@@ -39,7 +39,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 MODEL = Path("tools/arlington/model")
-FEATURES = Path("tools/spec_map/features.toml")
+MAP_DIR = Path("tools/spec_map")
+FEATURES = MAP_DIR / "features.toml"
 TESTS = Path("tests")
 MAP = Path("docs/spec-map.json")
 COVERAGE = Path("docs/spec-coverage.md")
@@ -225,6 +226,50 @@ def clauses(config: dict[str, Any], features: dict[str, dict[str, Any]]) -> None
         raise MapError(msg)
 
 
+def inventory(root: Path, features: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Read the independently maintained edition crosswalk, rejecting dangling references."""
+    directory = root / MAP_DIR
+    baseline = tomllib.loads((directory / "baseline.toml").read_text(encoding="utf-8"))
+    provisions = []
+    with (directory / "provisions.tsv").open(encoding="utf-8", newline="") as stream:
+        for row in csv.DictReader(stream, delimiter="\t"):
+            names = row["features"].split()
+            if row["source"] not in baseline["sources"] or not row["summary"]:
+                msg = f"missing source or rationale for {row['provision']}"
+                raise MapError(msg)
+            require_features(names, features, row["provision"])
+            provisions.append({**row, "features": names})
+
+    corrections = []
+    with (directory / "errata.tsv").open(encoding="utf-8", newline="") as stream:
+        for row in csv.DictReader(stream, delimiter="\t"):
+            names = row["features"].split()
+            dimensions = row["dimensions"].split()
+            if set(dimensions) - set(DIMENSIONS) or (dimensions and not names):
+                msg = f"invalid feature/dimension mapping for pdf-issues#{row['issue']}"
+                raise MapError(msg)
+            require_features(names, features, f"pdf-issues#{row['issue']}")
+            corrections.append(
+                {
+                    "issue": int(row["issue"]),
+                    "locations": row["locations"].split(),
+                    "work": [int(number) for number in row["work"].split()],
+                    "features": names,
+                    "dimensions": dimensions,
+                    "summary": row["summary"],
+                }
+            )
+    return {**baseline, "provisions": provisions, "corrections": corrections}
+
+
+def require_features(names: list[str], features: dict[str, dict[str, Any]], provision: str) -> None:
+    """Fail even when both the corresponding clause declaration and its feature have disappeared."""
+    missing = sorted(set(names) - features.keys())
+    if missing:
+        msg = f"{provision} requires missing features: {', '.join(missing)}"
+        raise MapError(msg)
+
+
 def object_keys(root: Path, name: str) -> set[str]:
     """Return the keys of the object type ``name``."""
     with (root / MODEL / "tsv" / f"{name}.tsv").open(encoding="utf-8", newline="") as file:
@@ -264,6 +309,7 @@ def build(root: Path) -> dict[str, Any]:
     commit = (root / MODEL / "COMMIT").read_text(encoding="utf-8").strip()
     return {
         "arlington": commit,
+        "inventory": inventory(root, features),
         "dimensions": list(DIMENSIONS),
         "clauses": config["clauses"],
         "features": list(features.values()),
@@ -281,10 +327,78 @@ def coverage(spec_map: dict[str, Any]) -> dict[str, dict[str, int]]:
 
 def render(spec_map: dict[str, Any]) -> str:
     """Return the map as JSON with one feature per line."""
-    head = {key: value for key, value in spec_map.items() if key != "features"}
-    lines = [json.dumps(feature, ensure_ascii=False) for feature in spec_map["features"]]
+    baseline = spec_map["inventory"]
+    inventory_head = {key: value for key, value in baseline.items() if key not in {"provisions", "corrections"}}
+    inventory_text = json.dumps(inventory_head, indent=2, ensure_ascii=False)[:-2]
+    for key in ("provisions", "corrections"):
+        rows = ",\n    ".join(json.dumps(row, ensure_ascii=False) for row in baseline[key])
+        inventory_text += f',\n  "{key}": [\n    {rows}\n  ]'
+    inventory_json = (inventory_text + "\n}").replace("\n", "\n  ")
+    head = {key: value for key, value in spec_map.items() if key not in {"features", "inventory"}}
     head_text = json.dumps({**head, "coverage": coverage(spec_map)}, indent=2, ensure_ascii=False)
-    return head_text[:-2] + ',\n  "features": [\n    ' + ",\n    ".join(lines) + "\n  ]\n}\n"
+    lines = [json.dumps(feature, ensure_ascii=False) for feature in spec_map["features"]]
+    return (
+        head_text[:-2]
+        + ',\n  "inventory": '
+        + inventory_json
+        + ',\n  "features": [\n    '
+        + ",\n    ".join(lines)
+        + "\n  ]\n}\n"
+    )
+
+
+def inventory_page(baseline: dict[str, Any]) -> list[str]:
+    """Describe the source editions, changes, crosswalk and the scope of the correction evidence."""
+    map_url = "https://github.com/yhay81/pyropdf/blob/main/docs/spec-map.json"
+    lines = ["## Specification baseline", "", f"Reviewed {baseline['reviewed']}.", ""]
+    lines.extend(f"- [{src['id']}]({src['url']}), {src['revision']}." for src in baseline["sources"].values())
+    lines += [
+        "",
+        f"Changes since `{baseline['previous']}`. {baseline['changes']}",
+        "",
+        baseline["grouping"],
+        "",
+        baseline["watchlist"],
+        "",
+        baseline["review"],
+        "",
+        "| Provision | Kind | Feature IDs | Reason for grouping |",
+        "| --- | --- | --- | --- |",
+    ]
+    for row in baseline["provisions"]:
+        names = ", ".join(f"`{name}`" for name in row["features"])
+        lines.append(f"| {row['provision']} | {row['kind']} | {names or '—'} | {row['summary']} |")
+    lines += [
+        "",
+        "### Correction register",
+        "",
+        "Compare a checkout of the upstream pages with the committed register using",
+        "`python3 tools/spec_map/check_errata.py /path/to/pdf-issues`.",
+        "",
+        f"The [JSON inventory]({map_url}) lists {len(baseline['corrections'])} corrections.",
+        "Each record has its upstream issue number, page anchors, affected feature IDs, dimensions to check,",
+        "and an original summary. Empty dimension lists identify changes to wording, cross-references or examples.",
+        "Feature tests and release decisions remain on the feature rows. An erratum needs a targeted regression",
+        "before a test can be cited for that specific correction. The register gives no automatic coverage credit.",
+    ]
+    source = baseline["sources"]["errata"]
+    lines += [
+        "",
+        '<details markdown="1"><summary>Corrections by upstream issue number</summary>',
+        "",
+        "| Issue | Corrected provision | Features | Dimensions to check | Related work |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for correction in baseline["corrections"]:
+        number = correction["issue"]
+        link = str(number) if number in source["page_only"] else f"[{number}]({source['issue_url']}{number})"
+        summary = f"[{correction['summary']}]({source['location_url']}{correction['locations'][0]})"
+        names = ", ".join(f"`{name}`" for name in correction["features"])
+        dimensions = ", ".join(correction["dimensions"]) or "Editorial"
+        work = ", ".join(f"[#{n}](https://github.com/yhay81/pyropdf/issues/{n})" for n in correction["work"])
+        lines.append(f"| {link} | {summary} | {names or '—'} | {dimensions} | {work or '—'} |")
+    lines += ["", "</details>"]
+    return lines
 
 
 def profile_table(spec_map: dict[str, Any]) -> list[str]:
@@ -344,7 +458,7 @@ def page(spec_map: dict[str, Any]) -> str:
         names = ", ".join(f"`{feature['feature']}`" for feature in features)
         lines.append(f"| {clause} | {title} | {names} | " + " | ".join(cells) + " |")
     lines += profile_table(spec_map)
-    lines += ["", "## Exclusions", ""]
+    lines += ["", *inventory_page(spec_map["inventory"]), "", "## Exclusions", ""]
     excluded = []
     for feature in spec_map["features"]:
         for dimension in DIMENSIONS:

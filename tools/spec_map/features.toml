@@ -58,6 +58,7 @@ preserve = { status = "planned", milestone = "Phase 4: Specification" }
 "7.6.4" = "Standard security handler"
 "7.6.5" = "Public-key security handlers"
 "7.6.6" = "Crypt filters"
+"7.6.7" = "Encryption wrappers"
 "7.7.2" = "Document catalog"
 "7.7.3" = "Page tree"
 "7.7.4" = "Name dictionary"
@@ -75,6 +76,7 @@ preserve = { status = "planned", milestone = "Phase 4: Specification" }
 "7.11.4.2" = "Related files arrays"
 "7.11.6" = "Collection items"
 "7.12" = "Extensions dictionary"
+"8.3" = "Coordinate transformations"
 "8.4" = "Graphics state"
 "8.5" = "Path construction and painting"
 "8.6.4" = "Device colour spaces"
@@ -82,11 +84,13 @@ preserve = { status = "planned", milestone = "Phase 4: Specification" }
 "8.6.5.3" = "CalRGB colour spaces"
 "8.6.5.4" = "Lab colour spaces"
 "8.6.5.5" = "ICCBased colour spaces"
+"8.6.5.8" = "Rendering intent selection"
 "8.6.6.2" = "Pattern colour spaces"
 "8.6.6.3" = "Indexed colour spaces"
 "8.6.6.4" = "Separation colour spaces"
 "8.6.6.5" = "DeviceN colour spaces"
 "8.6.7" = "Overprint control"
+"8.6.8" = "Colour-setting operators"
 "8.7.3" = "Tiling patterns"
 "8.7.4" = "Shading patterns"
 "8.7.4.5.2" = "Type 1 function-based shadings"
@@ -120,6 +124,8 @@ preserve = { status = "planned", milestone = "Phase 4: Specification" }
 "10.5" = "Transfer functions"
 "10.6" = "Halftones"
 "10.7" = "Scan conversion details"
+"10.8" = "Rendering of colour separations"
+"11.3" = "Alpha compositing"
 "11.3.5" = "Blend mode"
 "11.5" = "Soft masks"
 "11.6.6" = "Transparency group XObjects"
@@ -128,7 +134,7 @@ preserve = { status = "planned", milestone = "Phase 4: Specification" }
 "12.3.2" = "Destinations"
 "12.3.3" = "Document outline"
 "12.3.5" = "Collections"
-"12.3.6" = "Navigators"
+"12.3.5.3" = "Navigators"
 "12.4.2" = "Page labels"
 "12.4.3" = "Articles"
 "12.4.4" = "Presentations"
@@ -174,7 +180,7 @@ preserve = { status = "planned", milestone = "Phase 4: Specification" }
 "12.6.4.16" = "Go-To-3D-view actions"
 "12.6.4.17" = "ECMAScript actions"
 "12.6.4.18" = "Rich media execute actions"
-"12.7.2" = "Interactive form dictionary"
+"12.7.3" = "Interactive form dictionary"
 "12.7.4.3" = "Variable text"
 "12.7.5.2" = "Button fields"
 "12.7.5.3" = "Text fields"
@@ -190,13 +196,15 @@ preserve = { status = "planned", milestone = "Phase 4: Specification" }
 "12.8.6" = "Permissions"
 "12.8.7" = "Legal content attestations"
 "12.9" = "Measurement properties"
-"12.10" = "Document requirements"
+"12.10" = "Geospatial coordinates"
+"12.11" = "Document requirements"
 "13.2" = "Multimedia"
 "13.3" = "Sounds"
 "13.4" = "Movies"
 "13.5" = "Alternate presentations"
 "13.6" = "3D artwork"
 "13.7" = "Rich media"
+"14.2" = "Legacy resource procedure sets"
 "14.3.2" = "Metadata streams"
 "14.3.3" = "Document information dictionary"
 "14.4" = "File identifiers"
@@ -214,16 +222,25 @@ preserve = { status = "planned", milestone = "Phase 4: Specification" }
 "14.11.7" = "Open prepress interface"
 "14.12" = "Document parts"
 "14.13" = "Associated files"
+"Annex D" = "PDF character tables"
+"Annex E" = "Extension naming rules"
 "Annex F" = "Linearized PDF"
+"Annex I" = "Compatibility across PDF versions"
+"Annex K" = "XFA packets"
+"Annex L" = "Allowed structure children"
+"Annex O" = "PDF URI fragments"
+"Annex Q" = "Page transparency detection"
 "ISO 14289" = "PDF/UA"
 "ISO 15930" = "PDF/X"
 "ISO 16612" = "PDF/VT"
 "ISO 19005" = "PDF/A"
+"ISO/TS 24064" = "RichMedia STEP assets"
 "ISO/TS 32001" = "Hash algorithms"
 "ISO/TS 32002" = "Digital signature algorithms"
 "ISO/TS 32003" = "AES-GCM encryption"
 "ISO/TS 32004" = "Integrity protection"
 "ISO/TS 32005" = "Structure namespace inclusion"
+"ISO/TS 32007" = "RichMedia glTF assets"
 
 [features.lexical-conventions]
 clause = "7.2"
@@ -725,7 +742,7 @@ description = "Portable collections: their schema, folders, sort, and navigator.
 objects = ["Collection", "CollectionSchema", "CollectionField", "CollectionFolder", "CollectionSort", "CollectionColors", "CollectionSplit", "Navigator"]
 
 [features.navigators]
-clause = "12.3.6"
+clause = "12.3.5.3"
 description = "Navigators that present a portable collection."
 objects = []
 
@@ -980,7 +997,7 @@ create = { status = "partial", missing = "Field creation writes `/DA` and `/Q`, 
 edit = { status = "partial", missing = "Widget and field edits update `/DA`, `/Q`, and embedded font resources, without rich text (`/RV` and `/DS`).", issue = 256, milestone = "Phase 4: Specification" }
 
 [features.interactive-form]
-clause = "12.7.2"
+clause = "12.7.3"
 description = "The interactive form dictionary and the field tree."
 objects = ["InteractiveForm", "Field", "ArrayOfFields"]
 
@@ -1065,7 +1082,7 @@ description = "Viewports and measure dictionaries: rectilinear and geospatial."
 objects = ["Viewport", "MeasureRL", "MeasureGEO", "NumberFormat", "GeographicCoordinateSystem", "ProjectedCoordinateSystem", "PointData"]
 
 [features.document-requirements]
-clause = "12.10"
+clause = "12.11"
 description = "Requirements that a viewer must meet to process the document."
 objects = ["RequirementsHandler"]
 
@@ -1379,3 +1396,92 @@ clause = "ISO 16612"
 description = "PDF/VT: variable and transactional printing documents, read and kept."
 objects = []
 read = { status = "partial", missing = "`Document.profiles` reads PDF/VT claims, without structural checks for PDF/VT.", issue = 256, milestone = "Phase 4: Specification" }
+
+[features.unencrypted-wrapper]
+clause = "7.6.7"
+description = "An unencrypted outer PDF identifies and carries one encrypted document."
+objects = ["EncryptedPayload"]
+
+[features.coordinate-systems]
+clause = "8.3"
+description = "Concatenating transformations maps points between user, device, text, image and pattern coordinates."
+objects = []
+
+[features.rendering-intents]
+clause = "8.6.5.8"
+description = "Select how out-of-gamut colours are translated for the output device."
+objects = []
+
+[features.colour-operators]
+clause = "8.6.8"
+description = "Choose stroking and nonstroking colour spaces and component values in a content stream."
+objects = []
+
+[features.separation-rendering]
+clause = "10.8"
+description = "Render process and spot plates with the specified interactions between colourants."
+objects = []
+
+[features.alpha-compositing]
+clause = "11.3"
+description = "Combine source, backdrop, opacity and shape when painting overlapping content."
+objects = []
+
+[features.geospatial]
+clause = "12.10"
+description = "Relate positions on a PDF page to locations in a geographic coordinate system."
+objects = []
+
+[features.procedure-sets]
+clause = "14.2"
+description = "Read and retain the resource names that older PDF consumers used to choose procedure sets."
+objects = ["ArrayOfNamesForProcSet"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated features is excluded by the specification completion milestone." }
+
+[features.character-tables]
+clause = "Annex D"
+description = "Map bytes through the PDF-defined encodings, including the document string and standard font encodings."
+objects = []
+
+[features.private-names]
+clause = "Annex E"
+description = "Identify registered and private names added to PDF dictionaries by producers."
+objects = []
+
+[features.version-compatibility]
+clause = "Annex I"
+description = "Relate version declarations and compatibility sections to the features a reader may encounter."
+objects = []
+
+[features.xfa]
+clause = "Annex K"
+description = "Identify the deprecated XFA payload of an existing interactive form and its packet names."
+objects = ["ArrayOfXFA"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated features is excluded by the specification completion milestone." }
+
+[features.structure-children]
+clause = "Annex L"
+description = "Check parent and child standard roles and their allowed multiplicities in the PDF 2.0 namespace."
+objects = []
+
+[features.fragment-identifiers]
+clause = "Annex O"
+description = "Resolve fragment parameters that select content or set viewing and navigation options."
+objects = []
+
+[features.page-transparency]
+clause = "Annex Q"
+description = "Determine whether the resources and operations used on a page require transparent imaging."
+objects = []
+
+[features.step-rich-media]
+clause = "ISO/TS 24064"
+description = "Connect the STEP AP242 payload, configuration and view to its RichMedia annotation."
+objects = []
+
+[features.gltf-rich-media]
+clause = "ISO/TS 32007"
+description = "Connect a glTF asset and its resources to a RichMedia configuration and view."
+objects = []

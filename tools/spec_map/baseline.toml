@@ -1,0 +1,25 @@
+reviewed = "2026-11-20"
+previous = "e43dab4d"
+changes = "The preceding map had no dated provision or correction inventory. This review adds the edition's numbered contents and annexes, the published STEP and glTF extensions, profile parts and corrigenda, and the technical group's correction register. It distinguishes geographic coordinates (12.10) from processor requirements (12.11) and updates the references for interactive form dictionaries (12.7.3) and collection navigators (12.3.5.3, correction 477)."
+grouping = "The base crosswalk follows the published contents through the second-level clauses. Descendant provisions use the listed feature IDs, with individual rows for specialized behaviors and correction locations. Empty feature lists document introductory or informative material. Every linked feature has the five map dimensions; a link supplies no implementation evidence."
+watchlist = "The base amendment (DAmd 1.2), revisions of 32004, 32005 and PDF/A-4, the PDF/UA-1 amendment, 32008 and 32009 stay on the publication watchlist in #258."
+review = "Within one month of publication, compare the official catalogues and the PDF Association correction register with this snapshot. Diff the published pages between pins as well as comparing their identifiers, because wording can change at an existing location. Record the changed publication, provision, correction ID, affected features and dimensions. Add a regression test for the corrected behavior or link an open implementation issue from #258 that names the correction and the missing test. Preserve the release exclusions, record the delta from the previous pin, regenerate both outputs and run the offline checks."
+[sources.base]
+id = "ISO 32000-2:2020, edition 2"
+revision = "2020-12"
+url = "https://www.iso.org/standard/75839.html"
+
+[sources.standards]
+id = "PDF Association catalogue of ISO publications"
+revision = "reviewed 2026-11-20; individual publication years are in the crosswalk"
+url = "https://pdfa.org/pdf-standards/"
+
+[sources.errata]
+id = "PDF Association pdf-issues, published industry corrections"
+revision = "2026-11-17, d9b2519a16d0e64f6cfc2bee48fc6b6977bbca05"
+url = "https://github.com/pdf-association/pdf-issues/tree/d9b2519a16d0e64f6cfc2bee48fc6b6977bbca05/docs"
+issue_url = "https://github.com/pdf-association/pdf-issues/issues/"
+location_url = "https://pdf-issues.pdfa.org/"
+directories = ["32000-2-2020", "32001-2022", "32002-2022", "32003-2023", "32005-2023", "32007-2024", "14289-1-2014", "19005-4-2020"]
+# The published clause marks 422, but the corresponding upstream issue returns HTTP 404.
+page_only = [422]
