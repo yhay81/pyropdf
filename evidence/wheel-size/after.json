@@ -1,0 +1,140 @@
+{
+  "release_run": "44783558184",
+  "wheels": [
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "filename": "pyropdf-0.3.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "tag": "cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64",
+      "sha256": "e499ee7ec1a202f122b2c4d4e0f26c43164e6c1ce8ed501ef5fb697b4dd39ab8",
+      "size_bytes": 8985644,
+      "size_mib": 8.569378,
+      "extension_bytes": 8480241
+    },
+    {
+      "target": "aarch64-unknown-linux-gnu",
+      "filename": "pyropdf-0.3.1-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "tag": "cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64",
+      "sha256": "85ecf74dce2233b4aee6804e670d1e604f92a284f5703eea08a38344fb816b8e",
+      "size_bytes": 8221985,
+      "size_mib": 7.841096,
+      "extension_bytes": 7716577
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "filename": "pyropdf-0.3.1-cp311-abi3-macosx_10_12_x86_64.whl",
+      "tag": "cp311-abi3-macosx_10_12_x86_64",
+      "sha256": "d9e60f304e98ee0bc471695f8b97534b647d83f8273f52328e8fcf67ccc283c2",
+      "size_bytes": 8694186,
+      "size_mib": 8.291422,
+      "extension_bytes": 8188797
+    },
+    {
+      "target": "aarch64-apple-darwin",
+      "filename": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+      "tag": "cp311-abi3-macosx_11_0_arm64",
+      "sha256": "12304b88b50cd32705b99688609346826de9ab0eb254f72cf947f2fc7b45882c",
+      "size_bytes": 7735185,
+      "size_mib": 7.376847,
+      "extension_bytes": 7229793
+    },
+    {
+      "target": "x86_64-pc-windows-msvc",
+      "filename": "pyropdf-0.3.1-cp311-abi3-win_amd64.whl",
+      "tag": "cp311-abi3-win_amd64",
+      "sha256": "dd4d0af2d5907ce426fa2273aacf1507c24c9b31f05e317c14526fa2784a928a",
+      "size_bytes": 9090201,
+      "size_mib": 8.669091,
+      "extension_bytes": 8584640
+    },
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "filename": "pyropdf-0.3.1-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "tag": "cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64",
+      "sha256": "70c8c0d33a06e7b694c999fe0aa5ab86294196ca03b0c51caa31798085f53f98",
+      "size_bytes": 8959457,
+      "size_mib": 8.544404,
+      "extension_bytes": 8453987
+    },
+    {
+      "target": "aarch64-unknown-linux-gnu",
+      "filename": "pyropdf-0.3.1-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "tag": "cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64",
+      "sha256": "eaebc2b1202c8f3556eb496a71178cd3889061a321e95effc1039f4345e62514",
+      "size_bytes": 8201271,
+      "size_mib": 7.821342,
+      "extension_bytes": 7695792
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "filename": "pyropdf-0.3.1-cp314-cp314t-macosx_10_12_x86_64.whl",
+      "tag": "cp314-cp314t-macosx_10_12_x86_64",
+      "sha256": "b97c531ef9e935ff8bba7bb1dbd665af73566cd27141cd60c7999ae16f7ce0be",
+      "size_bytes": 8721033,
+      "size_mib": 8.317025,
+      "extension_bytes": 8215597
+    },
+    {
+      "target": "aarch64-apple-darwin",
+      "filename": "pyropdf-0.3.1-cp314-cp314t-macosx_11_0_arm64.whl",
+      "tag": "cp314-cp314t-macosx_11_0_arm64",
+      "sha256": "3baa21ca90b422bd1533e88457bb8d835418ce62f2a01b6162d37f67d0f95130",
+      "size_bytes": 7708568,
+      "size_mib": 7.351463,
+      "extension_bytes": 7203134
+    },
+    {
+      "target": "x86_64-pc-windows-msvc",
+      "filename": "pyropdf-0.3.1-cp314-cp314t-win_amd64.whl",
+      "tag": "cp314-cp314t-win_amd64",
+      "sha256": "8d15535945af526f76324ed5a9d10475c4fc9ebc146602d6c2a0b9f7184675e8",
+      "size_bytes": 9061166,
+      "size_mib": 8.641401,
+      "extension_bytes": 8555557
+    },
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "filename": "pyropdf-0.3.1-cp315-cp315t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "tag": "cp315-cp315t-manylinux2014_x86_64.manylinux_2_17_x86_64",
+      "sha256": "1c8abfa9fabe6b48b92c678585bbcb3785a30a5f88edd33fdaf9e8dedcf8576c",
+      "size_bytes": 8959665,
+      "size_mib": 8.544602,
+      "extension_bytes": 8454190
+    },
+    {
+      "target": "aarch64-unknown-linux-gnu",
+      "filename": "pyropdf-0.3.1-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "tag": "cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64",
+      "sha256": "bff3882494bb2867748cbb5fd80b73bfcef4431455f2f72fdab3e9d19e7f949e",
+      "size_bytes": 8201120,
+      "size_mib": 7.821198,
+      "extension_bytes": 7695639
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "filename": "pyropdf-0.3.1-cp315-cp315t-macosx_10_12_x86_64.whl",
+      "tag": "cp315-cp315t-macosx_10_12_x86_64",
+      "sha256": "84dfea3691c4496484bf4342c14fb70cbc7c716215ffa3e657ca018a0928f9f9",
+      "size_bytes": 8720979,
+      "size_mib": 8.316974,
+      "extension_bytes": 8215542
+    },
+    {
+      "target": "aarch64-apple-darwin",
+      "filename": "pyropdf-0.3.1-cp315-cp315t-macosx_11_0_arm64.whl",
+      "tag": "cp315-cp315t-macosx_11_0_arm64",
+      "sha256": "3241d8fbb214eed1cb127d9850570f9297b27b99a1285d630dd9837833d74084",
+      "size_bytes": 7708322,
+      "size_mib": 7.351229,
+      "extension_bytes": 7202891
+    },
+    {
+      "target": "x86_64-pc-windows-msvc",
+      "filename": "pyropdf-0.3.1-cp315-cp315t-win_amd64.whl",
+      "tag": "cp315-cp315t-win_amd64",
+      "sha256": "cf41be11e5a517d645d36402f81f273c828ca580ee1ce7b771909c89d9950883",
+      "size_bytes": 9061264,
+      "size_mib": 8.641495,
+      "extension_bytes": 8555654
+    }
+  ]
+}

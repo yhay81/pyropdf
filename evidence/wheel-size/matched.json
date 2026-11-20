@@ -1,0 +1,97 @@
+[
+  {
+    "head": {
+      "filename": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+      "tag": "cp311-abi3-macosx_11_0_arm64",
+      "sha256": "a6278b440791853103c8747644b4bfc1abaeb15d84a343da79fb8ddcee12b4cc",
+      "size_bytes": 7735192,
+      "size_mib": 7.376854,
+      "extension_bytes": 7229795
+    },
+    "base": {
+      "filename": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+      "tag": "cp311-abi3-macosx_11_0_arm64",
+      "sha256": "23f08f8ae5b1023b038dfd5142b119044f487e05cc638c8df83caa713ec5a4b4",
+      "size_bytes": 9259713,
+      "size_mib": 8.83075,
+      "extension_bytes": 8754315
+    },
+    "growth_bytes": -1524521
+  },
+  {
+    "head": {
+      "filename": "pyropdf-0.3.1-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "tag": "cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64",
+      "sha256": "22531f384545974aa7ae43f29d86d6e7cf4540adcb5bf39701e42178c129d711",
+      "size_bytes": 8221990,
+      "size_mib": 7.841101,
+      "extension_bytes": 7716577
+    },
+    "base": {
+      "filename": "pyropdf-0.3.1-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "tag": "cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64",
+      "sha256": "66d64c63b61fd9c95bbdae040ec37661dd263a07772fd6537b57bf3a0af5100e",
+      "size_bytes": 10144511,
+      "size_mib": 9.67456,
+      "extension_bytes": 9639096
+    },
+    "growth_bytes": -1922521
+  },
+  {
+    "head": {
+      "filename": "pyropdf-0.3.1-cp311-abi3-macosx_10_12_x86_64.whl",
+      "tag": "cp311-abi3-macosx_10_12_x86_64",
+      "sha256": "279d16e38434acb4b851cbb62ec0807660dfe670be4e1843802e26b2d4e76b9f",
+      "size_bytes": 8694198,
+      "size_mib": 8.291433,
+      "extension_bytes": 8188797
+    },
+    "base": {
+      "filename": "pyropdf-0.3.1-cp311-abi3-macosx_10_12_x86_64.whl",
+      "tag": "cp311-abi3-macosx_10_12_x86_64",
+      "sha256": "34ffc5a518417fc96761573b647d8413378c297c0ac6e64cf79ca03a32a4a8e9",
+      "size_bytes": 10431672,
+      "size_mib": 9.948418,
+      "extension_bytes": 9926276
+    },
+    "growth_bytes": -1737474
+  },
+  {
+    "head": {
+      "filename": "pyropdf-0.3.1-cp311-abi3-win_amd64.whl",
+      "tag": "cp311-abi3-win_amd64",
+      "sha256": "4912ab089288d9a3e1de7c4720bbd3554a5fb252363f301ebc4c87abc914ffb3",
+      "size_bytes": 9090209,
+      "size_mib": 8.669099,
+      "extension_bytes": 8584640
+    },
+    "base": {
+      "filename": "pyropdf-0.3.1-cp311-abi3-win_amd64.whl",
+      "tag": "cp311-abi3-win_amd64",
+      "sha256": "ba131c076245931b39ae43beeb7139bd0551e58da8f763ea200f170a9fbb49dc",
+      "size_bytes": 10348286,
+      "size_mib": 9.868895,
+      "extension_bytes": 9842716
+    },
+    "growth_bytes": -1258077
+  },
+  {
+    "head": {
+      "filename": "pyropdf-0.3.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "tag": "cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64",
+      "sha256": "690e95dc898887302c6bee4b6a843fd6a12a81e0f464a39b0d6b138794abf6e6",
+      "size_bytes": 8985653,
+      "size_mib": 8.569386,
+      "extension_bytes": 8480241
+    },
+    "base": {
+      "filename": "pyropdf-0.3.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "tag": "cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64",
+      "sha256": "9ff887adbb0e2c9c7dd2a56b4c653035b879d293ac3bfc6c5de66714c9a23274",
+      "size_bytes": 10891096,
+      "size_mib": 10.386559,
+      "extension_bytes": 10385689
+    },
+    "growth_bytes": -1905443
+  }
+]
