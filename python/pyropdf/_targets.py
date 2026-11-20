@@ -18,6 +18,7 @@ from pyropdf._actions import (
     _is_custom_target,
 )
 from pyropdf._geometry import Point
+from pyropdf._media_actions import GoTo3DView, RenditionAction, RichMediaExecute
 from pyropdf._presentations import TransitionAction
 from pyropdf._threads import ThreadAction
 
@@ -126,6 +127,9 @@ Target: TypeAlias = (
     Destination
     | RemoteDestination
     | EmbeddedDestination
+    | GoTo3DView
+    | RenditionAction
+    | RichMediaExecute
     | Launch
     | NamedAction
     | TransitionAction

@@ -149,6 +149,35 @@ def add_annotation(doc: pyropdf.Document) -> set[int]:
     return touched
 
 
+def add_screen(doc: pyropdf.Document) -> set[int]:
+    """Add a Screen with a self-targeted rendition and preserve its siblings."""
+    page = doc.pages[0]
+    items = page.obj.get("Annots")
+    touched = {items.xref if isinstance(items, pyropdf.Array) and items.xref is not None else page.xref}
+    if pdf_version(doc) < (1, 5):
+        touched.add(number(doc.catalog))
+    clip = pyropdf.MediaAsset(filename="caption.txt", content_type="text/plain", data=MARKER.encode())
+    page.annotations.add(pyropdf.Screen(rect=pyropdf.Rect(10, 10, 30, 30), asset=clip))
+    return touched
+
+
+def check_screen(doc: pyropdf.Document) -> None:
+    annotations = doc.pages[0].annotations
+    assert annotations
+    screen = annotations[-1]
+    action = screen.action
+    assert isinstance(action, pyropdf.RenditionAction)
+    assert action.annotation == screen.xref
+    assert isinstance(action.rendition, pyropdf.typed.RenditionMedia)
+    clip = action.rendition.C
+    assert isinstance(clip, pyropdf.typed.MediaClipData)
+    file = clip.D
+    assert isinstance(file, pyropdf.typed.FileSpecification)
+    assert file.EF
+    assert file.EF.F
+    assert file.EF.F.obj.read() == MARKER.encode()
+
+
 def page_annotations(page: pyropdf.Page) -> set[int]:
     """Include an annotation list stored in its own indirect array."""
     touched = {number(page.obj)}
@@ -604,6 +633,7 @@ NEW_EDITS = {
     "canvas_path": Edit(apply=canvas_path, check=check_path),
     "canvas_text": Edit(apply=canvas_text, check=check_text),
     "canvas_image": Edit(apply=canvas_image, check=check_image),
+    "add_screen": Edit(apply=add_screen, check=check_screen),
     "add_annotation": Edit(apply=add_annotation, check=check_annotation),
     "edit_annotation": Edit(prepare=prepare_annotation, apply=edit_annotation, check=check_edited_annotation),
     "delete_annotation": Edit(prepare=prepare_annotation, apply=delete_annotation, check=check_removed_annotation),

@@ -317,7 +317,7 @@ pub fn annotation_remove(
             |annots, transaction, budget| {
                 let handles = input::read_handles(handles, budget)?;
                 annots
-                    .remove(transaction, &handles)
+                    .remove_with_references(transaction, &handles, &document.references)
                     .map_err(annotation_error)
             },
         )

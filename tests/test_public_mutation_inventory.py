@@ -90,6 +90,12 @@ MUTATIONS = (
     ("delete_attachment", "Prune the name tree and release unreferenced streams.", "Attachments", "__delitem__"),
     ("write_attachment", "Replace the embedded stream; update size and checksum.", "Attachment", "write"),
     ("add_annotation", "Create the annotation, page Annots entry and appearance.", "Annotations", "add"),
+    (
+        "add_screen",
+        "A Screen adds a self-targeted rendition, its clip and its embedded file to the annotation.",
+        "Annotations",
+        "add",
+    ),
     ("delete_annotation", "Detach annotation and owned appearance from page Annots.", "Annotations", "__delitem__"),
     (
         "edit_annotation",
@@ -121,6 +127,12 @@ MUTATIONS = (
         "flatten",
     ),
     ("flatten_annotations", "The page form calls the same flattener restricted to one page.", "Page", "flatten"),
+    (
+        "flatten_widgets",
+        "Flatten widget appearances into page resources and remove their field and structure memberships.",
+        "Page",
+        "flatten",
+    ),
     ("add_field", "Create the field, attach widgets and prepare their appearances.", "Widgets", "add"),
     ("delete_field", "Unregister fields and remove their widgets from page annotations.", "Form", "__delitem__"),
     ("delete_widget", "Remove the widget and its dependent field membership.", "Widgets", "__delitem__"),
@@ -692,16 +704,20 @@ def test_native_read_only_descriptors_reject_assignment() -> None:
 
 
 def test_every_public_operation_has_a_classification() -> None:
-    declared = [(owner, op) for _, _, owner, names in MUTATIONS for op in names.split()]
+    # An operation can have several cases for different input dependencies.
+    assignments = [(owner, op, case) for case, _, owner, names in MUTATIONS for op in names.split()]
+    assert len(assignments) == len(set(assignments))
+    declared = {(owner, op) for owner, op, _ in assignments}
     for coverage in (READ_ONLY, EXTERNAL):
-        declared.extend((owner, op) for owner, names in coverage.items() for op in names.split())
-    assert len(declared) == len(set(declared))
-    assert set(declared) == public_operations()
+        for owner, names in coverage.items():
+            for op in names.split():
+                assert (owner, op) not in declared
+                declared.add((owner, op))
+    assert declared == public_operations()
 
 
 def test_each_mutation_names_an_executable_save_case() -> None:
-    missing = {case for case, _, _, _ in MUTATIONS if case not in EDITS or case == "none"}
-    assert not missing, sorted(missing)
+    assert {case for case, _, _, _ in MUTATIONS} == EDITS.keys() - {"none"}
     for case, dependencies, owner, names in MUTATIONS:
         assert dependencies.strip(), owner
         assert names.split(), owner

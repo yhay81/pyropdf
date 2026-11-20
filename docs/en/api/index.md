@@ -178,10 +178,17 @@ method and property of its classes with its full description.
 - [`LineAnnotation`](annotations.md#lineannotation): A straight line between two display points, as `page.annotations.add` takes it.
 - [`LineEnding`](annotations.md#lineending): The shape at an end of a line or polyline, `/LE` (ISO 32000-2 Table 179).
 - [`MarkupRects`](annotations.md#markuprects): Rectangles or quads that text markup covers: one, or a sequence of them.
+- [`MediaAsset`](annotations.md#mediaasset): An embedded media file shared by its file specification and media instances.
+- [`MediaKind`](annotations.md#mediakind): Base-standard RichMedia configuration and instance subtypes.
+- [`ModelFormat`](annotations.md#modelformat): Embedded base-standard 3D stream formats.
+- [`ModelView`](annotations.md#modelview): A named 3D view with optional links to existing 3D measurements.
 - [`Note`](annotations.md#note): A note shown as an icon, as `page.annotations.add` takes it.
 - [`NoteIcon`](annotations.md#noteicon): The icon of a note, `/Name` (ISO 32000-2 §12.5.6.4).
 - [`Polygon`](annotations.md#polygon): A closed polygon through two or more display points, as `page.annotations.add` takes it.
 - [`PolyLine`](annotations.md#polyline): An open line through two or more display points, as `page.annotations.add` takes it.
+- [`ProjectionAnnotation`](annotations.md#projectionannotation): A projection annotation that links back to a 3D measurement.
+- [`RichMedia`](annotations.md#richmedia): A RichMedia annotation with a named asset, configuration, instance and optional 3D views.
+- [`Screen`](annotations.md#screen): A Screen annotation with an optional media clip and its rendition action.
 - [`Sound`](annotations.md#sound): The sound of a sound annotation, `/Sound`, as `Annotation.sound` reads it.
 - [`SoundEncoding`](annotations.md#soundencoding): How a sound's samples encode amplitudes, `/E` (ISO 32000-2 Table 208).
 - [`Square`](annotations.md#square): A rectangle, as `page.annotations.add` takes it.
@@ -189,6 +196,7 @@ method and property of its classes with its full description.
 - [`Stamp`](annotations.md#stamp): A rubber stamp, as `page.annotations.add` takes it.
 - [`StampIcon`](annotations.md#stampicon): Standard rubber-stamp icon names, `/Name` (ISO 32000-2 §12.5.6.12).
 - [`StrikeOut`](annotations.md#strikeout): A line through text, as `page.annotations.add` takes it.
+- [`ThreeD`](annotations.md#threed): A 3D annotation whose stream holds an opaque U3D or PRC asset.
 - [`Underline`](annotations.md#underline): A line under text, as `page.annotations.add` takes it.
 
 ## [Links and destinations](links-and-destinations.md)
@@ -211,6 +219,7 @@ method and property of its classes with its full description.
 - [`DocumentTriggers`](actions-and-triggers.md#documenttriggers): Catalog additional-action scripts by `DocumentTrigger` (`Catalog["AA"]`, Table 200).
 - [`EmbeddedDestination`](actions-and-triggers.md#embeddeddestination): An embedded go-to action into an embedded or parent PDF file (`/S /GoToE`, ISO 32000-2 Table 204).
 - [`EmbeddedTarget`](actions-and-triggers.md#embeddedtarget): One hop in an embedded go-to target path (`/T`, ISO 32000-2 Table 205).
+- [`GoTo3DView`](actions-and-triggers.md#goto3dview): Select a target's 3D view by index, internal name, PDF selector name, or view dictionary.
 - [`HideAction`](actions-and-triggers.md#hideaction): An action that hides or shows annotations and form fields (`/S /Hide`, ISO 32000-2 Table 214).
 - [`ImportDataAction`](actions-and-triggers.md#importdataaction): An action that imports FDF field values from a file (`/S /ImportData`, ISO 32000-2 Table 243).
 - [`JavaScriptAction`](actions-and-triggers.md#javascriptaction): An action that runs an ECMAScript script (`/S /JavaScript`, ISO 32000-2 Table 221).
@@ -218,7 +227,10 @@ method and property of its classes with its full description.
 - [`LayerStateTransition`](actions-and-triggers.md#layerstatetransition): How a `LayerStateChange` updates optional content groups (ISO 32000-2 Table 217).
 - [`PageTrigger`](actions-and-triggers.md#pagetrigger): Page additional-action events (`Page["AA"]`, ISO 32000-2 Table 198).
 - [`PageTriggers`](actions-and-triggers.md#pagetriggers): Page additional actions by `PageTrigger` (`Page["AA"]`, ISO 32000-2 Table 198).
+- [`RenditionAction`](actions-and-triggers.md#renditionaction): A Screen target, optional rendition, operation and inert script.
+- [`RenditionOperation`](actions-and-triggers.md#renditionoperation): The operation requested of a viewer by a rendition action.
 - [`ResetFormAction`](actions-and-triggers.md#resetformaction): An action that resets form fields to their default values (`/S /ResetForm`, ISO 32000-2 Table 241).
+- [`RichMediaExecute`](actions-and-triggers.md#richmediaexecute): An inert command and optional arguments for an instance of a RichMedia annotation.
 - [`SetLayerStateAction`](actions-and-triggers.md#setlayerstateaction): An action that changes optional-content group states (`/S /SetOCGState`, ISO 32000-2 Table 217).
 - [`SubmitFormAction`](actions-and-triggers.md#submitformaction): An action that submits form field values to a URL (`/S /SubmitForm`, ISO 32000-2 Table 239).
 - [`SubmitFormFlags`](actions-and-triggers.md#submitformflags): Bit flags of a `SubmitFormAction` (`/Flags`, ISO 32000-2 Table 240).

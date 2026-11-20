@@ -182,9 +182,8 @@ def language_saves(directory: Path) -> dict[Path, str]:
 EXTENSIONS = dict.fromkeys(("3a", "3b", "3u"), "ISO_19005_3")
 PADES_LEVEL = 2
 
-# The pinned base 2.0 model evaluates these two standard PAdES features
-# against an extension-only predicate. Check its verdict AND the extension
-# profile on the identical bytes; a new failure in either run fails CI.
+# The base 2.0 model rejects these standard VRI and CAdES cases (#883).
+# Check both base and extension verdicts on the same bytes.
 for source_path, profile in FIXTURES.items():
     extension = "+ISO_19005_3" if profile in EXTENSIONS else ""
     version = "2.0" if profile.startswith("4") or profile == "ua2" else "1.4" if profile.startswith("1") else "1.7"
@@ -195,9 +194,9 @@ for source_path, profile in FIXTURES.items():
         source_path.stem, "arlington" + version + extension, {"radio_groups": {"Field-1", "Field-Ff-Bitmask-9"}}, "#879"
     )
     model = "arlington2.0" + extension
-    expect(source_path.stem, model, {"security_store": {"VRI-OCSP-Array-9"}}, "#883")
+    expect(source_path.stem, model, {"security_store": {"VRI-OCSP-Array-9"}}, "#926")
     if profile.startswith("4") or profile == "ua2":
-        expect(source_path.stem, model, {"sign_revision": {"Signature-SubFilter-Name-ETSI.CAdES.detached-27"}}, "#883")
+        expect(source_path.stem, model, {"sign_revision": {"Signature-SubFilter-Name-ETSI.CAdES.detached-27"}}, "#927")
 
 
 def saves(directory: Path) -> dict[Path, str]:
@@ -526,6 +525,23 @@ def run(jar: Path, files: dict[Path, str]) -> list[tuple[str, Path]]:
 def dual_archival(files: dict[Path, str]) -> dict[Path, str]:
     """Include the same source and every save in the independent PDF/A-4 run."""
     return {path: "4" for path in files if path.stem == DUAL or path.stem.startswith(DUAL + "-")}
+
+
+# The shared Screen case embeds a clip and a rendition action without tagging
+# the annotation. Each profile restricts a different part of that graph.
+SCREEN_RULES = {
+    "1": {"6.1.11-1", "6.5.2-1", "6.5.3-2", "6.6.1-1"},
+    "2": {"6.3.1-1", "6.3.2-1", "6.5.1-1", "6.8-2", "6.8-5"},
+    "3": {"6.3.1-1", "6.3.2-1", "6.5.1-1", "6.8-2", "6.8-3", "6.8-4"},
+    "4": {"6.3.1-1", "6.3.2-1", "6.6.1-1", "6.9-2", "6.9-4"},
+    "ua1": {"7.11-1", "7.18.1-1", "7.18.1-2", "7.18.3-1", "7.18.6.2-2"},
+    "ua2": {"8.9.2.4.12-1", "8.9.3.3-1"},
+}
+for source_path, variant in [*FIXTURES.items(), *dual_archival(FIXTURES).items()]:
+    rules = SCREEN_RULES[variant if variant.startswith("ua") else variant[0]]
+    if variant == "4":
+        rules = rules | {"6.9-3"}  # The base profile also restricts the embedded file's type.
+    expect(source_path.stem, variant, {"add_screen": rules}, "#848")
 
 
 def pades_comparisons(models: dict[Path, str]) -> dict[Path, str]:

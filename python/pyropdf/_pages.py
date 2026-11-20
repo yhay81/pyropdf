@@ -285,9 +285,15 @@ class Pages(Sequence[Page]):
         at = max(0, index + count) if index < 0 else min(index, count)
         has_capture = _has_capture_indexes(source)
         if source is not self._document:
+            from pyropdf._media import finish_media_import  # noqa: PLC0415
+
             if has_capture:
                 _guard_capture_pages(source, set(chosen))
-            _core.import_pages(doc, source._core(), chosen, at)  # noqa: SLF001
+            with self._document.transaction("pages"):
+                media = _core.import_pages(doc, source._core(), chosen, at)  # noqa: SLF001
+                if media is not None:
+                    major, minor, first, prc = media
+                    finish_media_import(self._document, major, minor, first, contains_prc=prc)
             return
         order = [*objects[:at], *chosen, *objects[at:]]
         copies = [False] * at + [True] * len(chosen) + [False] * (count - at)
