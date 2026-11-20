@@ -585,17 +585,25 @@ def edit_web_capture(doc: pyropdf.Document) -> set[int]:
         registered = pyropdf.typed.WebCapturePageSet(new)
         database.add(registered)
         assert database.by_id(_CAPTURE_ID) == (registered,)
-        database.remove(registered)
     return touched
 
 
 def check_web_capture(doc: pyropdf.Document) -> None:
     database = doc.web_capture
-    assert not database.by_id(_CAPTURE_ID)
     assert not database.by_url(_CAPTURE_URL.decode())
-    assert not database.by_url((_CAPTURE_URL + b"-revised").decode())
-    assert "ID" not in doc.pages[0].obj
-    assert database.info is None
+    renamed = database.by_url((_CAPTURE_URL + b"-revised").decode())
+    if pdf_version(doc) < (2, 0):
+        (content,) = renamed
+        assert database.by_id(_CAPTURE_ID) == (content,)
+        assert isinstance(content, pyropdf.typed.WebCapturePageSet)
+        assert content.O[0].obj == doc.pages[0].obj
+        assert bytes(doc.pages[0].obj["ID"]) == _CAPTURE_ID
+        assert database.info is not None
+    else:
+        assert not renamed
+        assert not database.by_id(_CAPTURE_ID)
+        assert "ID" not in doc.pages[0].obj
+        assert database.info is None
 
 
 def prepare_related_files(doc: pyropdf.Document) -> None:
