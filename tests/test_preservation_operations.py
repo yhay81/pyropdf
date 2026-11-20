@@ -904,3 +904,234 @@ FAMILY_EDITS.update(
         prepare=prepare_page_boxes, apply=edit_page_boxes, check=check_page_boxes, affected_pages=last_page
     ),
 )
+
+
+def indirect_numbers(*values: object) -> set[int]:
+    return {
+        item.xref for item in values if isinstance(item, (Dictionary, pyropdf.Array)) and item.xref is not None
+    }
+
+
+def prepare_widget_events(doc: pyropdf.Document) -> None:
+    prepare_field(doc)
+    field = doc.form[FIELD]
+    field.scripts[pyropdf.ScriptTrigger.FORMAT] = "event.value = event.value;"
+    widget = field.widgets[0]
+    widget.triggers[pyropdf.AnnotationTrigger.FOCUS] = pyropdf.NamedAction("NextPage")
+
+
+def edit_widget_events(doc: pyropdf.Document) -> set[int]:
+    field = doc.form[FIELD]
+    widget = field.widgets[0]
+    aa = widget.obj["AA"]
+    touched = {widget.xref, field.xref} | indirect_numbers(aa, aa["Fo"], field.obj["AA"]["F"])
+    del widget.triggers[pyropdf.AnnotationTrigger.FOCUS]
+    assert field.scripts[pyropdf.ScriptTrigger.FORMAT] == "event.value = event.value;"
+    del field.scripts[pyropdf.ScriptTrigger.FORMAT]
+    widget.triggers[pyropdf.AnnotationTrigger.ACTIVATE] = LINK_URI
+    return touched
+
+
+def check_widget_events(doc: pyropdf.Document) -> None:
+    field = doc.form[FIELD]
+    assert dict(field.widgets[0].triggers) == {pyropdf.AnnotationTrigger.ACTIVATE: LINK_URI}
+    assert not field.scripts
+    assert field.value == "AVA"
+
+
+def prepare_replies(doc: pyropdf.Document) -> None:
+    page = doc.pages[0]
+    for text in ("question", "reply"):
+        item = page.annotations.add(pyropdf.Note((10, 10), contents=text))
+        item.name = MARKER + text
+
+
+def edit_replies(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[0]
+    question, reply = page.annotations[-2:]
+    touched = page_annotations(page) | {question.xref, reply.xref}
+    reply.in_reply_to = question
+    question.popup_rect = (24, 25, 64, 65)
+    question.is_open = True
+    return touched
+
+
+def check_replies(doc: pyropdf.Document) -> None:
+    page = doc.pages[0]
+    question, reply = page.annotations[-2:]
+    assert question.name == MARKER + "question" and reply.name == MARKER + "reply"
+    assert reply.in_reply_to == question
+    assert question.is_open and question.popup_rect == pyropdf.Rect(24, 25, 64, 65)
+    popup = question.obj["Popup"]
+    assert popup["Parent"] == question.obj
+    assert [entry.xref for entry in page.obj["Annots"]].count(popup.xref) == 1
+
+
+def prepare_embedded_note(doc: pyropdf.Document) -> None:
+    item = doc.pages[0].annotations.add(pyropdf.FileAttachment((10, 10), b"before", filename="source.txt"))
+    item.name = MARKER
+
+
+def edit_embedded_note(doc: pyropdf.Document) -> set[int]:
+    item = annotation(doc)
+    file = item.file
+    assert file is not None
+    spec = item.obj["FS"]
+    stream = spec["EF"]["F"]
+    touched = {item.xref} | indirect_numbers(spec, stream, stream.get("Params"))
+    file.write(b"changed bytes")
+    file.filename = "changed.txt"
+    file.description = MARKER
+    file.created = "D:20250101000000Z"
+    del file.modified
+    return touched
+
+
+def check_embedded_note(doc: pyropdf.Document) -> None:
+    file = annotation(doc).file
+    assert file is not None
+    assert (file.filename, file.description, file.read()) == ("changed.txt", MARKER, b"changed bytes")
+    assert file.created == "D:20250101000000Z" and file.modified is None
+
+
+def prepare_collection_item(doc: pyropdf.Document) -> None:
+    attachment = doc.attachments.add(MARKER, b"embedded", filename="notes.txt")
+    attachment.collection_item = {"Project": "before"}
+
+
+def edit_collection_item(doc: pyropdf.Document) -> set[int]:
+    entries = doc.catalog["Names"]["EmbeddedFiles"]["Names"]
+    spec = next(entries[i + 1] for i in range(0, len(entries), 2) if entries[i] == MARKER.encode())
+    previous = number(spec["CI"])
+    doc.attachments[MARKER].collection_item = {"Project": MARKER, "Count": 7}
+    assert previous not in doc.objects
+    return {number(spec), previous}
+
+
+def check_collection_item(doc: pyropdf.Document) -> None:
+    item = doc.attachments[MARKER]
+    assert item.collection_item == {"Project": MARKER, "Count": 7}
+    assert (item.filename, item.read()) == ("notes.txt", b"embedded")
+
+
+def prepare_bead_membership(doc: pyropdf.Document) -> None:
+    doc.pages.new((181, 211))
+    doc.threads.add([(0, (5, 6, 15, 16)), (0, (20, 21, 30, 31))], title=MARKER)
+    page = doc.pages[0]
+    page.obj["B"] = doc.objects[doc.objects.add(list(page.obj["B"]))]
+
+
+def edit_bead_membership(doc: pyropdf.Document) -> set[int]:
+    page, other = doc.pages[0], doc.pages[-1]
+    thread = doc.threads[-1]
+    first, second = thread.beads
+    touched = {page.xref, other.xref, thread.xref, first.xref, second.xref} | indirect_numbers(page.obj["B"])
+    second.page = other
+    thread.beads.add(other, (41, 42, 51, 52))
+    gone = first.xref
+    del thread.beads[0]
+    assert gone not in doc.objects
+    return touched
+
+
+def check_bead_membership(doc: pyropdf.Document) -> None:
+    thread = doc.threads[-1]
+    assert thread.title == MARKER
+    first, second = thread.beads
+    other = doc.pages[-1]
+    assert first.page == second.page == other
+    assert (first.rect, second.rect) == (pyropdf.Rect(20, 21, 30, 31), pyropdf.Rect(41, 42, 51, 52))
+    assert thread.obj["F"] == first.obj and first.obj["T"] == thread.obj
+    assert first.obj["N"] == first.obj["V"] == second.obj
+    assert second.obj["N"] == second.obj["V"] == first.obj
+    assert list(other.obj["B"]) == [first.obj, second.obj]
+    assert all(bead.get("T") != thread.obj for bead in doc.pages[0].obj.get("B", ()))
+
+
+def prepare_metadata(doc: pyropdf.Document) -> None:
+    if doc.xmp is None:
+        from test_metadata import XMP  # noqa: PLC0415 - use the corpus's minimal valid XMP packet.
+
+        doc.xmp = XMP
+    doc.metadata["title"] = MARKER + " before"
+
+
+def edit_metadata(doc: pyropdf.Document) -> set[int]:
+    touched = indirect_numbers(doc.trailer.get("Info"), doc.catalog.get("Metadata"))
+    doc.metadata["title"] = MARKER
+    return touched
+
+
+def check_metadata(doc: pyropdf.Document) -> None:
+    assert doc.metadata["title"] == MARKER
+    assert doc.trailer["Info"]["Title"].text == MARKER
+    assert doc.xmp and f">{MARKER}<" in doc.xmp
+
+
+def prepare_catalog_records(doc: pyropdf.Document) -> None:
+    doc.legal_attestation = pyropdf.LegalAttestation(attestation="before")
+    doc.requirements = (pyropdf.DocumentRequirement(pyropdf.RequirementType.ENABLE_JAVASCRIPTS),)
+
+
+def edit_catalog_records(doc: pyropdf.Document) -> set[int]:
+    catalog = doc.catalog
+    req = catalog["Requirements"]
+    touched = {number(catalog)} | indirect_numbers(catalog["Legal"], req, *req)
+    del doc.requirements
+    doc.legal_attestation = pyropdf.LegalAttestation(attestation=MARKER)
+    return touched
+
+
+def check_catalog_records(doc: pyropdf.Document) -> None:
+    assert doc.requirements == () and "Requirements" not in doc.catalog
+    assert doc.legal_attestation == pyropdf.LegalAttestation(attestation=MARKER)
+
+
+def prepare_signature(doc: pyropdf.Document) -> None:
+    doc.prepare_signature(FIELD)
+    doc.form[FIELD].lock = pyropdf.FieldLock()
+
+
+def edit_signature(doc: pyropdf.Document) -> set[int]:
+    field = doc.form[FIELD]
+    touched = {field.xref} | indirect_numbers(field.obj.get("SV"), field.obj["Lock"])
+    assert doc.prepare_signature(FIELD, field_lock=pyropdf.FieldLock(), reason=MARKER) == field.xref
+    return touched
+
+
+def check_signature(doc: pyropdf.Document) -> None:
+    field = doc.form[FIELD]
+    assert field.lock == pyropdf.FieldLock()
+    assert [item.text for item in field.obj["SV"]["Reasons"]] == [MARKER]
+    assert field.widgets[0].page == doc.pages[0] and field.value is None
+
+
+def edit_security_store(doc: pyropdf.Document) -> set[int]:
+    # A DER OCSPResponse containing the protocol's unauthorized response status.
+    ocsp = bytes.fromhex("30030a0106")
+    key = pyropdf.vri_key(b"archived signature")
+    info = pyropdf.ValidationInfo(ocsps=(ocsp,))
+    doc.security_store = pyropdf.SecurityStore(ocsps=(ocsp,), vri={key: info})
+    return {number(doc.catalog)}
+
+
+def check_security_store(doc: pyropdf.Document) -> None:
+    dss = doc.catalog["DSS"]
+    key = pyropdf.vri_key(b"archived signature")
+    stream = dss["OCSPs"][0]
+    assert stream.xref and stream == dss["VRI"][key]["OCSP"][0]
+    assert stream.read() == bytes.fromhex("30030a0106")
+    assert doc.security_store and doc.security_store.vri[key].ocsps == doc.security_store.ocsps
+
+
+FAMILY_EDITS.update(
+    action_triggers=Edit(prepare=prepare_widget_events, apply=edit_widget_events, check=check_widget_events),
+    annotation_relations=Edit(prepare=prepare_replies, apply=edit_replies, check=check_replies, affected_pages=first_page),
+    file_specification=Edit(prepare=prepare_embedded_note, apply=edit_embedded_note, check=check_embedded_note),
+    collection_item=Edit(prepare=prepare_collection_item, apply=edit_collection_item, check=check_collection_item),
+    article_membership=Edit(prepare=prepare_bead_membership, apply=edit_bead_membership, check=check_bead_membership),
+    document_metadata=Edit(prepare=prepare_metadata, apply=edit_metadata, check=check_metadata),
+    catalog_records=Edit(prepare=prepare_catalog_records, apply=edit_catalog_records, check=check_catalog_records),
+    signature_field=Edit(prepare=prepare_signature, apply=edit_signature, check=check_signature),
+    security_store=Edit(apply=edit_security_store, check=check_security_store),
+)
