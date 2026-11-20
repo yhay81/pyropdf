@@ -231,6 +231,50 @@ def test_an_untagged_annotation_breaks_a_pdfua_claim() -> None:
     assert claim.objects == (note,)
 
 
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.parametrize("direct", [False, True], ids=["property", "catalog"])
+def test_removing_the_language_needed_by_alternate_text_breaks_pdfua(*, incremental: bool, direct: bool) -> None:
+    doc = pyropdf.open(ASSETS.parent / "pdfua" / "pdfua-1.pdf")
+    doc.catalog["Unrelated"] = True
+    assert doc.changes(incremental=incremental).claims == ()
+    if direct:
+        del doc.catalog["Lang"]
+    else:
+        del doc.language
+    (claim,) = doc.changes(incremental=incremental).claims
+    assert claim.claim == "PDF/UA-1"
+    assert claim.objects == (doc.catalog.xref,)
+    assert "language" in claim.reason
+
+    doc.history.undo()
+    assert doc.changes(incremental=incremental).claims == ()
+    doc.history.redo()
+    doc.language = "fr-CA"
+    assert doc.changes(incremental=incremental).claims == ()
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.parametrize("on_parent", [False, True], ids=["figure", "ancestor"])
+def test_structure_language_can_supply_alternate_text_language(*, incremental: bool, on_parent: bool) -> None:
+    doc = pyropdf.open(ASSETS.parent / "pdfua" / "pdfua-1.pdf")
+    root = doc.catalog["StructTreeRoot"]["K"][0]
+    element = root if on_parent else root["K"][0]
+    element["Lang"] = pyropdf.String(b"en-US")
+    # Give the XMP title an explicit language as well (ISO 14289-1 §7.2).
+    assert doc.xmp is not None
+    doc.xmp = doc.xmp.replace('xml:lang="x-default"', 'xml:lang="en-US"')
+    del doc.language
+    assert doc.changes(incremental=incremental).claims == ()
+
+
+def test_edit_to_a_catalog_that_already_lacked_language_is_not_a_language_loss() -> None:
+    doc = pyropdf.open(ASSETS.parent / "pdfua" / "pdfua-1.pdf")
+    del doc.language
+    reopened = pyropdf.open(doc.to_bytes())
+    reopened.catalog["Unrelated"] = True
+    assert reopened.changes(incremental=True).claims == ()
+
+
 def test_claims_are_read_from_elements_and_exact_names() -> None:
     doc = _claiming('notpdfaid:part="1"><pdfaid:part> 1 </pdfaid:part><pdfaid:conformance>a</pdfaid:conformance')
     doc.objects.add({"ca": 0.5})

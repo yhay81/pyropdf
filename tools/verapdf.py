@@ -70,10 +70,40 @@ for variant in ("1a", "1b", "2a", "2b", "2u", "4"):
     expect(f"pdfa-{variant}", variant, {"add_attachment": rules, "write_attachment": rules}, "#301")
 expect(DUAL, "4", {"add_attachment": {"6.9-3"}, "write_attachment": {"6.9-3"}}, "#301")
 expect("pdfua-1", "ua1", UNTAGGED_RULES, "#794")
+expect("pdfua-1", "ua1", {"remove-language": {"7.2-22", "7.2-33"}}, "#847")
 for source in ("pdfua-2", DUAL):
     expect(source, "ua2", UA2_ANNOTATIONS, "#848")
     expect(source, "ua2", {"add_attachment": {"8.14.1-1"}, "write_attachment": {"8.14.1-1"}}, "#848")
     expect(source, "ua2", {"delete_page": {"8.2.5.2-1"}}, "#848")
+
+
+def language_saves(directory: Path) -> dict[Path, str]:
+    """Write the UA-1 catalog language loss and a control with explicit structure and metadata languages."""
+    source = ROOT / "tests/assets/pdfua/pdfua-1.pdf"
+    files = {}
+    for local_language in (False, True):
+        with pyropdf.open(source) as doc:
+            if local_language:
+                doc.catalog["StructTreeRoot"]["K"][0]["Lang"] = pyropdf.String(b"en-US")
+                packet = doc.xmp
+                if packet is None:
+                    msg = "the PDF/UA-1 fixture must have an XMP title"
+                    raise ValueError(msg)
+                doc.xmp = packet.replace('xml:lang="x-default"', 'xml:lang="en-US"')
+            del doc.language
+            for incremental in (False, True):
+                claims = doc.changes(incremental=incremental).claims
+                expected = [] if local_language else [("PDF/UA-1", (doc.catalog.xref,))]
+                if [(claim.claim, claim.objects) for claim in claims] != expected:
+                    msg = f"unexpected pre-save language report: {claims}"
+                    raise ValueError(msg)
+                edit = "local-language" if local_language else "remove-language"
+                mode = "incremental" if incremental else "full"
+                path = directory / f"pdfua-1-{edit}-{mode}.pdf"
+                doc.save(path, incremental=incremental)
+                files[path] = "ua1"
+    return files
+
 
 #: Arlington extensions of the PDF version for each fixture.
 EXTENSIONS = dict.fromkeys(("3a", "3b", "3u"), "ISO_19005_3")
@@ -227,6 +257,7 @@ def main() -> int:
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
         files = saves(Path(directory))
+        files.update(language_saves(Path(directory)))
         failures = run(args.jar.resolve(), files)
         failures += run(args.jar.resolve(), dual_archival(files))
         failures += controls(args.jar.resolve(), Path(directory))
