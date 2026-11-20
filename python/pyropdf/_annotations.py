@@ -318,7 +318,7 @@ class SoundEncoding(enum.StrEnum):
     """A-law encoded samples."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Sound:
     """The sound of a sound annotation, ``/Sound``, as :meth:`Annotation.sound` reads it.
 

@@ -282,6 +282,8 @@ Document.profiles: Profiles
 
 The PDF/A, PDF/UA, PDF/X, and PDF/VT claims of the XMP metadata, and the output intents.
 
+The PDF/A name uses uppercase conformance, such as `"PDF/A-2B"`.
+`pdfa_claim` gives its separate part and original conformance spelling.
 The claims are what the document declares, not a validation. The
 metadata read is capped at 16 MiB, beyond which `LimitError`
 is raised with code `stream_data_size`.
@@ -490,7 +492,10 @@ Settable.
 Document.pdfa_claim: tuple[int, str] | None
 ```
 
-The PDF/A part and conformance level of the XMP metadata, such as `(2, "B")`, or `None`.
+The PDF/A part and the conformance spelling in XMP, such as `(2, "b")`, or `None`.
+
+A declared part with no conformance gives an empty string. For the normalized
+profile name, the other declarations, and the output intents, read `profiles`.
 
 ### `Document.page_mode`
 

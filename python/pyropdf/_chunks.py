@@ -54,7 +54,7 @@ _INDIVISIBLE = frozenset({"heading", "table", "image"})
 _WORDS = re.compile(r"\S+\s*")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Element:
     """One piece of a page's structure, with where it is.
 
@@ -91,7 +91,7 @@ class Element:
         return f"{'#' * self.level} {self.text}" if self.kind == "heading" and self.level else self.text
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Chunk:
     """Consecutive elements within one section, joined as Markdown in :attr:`text`.
 
@@ -177,7 +177,7 @@ def _pages_elements(
         tables = _markdown._page_tables(page, table_strategy)  # noqa: SLF001
         elements = _PageReader(page.index, layout, levels, budget).read(tables, words if tables else None)
         for image in page.images():
-            _place(elements, Element("image", page.index, image.item.bbox, ""))
+            _place(elements, Element(kind="image", page=page.index, bbox=image.item.bbox, text=""))
         result.append((page, (layout["width"], layout["height"]), elements))
     return result
 
@@ -246,9 +246,9 @@ class _PageReader:
             return
         self._flush()
         if level is not None:
-            self._add(Element("heading", self.page, Rect(*bbox), text, level=level))
+            self._add(Element(kind="heading", page=self.page, bbox=Rect(*bbox), text=text, level=level))
         else:
-            self._add(Element("list_item", self.page, Rect(*bbox), item or text))
+            self._add(Element(kind="list_item", page=self.page, bbox=Rect(*bbox), text=item or text))
 
     def _tables(self, tables: list[Table], rendered: list[tuple[Any, str]], indexes: list[int]) -> None:
         if not indexes:
@@ -256,7 +256,7 @@ class _PageReader:
         self._flush()
         for index in indexes:
             table = tables[index]
-            self._add(Element("table", self.page, table.bbox, rendered[index][1], rows=table.rows))
+            self._add(Element(kind="table", page=self.page, bbox=table.bbox, text=rendered[index][1], rows=table.rows))
 
     def _flush(self) -> None:
         if not self.lines:
@@ -270,7 +270,7 @@ class _PageReader:
         )
         text = _markdown._join_lines([text for text, _ in self.lines])  # noqa: SLF001
         self.lines.clear()
-        self._add(Element("paragraph", self.page, bbox, text))
+        self._add(Element(kind="paragraph", page=self.page, bbox=bbox, text=text))
 
 
 def _place(elements: list[Element], image: Element) -> None:
@@ -354,7 +354,15 @@ class _Assembler:
             return
         text = "".join(self.parts)
         oversized = len(text) > self.max_chars
-        self.chunks.append(Chunk(len(self.chunks), text, tuple(self.elements), self.section, oversized=oversized))
+        self.chunks.append(
+            Chunk(
+                index=len(self.chunks),
+                text=text,
+                elements=tuple(self.elements),
+                section=self.section,
+                oversized=oversized,
+            )
+        )
         self.elements, self.parts, self.size, self.last = [], [], 0, None
 
 

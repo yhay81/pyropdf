@@ -97,7 +97,7 @@ def _text_paint(
     return filled, stroked
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TextFit:
     """How text fits a :meth:`Canvas.textbox`: the height left below its last line.
 

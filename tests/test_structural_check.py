@@ -89,7 +89,9 @@ def test_every_valid_asset_passes_or_lists_its_real_defects(path: str) -> None:
 
 def test_a_new_document_passes() -> None:
     report = pyropdf.Document().check()
-    assert report == StructuralReport((), "1.7", report.objects, report.unchecked, truncated=False)
+    assert report == StructuralReport(
+        defects=(), version="1.7", objects=report.objects, unchecked=report.unchecked, truncated=False
+    )
     assert not report
 
 
@@ -217,12 +219,12 @@ def test_tiling_pattern_integer_constraints_are_still_validated() -> None:
 def test_the_report_names_object_path_and_both_clauses() -> None:
     [defect] = pyropdf.open(BROKEN / "value.pdf").check().defects
     assert defect == StructuralDefect(
-        1,
-        "PageLayout",
-        "Catalog/PageLayout",
-        "Table 29",
-        "value",
-        defect.message,
+        xref=1,
+        path="PageLayout",
+        clause="Catalog/PageLayout",
+        spec="Table 29",
+        kind="value",
+        message=defect.message,
     )
     assert "/Sideways" in defect.message
 

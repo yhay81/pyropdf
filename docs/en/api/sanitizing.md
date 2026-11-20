@@ -12,6 +12,7 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 ```python
 SanitizeReport(
+    *,
     removed: Mapping[str, int],
     changes: ChangeReport,
     dropped_claims: tuple[str, ...],
