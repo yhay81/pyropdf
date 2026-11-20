@@ -152,14 +152,14 @@ def _entries(document: Document) -> dict[str, str]:
     return entries
 
 
-def _xmp_stream(document: Document) -> Stream | None:
-    stream = document.catalog.get("Metadata")
+def _xmp_stream(catalog: Dictionary) -> Stream | None:
+    stream = catalog.get("Metadata")
     return stream if isinstance(stream, Stream) else None
 
 
 def read_xmp(document: Document) -> str | None:
     """Return the catalog's XMP packet as text, or ``None`` without a metadata stream."""
-    stream = _xmp_stream(document)
+    stream = _xmp_stream(document.catalog)
     if stream is None:
         return None
     return stream.read(max_size=_MAX_XMP_SIZE).decode("utf-8", "replace").replace("\x00", "")
@@ -168,14 +168,16 @@ def read_xmp(document: Document) -> str | None:
 def write_xmp(document: Document, packet: str) -> None:
     """Store ``packet`` in the catalog's metadata stream, unfiltered, adding the stream when absent."""
     data = packet.encode("utf-8")
-    stream = _xmp_stream(document)
     with document.transaction("xmp"):
+        catalog = document.catalog
+        _require_version(document, catalog, (1, 4))
+        stream = _xmp_stream(catalog)
         if stream is not None:
             stream.write(data, filter=None)
             return
         objects = document.objects
         added = objects[objects.add_stream(data, {"Type": Name("Metadata"), "Subtype": Name("XML")}, filter=None)]
-        document.catalog["Metadata"] = added
+        catalog["Metadata"] = added
 
 
 def _xmp_text(key: str, value: str) -> str:
