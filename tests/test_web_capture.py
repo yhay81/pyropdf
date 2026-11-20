@@ -273,3 +273,28 @@ def test_capture_lookup_and_removal_share_the_operation_budget_and_refuse_atomic
     assert doc.web_capture.by_id(IDENTIFIER) == (pages, image)
     assert not doc.history.steps
     assert doc.to_bytes(incremental=True) == data
+
+
+def test_bad_image_reference_counts_and_page_only_source_keys_refuse_registration() -> None:
+    doc = pyropdf.open(_pdf(captured=False))
+    obj = doc.objects[
+        doc.objects.add(
+            {
+                "S": Name("SIS"),
+                "ID": IDENTIFIER,
+                "O": [doc.objects[5]],
+                "SI": {"AU": URL.encode()},
+                "R": 2,
+            }
+        )
+    ]
+    image = typed.WebCaptureImageSet(obj)
+    with pytest.raises(ValueError, match="pages that reference"):
+        doc.web_capture.add(image)
+    assert doc.web_capture.info is None
+    assert "ID" not in doc.objects[5]
+    obj["R"] = 1
+    obj["SI"]["S"] = 0
+    with pytest.raises(pyropdf.PdfError, match="only a page set"):
+        doc.web_capture.add(image)
+    assert not doc.web_capture.by_id(IDENTIFIER)

@@ -48,7 +48,11 @@ class _Work:
 
 
 def _set(value: object) -> _Set:
-    if isinstance(value, Dictionary) and _is_dict(value):
+    if (
+        isinstance(value, Dictionary)
+        and _is_dict(value)
+        and value.get("Type", "SpiderContentSet") == "SpiderContentSet"
+    ):
         if value.get("S") == "SPS":
             return typed.WebCapturePageSet(value)
         if value.get("S") == "SIS":
@@ -192,12 +196,27 @@ def _aliases(aliases: object, work: _Work) -> list[object]:
     return urls
 
 
-def _source_keys(raw: object, work: _Work) -> set[bytes]:
+def _check_source(source: Dictionary, *, page_set: bool) -> None:
+    if not page_set and ("S" in source or "C" in source):
+        msg = "only a page set may store a source submission mode or command"
+        raise PdfError(msg)
+    if "S" in source and (type(source["S"]) is not int or source["S"] not in (0, 1, 2)):
+        msg = "a source submission mode must be 0, 1 or 2"
+        raise PdfError(msg)
+    if "C" in source:
+        command = source["C"]
+        if not isinstance(command, Dictionary) or not _is_dict(command) or not command.is_indirect:
+            msg = "a source command must be an indirect dictionary"
+            raise PdfError(msg)
+
+
+def _source_keys(content: _Set, work: _Work) -> set[bytes]:
     keys: set[bytes] = set()
-    for source in _items(raw, work):
+    for source in _items(content.obj.get("SI"), work):
         if not isinstance(source, Dictionary) or not _is_dict(source):
             msg = "a content set needs one or more source information dictionaries"
             raise ValueError(msg)
+        _check_source(source, page_set=isinstance(content, typed.WebCapturePageSet))
         aliases = source.get("AU")
         urls = _aliases(aliases, work)
         for item in urls:
@@ -266,6 +285,19 @@ def _write_index(document: Document, names: Dictionary, key: str, index: _Index,
         names[key] = root
     elif key in names:
         del names[key]
+
+
+def _editable_members(
+    document: Document, content: _Set, siblings: set[Dictionary], work: _Work, *, register: bool
+) -> tuple[Dictionary, ...]:
+    members = _members(content, work)
+    owned = set(members)
+    if any(owned.intersection(_members(_set(sibling), work)) for sibling in siblings):
+        msg = "a page or image cannot belong to more than one capture set"
+        raise ValueError(msg)
+    if register and isinstance(content, typed.WebCaptureImageSet):
+        _check_image_counts(document, content, members, work)
+    return members
 
 
 def _store_members(
@@ -416,15 +448,23 @@ class WebCapture:
             msg = "the set must be an indirect content set of this document"
             raise ValueError(msg)
         with document.transaction("edit Web Capture"):
-            if action == "add" and _version(document) >= (2, 0):
-                msg = "creating Web Capture is deprecated in PDF 2.0"
-                raise ValueError(msg)
+            if action == "add":
+                self._check_registration()
             if action == "sources":
                 content.obj["SI"] = source
             _core.read_operation(
                 document._core(),  # noqa: SLF001
                 lambda operation: self._update_indexes(content, action, _Work(operation)),
             )
+
+    def _check_registration(self) -> None:
+        document = self._document
+        if _version(document) >= (2, 0):
+            msg = "creating Web Capture is deprecated in PDF 2.0"
+            raise ValueError(msg)
+        if "SpiderInfo" in document.catalog and (self.info is None or self.info.V != 1):
+            msg = "the existing Web Capture information must declare version 1"
+            raise PdfError(msg)
 
     def _update_indexes(self, content: _Set, action: Literal["add", "remove", "sources"], work: _Work) -> None:
         document = self._document
@@ -434,11 +474,7 @@ class WebCapture:
         if not isinstance(identifier, String) or len(identifier) != _ID_BYTES:
             msg = "a Web Capture source identifier must contain 16 bytes"
             raise ValueError(msg)
-        desired = (
-            {}
-            if action == "remove"
-            else {"IDS": {bytes(identifier)}, "URLS": _source_keys(content.obj.get("SI"), work)}
-        )
+        desired = {} if action == "remove" else {"IDS": {bytes(identifier)}, "URLS": _source_keys(content, work)}
         changed: dict[str, _Index] = {}
         siblings: set[Dictionary] = set()
         registered = False
@@ -452,11 +488,7 @@ class WebCapture:
             msg = "the content set is already registered" if registered else "the content set is not registered"
             raise ValueError(msg)
         if action != "sources":
-            members = _members(content, work)
-            owned = set(members)
-            if any(owned.intersection(_members(_set(sibling), work)) for sibling in siblings):
-                msg = "a page or image cannot belong to more than one capture set"
-                raise ValueError(msg)
+            members = _editable_members(document, content, siblings, work, register=action == "add")
             _store_members(document, content, members, identifier, add=action == "add")
         if action == "add":
             _require_version(document, catalog, (1, 3))
@@ -478,8 +510,9 @@ def _prune_empty_info(document: Document) -> None:
             _core.object_free_unreferenced(document._core(), [info.xref])  # noqa: SLF001
 
 
-def _references_image(page: Dictionary, images: set[Dictionary], work: _Work) -> bool:
+def _page_images(page: Dictionary, images: set[Dictionary], work: _Work) -> set[Dictionary]:
     """Follow stored page resources (including inherited ones) and annotation appearances."""
+    matches: set[Dictionary] = set()
     pending: list[object] = [page.get("Annots"), page.get("Thumb")]
     parent = page
     ancestors: set[Dictionary] = set()
@@ -499,7 +532,7 @@ def _references_image(page: Dictionary, images: set[Dictionary], work: _Work) ->
         seen.add(value)
         if isinstance(value, Dictionary):
             if value in images:
-                return True
+                matches.add(value)
             if value.get("Type") in ("Page", "Pages", "Catalog"):
                 continue
             work.charge(len(value))
@@ -507,7 +540,23 @@ def _references_image(page: Dictionary, images: set[Dictionary], work: _Work) ->
         else:
             work.charge(len(value))
             pending.extend(value)
-    return False
+    return matches
+
+
+def _check_image_counts(
+    document: Document, content: typed.WebCaptureImageSet, members: tuple[Dictionary, ...], work: _Work
+) -> None:
+    images = set(members)
+    counts = dict.fromkeys(members, 0)
+    work.charge(len(document.pages))
+    for page in document.pages:
+        for image in _page_images(page.obj, images, work):
+            counts[image] += 1
+    raw = content.obj["R"]
+    recorded = tuple(raw) if isinstance(raw, Array) else (raw,)
+    if tuple(counts.values()) != recorded:
+        msg = "the image reference counts do not match the pages that reference the image set"
+        raise ValueError(msg)
 
 
 def _has_capture_indexes(document: Document) -> bool:
@@ -540,6 +589,6 @@ def _check_page_memberships(document: Document, pages: set[tuple[int, int]], wor
                     elif (member.xref, member.generation) in pages:
                         msg = "remove the Web Capture page set before deleting or copying one of its pages"
                         raise PdfError(msg)
-    if images and any(_references_image(Dictionary(document, pair), images, work) for pair in pages):
+    if images and any(_page_images(Dictionary(document, pair), images, work) for pair in pages):
         msg = "remove the Web Capture image set before changing a page that references its images"
         raise PdfError(msg)
