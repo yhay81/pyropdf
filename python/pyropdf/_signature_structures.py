@@ -19,7 +19,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
 from pyropdf import _core
-from pyropdf._attachments import _DEFAULT_MAX_EMBEDDED_FILE_SIZE, _entries, _file, _text
+from pyropdf._attachments import _DEFAULT_MAX_EMBEDDED_FILE_SIZE, _entries, _file, _text, _version
 from pyropdf._collections import (
     _INT64_MAX,
     _check_text_budget,
@@ -332,7 +332,8 @@ class SecurityStore:
     ``ocsps`` (``/OCSPs``), CRLs ``crls`` (``/CRLs``), and per-signature
     :class:`ValidationInfo` entries keyed by :func:`vri_key` in ``vri`` (``/VRI``).
     Writing deduplicates identical DER byte strings into shared indirect Flate
-    streams and promotes the catalog's ``/Version`` to ``2.0``.
+    streams. An older document is promoted to PDF 2.0 in the same transaction.
+    If that introduces a structural defect, assignment raises :class:`PdfError`.
     """
 
     certificates: tuple[bytes, ...]
@@ -1293,6 +1294,23 @@ def _build_vri_map_object(
     return document.objects[vri_map_xref]
 
 
+def _require_dss_version(document: Document, catalog: Dictionary) -> None:
+    """Refuse a PDF 2.0 promotion that introduces structural defects in existing objects."""
+    before = document.check() if _version(document) < (2, 0) else None
+    _require_collection_version(document, catalog, (2, 0))
+    if before is None:
+        return
+    after = document.check()
+    if after.truncated:
+        msg = "cannot promote the document to PDF 2.0 for /DSS: structural defect report is truncated"
+        raise PdfError(msg)
+    existing = set(before.defects)
+    for defect in after.defects:
+        if defect not in existing:
+            msg = f"cannot promote the document to PDF 2.0 for /DSS: {defect.clause}: {defect.message}"
+            raise PdfError(msg)
+
+
 def write_security_store(document: Document, store: SecurityStore | None) -> None:
     """Write ``store`` to ``Catalog['DSS']`` in one transaction, deduplicating DER streams."""
     if store is None:
@@ -1302,10 +1320,12 @@ def write_security_store(document: Document, store: SecurityStore | None) -> Non
         msg = f"security_store must be a SecurityStore or None: {type(store).__name__}"
         raise TypeError(msg)
 
-    with document.transaction("security store"):
+    core = document._core()  # noqa: SLF001
+    operation = _core.begin_operation(core, "security store")
+    try:
         catalog = _catalog(document)
         retired, existing_streams, existing_vris = _collect_dss_state(catalog.get("DSS"))
-        _require_collection_version(document, catalog, (2, 0))
+        _require_dss_version(document, catalog)
 
         pool: dict[bytes, Stream] = {}
         used_xrefs: set[int] = set()
@@ -1343,7 +1363,11 @@ def write_security_store(document: Document, store: SecurityStore | None) -> Non
 
         candidates = sorted(set(retired) - used_xrefs - _signed_file_xrefs(document))
         if candidates:
-            _core.object_free_unreferenced(document._core(), candidates)  # noqa: SLF001
+            _core.object_free_unreferenced(core, candidates)
+    except BaseException:
+        _core.abort_canvas(core, operation)
+        raise
+    _core.end_transaction(core, True)  # noqa: FBT003 - commit the operation.
 
 
 def delete_security_store(document: Document) -> None:
