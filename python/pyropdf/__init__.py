@@ -240,6 +240,7 @@ from pyropdf._web_capture import WebCapture
 from pyropdf._widgets import Widget, Widgets
 
 _PUBLIC_MODULE_EXPORTS = (
+    WebCapture,
     GoTo3DView,
     MediaAsset,
     MediaKind,

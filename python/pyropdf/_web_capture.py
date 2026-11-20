@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 _Set = typed.WebCapturePageSet | typed.WebCaptureImageSet
 _ID_BYTES = 16
+_ENTRY_BYTES = 96  # A working entry holds its object handle and a collection slot.
 _MAX_KEY_BYTES = 1_048_576
 _COUNT: LimitCode = "object_count"
 _DEPTH: LimitCode = "object_depth"
@@ -27,17 +28,20 @@ _SIZE: LimitCode = "object_parse_size"
 
 @dataclass
 class _Work:
+    operation: _core._OperationBudget
     remaining: int = _MAX_TREE_ENTRIES
     key_bytes: int = _MAX_KEY_BYTES
 
     def key(self, value: bytes) -> None:
         self.key_bytes -= len(value)
+        self.operation.charge("memory_size", len(value))
         if self.key_bytes < 0:
             msg = "Web Capture index keys and source URLs exceed one MiB"
             raise LimitError(_SIZE, msg)
 
     def charge(self, count: int = 1) -> None:
         self.remaining -= count
+        self.operation.charge("memory_size", count * _ENTRY_BYTES)
         if self.remaining < 0:
             msg = "the Web Capture database exceeds the bounded number of nodes, entries and members"
             raise LimitError(_COUNT, msg)
@@ -348,9 +352,12 @@ class WebCapture:
         return typed.WebCaptureInfo(obj) if isinstance(obj, Dictionary) and _is_dict(obj) else None
 
     def _lookup(self, index: str, key: bytes) -> tuple[_Set, ...]:
-        work = _Work()
-        values = _read_index(self._document.catalog.get("Names"), index, work).entries
-        return _sets(values[key], work) if key in values else ()
+        def read(operation: _core._OperationBudget) -> tuple[_Set, ...]:
+            work = _Work(operation)
+            values = _read_index(self._document.catalog.get("Names"), index, work).entries
+            return _sets(values[key], work) if key in values else ()
+
+        return _core.read_operation(self._document._core(), read)  # noqa: SLF001
 
     def by_id(self, identifier: bytes, /) -> tuple[typed.WebCapturePageSet | typed.WebCaptureImageSet, ...]:
         """Resolve a binary source identifier, keeping the order of sets sharing the key."""
@@ -414,11 +421,13 @@ class WebCapture:
                 raise ValueError(msg)
             if action == "sources":
                 content.obj["SI"] = source
-            self._update_indexes(content, action)
+            _core.read_operation(
+                document._core(),  # noqa: SLF001
+                lambda operation: self._update_indexes(content, action, _Work(operation)),
+            )
 
-    def _update_indexes(self, content: _Set, action: Literal["add", "remove", "sources"]) -> None:
+    def _update_indexes(self, content: _Set, action: Literal["add", "remove", "sources"], work: _Work) -> None:
         document = self._document
-        work = _Work()
         catalog = document.catalog
         names = catalog.get("Names")
         identifier = content.obj.get("ID")
@@ -508,10 +517,15 @@ def _has_capture_indexes(document: Document) -> bool:
 
 def _guard_capture_pages(document: Document, pages: set[tuple[int, int]]) -> None:
     """Refuse to change indexed memberships or image page counts before a structural edit."""
-    if not pages:
-        return
+    if pages:
+        _core.read_operation(
+            document._core(),  # noqa: SLF001
+            lambda operation: _check_page_memberships(document, pages, _Work(operation)),
+        )
+
+
+def _check_page_memberships(document: Document, pages: set[tuple[int, int]], work: _Work) -> None:
     names = document.catalog.get("Names")
-    work = _Work()
     seen: set[Dictionary] = set()
     images: set[Dictionary] = set()
     for key in ("IDS", "URLS"):

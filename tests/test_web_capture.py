@@ -261,3 +261,15 @@ def test_one_optional_index_may_contain_a_direct_dictionary() -> None:
     with pytest.raises(ValueError, match="indirect"):
         doc.web_capture.remove(pages)
     assert doc.to_bytes(incremental=True) == before
+
+
+def test_capture_lookup_and_removal_share_the_operation_budget_and_refuse_atomically() -> None:
+    data = _pdf()
+    doc = pyropdf.open(data, limits=pyropdf.DocumentLimits(max_memory_size=16_384))
+    pages, image = doc.web_capture.by_id(IDENTIFIER)
+    with pytest.raises(pyropdf.LimitError) as caught:
+        doc.web_capture.remove(pages)
+    assert caught.value.code == "memory_size"
+    assert doc.web_capture.by_id(IDENTIFIER) == (pages, image)
+    assert not doc.history.steps
+    assert doc.to_bytes(incremental=True) == data
