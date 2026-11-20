@@ -357,6 +357,18 @@ def dual_archival(files: dict[Path, str]) -> dict[Path, str]:
     return {path: "4" for path in files if path.stem == DUAL or path.stem.startswith(DUAL + "-")}
 
 
+def pades_comparisons(models: dict[Path, str]) -> dict[Path, str]:
+    """Check the same native 2.0 DSS and CAdES files under the PAdES extension."""
+    suffixes = tuple(
+        f"-{edit}-{mode}" for edit in ("security_store", "sign_revision") for mode in ("full", "incremental")
+    )
+    return {
+        path: model + ("," if "+" in model else "+") + "ETSI_PAdES"
+        for path, model in models.items()
+        if model.partition("+")[0] == "arlington2.0" and "ETSI_PAdES" not in model and path.stem.endswith(suffixes)
+    }
+
+
 def negative_control(source: Path, flavour: str) -> tuple[bytes, str]:
     """Break one requirement, leaving the XMP claim, xref offsets and stream lengths intact."""
     if flavour.startswith("ua"):
@@ -403,12 +415,7 @@ def main() -> int:
         if args.arlington:
             models = {path: arlington(path, flavour) for path, flavour in files.items()}
             failures += run(args.arlington.resolve(), models)
-            pades = {
-                path: model + ("," if "+" in model else "+") + "ETSI_PAdES"
-                for path, model in models.items()
-                if EXPECTED.get(f"{model} {path.name}", ("", set()))[0] == "#883"
-            }
-            failures += run(args.arlington.resolve(), pades)
+            failures += run(args.arlington.resolve(), pades_comparisons(models))
     return 1 if failures else 0
 
 

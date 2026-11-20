@@ -155,3 +155,18 @@ def test_arlington_selects_the_declared_pades_extension(tmp_path: Path, level: i
         doc.catalog["Extensions"] = {"ETSI_PAdES": {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": level}}
         doc.save(result)
     assert VERAPDF.arlington(result, "3b") == f"arlington1.7+{extensions}"
+
+
+def test_supplemental_pades_validation_keeps_native_and_archival_checks_distinct() -> None:
+    dss = Path("pdfa-3b-security_store-full.pdf")
+    signature = Path("pdfa-4-sign_revision-incremental.pdf")
+    models = {
+        dss: "arlington2.0+ISO_19005_3",
+        signature: "arlington2.0",
+        Path("pdfa-1b-sign_revision-full.pdf"): "arlington1.7+ETSI_PAdES",
+        Path("pdfua-2-none-full.pdf"): "arlington2.0",
+    }
+    assert VERAPDF.pades_comparisons(models) == {
+        dss: "arlington2.0+ISO_19005_3,ETSI_PAdES",
+        signature: "arlington2.0+ETSI_PAdES",
+    }
