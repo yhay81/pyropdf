@@ -134,3 +134,39 @@ def test_the_profile_map_names_only_the_matching_parameter_case() -> None:
                 for test in row[dimension]["tests"]
                 if "::test_profile_structure_and_page_rotation" in test
             )
+
+
+def test_verapdf_rules_include_full_iso_table_names_and_model_deviations() -> None:
+    report = (
+        "FAIL output.pdf ua2\n"
+        "  FAIL 8.2.5.2-1\n"
+        "  FAIL Table 5. StructTreeRoot-Document-1\n"
+        "DEVIATION other.pdf arlington2.0\n"
+        "  DEVIATION VRI-OCSP-Array-9\n"
+    )
+    assert VERAPDF.failed_rules(report) == {"8.2.5.2-1", "Table 5. StructTreeRoot-Document-1", "VRI-OCSP-Array-9"}
+
+
+@pytest.mark.parametrize(("level", "extensions"), [(1, "ISO_19005_3"), (2, "ISO_19005_3,ETSI_PAdES")])
+def test_arlington_selects_the_declared_pades_extension(tmp_path: Path, level: int, extensions: str) -> None:
+    source = ROOT / "tests/assets/pdfa/pdfa-3b.pdf"
+    result = tmp_path / "document with spaces.pdf"
+    with pyropdf.open(source) as doc:
+        doc.catalog["Extensions"] = {"ETSI_PAdES": {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": level}}
+        doc.save(result)
+    assert VERAPDF.arlington(result, "3b") == f"arlington1.7+{extensions}"
+
+
+def test_supplemental_pades_validation_keeps_native_and_archival_checks_distinct() -> None:
+    dss = Path("pdfa-3b-security_store-full.pdf")
+    signature = Path("pdfa-4-sign_revision-incremental.pdf")
+    models = {
+        dss: "arlington2.0+ISO_19005_3",
+        signature: "arlington2.0",
+        Path("pdfa-1b-sign_revision-full.pdf"): "arlington1.7+ETSI_PAdES",
+        Path("pdfua-2-none-full.pdf"): "arlington2.0",
+    }
+    assert VERAPDF.pades_comparisons(models) == {
+        dss: "arlington2.0+ISO_19005_3,ETSI_PAdES",
+        signature: "arlington2.0+ETSI_PAdES",
+    }
