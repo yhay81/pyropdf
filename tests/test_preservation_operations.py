@@ -697,20 +697,6 @@ def import_form_data(doc: pyropdf.Document) -> set[int]:
     return touched
 
 
-FAMILY_EDITS = {
-    "viewer_preferences": Edit(
-        prepare=prepare_viewer_preferences, apply=edit_viewer_preferences, check=check_viewer_preferences
-    ),
-    "structure_role_map": Edit(prepare=prepare_structure, apply=edit_structure, check=check_structure),
-    "shared_action_trigger": Edit(prepare=prepare_actions, apply=edit_actions, check=check_actions),
-    "article_beads": Edit(prepare=prepare_article, apply=edit_article, check=check_article),
-    "collection": Edit(prepare=prepare_collection, apply=edit_collection, check=check_collection),
-    "import_form_data": Edit(
-        prepare=prepare_field, apply=import_form_data, check=check_filled_field, affected_pages=first_page
-    ),
-}
-
-
 def prepare_named_pages(doc: pyropdf.Document) -> None:
     doc.named_pages = {MARKER: 0, "sibling": 0}
 
@@ -894,22 +880,6 @@ def check_page_boxes(doc: pyropdf.Document) -> None:
 
 def last_page(doc: pyropdf.Document) -> set[int]:
     return {doc.pages[-1].xref}
-
-
-FAMILY_EDITS.update(
-    named_pages=Edit(prepare=prepare_named_pages, apply=edit_named_pages, check=check_named_pages),
-    outline=Edit(prepare=prepare_outline, apply=edit_outline, check=check_outline),
-    page_labels=Edit(prepare=prepare_page_labels, apply=edit_page_labels, check=check_page_labels),
-    history_restore=Edit(apply=restore_history, check=check_history),
-    document_scripts=Edit(prepare=prepare_scripts, apply=remove_scripts, check=check_scripts),
-    structure_membership=Edit(
-        prepare=prepare_structure_membership, apply=change_structure_membership, check=check_structure_membership
-    ),
-    links=Edit(prepare=prepare_links, apply=change_links, check=check_links, affected_pages=first_page),
-    page_boxes=Edit(
-        prepare=prepare_page_boxes, apply=edit_page_boxes, check=check_page_boxes, affected_pages=last_page
-    ),
-)
 
 
 def indirect_numbers(*values: object) -> set[int]:
@@ -1186,21 +1156,6 @@ def check_security_store(doc: pyropdf.Document) -> None:
     assert doc.security_store.vri[key].ocsps == doc.security_store.ocsps
 
 
-FAMILY_EDITS.update(
-    action_triggers=Edit(prepare=prepare_widget_events, apply=edit_widget_events, check=check_widget_events),
-    annotation_relations=Edit(
-        prepare=prepare_replies, apply=edit_replies, check=check_replies, affected_pages=first_page
-    ),
-    file_specification=Edit(prepare=prepare_embedded_note, apply=edit_embedded_note, check=check_embedded_note),
-    collection_item=Edit(prepare=prepare_collection_item, apply=edit_collection_item, check=check_collection_item),
-    article_membership=Edit(prepare=prepare_bead_membership, apply=edit_bead_membership, check=check_bead_membership),
-    document_metadata=Edit(prepare=prepare_metadata, apply=edit_metadata, check=check_metadata),
-    catalog_records=Edit(prepare=prepare_catalog_records, apply=edit_catalog_records, check=check_catalog_records),
-    signature_field=Edit(prepare=prepare_signature, apply=edit_signature, check=check_signature),
-    security_store=Edit(apply=edit_security_store, check=check_security_store),
-)
-
-
 def prepare_ocg(doc: pyropdf.Document) -> None:
     group = doc.layers.add(MARKER, visible=True)
     assert group.on
@@ -1436,17 +1391,6 @@ def check_recolor(doc: pyropdf.Document) -> None:
     assert [op.operator for op in page.operations] == ["BMC", "g", "re", "f", "EMC"]
 
 
-FAMILY_EDITS.update(
-    optional_content=Edit(prepare=prepare_ocg, apply=edit_ocg, check=check_ocg),
-    page_records=Edit(prepare=prepare_page_records, apply=edit_page_records, check=check_page_records),
-    radio_groups=Edit(prepare=prepare_radio_group, apply=edit_radio_group, check=check_radio_group),
-    sanitize=Edit(prepare=prepare_sanitize, apply=sanitize_actions, check=check_sanitized),
-    remove_rotation=Edit(prepare=prepare_rotated_page, apply=remove_rotation, check=check_rotation_removed),
-    clean_content=Edit(prepare=prepare_to_clean, apply=clean_page, check=check_clean_page),
-    recolor=Edit(prepare=prepare_recolor, apply=edit_recolor, check=check_recolor, affected_pages=last_page),
-)
-
-
 def prepare_canvas_resources(doc: pyropdf.Document) -> None:
     prepare_ocg(doc)
     doc.pages.new((100, 100))
@@ -1680,28 +1624,6 @@ def check_ocr(doc: pyropdf.Document) -> None:
     assert set(bytes(page.pixmap(dpi=36, background=(255, 255, 255)))) == {255}
 
 
-FAMILY_EDITS.update(
-    canvas_resources=Edit(
-        prepare=prepare_canvas_resources,
-        apply=edit_canvas_resources,
-        check=check_canvas_resources,
-        affected_pages=last_page,
-    ),
-    tagged_drawing=Edit(
-        prepare=prepare_tagged_drawing, apply=tagged_drawing, check=check_tagged_drawing, affected_pages=first_page
-    ),
-    image_stream=Edit(
-        prepare=prepare_shared_image, apply=edit_shared_image, check=check_shared_image, affected_pages=two_last_pages
-    ),
-    new_page_image=Edit(apply=new_page_image, check=check_new_image_page),
-    page_copies=Edit(prepare=prepare_copy, apply=copy_page, check=check_page_copy),
-    replace_text=Edit(
-        prepare=prepare_text_replacement, apply=edit_page_text, check=check_page_text, affected_pages=last_page
-    ),
-    ocr_layer=Edit(prepare=prepare_ocr, apply=edit_ocr, check=check_ocr, affected_pages=last_page),
-)
-
-
 @cache
 def font_source() -> tuple[bytes, int]:
     # Generate a small embedded font with several glyphs, then leave only
@@ -1805,14 +1727,6 @@ def check_rewritten_image(doc: pyropdf.Document) -> None:
     assert len(set(decoded)) > 16
 
 
-FAMILY_EDITS.update(
-    subset_fonts=Edit(prepare=prepare_font_subset, apply=subset_font, check=check_subset_font),
-    rewrite_images=Edit(
-        prepare=prepare_image_rewrite, apply=rewrite_image, check=check_rewritten_image, affected_pages=two_last_pages
-    ),
-)
-
-
 @cache
 def local_pki() -> LocalPki:
     from cryptography import x509  # noqa: PLC0415 - signing is a development-only oracle.
@@ -1833,16 +1747,23 @@ def local_pki() -> LocalPki:
     )
 
 
+def check_adopted_revision(doc: pyropdf.Document, appended: bytes) -> None:
+    assert doc.to_bytes(incremental=True) == appended
+    for incremental in (True, False):
+        claims = doc.changes(incremental=incremental).signatures
+        assert any(change.field == FIELD for change in claims) is not incremental
+        with pyropdf.open(doc.to_bytes(incremental=incremental)) as reopened:
+            signature = next(sig for sig in reopened.signatures if sig.field == FIELD)
+            assert bool(signature.verify(local_pki().trust)) is incremental
+
+
 def sign_revision(doc: pyropdf.Document) -> set[int]:
     field = doc.form[FIELD]
     touched = {field.xref} | indirect_numbers(doc.catalog["AcroForm"])
     if pdf_version(doc) < (2, 0) or not doc.catalog["AcroForm"].is_indirect:
         touched.add(number(doc.catalog))
     signed = doc.sign(FIELD, local_pki().signer, reason=MARKER, reserve=4096)
-    assert doc.to_bytes(incremental=True) == signed
-    assert next(sig for sig in doc.signatures if sig.field == FIELD).verify(local_pki().trust)
-    assert any(change.field == FIELD for change in doc.changes(incremental=False).signatures)
-    assert all(change.field != FIELD for change in doc.changes(incremental=True).signatures)
+    check_adopted_revision(doc, signed)
     return touched
 
 
@@ -1867,10 +1788,7 @@ def timestamp_revision(doc: pyropdf.Document) -> set[int]:
         assert doc.to_bytes(incremental=True) == before
         return set()
     stamped = doc.timestamp(local_pki().timestamper, field=FIELD, reserve=4096)
-    assert doc.to_bytes(incremental=True) == stamped
-    assert any(change.field == FIELD for change in doc.changes(incremental=False).signatures)
-    assert all(change.field != FIELD for change in doc.changes(incremental=True).signatures)
-    assert next(sig for sig in doc.signatures if sig.field == FIELD).verify(local_pki().trust)
+    check_adopted_revision(doc, stamped)
     return touched
 
 
@@ -1884,7 +1802,71 @@ def check_timestamp(doc: pyropdf.Document) -> None:
     assert len(stamp.byte_range) == 4
 
 
-FAMILY_EDITS.update(
-    sign_revision=Edit(prepare=prepare_signature, apply=sign_revision, check=check_signed_revision),
-    timestamp_revision=Edit(prepare=prepare_signature, apply=timestamp_revision, check=check_timestamp),
-)
+FAMILY_EDITS = {
+    "action_triggers": Edit(prepare=prepare_widget_events, apply=edit_widget_events, check=check_widget_events),
+    "annotation_relations": Edit(
+        prepare=prepare_replies, apply=edit_replies, check=check_replies, affected_pages=first_page
+    ),
+    "article_beads": Edit(prepare=prepare_article, apply=edit_article, check=check_article),
+    "article_membership": Edit(
+        prepare=prepare_bead_membership, apply=edit_bead_membership, check=check_bead_membership
+    ),
+    "canvas_resources": Edit(
+        prepare=prepare_canvas_resources,
+        apply=edit_canvas_resources,
+        check=check_canvas_resources,
+        affected_pages=last_page,
+    ),
+    "catalog_records": Edit(prepare=prepare_catalog_records, apply=edit_catalog_records, check=check_catalog_records),
+    "clean_content": Edit(prepare=prepare_to_clean, apply=clean_page, check=check_clean_page),
+    "collection": Edit(prepare=prepare_collection, apply=edit_collection, check=check_collection),
+    "collection_item": Edit(prepare=prepare_collection_item, apply=edit_collection_item, check=check_collection_item),
+    "document_metadata": Edit(prepare=prepare_metadata, apply=edit_metadata, check=check_metadata),
+    "document_scripts": Edit(prepare=prepare_scripts, apply=remove_scripts, check=check_scripts),
+    "file_specification": Edit(prepare=prepare_embedded_note, apply=edit_embedded_note, check=check_embedded_note),
+    "history_restore": Edit(apply=restore_history, check=check_history),
+    "image_stream": Edit(
+        prepare=prepare_shared_image, apply=edit_shared_image, check=check_shared_image, affected_pages=two_last_pages
+    ),
+    "import_form_data": Edit(
+        prepare=prepare_field, apply=import_form_data, check=check_filled_field, affected_pages=first_page
+    ),
+    "links": Edit(prepare=prepare_links, apply=change_links, check=check_links, affected_pages=first_page),
+    "named_pages": Edit(prepare=prepare_named_pages, apply=edit_named_pages, check=check_named_pages),
+    "new_page_image": Edit(apply=new_page_image, check=check_new_image_page),
+    "ocr_layer": Edit(prepare=prepare_ocr, apply=edit_ocr, check=check_ocr, affected_pages=last_page),
+    "optional_content": Edit(prepare=prepare_ocg, apply=edit_ocg, check=check_ocg),
+    "outline": Edit(prepare=prepare_outline, apply=edit_outline, check=check_outline),
+    "page_boxes": Edit(
+        prepare=prepare_page_boxes, apply=edit_page_boxes, check=check_page_boxes, affected_pages=last_page
+    ),
+    "page_copies": Edit(prepare=prepare_copy, apply=copy_page, check=check_page_copy),
+    "page_labels": Edit(prepare=prepare_page_labels, apply=edit_page_labels, check=check_page_labels),
+    "page_records": Edit(prepare=prepare_page_records, apply=edit_page_records, check=check_page_records),
+    "radio_groups": Edit(prepare=prepare_radio_group, apply=edit_radio_group, check=check_radio_group),
+    "recolor": Edit(prepare=prepare_recolor, apply=edit_recolor, check=check_recolor, affected_pages=last_page),
+    "remove_rotation": Edit(prepare=prepare_rotated_page, apply=remove_rotation, check=check_rotation_removed),
+    "replace_text": Edit(
+        prepare=prepare_text_replacement, apply=edit_page_text, check=check_page_text, affected_pages=last_page
+    ),
+    "rewrite_images": Edit(
+        prepare=prepare_image_rewrite, apply=rewrite_image, check=check_rewritten_image, affected_pages=two_last_pages
+    ),
+    "sanitize": Edit(prepare=prepare_sanitize, apply=sanitize_actions, check=check_sanitized),
+    "security_store": Edit(apply=edit_security_store, check=check_security_store),
+    "shared_action_trigger": Edit(prepare=prepare_actions, apply=edit_actions, check=check_actions),
+    "sign_revision": Edit(prepare=prepare_signature, apply=sign_revision, check=check_signed_revision),
+    "signature_field": Edit(prepare=prepare_signature, apply=edit_signature, check=check_signature),
+    "structure_membership": Edit(
+        prepare=prepare_structure_membership, apply=change_structure_membership, check=check_structure_membership
+    ),
+    "structure_role_map": Edit(prepare=prepare_structure, apply=edit_structure, check=check_structure),
+    "subset_fonts": Edit(prepare=prepare_font_subset, apply=subset_font, check=check_subset_font),
+    "tagged_drawing": Edit(
+        prepare=prepare_tagged_drawing, apply=tagged_drawing, check=check_tagged_drawing, affected_pages=first_page
+    ),
+    "timestamp_revision": Edit(prepare=prepare_signature, apply=timestamp_revision, check=check_timestamp),
+    "viewer_preferences": Edit(
+        prepare=prepare_viewer_preferences, apply=edit_viewer_preferences, check=check_viewer_preferences
+    ),
+}
