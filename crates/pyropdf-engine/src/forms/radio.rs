@@ -10,14 +10,14 @@ use pyropdf_store::version::Transaction;
 
 use super::traversal::{MAX_EDGES, edges_error};
 use super::values::{
-    FIELD_TRIGGERS, Id, MAX_NAME_BYTES, charge, id, located, object, object_location, read,
+    FIELD_TRIGGERS, Id, MAX_NAME_BYTES, charge, id, located, object, object_location, own, read,
 };
 use super::{RADIO, text_string};
 use crate::annotations::{AnnotationError as Error, AnnotationResult as Result};
 
 /// The keys of a radio button that a repaired group gives to its new
 /// parent field.
-const RADIO_KEYS: [&str; 7] = ["FT", "T", "TU", "TM", "Ff", "V", "DV"];
+const RADIO_KEYS: [&str; 8] = ["FT", "T", "TU", "TM", "Ff", "V", "DV", "DA"];
 
 /// Where the form's `/Fields` array is written: as an object of its own,
 /// in the form dictionary's object, or in the catalog's.
@@ -27,8 +27,14 @@ enum Holder {
     Catalog(Id),
 }
 
+struct Fields {
+    holder: Holder,
+    entries: Array,
+    default_appearance: Option<Value>,
+}
+
 /// Resolve aliases to the actual object that owns the form or fields array.
-fn holder(reads: &mut Reads<'_>) -> Result<Option<(Holder, Array)>> {
+fn holder(reads: &mut Reads<'_>) -> Result<Option<Fields>> {
     let Some(&Value::Reference(root)) = reads.trailer().get("Root") else {
         return Ok(None);
     };
@@ -36,7 +42,8 @@ fn holder(reads: &mut Reads<'_>) -> Result<Option<(Holder, Array)>> {
     else {
         return Ok(None);
     };
-    let Some((Value::Dict(form), form_object)) = located(reads, catalog.get("AcroForm"))? else {
+    let Some((Value::Dict(mut form), form_object)) = located(reads, catalog.get("AcroForm"))?
+    else {
         return Ok(None);
     };
     if matches!(form.get("Type"), Some(Value::Name(kind)) if matches!(kind.as_bytes(), b"Page" | b"Pages" | b"Catalog"))
@@ -46,11 +53,14 @@ fn holder(reads: &mut Reads<'_>) -> Result<Option<(Holder, Array)>> {
         ));
     }
     let owner = form_object.map_or(Holder::Catalog(root), Holder::Form);
-    Ok(match located(reads, form.get("Fields"))? {
-        Some((Value::Array(fields), Some(object))) => Some((Holder::Array(object), fields)),
-        Some((Value::Array(fields), None)) => Some((owner, fields)),
-        _ => None,
-    })
+    let Some((Value::Array(entries), object)) = located(reads, form.get("Fields"))? else {
+        return Ok(None);
+    };
+    Ok(Some(Fields {
+        holder: object.map_or(owner, Holder::Array),
+        entries,
+        default_appearance: form.remove("DA"),
+    }))
 }
 
 /// A radio group to repair: the name its buttons share and their objects.
@@ -141,7 +151,12 @@ fn radio_groups(reads: &mut Reads<'_>, fields: &Array) -> Result<Vec<Group>> {
 pub fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> Result<u32> {
     let before = transaction.snapshot();
     let mut reads = Reads::new(&before, budget);
-    let Some((owner, fields)) = holder(&mut reads)? else {
+    let Some(Fields {
+        holder: owner,
+        entries: fields,
+        default_appearance,
+    }) = holder(&mut reads)?
+    else {
         return Ok(0);
     };
     let groups = radio_groups(&mut reads, &fields)?;
@@ -201,6 +216,23 @@ pub fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> Re
                 parent.insert(Name::from("V"), copy_for_edit(value, budget)?);
                 break;
             }
+        }
+        // The repaired kids are pure annotations. Only their shared field
+        // can carry /DA, so compare the effective values before moving it.
+        let appearance = own(&mut reads, first, "DA")?.or(default_appearance.as_ref());
+        let expected = read(&mut reads, appearance)?;
+        for &(_, member) in &members[1..] {
+            if let Some(Value::Dict(widget)) = object(&mut reads, id(member))?.as_deref() {
+                let raw = own(&mut reads, widget, "DA")?.or(default_appearance.as_ref());
+                if read(&mut reads, raw)? != expected {
+                    return Err(Error::Malformed(
+                        "cannot merge radio buttons with different default appearances".to_owned(),
+                    ));
+                }
+            }
+        }
+        if let Some(appearance) = appearance {
+            parent.insert(Name::from("DA"), copy_for_edit(appearance, budget)?);
         }
         let mut field_actions = Dict::new();
         for &(_, member) in members {
