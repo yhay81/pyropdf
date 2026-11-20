@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -72,3 +73,64 @@ def test_saved_inventory_keeps_annotation_preparation_in_the_change_report(
     for path in files.keys() - {SOURCE}:
         edit = next(edit for edit in VERAPDF.UNTAGGED_RULES if edit in path.name)
         EDITS[edit].check(pyropdf.open(path))
+
+
+@pytest.mark.spec("{profile}", "read", "interpret", "edit", "preserve")
+@pytest.mark.parametrize(
+    "profile",
+    [
+        "pdfa-1a",
+        "pdfa-1b",
+        "pdfa-2a",
+        "pdfa-2b",
+        "pdfa-2u",
+        "pdfa-3a",
+        "pdfa-3b",
+        "pdfa-3u",
+        "pdfa-4",
+        "pdfa-4e",
+        "pdfa-4f",
+        "pdfua-1",
+        "pdfua-2",
+    ],
+)
+def test_profile_structure_and_page_rotation(profile: str) -> None:
+    family, level = profile.split("-")
+    path = ROOT / "tests" / "assets" / family / f"{profile}.pdf"
+    original = pyropdf.open(path)
+    claim = f"PDF/{'A' if family == 'pdfa' else 'UA'}-{level.upper()}"
+    profiles = original.profiles
+    assert (profiles.pdfa if family == "pdfa" else profiles.pdfua) == claim
+    assert original.check().defects == ()
+
+    content = list(original.pages[0].operations)
+    for incremental in (False, True):
+        doc = pyropdf.open(path)
+        doc.pages[0].rotation = 90
+        saved = pyropdf.open(doc.to_bytes(incremental=incremental))
+        assert saved.profiles == profiles
+        assert saved.pages[0].rotation == 90
+        assert list(saved.pages[0].operations) == content
+        assert saved.check().defects == ()
+
+    # A missing required entry must be reported even with the original XMP claim.
+    key = "OutputIntents" if family == "pdfa" else "StructTreeRoot"
+    del original.catalog[key]
+    assert (original.profiles.pdfa if family == "pdfa" else original.profiles.pdfua) == claim
+    assert any(defect.kind == "profile" and defect.path == key for defect in original.check().defects)
+
+
+def test_the_profile_map_names_only_the_matching_parameter_case() -> None:
+    spec_map = json.loads((ROOT / "docs" / "spec-map.json").read_text(encoding="utf-8"))
+    features = {feature["feature"]: feature for feature in spec_map["features"]}
+    for fixture in VERAPDF.FIXTURES:
+        if fixture.stem == VERAPDF.DUAL:
+            continue
+        row = features[fixture.stem]
+        for dimension in ("read", "interpret", "edit", "preserve"):
+            assert any(test.endswith(f"[{fixture.stem}]") for test in row[dimension]["tests"])
+            assert all(
+                test.endswith(f"[{fixture.stem}]")
+                for test in row[dimension]["tests"]
+                if "::test_profile_structure_and_page_rotation" in test
+            )

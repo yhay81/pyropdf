@@ -85,6 +85,21 @@ def spec_marker(decorator: ast.expr, where: str) -> tuple[str, ...] | None:
     return arguments
 
 
+def profile_cases(node: ast.FunctionDef, where: str) -> dict[str, str]:
+    """Use the literal pytest parameter IDs so that one profile cannot prove another."""
+    for decorator in node.decorator_list:
+        if not isinstance(decorator, ast.Call) or ast.unparse(decorator.func) != "pytest.mark.parametrize":
+            continue
+        match decorator.args:
+            case [ast.Constant(value="profile"), ast.List(elts=parameters)] if not decorator.keywords:
+                if all(isinstance(arg, ast.Constant) and isinstance(arg.value, str) for arg in parameters):
+                    return {
+                        str(arg.value): f"{where}[{arg.value}]" for arg in parameters if isinstance(arg, ast.Constant)
+                    }
+    msg = f"{where}: the {{profile}} marker requires literal profile parameters with default pytest IDs"
+    raise MapError(msg)
+
+
 def marked(root: Path, names: list[str]) -> dict[tuple[str, str], list[str]]:
     """Return the tests that prove each feature in each dimension, by pytest node ID."""
     proved: dict[tuple[str, str], list[str]] = {}
@@ -101,6 +116,8 @@ def marked(root: Path, names: list[str]) -> dict[tuple[str, str], list[str]]:
                     continue
                 feature, *dimensions = marker
                 cases = {name: f"{where}[{name}]" for name in names} if feature == ARLINGTON else {feature: where}
+                if feature == "{profile}":
+                    cases = profile_cases(node, where)
                 for name, test in cases.items():
                     for dimension in dimensions:
                         proved.setdefault((name, dimension), []).append(test)
@@ -270,6 +287,28 @@ def render(spec_map: dict[str, Any]) -> str:
     return head_text[:-2] + ',\n  "features": [\n    ' + ",\n    ".join(lines) + "\n  ]\n}\n"
 
 
+def profile_table(spec_map: dict[str, Any]) -> list[str]:
+    """Return coverage by profile part and level for both language editions."""
+    lines = [
+        "",
+        "## PDF/A and PDF/UA profiles",
+        "",
+        "Each row refers to its own fixture and parameterized test in `docs/spec-map.json`.",
+        (
+            "The machine and human checks are documented in the "
+            "[corpus review](https://github.com/yhay81/pyropdf/blob/main/tests/assets/pdfua/README.md)."
+        ),
+        "",
+        "| Profile | " + " | ".join(DIMENSIONS) + " |",
+        "| --- |" + " --- |" * len(DIMENSIONS),
+    ]
+    for feature in spec_map["features"]:
+        if feature["feature"].startswith(("pdfa-", "pdfua-")):
+            statuses = [feature[dimension]["status"] for dimension in DIMENSIONS]
+            lines.append(f"| `{feature['feature']}` | " + " | ".join(statuses) + " |")
+    return lines
+
+
 def page(spec_map: dict[str, Any]) -> str:
     """Return docs/spec-coverage.md: coverage per dimension and per clause, and the exclusions."""
     lines = [
@@ -304,6 +343,7 @@ def page(spec_map: dict[str, Any]) -> str:
             cells.append(", ".join(f"{count} {name}" for name, count in sorted(counts.items())))
         names = ", ".join(f"`{feature['feature']}`" for feature in features)
         lines.append(f"| {clause} | {title} | {names} | " + " | ".join(cells) + " |")
+    lines += profile_table(spec_map)
     lines += ["", "## Exclusions", ""]
     excluded = []
     for feature in spec_map["features"]:
