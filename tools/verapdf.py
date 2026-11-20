@@ -49,6 +49,7 @@ UNTAGGED_RULES = {
 
 #: Verdicts that differ from acceptance, by flavour and file name, with the issue that tracks each.
 REJECTED: dict[str, str] = {
+    **{f"ua1 pdfua-1-remove-language-{mode}.pdf": "#847" for mode in ("full", "incremental")},
     # PDF/A-1 forbids embedded files, and PDF/A-2 and PDF/A-4 allow only
     # embedded PDF/A files; doc.changes() reports these claims broken.
     **{
@@ -63,10 +64,42 @@ REJECTED: dict[str, str] = {
 }
 
 REJECTED_RULES = {
-    f"ua1 pdfua-1-{edit}-{mode}.pdf": rules
-    for edit, rules in UNTAGGED_RULES.items()
-    for mode in ("full", "incremental")
+    **{
+        f"ua1 pdfua-1-{edit}-{mode}.pdf": rules
+        for edit, rules in UNTAGGED_RULES.items()
+        for mode in ("full", "incremental")
+    },
+    **{f"ua1 pdfua-1-remove-language-{mode}.pdf": {"7.2-22", "7.2-33"} for mode in ("full", "incremental")},
 }
+
+
+def language_saves(directory: Path) -> dict[Path, str]:
+    """Write the UA-1 catalog language loss and a control with explicit structure and metadata languages."""
+    source = ROOT / "tests/assets/pdfua/pdfua-1.pdf"
+    files = {}
+    for local_language in (False, True):
+        with pyropdf.open(source) as doc:
+            if local_language:
+                doc.catalog["StructTreeRoot"]["K"][0]["Lang"] = pyropdf.String(b"en-US")
+                packet = doc.xmp
+                if packet is None:
+                    msg = "the PDF/UA-1 fixture must have an XMP title"
+                    raise ValueError(msg)
+                doc.xmp = packet.replace('xml:lang="x-default"', 'xml:lang="en-US"')
+            del doc.language
+            for incremental in (False, True):
+                claims = doc.changes(incremental=incremental).claims
+                expected = [] if local_language else [("PDF/UA-1", (doc.catalog.xref,))]
+                if [(claim.claim, claim.objects) for claim in claims] != expected:
+                    msg = f"unexpected pre-save language report: {claims}"
+                    raise ValueError(msg)
+                edit = "local-language" if local_language else "remove-language"
+                mode = "incremental" if incremental else "full"
+                path = directory / f"pdfua-1-{edit}-{mode}.pdf"
+                doc.save(path, incremental=incremental)
+                files[path] = "ua1"
+    return files
+
 
 #: The Arlington extensions that a PDF/A part adds to the PDF version it is based on, by flavour.
 EXTENSIONS = {"3b": "ISO_19005_3"}
@@ -185,6 +218,7 @@ def main() -> int:
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
         files = saves(Path(directory))
+        files.update(language_saves(Path(directory)))
         failures = run(args.jar.resolve(), files)
         if args.arlington:
             failures += run(

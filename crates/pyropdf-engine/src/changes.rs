@@ -10,14 +10,15 @@
 //! forbids; this is not a validation of the claim (Phase 3's structural
 //! check is).
 
+use std::collections::HashSet;
 use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;
 
 use pyropdf_store::LimitExceeded;
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_set};
 use pyropdf_store::index::{Index, Location};
-use pyropdf_store::value::{Dict, Value};
+use pyropdf_store::value::{Dict, Reference, Value};
 use pyropdf_store::version::{ChangeSet, Version};
 
 use crate::annotations::version::{
@@ -545,9 +546,16 @@ fn claims<'b>(
                 continue;
             }
             let is_catalog = root_number == Some(number);
+            let language_loss = if claim == Claim::Ua(1) && is_catalog {
+                lost_alt_language(opened, version, &value, budget)?
+                    .then_some("removing the catalog language leaves structure alternate text without a language")
+            } else {
+                None
+            };
             for reason in breaks(claim, is_catalog, opened_catalog_ver, &value, budget)?
                 .into_iter()
                 .flatten()
+                .chain(language_loss)
             {
                 match found
                     .as_mut_slice()
@@ -578,6 +586,99 @@ fn claims<'b>(
         }
     }
     Ok(out)
+}
+
+/// ISO 14289-1 §7.2: alternate text can inherit its language from a
+/// structure element. A missing catalog /Lang alone does not break this rule.
+fn lost_alt_language(
+    opened: &Version,
+    version: &Version,
+    value: &Value,
+    budget: &Budget,
+) -> Result<bool> {
+    let Value::Dict(current) = value else {
+        return Ok(false);
+    };
+    if has_text_entry(version, current, "Lang", budget)? {
+        return Ok(false);
+    }
+    let original = catalog(opened, budget)?;
+    let Some(original) = original.as_deref().and_then(value_dict) else {
+        return Ok(false);
+    };
+    if !has_text_entry(opened, original, "Lang", budget)? {
+        return Ok(false);
+    }
+    let Some(root) = current.get("StructTreeRoot") else {
+        return Ok(false);
+    };
+    let root = resolved(version, root, budget)?;
+    let Some(kids) = root
+        .as_deref()
+        .and_then(value_dict)
+        .and_then(|dict| dict.get("K"))
+    else {
+        return Ok(false);
+    };
+    alt_needs_language(version, kids, &mut HashSet::new(), 0, budget)
+}
+
+fn has_text_entry(version: &Version, dict: &Dict, key: &str, budget: &Budget) -> Result<bool> {
+    let Some(value) = dict.get(key) else {
+        return Ok(false);
+    };
+    Ok(
+        matches!(resolved(version, value, budget)?.as_deref(), Some(Value::String(text)) if !text.as_bytes().is_empty()),
+    )
+}
+
+/// Follow only /K children of structure elements, stopping at each language
+/// boundary. Only paths that still depend on the catalog enter the visited set.
+fn alt_needs_language(
+    version: &Version,
+    value: &Value,
+    seen: &mut HashSet<Reference>,
+    depth: usize,
+    budget: &Budget,
+) -> Result<bool> {
+    budget.poll()?;
+    if depth > MAX_DEPTH {
+        return Err(LimitExceeded::over(
+            LimitCode::StructureTreeCount,
+            MAX_DEPTH as u64,
+            depth as u64,
+        )
+        .into());
+    }
+    if let Value::Reference(reference) = value
+        && (version.generation(reference.number()) != Some(reference.generation())
+            || !try_insert_set(seen, *reference, budget)?)
+    {
+        return Ok(false);
+    }
+    let node = resolved(version, value, budget)?;
+    match node.as_deref() {
+        Some(Value::Array(children)) => {
+            for child in children.iter() {
+                if alt_needs_language(version, child, seen, depth + 1, budget)? {
+                    return Ok(true);
+                }
+            }
+        }
+        Some(Value::Dict(element)) if element.get("S").is_some() => {
+            if has_text_entry(version, element, "Lang", budget)? {
+                return Ok(false);
+            }
+            if has_text_entry(version, element, "Alt", budget)? {
+                return Ok(true);
+            }
+            if let Some(kids) = element.get("K") {
+                return alt_needs_language(version, kids, seen, depth + 1, budget);
+            }
+        }
+        _ => {}
+    }
+    Ok(false)
 }
 
 /// Returns the PDF/A-1, PDF/A-2, PDF/A-3, PDF/A-4, and PDF/UA claims of XMP
