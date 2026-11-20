@@ -499,7 +499,12 @@ impl<'g, G: Graph> Walk<'g, G> {
                 self.decide(&scope, predicate)? == Some(true)
             }
         };
-        if !required || (key.inheritable && self.inherited(dict, key.name)?) {
+        if !required
+            || (key.inheritable
+                && self
+                    .inheritable(dict, key.name.as_bytes(), |_| Some(()))?
+                    .is_some())
+        {
             return Ok(());
         }
         let message = format!("/{} is required", key.name);
@@ -514,26 +519,48 @@ impl<'g, G: Graph> Walk<'g, G> {
         Ok(())
     }
 
-    /// Whether an ancestor along `/Parent` holds the key `name`.
-    fn inherited(&self, dict: &G::Value, name: &str) -> Result<bool, G::Error> {
-        let reference = |value: Option<&G::Value>| match value.map(|value| self.graph.view(value)) {
-            Some(View::Reference(number)) => Some(number),
-            _ => None,
-        };
-        let mut next = reference(self.graph.get(dict, b"Parent"));
-        for _ in 0..MAX_INHERITANCE {
-            let Some(number) = next else {
-                break;
-            };
-            let Some(parent) = self.graph.resolve(number)? else {
-                break;
-            };
-            if self.graph.get(&parent, name.as_bytes()).is_some() {
-                return Ok(true);
+    /// Interpret the first non-null value of an inheritable key on the
+    /// object or its parents. A null indirect value is also omitted.
+    fn inheritable<T>(
+        &self,
+        dict: &G::Value,
+        key: &[u8],
+        read: impl Fn(View<'_>) -> Option<T>,
+    ) -> Result<Option<T>, G::Error> {
+        let mut parent: Option<G::Owned> = None;
+        for depth in 0..=MAX_INHERITANCE {
+            let current = parent.as_deref().unwrap_or(dict);
+            if let Some(raw) = self.graph.get(current, key) {
+                let resolved;
+                let view = match self.graph.view(raw) {
+                    View::Reference(number) => {
+                        resolved = self.graph.resolve(number)?;
+                        resolved
+                            .as_deref()
+                            .map_or(View::Null, |value| self.graph.view(value))
+                    }
+                    view => view,
+                };
+                if view != View::Null {
+                    return Ok(read(view));
+                }
             }
-            next = reference(self.graph.get(&parent, b"Parent"));
+            let Some(View::Reference(number)) = self
+                .graph
+                .get(current, b"Parent")
+                .map(|value| self.graph.view(value))
+            else {
+                break;
+            };
+            if depth == MAX_INHERITANCE {
+                break;
+            }
+            parent = self.graph.resolve(number)?;
+            if parent.is_none() {
+                break;
+            }
         }
-        Ok(false)
+        Ok(None)
     }
 
     #[expect(clippy::too_many_arguments, reason = "the location of one value")]
@@ -634,7 +661,7 @@ impl<'g, G: Graph> Walk<'g, G> {
         let target = match typed.kind {
             Kind::NameTree | Kind::NumberTree => Some(Target::Tree(typed)),
             _ if typed.links.is_empty() => None,
-            _ => match self.choose(typed.links, value) {
+            _ => match self.choose(typed.links, value)? {
                 Some(at) => Some(Target::Object(at)),
                 None => {
                     self.report.unchecked += 1;
@@ -732,12 +759,42 @@ impl<'g, G: Graph> Walk<'g, G> {
 
     /// The object type among `links` that a value is, chosen by the keys
     /// whose values tell the types apart, such as `/Subtype` and `/ShadingType`.
-    fn choose(&self, links: &[Link], value: &G::Value) -> Option<u16> {
+    fn choose(&self, links: &[Link], value: &G::Value) -> Result<Option<u16>, G::Error> {
         if let [only] = links {
-            return Some(only.object);
+            return Ok(Some(only.object));
         }
         if !matches!(self.graph.view(value), View::Dictionary | View::Stream) {
-            return None;
+            return Ok(None);
+        }
+        // All button subtypes have /FT /Btn. ISO 32000-2 Table 229
+        // distinguishes them by bits 16 (Radio) and 17 (Pushbutton).
+        // A widget-only kid has no field keys and is checked as AnnotWidget.
+        if links
+            .iter()
+            .any(|link| link.target().name == "FieldBtnRadio")
+            && [b"FT".as_slice(), b"Ff", b"T", b"Kids"]
+                .iter()
+                .any(|key| self.graph.get(value, key).is_some())
+            && self.inheritable(value, b"FT", |view| {
+                Some(matches!(view, View::Name(b"Btn")))
+            })? == Some(true)
+        {
+            let flags = self
+                .inheritable(value, b"Ff", |view| match view {
+                    View::Integer(flags) => Some(flags),
+                    _ => None,
+                })?
+                .unwrap_or(0);
+            let subtype = if flags & (1 << 16) != 0 {
+                "FieldBtnPush"
+            } else if flags & (1 << 15) != 0 {
+                "FieldBtnRadio"
+            } else {
+                "FieldBtnCheckbox"
+            };
+            if let Some(link) = links.iter().find(|link| link.target().name == subtype) {
+                return Ok(Some(link.object));
+            }
         }
         // The most telling keys matched, then the fewest required keys
         // missing.
@@ -758,11 +815,11 @@ impl<'g, G: Graph> Walk<'g, G> {
                 }
             }
         }
-        match best {
+        Ok(match best {
             Some((_, 0, _)) if tied => None,
             Some((at, _, _)) => Some(at),
             None => None,
-        }
+        })
     }
 
     /// How many keys that `described` always requires a dictionary lacks,
@@ -887,13 +944,13 @@ impl<'g, G: Graph> Walk<'g, G> {
                     let Some(value) = self.graph.resolve(number)? else {
                         continue;
                     };
-                    match self.choose(typed.links, &value) {
+                    match self.choose(typed.links, &value)? {
                         Some(chosen) => self.enqueue(number, Target::Object(chosen)),
                         None => self.report.unchecked += 1,
                     }
                 }
                 Item::Direct(at, value, path) if at % 2 == 1 => {
-                    match self.choose(typed.links, value) {
+                    match self.choose(typed.links, value)? {
                         #[expect(
                             clippy::disallowed_methods,
                             reason = "one frame per direct value of the object, which the graph read within the budget"
