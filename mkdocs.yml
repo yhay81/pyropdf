@@ -90,6 +90,7 @@ nav:
       - Structure: api/structure.md
       - Attachments: api/attachments.md
       - Collections: api/collections.md
+      - Measurement and requirements: api/measurement-and-requirements.md
       - History and changes: api/history-and-changes.md
       - Encryption: api/encryption.md
       - Signing: api/signing.md

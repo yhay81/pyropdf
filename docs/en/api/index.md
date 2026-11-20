@@ -291,6 +291,19 @@ method and property of its classes with its full description.
 - [`NamedPages`](collections.md#namedpages): The document's `/Names /Pages` name tree as a live mutable mapping (ISO 32000-2 Table 32).
 - [`Navigator`](collections.md#navigator): Navigator presentation of a portable collection (`Navigator`, ISO 32000-2 Table 160, PDF 2.0).
 
+## [Measurement and requirements](measurement-and-requirements.md)
+
+- [`CoordinateSystem`](measurement-and-requirements.md#coordinatesystem): A geographic (`/GEOGCS`) or projected (`/PROJCS`) coordinate reference system (Tables 270–271).
+- [`DocumentRequirement`](measurement-and-requirements.md#documentrequirement): One viewer capability requirement in `Catalog['Requirements']` (ISO 32000-2 Table 273).
+- [`GeospatialMeasure`](measurement-and-requirements.md#geospatialmeasure): A geospatial measure dictionary with full-precision decimal coordinates (`/Subtype /GEO`, Table 269, PDF 2.0).
+- [`NumberFormat`](measurement-and-requirements.md#numberformat): One unit and conversion factor in a rectilinear measurement chain (`NumberFormat`, ISO 32000-2 Table 268).
+- [`NumberFormatFraction`](measurement-and-requirements.md#numberformatfraction): Fractional display mode of the final `NumberFormat` in a rectilinear unit chain (`/F`, Table 268).
+- [`PointData`](measurement-and-requirements.md#pointdata): Extended geospatial point cloud attributes attached to a viewport (`/Type /PtData`, Table 272, PDF 2.0).
+- [`RectilinearMeasure`](measurement-and-requirements.md#rectilinearmeasure): A rectilinear coordinate system and unit conversion dictionary (`/Subtype /RL`, ISO 32000-2 Table 267).
+- [`RequirementHandler`](measurement-and-requirements.md#requirementhandler): Fallback handler invoked when a viewer cannot satisfy a `DocumentRequirement` (Table 276).
+- [`RequirementType`](measurement-and-requirements.md#requirementtype): Standard viewer capability requirement names for `Document.requirements` (ISO 32000-2 Table 275).
+- [`Viewport`](measurement-and-requirements.md#viewport): A rectangular measurement region on a page (`/Type /Viewport`, ISO 32000-2 Table 265).
+
 ## [History and changes](history-and-changes.md)
 
 - [`ChangeReport`](history-and-changes.md#changereport): What the edits since opening invalidate, for a save that is incremental or not.

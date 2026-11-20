@@ -18,6 +18,12 @@ from pyropdf._geometry import Quad, Rect
 from pyropdf._images import PageImage, page_images
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._links import Links
+from pyropdf._measurement import (
+    Viewport,
+    _delete_page_viewports,
+    _read_page_viewports,
+    _write_page_viewports,
+)
 from pyropdf._objects import Dictionary
 from pyropdf._ocr import (
     OcrEngine,
@@ -354,6 +360,31 @@ class Page:
     @thumbnail.deleter
     def thumbnail(self) -> None:
         _delete_page_thumbnail(self)
+
+    @property
+    def viewports(self) -> tuple[Viewport, ...]:
+        """Return the page's measurement viewports (``/VP``) as :class:`Viewport` records in display coordinates.
+
+        Each :attr:`Viewport.bbox` is converted between PDF user space and the
+        page's display space across ``/CropBox``, ``/Rotate``, and ``/UserUnit``,
+        and numeric measurement values (:class:`NumberFormat`,
+        :class:`RectilinearMeasure`, :class:`GeospatialMeasure`, and
+        :class:`PointData`) are preserved as :class:`~decimal.Decimal` values.
+        Assigning an iterable of :class:`Viewport` records replaces ``Page['VP']``
+        in one transaction (promoting the catalog version to ``1.6`` or ``2.0``
+        as required, or removing ``/VP`` when empty) and frees unreferenced
+        retired objects; ``del page.viewports`` removes ``/VP`` and frees
+        unreferenced objects.
+        """
+        return _read_page_viewports(self)
+
+    @viewports.setter
+    def viewports(self, viewports: Iterable[Viewport]) -> None:
+        _write_page_viewports(self, viewports)
+
+    @viewports.deleter
+    def viewports(self) -> None:
+        _delete_page_viewports(self)
 
     @property
     def rotation(self) -> int:

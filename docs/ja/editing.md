@@ -575,6 +575,82 @@ with wrap_encrypted_payload(EncryptedPayload(locked_bytes, filename="invoice.pdf
     print(wrapper.encrypted_payload.filename, wrapper.encrypted_payload.subtype)
 ```
 
+## ビューポート・地理空間計測・文書要件 {#viewports-and-requirements}
+
+`page.viewports` は `/CropBox`・`/Rotate`・`/UserUnit` を反映した表示座標でページの計測ビューポート
+（`/VP`）を読み書きします。CAD 縮尺の単位連鎖を表す `RectilinearMeasure`（`NumberFormat`、
+`NumberFormatFraction`）と、EPSG コードや WKT 座標系を表す `GeospatialMeasure`
+（`CoordinateSystem`、`PointData`）を扱え、座標値や換算係数は `decimal.Decimal` として保持し、
+`float` の丸めなしに正確な十進桁のまま PDF オブジェクトストアへ書き込みます。`doc.requirements` は
+`Catalog["Requirements"]`（`DocumentRequirement`、`RequirementType`、`RequirementHandler`）を管理し、
+`del page.viewports` や `del doc.requirements` は 1 つのトランザクションで項目を取り除いて未参照オブジェクトを解放します。
+
+```python
+from decimal import Decimal
+import pyropdf
+from pyropdf import (
+    CoordinateSystem,
+    DocumentRequirement,
+    GeospatialMeasure,
+    NumberFormat,
+    NumberFormatFraction,
+    PointData,
+    RectilinearMeasure,
+    RequirementHandler,
+    RequirementType,
+    Viewport,
+)
+
+lat = Decimal("35.6812361234567890123456789")
+lon = Decimal("139.7671249876543210987654321")
+
+with pyropdf.Document() as doc:
+    page = doc.pages.new()
+    page.viewports = (
+        Viewport(
+            (36, 36, 260, 220),
+            name="Floor plan",
+            measure=RectilinearMeasure(
+                "1 in = 10 ft",
+                x=(
+                    NumberFormat(
+                        "ft",
+                        Decimal("0.1388888888888889"),
+                        fraction=NumberFormatFraction.FRACTION,
+                        denominator=16,
+                    ),
+                ),
+                distance=(NumberFormat("ft", Decimal("0.1388888888888889")),),
+                area=(NumberFormat("sq ft", Decimal("0.0192901234567901")),),
+            ),
+        ),
+        Viewport(
+            (36, 240, 260, 460),
+            name="Site map",
+            measure=GeospatialMeasure(
+                CoordinateSystem(epsg=4326),
+                (lat, lon, lat, lon),
+                pdu=("M", "SQM", "DEG"),
+            ),
+            point_data=PointData(("LAT", "LON", "ALT"), ((lat, lon, Decimal("42.5")),)),
+        ),
+    )
+    doc.requirements = (
+        DocumentRequirement(
+            RequirementType.GEOSPATIAL_2D,
+            handlers=(RequirementHandler("JS", script="app.alert('Geospatial viewer required');"),),
+            penalty=50,
+        ),
+    )
+    saved = doc.to_bytes()
+    assert b"35.6812361234567890123456789" in saved
+
+with pyropdf.open(saved) as reopened:
+    assert not reopened.check()
+    assert len(reopened.pages[0].viewports) == 2
+    assert reopened.requirements[0].type is RequirementType.GEOSPATIAL_2D
+```
+
 ## サニタイズ {#sanitizing}
 
 `doc.sanitize(path)` は JavaScript・アクション・添付ファイル・メタデータ・コメント・不可視テキスト・

@@ -56,6 +56,12 @@ from pyropdf._images import ImageRewriteReport, remove_image, replace_image, rew
 from pyropdf._layers import Layers
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._links import Destinations
+from pyropdf._measurement import (
+    DocumentRequirement,
+    _delete_document_requirements,
+    _read_document_requirements,
+    _write_document_requirements,
+)
 from pyropdf._metadata import (
     METADATA_KEYS,
     MarkInfo,
@@ -815,6 +821,31 @@ class Document:
     def viewer_preferences(self) -> None:
         self._ensure_open()
         delete_viewer_preferences(self)
+
+    @property
+    def requirements(self) -> tuple[DocumentRequirement, ...]:
+        """Return the catalog's viewer capability requirements (``/Requirements``).
+
+        Assigning an iterable of :class:`DocumentRequirement` records replaces
+        ``Catalog['Requirements']`` in one transaction (promoting the catalog
+        version to ``1.7`` for :attr:`RequirementType.ENABLE_JAVASCRIPTS` alone
+        or ``2.0`` with a trailer ``/ID`` when PDF 2.0 requirement types,
+        penalties, or versions are present, or removing ``/Requirements`` when
+        empty) and frees unreferenced retired objects; ``del doc.requirements``
+        removes ``/Requirements`` and frees unreferenced objects.
+        """
+        self._ensure_open()
+        return _read_document_requirements(self)
+
+    @requirements.setter
+    def requirements(self, requirements: Iterable[DocumentRequirement]) -> None:
+        self._ensure_open()
+        _write_document_requirements(self, requirements)
+
+    @requirements.deleter
+    def requirements(self) -> None:
+        self._ensure_open()
+        _delete_document_requirements(self)
 
     @property
     def history(self) -> History:

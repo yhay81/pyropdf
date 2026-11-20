@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 17 | 50 | 734 |
-| interpret | 1 | 13 | 0 | 14 | 672 | 101 |
-| create | 0 | 0 | 0 | 640 | 76 | 85 |
-| edit | 0 | 0 | 0 | 647 | 74 | 80 |
-| preserve | 0 | 0 | 0 | 4 | 670 | 127 |
+| read | 0 | 0 | 0 | 17 | 48 | 736 |
+| interpret | 1 | 13 | 0 | 14 | 670 | 103 |
+| create | 0 | 0 | 0 | 640 | 74 | 87 |
+| edit | 0 | 0 | 0 | 647 | 72 | 82 |
+| preserve | 0 | 0 | 0 | 4 | 668 | 129 |
 
 ## Clauses
 
@@ -169,8 +169,8 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.8.5 | Document timestamp dictionary | `document-timestamps` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.6 | Permissions | `permissions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.7 | Legal content attestations | `legal-attestations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.9 | Measurement properties | `measurement` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.10 | Document requirements | `document-requirements` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.9 | Measurement properties | `measurement` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 12.10 | Document requirements | `document-requirements` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 13.2 | Multimedia | `renditions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 13.3 | Sounds | `sounds` | 1 done | 1 planned | 1 planned | 1 planned | 1 done |
 | 13.4 | Movies | `movies` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |

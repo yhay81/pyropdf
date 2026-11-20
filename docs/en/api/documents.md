@@ -568,6 +568,24 @@ indirect dictionary's object number when it already has one, and
 
 Settable.
 
+### `Document.requirements`
+
+```python
+Document.requirements: tuple[DocumentRequirement, ...]
+```
+
+The catalog's viewer capability requirements (`/Requirements`).
+
+Assigning an iterable of `DocumentRequirement` records replaces
+`Catalog['Requirements']` in one transaction (promoting the catalog
+version to `1.7` for `RequirementType.ENABLE_JAVASCRIPTS` alone
+or `2.0` with a trailer `/ID` when PDF 2.0 requirement types,
+penalties, or versions are present, or removing `/Requirements` when
+empty) and frees unreferenced retired objects; `del doc.requirements`
+removes `/Requirements` and frees unreferenced objects.
+
+Settable.
+
 ### `Document.history`
 
 ```python

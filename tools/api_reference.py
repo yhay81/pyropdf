@@ -61,6 +61,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Structure", ("_structure",)),
     ("Attachments", ("_attachments",)),
     ("Collections", ("_collections",)),
+    ("Measurement and requirements", ("_measurement",)),
     ("History and changes", ("_history", "_changes", "_revisions")),
     ("Encryption", ("_encryption",)),
     ("Signing", ("_signing", "_signature_structures")),
