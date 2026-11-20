@@ -6,8 +6,8 @@
 # Every object of the Arlington PDF Model is a feature of the map.
 [arlington]
 interpret = { status = "planned", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Typed views write every key as declared, but nothing yet adds the references and settles the structures that a new object needs.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Typed views change and remove every key as declared, but no reference rule yet keeps the structures that depend on an object consistent.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Typed views write every key as declared, but creation and settling of required references are unverified for this object type.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Typed views change and remove every key as declared, but completeness of inbound reference rules is unverified for this object type.", milestone = "Phase 4: Specification" }
 preserve = { status = "planned", milestone = "Phase 4: Specification" }
 
 [features.flate-filter]
@@ -259,7 +259,7 @@ clause = "7.4.2"
 description = "The ASCIIHexDecode filter: stream data as hexadecimal digits."
 objects = []
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "partial", missing = "Decompressed saves remove ASCIIHexDecode, without re-encoding streams in hexadecimal.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Decompressed saves remove ASCIIHexDecode, without re-encoding streams in hexadecimal.", milestone = "Phase 4: Specification" }
 
 [features.ascii85-filter]
 clause = "7.4.3"
@@ -283,7 +283,7 @@ clause = "7.4.6"
 description = "The CCITTFaxDecode filter: Group 3 and Group 4 fax encoding of monochrome images."
 objects = ["FilterCCITTFaxDecode"]
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "partial", missing = "Image rewriting encodes monochrome images with Group 4 CCITTFaxDecode, without Group 3 encoding.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Image rewriting encodes monochrome images with Group 4 CCITTFaxDecode, without Group 3 encoding.", milestone = "Phase 4: Specification" }
 
 [features.jbig2-filter]
 clause = "7.4.7"
@@ -301,7 +301,7 @@ interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a
 clause = "7.4.9"
 description = "The JPXDecode filter: JPEG 2000 images, with their own color and transparency."
 objects = []
-edit = { status = "partial", missing = "Image rewriting transcodes JPEG 2000 images to JPEG or Flate, without encoding new JPX streams.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Image rewriting transcodes JPEG 2000 images to JPEG or Flate, without encoding new JPX streams.", milestone = "Phase 4: Specification" }
 
 [features.crypt-filter]
 clause = "7.4.10"
@@ -336,8 +336,8 @@ clause = "7.5.8"
 description = "Cross-reference data as a stream, and hybrid-reference files."
 objects = ["XRefStream"]
 interpret = { status = "n/a", reason = "7.5.8: cross-reference streams index indirect objects in the file, whose resolution Read covers." }
-create = { status = "partial", missing = "Saves write pure cross-reference streams, without hybrid-reference `/XRefStm` sections.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Saves rewrite and renumber cross-reference streams, without writing hybrid-reference `/XRefStm` sections.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Saves write pure cross-reference streams, without hybrid-reference `/XRefStm` sections.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Saves rewrite and renumber cross-reference streams, without writing hybrid-reference `/XRefStm` sections.", milestone = "Phase 4: Specification" }
 
 [features.encryption-dictionary]
 clause = "7.6.3"
@@ -353,17 +353,17 @@ objects = ["EncryptionPublicKey"]
 clause = "7.6.6"
 description = "Named crypt filters and their methods: RC4, AES-128, and AES-256."
 objects = ["CryptFilter", "CryptFilterMap", "CryptFilterPublicKey", "CryptFilterPublicKeyMap"]
-read = { status = "partial", missing = "Standard security `/CF` filters for `/StmF` and `/StrF` are read, without public-key crypt filters or `/EFF`.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Standard security `/CF` filters decrypt and render streams and strings, without public-key crypt filters or `/EFF`.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Encrypted saves write standard security `/CF` dictionaries for AES-128 and AES-256, without public-key crypt filters or `/EFF`.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Saves replace or remove standard security `/CF` dictionaries, without public-key crypt filters or `/EFF`.", issue = 256, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "`Encryption.KEEP` and incremental saves preserve standard security `/CF` filters, without public-key crypt filters.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Standard security `/CF` filters for `/StmF` and `/StrF` are read, without public-key crypt filters or `/EFF`.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Standard security `/CF` filters decrypt and render streams and strings, without public-key crypt filters or `/EFF`.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Encrypted saves write standard security `/CF` dictionaries for AES-128 and AES-256, without public-key crypt filters or `/EFF`.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Saves replace or remove standard security `/CF` dictionaries, without public-key crypt filters or `/EFF`.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "`Encryption.KEEP` and incremental saves preserve standard security `/CF` filters, without public-key crypt filters.", milestone = "Phase 4: Specification" }
 
 [features.document-catalog]
 clause = "7.7.2"
 description = "The catalog: the root of the document's objects and its document-level settings."
 objects = ["Catalog"]
-interpret = { status = "partial", missing = "Catalog version, language, profiles, form, outline, layers, and structure root are interpreted, without viewer layout or page mode.", issue = 256, milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Catalog version, language, profiles, form, outline, layers, and structure root are interpreted. The viewer layout and page mode implementation needs clause-level evidence.", milestone = "Phase 4: Specification" }
 
 [features.page-objects]
 clause = "7.7.3"
@@ -374,9 +374,9 @@ objects = []
 clause = "7.7.4"
 description = "The name dictionary: the name trees of destinations, attachments, scripts, and other named objects."
 objects = ["Name"]
-interpret = { status = "partial", missing = "Destination, embedded-file, page, and JavaScript name trees are resolved, without Appearance, Templates, IDS, URLS, or Renditions trees.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Attachments, named pages, and document scripts create `/Names` entries for embedded files, pages, and JavaScript, without high-level creation for other `/Names` trees.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Attachments, named pages, document scripts, page cleanup, and sanitize edit `/Names` entries for destinations, embedded files, pages, and JavaScript, without high-level APIs for other trees.", issue = 256, milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Destination, embedded-file, page, and JavaScript name trees are resolved, without Appearance, Templates, IDS, URLS, or Renditions trees.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Attachments, named pages, and document scripts create `/Names` entries for embedded files, pages, and JavaScript, without high-level creation for other `/Names` trees.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Attachments, named pages, document scripts, page cleanup, and sanitize edit `/Names` entries for destinations, embedded files, pages, and JavaScript, without high-level APIs for other trees.", milestone = "Phase 4: Specification" }
 
 [features.content-streams]
 clause = "7.8"
@@ -467,13 +467,13 @@ objects = ["DeviceGrayColorSpace", "DeviceRGBColorSpace", "DeviceCMYKColorSpace"
 clause = "8.6.5.2"
 description = "CalGray: calibrated gray."
 objects = ["CalGrayColorSpace", "CalGrayDict"]
-edit = { status = "partial", missing = "Content cleaning prunes unused CalGray entries, without creating or editing CalGray dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Content cleaning prunes unused CalGray entries, without creating or editing CalGray dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.calrgb-color-space]
 clause = "8.6.5.3"
 description = "CalRGB: calibrated RGB."
 objects = ["CalRGBColorSpace", "CalRGBDict"]
-edit = { status = "partial", missing = "Recoloring converts CalRGB colors to device spaces, without creating or editing CalRGB dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Recoloring converts CalRGB colors to device spaces, without creating or editing CalRGB dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.lab-color-space]
 clause = "8.6.5.4"
@@ -484,32 +484,32 @@ objects = ["LabColorSpace", "LabDict"]
 clause = "8.6.5.5"
 description = "ICCBased: color described by an embedded ICC profile."
 objects = ["ICCBasedColorSpace", "ICCProfileStream"]
-edit = { status = "partial", missing = "Image rewriting resamples ICCBased images and recoloring converts ICCBased operators to device spaces, without embedding new ICCBased spaces.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Image rewriting resamples ICCBased images and recoloring converts ICCBased operators to device spaces, without embedding new ICCBased spaces.", milestone = "Phase 4: Specification" }
 
 [features.indexed-color-space]
 clause = "8.6.6.3"
 description = "Indexed: a color table over a base color space."
 objects = ["IndexedColorSpace"]
-edit = { status = "partial", missing = "Image rewriting resamples Indexed images and recoloring converts Indexed colors to device spaces, without creating new Indexed palettes.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Image rewriting resamples Indexed images and recoloring converts Indexed colors to device spaces, without creating new Indexed palettes.", milestone = "Phase 4: Specification" }
 
 [features.pattern-color-space]
 clause = "8.6.6.2"
 description = "Pattern: painting with a tiling or shading pattern."
 objects = ["PatternColorSpace"]
-create = { status = "partial", missing = "Canvas paints gradients in Pattern color space, without creating tiling or uncolored pattern spaces.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Canvas paints gradients in Pattern color space, without creating tiling or uncolored pattern spaces.", milestone = "Phase 4: Specification" }
 
 [features.separation-color-space]
 clause = "8.6.6.4"
 description = "Separation: one colorant with its alternate space and tint transform."
 objects = ["SeparationColorSpace", "Separation"]
-edit = { status = "partial", missing = "Recoloring converts Separation spaces with exponential tint transforms, without other tint transforms or creating Separation spaces.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Recoloring converts Separation spaces with exponential tint transforms, without other tint transforms or creating Separation spaces.", milestone = "Phase 4: Specification" }
 
 [features.devicen-color-space]
 clause = "8.6.6.5"
 description = "DeviceN: several colorants, with their attributes and mixing hints."
 objects = ["DeviceNColorSpace", "DeviceNDict", "DeviceNProcess", "DeviceNMixingHints", "ColorantsDict"]
-read = { status = "partial", missing = "DeviceN alternate spaces and tint transforms are read, without reading mixing hints.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "DeviceN alternate spaces and tint transforms are rendered, without evaluating mixing hints.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "DeviceN alternate spaces and tint transforms are read, without reading mixing hints.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "DeviceN alternate spaces and tint transforms are rendered, without evaluating mixing hints.", milestone = "Phase 4: Specification" }
 
 [features.overprint]
 clause = "8.6.7"
@@ -570,9 +570,9 @@ objects = ["XObjectMap"]
 clause = "8.9.5"
 description = "Image XObjects: samples, decoding, interpolation, and alternates."
 objects = ["XObjectImage", "AlternateImage"]
-read = { status = "partial", missing = "Image XObjects and their stored bytes and masks are extracted, without reading `/Alternates`.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Canvas and image pages embed JPEG, JPEG 2000, and Flate image XObjects, without writing `/Alternates`.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Images are replaced, resampled, recompressed, and recolored, without editing `/Alternates`.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Image XObjects and their stored bytes and masks are extracted, without reading `/Alternates`.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Canvas and image pages embed JPEG, JPEG 2000, and Flate image XObjects, without writing `/Alternates`.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Images are replaced, resampled, recompressed, and recolored, without editing `/Alternates`.", milestone = "Phase 4: Specification" }
 
 [features.image-masks]
 clause = "8.9.6"
@@ -598,10 +598,10 @@ objects = ["Reference"]
 clause = "8.11"
 description = "Optional content groups, memberships, configurations, and their usage."
 objects = ["OptContentGroup", "OptContentMembership", "OptContentConfig", "OptContentProperties", "OptContentUsage", "OptContentUsageApplication"]
-read = { status = "partial", missing = "Optional content groups, configurations, memberships, and visibility expressions are read, without `/Usage` dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Optional content groups, configurations, memberships, and visibility expressions are read, without `/Usage` dictionaries.", milestone = "Phase 4: Specification" }
 interpret = { status = "engine", upstream = 372 }
-create = { status = "partial", missing = "Canvas creates optional content groups and membership dictionaries, without `/Usage` or `/AS` usage application dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Layer states and configurations are switched, without editing `/Usage` or `/AS` dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Canvas creates optional content groups and membership dictionaries, without `/Usage` or `/AS` usage application dictionaries.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Layer states and configurations are switched, without editing `/Usage` or `/AS` dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.text-state]
 clause = "9.3"
@@ -617,7 +617,7 @@ objects = []
 clause = "9.6.2"
 description = "Type 1 fonts, the standard 14 fonts, and multiple master fonts."
 objects = ["FontType1", "FontMultipleMaster", "FontDescriptorType1"]
-create = { status = "partial", missing = "Canvas, annotations, and forms create Standard 14 Type 1 font dictionaries, without embedding custom Type 1 or Multiple Master font programs.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Canvas, annotations, and forms create Standard 14 Type 1 font dictionaries, without embedding custom Type 1 or Multiple Master font programs.", milestone = "Phase 4: Specification" }
 
 [features.truetype-fonts]
 clause = "9.6.3"
@@ -633,7 +633,7 @@ objects = ["FontType3", "FontDescriptorType3", "CharProcMap"]
 clause = "9.6.5"
 description = "Encodings of simple fonts: base encodings and differences."
 objects = ["Encoding"]
-create = { status = "partial", missing = "Standard 14 text and form fields write `/WinAnsiEncoding` and built-in symbolic encodings, without constructing custom `/Differences` arrays.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Standard 14 text and form fields write `/WinAnsiEncoding` and built-in symbolic encodings, without constructing custom `/Differences` arrays.", milestone = "Phase 4: Specification" }
 
 [features.cid-fonts]
 clause = "9.7.4"
@@ -644,7 +644,7 @@ objects = ["FontCIDType0", "FontCIDType2", "CIDSystemInfo", "FontDescriptorCIDTy
 clause = "9.7.5"
 description = "CMaps: predefined and embedded maps from codes to CIDs."
 objects = ["CMapStream"]
-create = { status = "partial", missing = "Embedded Type 0 fonts and OCR layers write `/Identity-H`, without generating custom embedded code-to-CID CMap streams.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Embedded Type 0 fonts and OCR layers write `/Identity-H`, without generating custom embedded code-to-CID CMap streams.", milestone = "Phase 4: Specification" }
 
 [features.type0-fonts]
 clause = "9.7.6"
@@ -660,8 +660,8 @@ objects = []
 clause = "9.9"
 description = "Embedded font programs: Type 1, TrueType, CFF, and OpenType."
 objects = ["FontFile", "FontFile2", "FontFile3Type1", "FontFile3CIDType0", "FontFile3OpenType", "FontFileType1"]
-create = { status = "partial", missing = "TrueType, CFF, and OpenType font programs are embedded, without embedding Type 1 font programs.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Embedded TrueType, CFF, and OpenType CIDFont programs are subset, without subsetting Type 1 font programs.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "TrueType, CFF, and OpenType font programs are embedded, without embedding Type 1 font programs.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Embedded TrueType, CFF, and OpenType CIDFont programs are subset, without subsetting Type 1 font programs.", milestone = "Phase 4: Specification" }
 
 [features.text-extraction]
 clause = "9.10"
@@ -677,7 +677,7 @@ objects = []
 clause = "10.4"
 description = "Conversions among device color spaces, black generation, and undercolor removal."
 objects = []
-edit = { status = "partial", missing = "Recoloring converts among DeviceGray, DeviceRGB, and DeviceCMYK with full black generation, without custom `/BG2` or `/UCR2` functions.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Recoloring converts among DeviceGray, DeviceRGB, and DeviceCMYK with full black generation, without custom `/BG2` or `/UCR2` functions.", milestone = "Phase 4: Specification" }
 
 [features.transfer-functions]
 clause = "10.5"
@@ -703,14 +703,14 @@ objects = ["ArrayOfBlendModes"]
 clause = "11.5"
 description = "Soft masks from luminosity, alpha, and images."
 objects = ["SoftMaskAlpha", "SoftMaskLuminosity", "XObjectImageSoftMask"]
-create = { status = "partial", missing = "PNG alpha images and translucent gradients create image and luminosity soft masks, without general group soft-mask scopes on Canvas.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Image replacement and rewriting update, resample, and synthesize image `/SMask` streams, without editing soft-mask dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "PNG alpha images and translucent gradients create image and luminosity soft masks, without general group soft-mask scopes on Canvas.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Image replacement and rewriting update, resample, and synthesize image `/SMask` streams, without editing soft-mask dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.transparency-groups]
 clause = "11.6.6"
 description = "Transparency groups: isolated and knockout groups."
 objects = ["GroupAttributes"]
-create = { status = "partial", missing = "Canvas opacity scopes create isolated transparency groups, without knockout group options.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Canvas opacity scopes create isolated transparency groups, without knockout group options.", milestone = "Phase 4: Specification" }
 
 [features.transparency-color]
 clause = "11.7"
@@ -726,10 +726,10 @@ objects = ["ViewerPreferences"]
 clause = "12.3.2"
 description = "Explicit and named destinations."
 objects = ["DestDict", "DestsMap", "Dest0Array", "Dest1Array", "Dest4Array", "DestXYZArray", "Dest0StructArray", "Dest1StructArray", "Dest4StructArray", "DestXYZStructArray"]
-read = { status = "partial", missing = "Page-based explicit and named destinations are read, without structure-element destinations.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Page-based explicit and named destinations resolve to display coordinates, without structure-element destinations.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Links and outline items create page-based destinations, without structure-element destinations.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Links, outline items, and page edits update page-based destinations, without structure-element destinations.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Page-based explicit and named destinations are read, without structure-element destinations.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Page-based explicit and named destinations resolve to display coordinates, without structure-element destinations.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Links and outline items create page-based destinations, without structure-element destinations.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Links, outline items, and page edits update page-based destinations, without structure-element destinations.", milestone = "Phase 4: Specification" }
 
 [features.outline]
 clause = "12.3.3"
@@ -770,8 +770,8 @@ objects = ["BorderStyle", "BorderEffect"]
 clause = "12.5.5"
 description = "Appearance streams of annotations: normal, rollover, and down."
 objects = ["Appearance", "AppearanceSubDict"]
-create = { status = "partial", missing = "Normal appearances and button state sub-dictionaries are generated, without generating rollover or down appearances.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Normal appearances are regenerated, cleaned, and recolored, without generating rollover or down appearances.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Normal appearances and button state sub-dictionaries are generated, without generating rollover or down appearances.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Normal appearances are regenerated, cleaned, and recolored, without generating rollover or down appearances.", milestone = "Phase 4: Specification" }
 
 [features.text-annotations]
 clause = "12.5.6.4"
@@ -792,10 +792,10 @@ objects = ["AnnotFreeText"]
 clause = "12.5.6.7"
 description = "Line annotations, with their endings, leaders, and captions."
 objects = ["AnnotLine"]
-read = { status = "partial", missing = "Line endpoints and endings are read, without leader lines or captions.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Line endpoints, endings, and interior colors render, without leader lines or captions.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Line annotations with endpoints and endings are created, without leader lines or captions.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Line endpoints, endings, and styles are edited, without leader lines or captions.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Line endpoints and endings are read, without leader lines or captions.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Line endpoints, endings, and interior colors render, without leader lines or captions.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Line annotations with endpoints and endings are created, without leader lines or captions.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Line endpoints, endings, and styles are edited, without leader lines or captions.", milestone = "Phase 4: Specification" }
 
 [features.square-circle-annotations]
 clause = "12.5.6.8"
@@ -841,7 +841,7 @@ objects = ["AnnotFileAttachment"]
 clause = "12.5.6.16"
 description = "Sound annotations."
 objects = ["AnnotSound"]
-edit = { status = "partial", missing = "Common annotation properties of sound annotations are edited and sanitize removes them, without replacing `/Sound` streams or creating sound annotations.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Common annotation properties of sound annotations are edited and sanitize removes them, without replacing `/Sound` streams or creating sound annotations.", milestone = "Phase 4: Specification" }
 
 [features.movie-annotations]
 clause = "12.5.6.17"
@@ -857,9 +857,9 @@ objects = ["AnnotScreen"]
 clause = "12.5.6.19"
 description = "Widget annotations: the appearance and characteristics of form fields."
 objects = ["AnnotWidget", "AppearanceCharacteristics", "IconFit"]
-read = { status = "partial", missing = "Widget rectangles, flags, borders, rotation, colors, and captions are read, without button icon streams or `/IF` icon fit dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Form field creation writes widget annotations and `/MK` appearance characteristics, without button icon streams or `/IF` icon fit dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Widget geometry, styles, captions, and appearances are edited, without button icon streams or `/IF` icon fit dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Widget rectangles, flags, borders, rotation, colors, and captions are read, without button icon streams or `/IF` icon fit dictionaries.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Form field creation writes widget annotations and `/MK` appearance characteristics, without button icon streams or `/IF` icon fit dictionaries.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Widget geometry, styles, captions, and appearances are edited, without button icon streams or `/IF` icon fit dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.printer-mark-annotations]
 clause = "12.5.6.20"
@@ -920,9 +920,9 @@ objects = ["ActionGoToDp"]
 clause = "12.6.4.6"
 description = "Launch actions: opening a file or application."
 objects = ["ActionLaunch", "MicrosoftWindowsLaunchParam"]
-read = { status = "partial", missing = "File launch actions on links and outline items are read, without Windows launch parameter dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Links and outline items create file launch actions, without Windows launch parameter dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Links, outline items, and sanitize edit or remove launch actions, without Windows launch parameter dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "File launch actions on links and outline items are read, without Windows launch parameter dictionaries.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Links and outline items create file launch actions, without Windows launch parameter dictionaries.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Links, outline items, and sanitize edit or remove launch actions, without Windows launch parameter dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.thread-actions]
 clause = "12.6.4.7"
@@ -933,9 +933,9 @@ objects = ["ActionThread"]
 clause = "12.6.4.8"
 description = "URI actions and the document's base URI."
 objects = ["ActionURI", "URI"]
-read = { status = "partial", missing = "Link and outline URI actions are read, without resolving the catalog's base URI dictionary or `/IsMap`.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Links and outline items create URI actions, without a high-level API for the catalog's base URI dictionary or `/IsMap`.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Links, outline items, and sanitize edit or remove URI actions, without a high-level API for the catalog's base URI dictionary.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Link and outline URI actions are read, without resolving the catalog's base URI dictionary or `/IsMap`.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Links and outline items create URI actions, without a high-level API for the catalog's base URI dictionary or `/IsMap`.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Links, outline items, and sanitize edit or remove URI actions, without a high-level API for the catalog's base URI dictionary.", milestone = "Phase 4: Specification" }
 
 [features.sound-actions]
 clause = "12.6.4.9"
@@ -991,10 +991,10 @@ objects = ["ActionRichMediaExecute"]
 clause = "12.7.4.3"
 description = "Variable text: default appearance, quadding, and rich text of fields."
 objects = []
-read = { status = "partial", missing = "Default appearance strings and quadding are read and inherited, without rich text (`/RV` and `/DS`).", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Default appearance strings and quadding shape and align field text, without rendering rich text (`/RV` and `/DS`).", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Field creation writes `/DA` and `/Q`, without rich text (`/RV` and `/DS`).", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Widget and field edits update `/DA`, `/Q`, and embedded font resources, without rich text (`/RV` and `/DS`).", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Default appearance strings and quadding are read and inherited, without rich text (`/RV` and `/DS`).", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Default appearance strings and quadding shape and align field text, without rendering rich text (`/RV` and `/DS`).", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Field creation writes `/DA` and `/Q`, without rich text (`/RV` and `/DS`).", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Widget and field edits update `/DA`, `/Q`, and embedded font resources, without rich text (`/RV` and `/DS`).", milestone = "Phase 4: Specification" }
 
 [features.interactive-form]
 clause = "12.7.3"
@@ -1010,9 +1010,9 @@ objects = ["FieldBtnPush", "FieldBtnCheckbox", "FieldBtnRadio"]
 clause = "12.7.5.3"
 description = "Text fields: single line, multiline, password, file select, and comb."
 objects = ["FieldTx"]
-interpret = { status = "partial", missing = "Single-line, multiline, and comb text fields render, without masking glyphs in password fields.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Single-line, multiline, and comb text fields and password and file-select flags are written, without password glyph masking.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Text field values, flags, and max lengths are edited, without password glyph masking in generated appearances.", issue = 256, milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Single-line, multiline, and comb text fields render, without masking glyphs in password fields.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Single-line, multiline, and comb text fields and password and file-select flags are written, without password glyph masking.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Text field values, flags, and max lengths are edited, without password glyph masking in generated appearances.", milestone = "Phase 4: Specification" }
 
 [features.choice-fields]
 clause = "12.7.5.4"
@@ -1023,10 +1023,10 @@ objects = ["FieldChoice"]
 clause = "12.7.5.5"
 description = "Signature fields, their locks, and seed values."
 objects = ["FieldSig", "SigFieldLock", "SigFieldSeedValue", "CertSeedValue"]
-read = { status = "partial", missing = "Signature fields and their values are read, without field lock (`/Lock`) or seed value (`/SV`) dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Signature fields are verified and checked for byte-range changes, without evaluating `/Lock` or `/SV` constraints.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Signing creates signature fields and widgets, without writing `/Lock` or `/SV` dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Signing fills existing unsigned signature fields, without enforcing `/Lock` or `/SV` dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Signature fields and their values are read, without field lock (`/Lock`) or seed value (`/SV`) dictionaries.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Signature fields are verified and checked for byte-range changes, without evaluating `/Lock` or `/SV` constraints.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Signing creates signature fields and widgets, without writing `/Lock` or `/SV` dictionaries.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Signing fills existing unsigned signature fields, without enforcing `/Lock` or `/SV` dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.form-actions]
 clause = "12.7.6"
@@ -1042,14 +1042,14 @@ objects = []
 clause = "12.7.9"
 description = "Forms flattened into page content."
 objects = []
-preserve = { status = "partial", missing = "Flattening preserves visual appearance and remaining fields, while tagged structure preservation is tracked in #800.", issue = 800, milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Flattening preserves visual appearance and remaining fields, while the tagged-structure regression from #800 still needs clause-level evidence.", milestone = "Phase 4: Specification" }
 
 [features.digital-signatures]
 clause = "12.8"
 description = "Signature dictionaries, byte ranges, and their PKCS#7 and CAdES encodings."
 objects = ["Signature", "SignatureBuildPropDict", "SignatureBuildDataDict", "SignatureBuildDataAppDict", "SignatureBuildDataSigQDict"]
-create = { status = "partial", missing = "Incremental CAdES and PKCS#7 signing with RSA, ECDSA, callbacks, and RFC 3161 timestamps works, without `/Prop_Build` dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Signing fills existing signature fields and appends incremental signatures, without `/Prop_Build` dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Incremental CAdES and PKCS#7 signing with RSA, ECDSA, callbacks, and RFC 3161 timestamps works, without `/Prop_Build` dictionaries.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Signing fills existing signature fields and appends incremental signatures, without `/Prop_Build` dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.signature-transforms]
 clause = "12.8.2"
@@ -1125,10 +1125,10 @@ objects = ["DocInfo"]
 clause = "14.3.2"
 description = "XMP metadata streams of the document and its components."
 objects = ["Metadata"]
-read = { status = "partial", missing = "Document catalog XMP streams are read, without a high-level reader for component-level `/Metadata` streams.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Catalog XMP packets are parsed for profile claims and Info synchronization, without interpreting component-level `/Metadata` streams.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "`Document.xmp` writes unfiltered catalog XMP streams, without a high-level API for component-level `/Metadata` streams.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Catalog XMP streams are updated in step with Info and sanitize removes `/Metadata` streams, without editing component-level packets.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Document catalog XMP streams are read, without a high-level reader for component-level `/Metadata` streams.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Catalog XMP packets are parsed for profile claims and Info synchronization, without interpreting component-level `/Metadata` streams.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "`Document.xmp` writes unfiltered catalog XMP streams, without a high-level API for component-level `/Metadata` streams.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Catalog XMP streams are updated in step with Info and sanitize removes `/Metadata` streams, without editing component-level packets.", milestone = "Phase 4: Specification" }
 
 [features.file-identifiers]
 clause = "14.4"
@@ -1139,7 +1139,7 @@ objects = []
 clause = "14.5"
 description = "Page-piece dictionaries: private data of applications."
 objects = ["PagePiece", "Data"]
-edit = { status = "partial", missing = "Sanitize removes `/PieceInfo` dictionaries, without a high-level API for reading or writing application data.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Sanitize removes `/PieceInfo` dictionaries, without a high-level API for reading or writing application data.", milestone = "Phase 4: Specification" }
 
 [features.marked-content]
 clause = "14.6"
@@ -1150,8 +1150,8 @@ objects = []
 clause = "14.7"
 description = "The structure tree, its elements, parent tree, attributes, and class map."
 objects = ["StructTreeRoot", "StructElem", "MarkedContentReference", "ObjectReference", "ClassMap", "RoleMap", "StructureAttributesDict", "UserProperty"]
-interpret = { status = "partial", missing = "Page import, copy, and deletion resolve MCIDs, object references, and role and class maps, without structure-driven text extraction.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Structure trees, elements, parent trees, role maps, and list and table attributes are created, without creating `ClassMap`, `ObjectReference`, or `UserProperty`.", issue = 256, milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Page import, copy, and deletion resolve MCIDs, object references, and role and class maps, without structure-driven text extraction.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Structure trees, elements, parent trees, role maps, and list and table attributes are created, without creating `ClassMap`, `ObjectReference`, or `UserProperty`.", milestone = "Phase 4: Specification" }
 
 [features.structure-namespaces]
 clause = "14.7.4"
@@ -1162,14 +1162,14 @@ objects = ["Namespace", "RoleMapNS"]
 clause = "14.8"
 description = "Tagged PDF: the mark information and the standard structure types and attributes."
 objects = ["MarkInfo"]
-interpret = { status = "partial", missing = "Profile checks and page operations interpret `MarkInfo` and standard roles, without structure-driven text extraction.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Canvas tags create `MarkInfo` and standard block, list, table, inline, figure, and artifact structures, without full standard attribute coverage.", issue = 256, milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Profile checks and page operations interpret `MarkInfo` and standard roles, without structure-driven text extraction.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Canvas tags create `MarkInfo` and standard block, list, table, inline, figure, and artifact structures, without full standard attribute coverage.", milestone = "Phase 4: Specification" }
 
 [features.accessibility]
 clause = "14.9"
 description = "Natural language, alternate descriptions, replacement text, and abbreviations."
 objects = []
-interpret = { status = "partial", missing = "Text extraction and profile checks interpret `/ActualText` and `/Lang`, without `/E` abbreviation expansion.", issue = 256, milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Text extraction and profile checks interpret `/ActualText` and `/Lang`, without `/E` abbreviation expansion.", milestone = "Phase 4: Specification" }
 
 [features.web-capture]
 clause = "14.10"
@@ -1180,8 +1180,8 @@ objects = ["WebCaptureInfo", "WebCapturePageSet", "WebCaptureImageSet", "SourceI
 clause = "14.11.2"
 description = "Media, crop, bleed, trim, and art boxes, and box color information."
 objects = ["BoxColorInfo", "BoxStyle"]
-read = { status = "partial", missing = "Media, crop, bleed, trim, and art boxes are read with inheritance and clipping, without a high-level reader for `/BoxColorInfo`.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Media, crop, bleed, trim, and art boxes are set in display space, without a high-level API for `/BoxColorInfo`.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Media, crop, bleed, trim, and art boxes are read with inheritance and clipping, without a high-level reader for `/BoxColorInfo`.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Media, crop, bleed, trim, and art boxes are set in display space, without a high-level API for `/BoxColorInfo`.", milestone = "Phase 4: Specification" }
 
 [features.separation-dictionaries]
 clause = "14.11.4"
@@ -1212,9 +1212,9 @@ objects = ["DPart", "DPartRoot", "DPM"]
 clause = "14.13"
 description = "Associated files of the document, its pages, and its objects."
 objects = ["AFFileSpecification", "AFEmbeddedFileStream", "AFEmbeddedFileParameter", "AFFileSpecEF"]
-read = { status = "partial", missing = "Catalog `/AF` entries are read and checked, without high-level readers for page or object associated files.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Attachments on PDF/A-3 and PDF/A-4 documents write catalog `/AF` entries and `/AFRelationship`, without page or object associated files.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Attachment deletion and sanitize update or remove `/AF` entries, without high-level APIs for page or object associated files.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Catalog `/AF` entries are read and checked, without high-level readers for page or object associated files.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Attachments on PDF/A-3 and PDF/A-4 documents write catalog `/AF` entries and `/AFRelationship`, without page or object associated files.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Attachment deletion and sanitize update or remove `/AF` entries, without high-level APIs for page or object associated files.", milestone = "Phase 4: Specification" }
 
 [features.linearization]
 clause = "Annex F"
@@ -1230,10 +1230,10 @@ objects = []
 clause = "ISO/TS 32002"
 description = "ECDSA and EdDSA signature algorithms in PDF."
 objects = []
-read = { status = "partial", missing = "ECDSA P-256 and P-384 signatures are parsed, without Ed25519 or Ed448.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "ECDSA P-256 and P-384 signatures are verified, without Ed25519 or Ed448.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Signing produces ECDSA P-256 and P-384 signatures, without Ed25519 or Ed448.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Signing fills existing signature fields with ECDSA P-256 and P-384 signatures, without Ed25519 or Ed448.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "ECDSA P-256 and P-384 signatures are parsed, without Ed25519 or Ed448.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "ECDSA P-256 and P-384 signatures are verified, without Ed25519 or Ed448.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Signing produces ECDSA P-256 and P-384 signatures, without Ed25519 or Ed448.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Signing fills existing signature fields with ECDSA P-256 and P-384 signatures, without Ed25519 or Ed448.", milestone = "Phase 4: Specification" }
 
 [features.aes-gcm]
 clause = "ISO/TS 32003"
@@ -1254,148 +1254,148 @@ objects = []
 clause = "ISO 19005"
 description = "Shared PDF/A claim mechanisms. Consult the level-specific rows for conformance evidence."
 objects = []
-read = { status = "partial", missing = "Shared claim readers have examples; each part and level has its own coverage row.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Changes identifies selected broken claims; rule coverage depends on the part and level.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Metadata, attachment, annotation, and font edits preserve existing PDF/A claims, without converting arbitrary documents to PDF/A or covering every edit.", issue = 256, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Untouched and targeted edits preserve PDF/A-1 to PDF/A-4 conformance, while remaining operations are tracked in #256.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Shared claim readers have examples; each part and level has its own coverage row.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Changes identifies selected broken claims; rule coverage depends on the part and level.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Metadata, attachment, annotation, and font edits preserve existing PDF/A claims, without converting arbitrary documents to PDF/A or covering every edit.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Untouched and targeted edits preserve PDF/A-1 to PDF/A-4 conformance, while the full public edit matrix still needs profile-specific validation.", milestone = "Phase 4: Specification" }
 
 [features.pdfua]
 clause = "ISO 14289"
 description = "Shared PDF/UA claim mechanisms. Consult the part-specific rows for conformance evidence."
 objects = []
-read = { status = "partial", missing = "Shared claim readers have examples; each part and level has its own coverage row.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Changes identifies selected broken claims; rule coverage depends on the part and level.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Font subsetting and tagged canvas drawing keep PDF/UA claims, without full PDF/UA authoring or covering every edit.", issue = 256, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Untouched saves and font subsetting preserve PDF/UA-1 conformance, while remaining operations are tracked in #256.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Shared claim readers have examples; each part and level has its own coverage row.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Changes identifies selected broken claims; rule coverage depends on the part and level.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Font subsetting and tagged canvas drawing keep PDF/UA claims, without full PDF/UA authoring or covering every edit.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Untouched saves and font subsetting preserve PDF/UA-1 conformance, while the full public edit matrix still needs profile-specific validation.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-1a]
 clause = "ISO 19005"
 description = "PDF/A-1a profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-1b]
 clause = "ISO 19005"
 description = "PDF/A-1b profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-2a]
 clause = "ISO 19005"
 description = "PDF/A-2a profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-2b]
 clause = "ISO 19005"
 description = "PDF/A-2b profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-2u]
 clause = "ISO 19005"
 description = "PDF/A-2u profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-3a]
 clause = "ISO 19005"
 description = "PDF/A-3a profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-3b]
 clause = "ISO 19005"
 description = "PDF/A-3b profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-3u]
 clause = "ISO 19005"
 description = "PDF/A-3u profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-4]
 clause = "ISO 19005"
 description = "PDF/A-4 profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-4e]
 clause = "ISO 19005"
 description = "PDF/A-4e profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-4f]
 clause = "ISO 19005"
 description = "PDF/A-4f profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfua-1]
 clause = "ISO 14289"
 description = "PDF/UA-1 profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfua-2]
 clause = "ISO 14289"
 description = "PDF/UA-2 profile evidence for a generated single-page fixture."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", issue = 256, milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", issue = 848, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", issue = 848, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", issue = 848, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The structural check detects selected missing requirements; comprehensive edit effects remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The tested edits include page rotation; complete coverage of profile-breaking edits is pending.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "The fixture and both save modes have machine checks; this does not cover the full conformance profile.", milestone = "Phase 4: Specification" }
 
 [features.pdfx]
 clause = "ISO 15930"
 description = "PDF/X: graphic exchange documents, read and kept."
 objects = []
-read = { status = "partial", missing = "`Document.profiles` reads PDF/X claims and `GTS_PDFX` output intents, without structural checks for PDF/X.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "`Document.profiles` reads PDF/X claims and `GTS_PDFX` output intents, without structural checks for PDF/X.", milestone = "Phase 4: Specification" }
 
 [features.pdfvt]
 clause = "ISO 16612"
 description = "PDF/VT: variable and transactional printing documents, read and kept."
 objects = []
-read = { status = "partial", missing = "`Document.profiles` reads PDF/VT claims, without structural checks for PDF/VT.", issue = 256, milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "`Document.profiles` reads PDF/VT claims, without structural checks for PDF/VT.", milestone = "Phase 4: Specification" }
 
 [features.unencrypted-wrapper]
 clause = "7.6.7"

@@ -11,11 +11,15 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import runpy
 import shutil
 import subprocess
 import sys
 import sysconfig
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 GENERATOR = ROOT / "tools/spec_map/generate.py"
@@ -40,6 +44,7 @@ def copy_root(root: Path) -> Path:
     shutil.copytree(ROOT / "tests", root / "tests", ignore=shutil.ignore_patterns("assets", "__pycache__"))
     for path in (
         FEATURES,
+        FEATURES.with_name("families.toml"),
         FEATURES.with_name("baseline.toml"),
         FEATURES.with_name("provisions.tsv"),
         FEATURES.with_name("errata.tsv"),
@@ -276,7 +281,8 @@ def test_upstream_correction_comparison_ignores_navigation_and_reports_new_locat
 def test_a_feature_takes_the_default_status_only_where_no_test_proves_it() -> None:
     by_name = features()
     assert by_name["flate-filter"]["read"]["status"] == "done"
-    assert by_name["lzw-filter"]["read"] == {"status": "planned", "milestone": "Phase 4: Specification"}
+    assert by_name["lzw-filter"]["read"]["status"] == "planned"
+    assert by_name["lzw-filter"]["read"]["family"] == "stream-filters"
 
 
 OPEN_MILESTONES = frozenset(
@@ -291,9 +297,9 @@ OPEN_MILESTONES = frozenset(
 
 def test_planned_and_partial_statuses_name_open_milestones_and_valid_issues() -> None:
     by_name = features()
-    assert by_name["Catalog"]["create"]["issue"] == 256
+    assert by_name["Catalog"]["create"]["issue"] == 889
     assert by_name["Catalog"]["create"]["milestone"] == "Phase 4: Specification"
-    assert by_name["Catalog"]["edit"]["issue"] == 256
+    assert by_name["Catalog"]["edit"]["issue"] == 889
     assert by_name["Catalog"]["edit"]["milestone"] == "Phase 4: Specification"
     for name, feature in by_name.items():
         for dimension in DIMENSIONS:
@@ -304,9 +310,91 @@ def test_planned_and_partial_statuses_name_open_milestones_and_valid_issues() ->
                 issue = entry["issue"]
                 assert type(issue) is int, (name, dimension, issue)
                 assert issue > 0, (name, dimension, issue)
+            if entry["status"] == "partial":
                 missing = entry.get("missing")
                 assert isinstance(missing, str), (name, dimension)
                 assert missing, (name, dimension)
+
+
+def test_work_index_accounts_for_all_unfinished_cells_in_both_directions() -> None:
+    spec_map = json.loads((ROOT / MAP).read_text(encoding="utf-8"))
+    families = spec_map["work"]
+    forward = {
+        (row["feature"], dim, entry["family"], entry["issue"])
+        for row in spec_map["features"]
+        for dim in DIMENSIONS
+        if (entry := row[dim])["status"] in {"planned", "partial", "engine"}
+    }
+    reverse = [
+        (name, dim, family, task["issue"])
+        for family, task in families.items()
+        for dim, members in task["cells"].items()
+        for name in members
+    ]
+    assert len(forward) == len(reverse)
+    assert forward == set(reverse)
+    assert len(forward) == sum(
+        counts.get(kind, 0) for counts in spec_map["coverage"].values() for kind in ("planned", "partial", "engine")
+    )
+    page = (ROOT / COVERAGE).read_text(encoding="utf-8")
+    for tracker in range(245, 257):
+        assert f"### {tracker} " in page
+    upstream = features()["optional-content"]["interpret"]
+    assert upstream["issue"] == upstream["upstream"] == 372
+    assert families[upstream["family"]]["kind"] == "upstream"
+    assert features()["optional-content"]["edit"]["issue"] != upstream["issue"]
+
+
+def test_an_unassigned_cell_prevents_generation(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    path = root / FEATURES.with_name("families.toml")
+    content = path.read_text(encoding="utf-8")
+    path.write_text(content.replace('"flate-filter", ', ""), encoding="utf-8")
+    result = generate(root, "--check")
+    assert result.returncode == 1
+    assert "flate-filter.edit has no scoped work owner" in result.stderr
+
+
+def test_an_engine_cell_cannot_be_assigned_to_an_unrelated_local_task(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    path = root / FEATURES.with_name("families.toml")
+    path.write_text(path.read_text(encoding="utf-8").replace("issue = 372", "issue = 373"), encoding="utf-8")
+    result = generate(root, "--check")
+    assert result.returncode == 1
+    assert "optional-content.interpret needs its declared upstream interpretation task" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        ({"state": "CLOSED"}, "has unresolved cells but #42 is CLOSED"),
+        ({"title": "Change a wheel build"}, "outside the recorded task scope"),
+        ({"parent": {"number": 249}}, "outside the recorded task scope"),
+        ({"labels": {"nodes": [], "pageInfo": {"hasNextPage": False}}}, "outside the recorded task scope"),
+        ({"blockedBy": {"nodes": [], "pageInfo": {"hasNextPage": True}}}, "live work ownership unknown"),
+    ],
+)
+def test_live_owner_check_uses_scope_state_and_upstream_kind(change: dict[str, Any], error: str) -> None:
+    module = runpy.run_path(str(ROOT / "tools/spec_map/ownership.py"))
+    families = {"visibility": {"tracker": 248, "issue": 42, "title": "Interpret visibility", "kind": "upstream"}}
+    issue = {
+        "number": 42,
+        "state": "OPEN",
+        "title": "Interpret visibility",
+        "parent": {"number": 248},
+        "labels": {"nodes": [{"name": "upstream"}], "pageInfo": {"hasNextPage": False}},
+        "blockedBy": {"nodes": [{"number": 13, "state": "OPEN"}], "pageInfo": {"hasNextPage": False}},
+    }
+    assert module["check_state"](families, {"i42": issue}) == ["visibility: #42; open dependencies: #13"]
+    with pytest.raises(module["OwnerError"], match=error):
+        module["check_state"](families, {"i42": {**issue, **change}})
+
+
+def test_failed_live_read_reports_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", "")
+    result = generate(ROOT, "--check", "--live-owners")
+    assert result.returncode != 0
+    assert "live work ownership unknown" in result.stderr
 
 
 def test_the_coverage_page_lists_every_clause_and_exclusion() -> None:

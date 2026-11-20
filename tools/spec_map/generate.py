@@ -7,7 +7,7 @@ status is ``done`` only when a test marked ``pytest.mark.spec(feature,
 *dimensions)`` proves it; the marker ``arlington`` stands for every object,
 proved by the case of a test parametrized by object name. features.toml gives
 every other status with what that status needs: ``planned`` its milestone,
-``partial`` what is missing with its issue and milestone, ``engine`` the
+``partial`` what is missing and its milestone, ``engine`` the
 upstream issue, ``n/a`` its reason, and ``non-goal`` its decision and reason.
 ``partial`` and ``engine`` keep the tests of what is done. An ``n/a`` reason
 starts with the clause it rests on: a policy exclusion is a ``non-goal``, and
@@ -16,7 +16,8 @@ so is creating a feature that features.toml marks ``deprecated``. features.toml'
 extensions, and the profiles it names, each with pyropdf's own title; every
 feature names one of them, and each of them has a feature.
 ``[feature-defaults]`` gives the statuses of the dimensions that a feature
-does not declare.
+does not declare. families.toml assigns each unfinished dimension to a scoped
+work item. ``--live-owners`` verifies their identities, state and direct dependencies.
 
 Run from the repository root: ``python3 tools/spec_map/generate.py`` writes
 the map and docs/spec-coverage.md, its coverage per clause and dimension
@@ -37,6 +38,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from ownership import OwnerError, assignments, live_report, work_page
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 MODEL = Path("tools/arlington/model")
 MAP_DIR = Path("tools/spec_map")
@@ -50,7 +53,7 @@ DIMENSIONS = ("read", "interpret", "create", "edit", "preserve")
 ARLINGTON = "arlington"
 NEEDS = {
     "planned": ("milestone",),
-    "partial": ("missing", "issue", "milestone"),
+    "partial": ("missing", "milestone"),
     "engine": ("upstream",),
     "n/a": ("reason",),
     "non-goal": ("decision", "reason"),
@@ -307,9 +310,12 @@ def build(root: Path) -> dict[str, Any]:
         for dimension in DIMENSIONS:
             feature[dimension] = feature.pop(dimension)
     commit = (root / MODEL / "COMMIT").read_text(encoding="utf-8").strip()
+    baseline = inventory(root, features)
+    work = assignments(root / MAP_DIR / "families.toml", features, DIMENSIONS, names)
     return {
         "arlington": commit,
-        "inventory": inventory(root, features),
+        "work": work,
+        "inventory": baseline,
         "dimensions": list(DIMENSIONS),
         "clauses": config["clauses"],
         "features": list(features.values()),
@@ -334,12 +340,17 @@ def render(spec_map: dict[str, Any]) -> str:
         rows = ",\n    ".join(json.dumps(row, ensure_ascii=False) for row in baseline[key])
         inventory_text += f',\n  "{key}": [\n    {rows}\n  ]'
     inventory_json = (inventory_text + "\n}").replace("\n", "\n  ")
-    head = {key: value for key, value in spec_map.items() if key not in {"features", "inventory"}}
+    head = {key: value for key, value in spec_map.items() if key not in {"features", "inventory", "work"}}
     head_text = json.dumps({**head, "coverage": coverage(spec_map)}, indent=2, ensure_ascii=False)
+    work_text = ",\n    ".join(
+        f"{json.dumps(family)}: {json.dumps(task, ensure_ascii=False)}" for family, task in spec_map["work"].items()
+    )
     lines = [json.dumps(feature, ensure_ascii=False) for feature in spec_map["features"]]
     return (
         head_text[:-2]
-        + ',\n  "inventory": '
+        + ',\n  "work": {\n    '
+        + work_text
+        + '\n  },\n  "inventory": '
         + inventory_json
         + ',\n  "features": [\n    '
         + ",\n    ".join(lines)
@@ -457,6 +468,7 @@ def page(spec_map: dict[str, Any]) -> str:
             cells.append(", ".join(f"{count} {name}" for name, count in sorted(counts.items())))
         names = ", ".join(f"`{feature['feature']}`" for feature in features)
         lines.append(f"| {clause} | {title} | {names} | " + " | ".join(cells) + " |")
+    lines += ["", *work_page(spec_map)]
     lines += profile_table(spec_map)
     lines += ["", *inventory_page(spec_map["inventory"]), "", "## Exclusions", ""]
     excluded = []
@@ -490,12 +502,15 @@ def main(argv: list[str] | None = None) -> int:
     """Write the map, or with --check report a stale map or a done status without a named test."""
     parser = argparse.ArgumentParser(description="Generate the specification map from the model and test markers.")
     parser.add_argument("--check", action="store_true", help="write nothing; fail when the map is stale")
+    parser.add_argument("--live-owners", action="store_true", help="check live task scope, state and blockers")
     parser.add_argument("--root", type=Path, default=ROOT, help="the repository root (default: %(default)s)")
     args = parser.parse_args(argv)
     root: Path = args.root
     try:
         spec_map = build(root)
-    except MapError as error:
+        if args.live_owners:
+            sys.stdout.write("\n".join(live_report(spec_map["work"])) + "\n")
+    except (MapError, OwnerError) as error:
         sys.stderr.write(f"{error}\n")
         return 1
     text = render(spec_map)

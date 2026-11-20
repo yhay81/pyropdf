@@ -222,6 +222,195 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32007 | RichMedia glTF assets | `gltf-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 
+## Unfinished work by milestone
+
+3,007 unfinished cells in 831 features: 1 engine, 1,378 partial, 1,628 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+
+Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
+
+### 245 Content model
+
+Milestone [#245](https://github.com/yhay81/pyropdf/issues/245).
+
+- [#901](https://github.com/yhay81/pyropdf/issues/901) Read and edit optional-content usage and usage application dictionaries. Resolve OCG Usage and configuration AS application dictionaries against their groups. Expose and modify the stored values, and verify configuration- and event-specific behavior through save/reopen.
+    - read, create, edit — `optional-content`.
+
+### 246 Canvas
+
+Milestone [#246](https://github.com/yhay81/pyropdf/issues/246).
+
+- [#896](https://github.com/yhay81/pyropdf/issues/896) Complete PDF function, pattern and mesh shading authoring and evaluation. Exercise sampled/calculator functions, function edits, tiling and uncolored patterns and shading types 1–7. Create and edit resources through the store, verify mesh and function evaluation independently and round-trip untouched data.
+    - read, interpret — `function-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`.
+    - create — `sampled-functions`, `calculator-functions`, `tiling-patterns`, `function-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`, `pattern-color-space`.
+    - edit — `sampled-functions`, `exponential-functions`, `stitching-functions`, `calculator-functions`, `tiling-patterns`, `function-shading`, `axial-shading`, `radial-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`, `shading-patterns`, `pattern-color-space`.
+    - preserve — `sampled-functions`, `calculator-functions`, `function-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`.
+
+### 247 Reading
+
+Milestone [#247](https://github.com/yhay81/pyropdf/issues/247).
+
+- [#888](https://github.com/yhay81/pyropdf/issues/888) Interpret the linked objects and values of standalone Arlington types. Resolve linked object types, arrays and conditional values through the versioned store. Exercise ambiguous links and invalid references with bounded, per-type fixtures. Record clause-backed exceptions for types with no distinct interpretation.
+    - interpret — all 613 standalone Arlington object rows.
+
+### 248 Rendering
+
+Milestone [#248](https://github.com/yhay81/pyropdf/issues/248).
+
+- [#898](https://github.com/yhay81/pyropdf/issues/898) Verify device-dependent colour and halftone rendering against independent samples. Read, write and retain the corresponding output-device parameters. Independently compare separation, overprint, rendering intents, transfer, BG2/UCR2, halftone and scan-conversion output and route confirmed interpreter gaps through the upstream workflow.
+    - read, interpret — `overprint`, `color-conversion`, `transfer-functions`, `halftones`, `scan-conversion`, `rendering-intents`, `separation-rendering`.
+    - create, edit, preserve — `overprint`, `color-conversion`, `device-color-conversion`, `transfer-functions`, `halftones`, `scan-conversion`, `rendering-intents`, `separation-rendering`.
+- [#372](https://github.com/yhay81/pyropdf/issues/372) hayro: evaluate optional content visibility expressions and annotation /OC. Adopt engine evaluation of visibility expressions and annotation OC. Track the upstream issue directly. #373 owns local adoption.
+    - interpret — `optional-content`.
+- [#899](https://github.com/yhay81/pyropdf/issues/899) Complete transparency group, soft-mask and compositing coverage. Exercise non-isolated and knockout groups, group masks, blending colour spaces, alpha composition and Annex Q resource traversal. Verify isolated and nested results with independent rendered references.
+    - read, interpret, preserve — `transparency-color`, `alpha-compositing`, `page-transparency`.
+    - create — `soft-masks`, `transparency-groups`, `transparency-color`, `alpha-compositing`, `page-transparency`.
+    - edit — `blend-modes`, `soft-masks`, `transparency-groups`, `transparency-color`, `alpha-compositing`, `page-transparency`.
+
+### 249 Writing
+
+Milestone [#249](https://github.com/yhay81/pyropdf/issues/249).
+
+- [#903](https://github.com/yhay81/pyropdf/issues/903) Write rollover/down and widget icon appearances and line or popup annotation details. Implement rollover/down streams, widget MK icons and IF fitting, line captions and leaders, and popup parent semantics. Check independent rendering and relationships after edit/reopen.
+    - read — `line-annotations`, `widget-annotations`.
+    - interpret — `line-annotations`, `popup-annotations`.
+    - create, edit — `appearance-streams`, `line-annotations`, `widget-annotations`.
+- [#903](https://github.com/yhay81/pyropdf/issues/903) Write rollover/down and widget icon appearances and line or popup annotation details. Inspect and edit stored redaction marks, overlay text and appearance streams. Preserve the marks through reopening before destructive application.
+    - read, create, edit, preserve — `redaction-annotations`.
+- [#902](https://github.com/yhay81/pyropdf/issues/902) Complete font program, encoding and CMap creation and editing. Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement.
+    - read, interpret, preserve — `character-tables`.
+    - create, edit — `type1-fonts`, `truetype-fonts`, `type3-fonts`, `simple-font-encodings`, `cmaps`, `embedded-fonts`, `character-tables`.
+- [#897](https://github.com/yhay81/pyropdf/issues/897) Write and edit calibrated and special colour spaces and their paint operators. Retain source operands and independently verify calibration, ICC profiles, palettes and tint transforms including DeviceN mixing hints. Construct and edit colour resources and exercise the corresponding operators.
+    - read, interpret — `devicen-color-space`, `colour-operators`.
+    - create, edit — `calgray-color-space`, `calrgb-color-space`, `lab-color-space`, `icc-based-color-space`, `indexed-color-space`, `separation-color-space`, `devicen-color-space`, `colour-operators`.
+    - preserve — `colour-operators`.
+- [#904](https://github.com/yhay81/pyropdf/issues/904) Support rich variable text, password appearances and legacy XFA form data. Read and edit RV/DS field data, mask displayed password glyphs, and inspect, edit/remove and preserve existing XFA packets under the recorded creation exclusion. Verify field values and appearances independently.
+    - read — `variable-text`, `xfa`.
+    - interpret, edit — `variable-text`, `text-fields`, `xfa`.
+    - create — `variable-text`, `text-fields`.
+    - preserve — `xfa`.
+
+### 250 Rewriting
+
+Milestone [#250](https://github.com/yhay81/pyropdf/issues/250).
+
+- [#900](https://github.com/yhay81/pyropdf/issues/900) Support alternate image resources, masks and reference XObjects through rewriting. Read and rewrite image alternates, masks and reference XObject relationships, verifying selection, unchanged resource bytes, and output without fetching or executing external content.
+    - read, edit — `images`, `reference-xobjects`.
+    - interpret, preserve — `reference-xobjects`.
+    - create — `images`, `image-masks`, `reference-xobjects`.
+- [#362](https://github.com/yhay81/pyropdf/issues/362) Redaction: remove text, images, and vector content under redaction annotations. Apply and verify redaction annotations over text, paths and images, using item provenance for destructive removal.
+    - interpret — `redaction-annotations`.
+
+### 251 Structure
+
+Milestone [#251](https://github.com/yhay81/pyropdf/issues/251).
+
+- [#889](https://github.com/yhay81/pyropdf/issues/889) Settle required links and inbound roles when creating or editing typed objects. Generate a role inventory from the pinned descriptors. For each applicable role, construct the required references and settle or reject replacements and removals atomically. Exercise already-implemented page, form and structure rules before adding missing rules.
+    - create, edit — all 613 standalone Arlington object rows.
+- [#906](https://github.com/yhay81/pyropdf/issues/906) Read and edit component XMP metadata through its owning PDF object. Identify, parse and update component Metadata streams without changing catalog metadata or sibling components. Verify save/reopen, removal and unrelated edits.
+    - read, interpret, create, edit — `xmp-metadata`.
+- [#895](https://github.com/yhay81/pyropdf/issues/895) Resolve catalog name trees, structure destinations and viewer action parameters. Follow named resources and structure destinations, resolve base URI/IsMap, Windows launch and remote/named targets as data, and round-trip fragment selection and navigation options. Expose unresolved targets without executing actions.
+    - read — `destinations`, `launch-actions`, `uri-actions`, `fragment-identifiers`.
+    - interpret — `name-dictionary`, `embedded-files`, `destinations`, `remote-goto-actions`, `launch-actions`, `uri-actions`, `named-actions`, `fragment-identifiers`.
+    - create, edit — `name-dictionary`, `destinations`, `launch-actions`, `uri-actions`, `fragment-identifiers`.
+    - preserve — `fragment-identifiers`.
+- [#908](https://github.com/yhay81/pyropdf/issues/908) Author standard tagged attributes, class maps and legal structure children. Author and edit class maps, object references, user properties and standard structure attributes. Validate child multiplicities and relationships through page operations and independent checks.
+    - create — `logical-structure`, `tagged-pdf`, `structure-children`.
+    - edit — `structure-children`.
+
+### 252 Persistence
+
+Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
+
+- [#865](https://github.com/yhay81/pyropdf/issues/865) Read and write AES-GCM encrypted PDFs under ISO/TS 32003. Read and write authenticated AES-GCM objects with independent positive and negative cases.
+    - read, interpret, create, edit, preserve — `aes-gcm`.
+- [#867](https://github.com/yhay81/pyropdf/issues/867) Complete the PDF hash and signature algorithm coverage for ISO/TS 32001 and 32002. Verify and create each specified hash/signature algorithm against independent vectors, including Ed25519 and Ed448.
+    - read, interpret, create, edit — `sha3-hashes`, `ecc-signatures`.
+    - preserve — `sha3-hashes`.
+- [#866](https://github.com/yhay81/pyropdf/issues/866) Verify and maintain document integrity protection for encrypted PDFs under ISO/TS 32004. Verify and maintain integrity protection during encrypted saves and refuse tampered data.
+    - read, interpret, create, edit, preserve — `integrity-protection`.
+- [#864](https://github.com/yhay81/pyropdf/issues/864) Read and write PDF public-key security handler recipients. Handle recipient selection, public-key crypt filters and permissions across open, save, decryption and rendering.
+    - read, interpret, create, edit, preserve — `public-key-security-handler`.
+- [#864](https://github.com/yhay81/pyropdf/issues/864) Read and write PDF public-key security handler recipients. Keep the public-key filter dictionaries and encrypted data valid when saving a recipient-encrypted document.
+    - preserve — `crypt-filters`.
+- [#893](https://github.com/yhay81/pyropdf/issues/893) Resolve stream Crypt overrides and embedded-file filter selection. Resolve and update EFF and per-stream filter choices. Check selection for both standard and public-key recipients once the recipient handler in #864 is available.
+    - read, interpret, create, edit — `crypt-filters`.
+- [#905](https://github.com/yhay81/pyropdf/issues/905) Resolve signature seed constraints and build properties through signing and editing. Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification.
+    - read, interpret — `signature-fields`.
+    - create, edit — `signature-fields`, `digital-signatures`.
+- [#893](https://github.com/yhay81/pyropdf/issues/893) Resolve stream Crypt overrides and embedded-file filter selection. Select a named Crypt filter per stream, honor Identity and EFF defaults, and exercise standard-handler strings, streams and attachments through full and incremental saves. Cover per-stream overrides separately from public-key recipients.
+    - read, create, edit, preserve — `crypt-filter`.
+- [#891](https://github.com/yhay81/pyropdf/issues/891) Complete stream filter read, rewrite and preservation cases. Round-trip encoded and decoded streams across the listed filter chains and parameters. Cover ASCIIHex re-encoding, Group 3 fax and JPX output gaps, and retain untouched encoded data. Account for unsupported encoder paths explicitly.
+    - read — `lzw-filter`, `run-length-filter`.
+    - interpret — `lzw-filter`.
+    - create — `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
+    - edit — `flate-filter`, `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
+    - preserve — `ascii85-filter`, `lzw-filter`, `run-length-filter`.
+- [#892](https://github.com/yhay81/pyropdf/issues/892) Verify hybrid-reference writing and linearized-file preservation. Write and reopen hybrid XRefStm sections and verify fast-web-view hints and offsets after supported saves. Reuse independent qpdf checks, including the modes where linearization cannot survive.
+    - create, edit — `xref-streams`.
+    - preserve — `linearization`.
+
+### 253 Understanding
+
+Milestone [#253](https://github.com/yhay81/pyropdf/issues/253).
+
+- [#907](https://github.com/yhay81/pyropdf/issues/907) Interpret standard structure roles, children, and abbreviation expansion in document order. Walk standard/custom roles and parent-child multiplicities, order content using structure references and expose abbreviation expansion in extracted output. Compare with hand-verified tagged documents.
+    - read, preserve — `structure-children`.
+    - interpret — `logical-structure`, `tagged-pdf`, `accessibility`, `structure-children`.
+
+### 254 Verification
+
+Milestone [#254](https://github.com/yhay81/pyropdf/issues/254).
+
+- [#890](https://github.com/yhay81/pyropdf/issues/890) Prove full and incremental preservation by Arlington object type. Build or reuse a reachable valid example for each descriptor and compare its keys, reference targets and stream bytes after an unrelated edit in both save modes. Reuse equivalent cases with explicit type-to-fixture coverage.
+    - preserve — all 613 standalone Arlington object rows.
+- [#894](https://github.com/yhay81/pyropdf/issues/894) Connect existing catalog, geometry, wrapper and flattening tests to their clause cells. Verify the current public APIs against the exact clause behavior, including tagged flattening, then mark only the matching parameterized tests. Add missing negative and save/reopen cases or record the precise residual.
+    - read, create, edit — `geospatial`, `unencrypted-wrapper`.
+    - interpret — `document-catalog`, `geospatial`, `unencrypted-wrapper`.
+    - preserve — `geospatial`, `unencrypted-wrapper`, `non-interactive-forms`.
+- [#851](https://github.com/yhay81/pyropdf/issues/851) Verify display-space coordinates across reading, editing and rendering on the same page. Verify display-space transformations at the reading, rendering and editing boundaries, including rotated, offset and scaled pages.
+    - read, interpret, create, edit, preserve — `coordinate-systems`.
+
+### 255 Conformance
+
+Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
+
+- [#846](https://github.com/yhay81/pyropdf/issues/846) Create accessible archival PDFs from a new Document through the public API. Create an accessible archival document with a valid claim and have an independent validator verify the result.
+    - create — `pdfa-4`, `pdfua-2`.
+- [#911](https://github.com/yhay81/pyropdf/issues/911) Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour. Create and independently validate the earlier PDF/A and PDF/UA profile examples.
+    - create — `pdfa-2b`, `pdfua-1`.
+- [#911](https://github.com/yhay81/pyropdf/issues/911) Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour. Exercise independently sourced conforming and negative fixtures beyond the original vector example. Validate public authoring per listed part and level using independent validation and retain allowable source variations.
+    - read, create — `pdfa`, `pdfua`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4e`, `pdfa-4f`.
+- [#911](https://github.com/yhay81/pyropdf/issues/911) Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour. Exercise additional conforming and negative sources beyond the original per-flavour vector example.
+    - read — `pdfa-2b`, `pdfa-4`, `pdfua-1`, `pdfua-2`.
+- [#910](https://github.com/yhay81/pyropdf/issues/910) Validate PDF/X and PDF/VT profile rules through a print exchange round trip. Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour.
+    - read, interpret, preserve — `pdfx`, `pdfvt`.
+    - create, edit — `pdfx`, `pdfvt`, `output-intents`.
+- [#848](https://github.com/yhay81/pyropdf/issues/848) Check pre-save conformance reports against the profile rules each edit actually breaks. Compare edit effects and preservation against the applicable rules with independently checked positive and negative cases.
+    - interpret, edit, preserve — `pdfa`, `pdfua`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f`, `pdfua-1`, `pdfua-2`.
+
+### 256 Specification completion
+
+Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
+
+- [#839](https://github.com/yhay81/pyropdf/issues/839) Expose developer extensions, associated files, page-piece dictionaries, document parts, and structure namespaces. Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations.
+    - read, interpret, create, edit — `developer-extensions`, `page-piece`, `associated-files`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
+    - preserve — `developer-extensions`, `page-piece`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
+- [#862](https://github.com/yhay81/pyropdf/issues/862) Expose multimedia, rendition and 3D relationships as editable PDF data. Resolve and edit media as stored data, including streams, actions, named views and legacy relationships under the deprecation policy.
+    - read, preserve — `movie-annotations`, `screen-annotations`, `projection-annotations`, `rich-annotations`, `sound-actions`, `movie-actions`, `rendition-actions`, `goto-3d-view-actions`, `rich-media-execute-actions`, `renditions`, `movies`, `alternate-presentations`, `3d-artwork`, `rich-media`.
+    - interpret, create, edit — `sound-annotations`, `movie-annotations`, `screen-annotations`, `projection-annotations`, `rich-annotations`, `sound-actions`, `movie-actions`, `rendition-actions`, `goto-3d-view-actions`, `rich-media-execute-actions`, `renditions`, `sounds`, `movies`, `alternate-presentations`, `3d-artwork`, `rich-media`.
+- [#861](https://github.com/yhay81/pyropdf/issues/861) Complete prepress dictionaries and print annotation relationships. Resolve box colour, separations, trapping, OPI and print annotation relationships and preserve or edit them under the edition policy.
+    - read, edit — `page-boundaries`, `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
+    - interpret, create, preserve — `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
+- [#859](https://github.com/yhay81/pyropdf/issues/859) Expose and preserve related-file arrays on file specifications. Resolve and preserve RF arrays on file specifications, including edits to related targets.
+    - read, interpret, create, edit, preserve — `related-files`.
+- [#863](https://github.com/yhay81/pyropdf/issues/863) Support STEP and glTF assets in RichMedia annotations under the published PDF 2.0 extensions. Read, author and verify STEP and glTF asset relationships against the published extensions.
+    - read, interpret, create, edit, preserve — `step-rich-media`, `gltf-rich-media`.
+- [#909](https://github.com/yhay81/pyropdf/issues/909) Verify private names, compatibility sections and legacy procedure-set resources. Exercise registered/private names and prefix collisions, BX/EX compatibility sections and effective PDF version, and reading/editing/preserving legacy ProcSet arrays under their creation exclusion.
+    - read, interpret, edit, preserve — `private-names`, `version-compatibility`, `procedure-sets`.
+    - create — `private-names`, `version-compatibility`.
+- [#860](https://github.com/yhay81/pyropdf/issues/860) Read, edit and preserve Web Capture content sets and their indexes. Read, edit and round-trip captured content sets and their indexes.
+    - read, interpret, create, edit, preserve — `web-capture`.
+
 ## PDF/A and PDF/UA profiles
 
 Each row refers to its own fixture and parameterized test in `docs/spec-map.json`.
