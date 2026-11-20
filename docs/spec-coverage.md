@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 32 | 48 | 734 |
-| interpret | 1 | 13 | 0 | 29 | 670 | 101 |
-| create | 0 | 0 | 0 | 640 | 87 | 87 |
-| edit | 0 | 0 | 0 | 660 | 72 | 82 |
-| preserve | 0 | 0 | 0 | 17 | 668 | 129 |
+| read | 0 | 0 | 0 | 32 | 65 | 734 |
+| interpret | 1 | 13 | 0 | 29 | 687 | 101 |
+| create | 0 | 0 | 2 | 640 | 102 | 87 |
+| edit | 0 | 0 | 0 | 660 | 89 | 82 |
+| preserve | 0 | 0 | 0 | 17 | 685 | 129 |
 
 ## Clauses
 
@@ -38,6 +38,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 7.6.4 | Standard security handler | `standard-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.6.6 | Crypt filters | `crypt-filters` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.7.2 | Document catalog | `document-catalog` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 7.7.3 | Page tree | `page-tree`, `page-objects` | 2 done | 2 done | 2 done | 2 done | 2 done |
 | 7.7.4 | Name dictionary | `name-dictionary` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
@@ -55,6 +56,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 7.11.4.2 | Related files arrays | `related-files` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.11.6 | Collection items | `collection-items` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.12 | Extensions dictionary | `developer-extensions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.3 | Coordinate transformations | `coordinate-systems` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.4 | Graphics state | `graphics-state` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.5 | Path construction and painting | `paths` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.4 | Device colour spaces | `device-color-spaces` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -62,11 +64,13 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 8.6.5.3 | CalRGB colour spaces | `calrgb-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
 | 8.6.5.4 | Lab colour spaces | `lab-color-space` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
 | 8.6.5.5 | ICCBased colour spaces | `icc-based-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
+| 8.6.5.8 | Rendering intent selection | `rendering-intents` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.6.6.2 | Pattern colour spaces | `pattern-color-space` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
 | 8.6.6.3 | Indexed colour spaces | `indexed-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
 | 8.6.6.4 | Separation colour spaces | `separation-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
 | 8.6.6.5 | DeviceN colour spaces | `devicen-color-space` | 1 partial | 1 partial | 1 planned | 1 planned | 1 done |
 | 8.6.7 | Overprint control | `overprint` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.6.8 | Colour-setting operators | `colour-operators` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.7.3 | Tiling patterns | `tiling-patterns` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
 | 8.7.4 | Shading patterns | `shading-patterns` | 1 done | 1 done | 1 done | 1 planned | 1 done |
 | 8.7.4.5.2 | Type 1 function-based shadings | `function-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -100,6 +104,8 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 10.5 | Transfer functions | `transfer-functions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 10.6 | Halftones | `halftones` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 10.7 | Scan conversion details | `scan-conversion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 10.8 | Rendering of colour separations | `separation-rendering` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 11.3 | Alpha compositing | `alpha-compositing` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 11.3.5 | Blend mode | `blend-modes` | 1 done | 1 done | 1 done | 1 planned | 1 done |
 | 11.5 | Soft masks | `soft-masks` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
 | 11.6.6 | Transparency group XObjects | `transparency-groups` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
@@ -108,7 +114,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.3.2 | Destinations | `destinations` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | 12.3.3 | Document outline | `outline` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.3.5 | Collections | `collections` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.3.6 | Navigators | `navigators` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 12.3.5.3 | Navigators | `navigators` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.4.2 | Page labels | `page-labels` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.4.3 | Articles | `articles` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.4.4 | Presentations | `presentations` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -154,7 +160,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.6.4.16 | Go-To-3D-view actions | `goto-3d-view-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.6.4.17 | ECMAScript actions | `ecmascript-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.18 | Rich media execute actions | `rich-media-execute-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.7.2 | Interactive form dictionary | `interactive-form` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 12.7.3 | Interactive form dictionary | `interactive-form` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.4.3 | Variable text | `variable-text` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | 12.7.5.2 | Button fields | `button-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.5.3 | Text fields | `text-fields` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
@@ -170,13 +176,15 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.8.6 | Permissions | `permissions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.7 | Legal content attestations | `legal-attestations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.9 | Measurement properties | `measurement` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.10 | Document requirements | `document-requirements` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 12.10 | Geospatial coordinates | `geospatial` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.11 | Document requirements | `document-requirements` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 13.2 | Multimedia | `renditions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 13.3 | Sounds | `sounds` | 1 done | 1 planned | 1 planned | 1 planned | 1 done |
 | 13.4 | Movies | `movies` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 13.5 | Alternate presentations | `alternate-presentations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 13.6 | 3D artwork | `3d-artwork` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 13.7 | Rich media | `rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 14.2 | Legacy resource procedure sets | `procedure-sets` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
 | 14.3.2 | Metadata streams | `xmp-metadata` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | 14.3.3 | Document information dictionary | `document-info` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.4 | File identifiers | `file-identifiers` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -194,16 +202,25 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 14.11.7 | Open prepress interface | `opi` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.12 | Document parts | `document-parts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.13 | Associated files | `associated-files` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
+| Annex D | PDF character tables | `character-tables` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| Annex E | Extension naming rules | `private-names` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 planned |
+| Annex I | Compatibility across PDF versions | `version-compatibility` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| Annex K | XFA packets | `xfa` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
+| Annex L | Allowed structure children | `structure-children` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| Annex Q | Page transparency detection | `page-transparency` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 partial | 3 partial | 3 planned | 3 partial | 3 partial |
 | ISO 15930 | PDF/X | `pdfx` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 partial | 12 partial | 12 planned | 12 partial | 12 partial |
+| ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| ISO/TS 32007 | RichMedia glTF assets | `gltf-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 
 ## PDF/A and PDF/UA profiles
 
@@ -226,6 +243,565 @@ The machine and human checks are documented in the [corpus review](https://githu
 | `pdfua-1` | partial | partial | planned | partial | partial |
 | `pdfua-2` | partial | partial | planned | partial | partial |
 
+## Specification baseline
+
+Reviewed 2026-11-20.
+
+- [ISO 32000-2:2020, edition 2](https://www.iso.org/standard/75839.html), 2020-12.
+- [PDF Association catalogue of ISO publications](https://pdfa.org/pdf-standards/), reviewed 2026-11-20; individual publication years are in the crosswalk.
+- [PDF Association pdf-issues, published industry corrections](https://github.com/pdf-association/pdf-issues/tree/d9b2519a16d0e64f6cfc2bee48fc6b6977bbca05/docs), 2026-11-17, d9b2519a16d0e64f6cfc2bee48fc6b6977bbca05.
+
+Changes since `e43dab4d`. The preceding map had no dated provision or correction inventory. This review adds the edition's numbered contents and annexes, the published STEP and glTF extensions, profile parts and corrigenda, and the technical group's correction register. It distinguishes geographic coordinates (12.10) from processor requirements (12.11) and updates the references for interactive form dictionaries (12.7.3) and collection navigators (12.3.5.3, correction 477).
+
+The base crosswalk follows the published contents through the second-level clauses. Descendant provisions use the listed feature IDs, with individual rows for specialized behaviors and correction locations. Empty feature lists document introductory or informative material. Every linked feature has the five map dimensions; a link supplies no implementation evidence.
+
+The base amendment (DAmd 1.2), revisions of 32004, 32005 and PDF/A-4, the PDF/UA-1 amendment, 32008 and 32009 stay on the publication watchlist in #258.
+
+Within one month of publication, compare the official catalogues and the PDF Association correction register with this snapshot. Diff the published pages between pins as well as comparing their identifiers, because wording can change at an existing location. Record the changed publication, provision, correction ID, affected features and dimensions. Add a regression test for the corrected behavior or link an open implementation issue from #258 that names the correction and the missing test. Preserve the release exclusions, record the delta from the previous pin, regenerate both outputs and run the offline checks.
+
+| Provision | Kind | Feature IDs | Reason for grouping |
+| --- | --- | --- | --- |
+| Foreword | front matter | — | The publication and committee history introduce no file-level requirement. |
+| Introduction | front matter | — | The edition history and examples explain how the standard is used. |
+| 1 | clause | — | Scope sets the boundaries of the format and its consumers. |
+| 2 | clause | — | External specifications are incorporated where the relevant feature invokes them. |
+| 3 | clause | — | Terminology is resolved against its substantive clause. |
+| 4 | clause | — | Notation is shared across the specification. |
+| 4.1 | clause | — | General conventions for reading requirements. |
+| 4.2 | clause | — | Conventions for names, literals, arrays and byte notation. |
+| 5 | clause | `file-header`, `document-catalog`, `version-compatibility` | Recognize the declared file version and its relationship to available features. |
+| 6 | clause | — | Conformance requirements apply across all feature rows. |
+| 6.1 | clause | — | Introduces the document and processor conformance rules. |
+| 6.2 | clause | — | Whether a PDF conforms depends on all features used in that file. |
+| 6.3 | clause | — | Processor obligations depend on the reader, writer and interactive capabilities exercised. |
+| 7 | clause | — | File primitives and their composition are split across the subclauses below. |
+| 7.1 | clause | — | Introduces the organization of the syntax chapter. |
+| 7.2 | clause | `lexical-conventions` | Tokenization of the PDF byte stream. |
+| 7.3 | clause | `basic-objects` | Represent and reference the primitive and composite PDF values. |
+| 7.4 | clause | `flate-filter`, `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `dct-filter`, `jpx-filter`, `crypt-filter` | Decode and encode stream bytes with each named filter. |
+| 7.5 | clause | `file-header`, `xref-table`, `incremental-update`, `object-streams`, `xref-streams` | Locate objects, the trailer, and the revision chain. |
+| 7.6 | clause | `standard-security-handler`, `encryption-dictionary`, `public-key-security-handler`, `crypt-filters`, `unencrypted-wrapper` | Read and maintain protected content, key information and cleartext wrappers. |
+| 7.7 | clause | `page-tree`, `document-catalog`, `page-objects`, `name-dictionary` | Start at the catalog and traverse pages and document-level names. |
+| 7.8 | clause | `content-streams` | Resolve the operations in a stream and their named resources. |
+| 7.9 | clause | `text-strings`, `dates`, `name-trees`, `number-trees` | Interpret common value representations and indexed trees. |
+| 7.10 | clause | `sampled-functions`, `exponential-functions`, `stitching-functions`, `calculator-functions` | Evaluate PDF functions and their parameters. |
+| 7.11 | clause | `file-specifications`, `embedded-files`, `related-files`, `collection-items` | Identify, embed and associate file specifications and collection entries. |
+| 7.12 | clause | `developer-extensions` | Declare a developer extension and its level. |
+| 8 | clause | — | The remaining subclauses describe the graphics model and its operators. |
+| 8.1 | clause | — | Introduces the model and the graphics features. |
+| 8.2 | clause | `content-streams`, `graphics-state`, `paths`, `text-objects`, `images` | Graphics objects delimit sequences of operations and determine valid operator contexts. |
+| 8.3 | clause | `coordinate-systems` | Translate points and distances between coordinate spaces. |
+| 8.4 | clause | `graphics-state` | Maintain the current painting parameters across saves and restores. |
+| 8.5 | clause | `paths` | Construct, clip and paint paths. |
+| 8.6 | clause | `device-color-spaces`, `calgray-color-space`, `calrgb-color-space`, `lab-color-space`, `icc-based-color-space`, `indexed-color-space`, `pattern-color-space`, `separation-color-space`, `devicen-color-space`, `overprint`, `rendering-intents`, `colour-operators` | Specify colours, component values, intent and overprint. |
+| 8.7 | clause | `tiling-patterns`, `function-shading`, `axial-shading`, `radial-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`, `shading-patterns` | Paint repeated geometry and sampled or function-based gradients. |
+| 8.8 | clause | `xobjects` | Invoke named external objects from content. |
+| 8.9 | clause | `images`, `image-masks`, `inline-images` | Sample, mask and place raster data. |
+| 8.10 | clause | `form-xobjects`, `reference-xobjects` | Reuse a form stream and its local resource environment. |
+| 8.11 | clause | `optional-content` | Determine which optional content is visible. |
+| 9 | clause | — | Text features are organized by operators, fonts and extraction below. |
+| 9.1 | clause | — | Introduces the PDF text model. |
+| 9.2 | clause | `text-state`, `text-objects`, `simple-font-encodings`, `type0-fonts` | Select a font resource and use it to paint a string. |
+| 9.3 | clause | `text-state` | Control glyph positioning, scale and painting mode. |
+| 9.4 | clause | `text-objects` | Establish text matrices and show glyphs. |
+| 9.5 | clause | `font-descriptors`, `simple-font-encodings`, `cid-fonts` | Font families share the descriptor and encoding structures covered below. |
+| 9.6 | clause | `type1-fonts`, `truetype-fonts`, `type3-fonts`, `simple-font-encodings` | Map codes and render text with a simple font. |
+| 9.7 | clause | `cid-fonts`, `cmaps`, `type0-fonts` | Route multibyte codes through a CMap to a descendant font. |
+| 9.8 | clause | `font-descriptors` | Read and maintain font metrics and font flags. |
+| 9.9 | clause | `embedded-fonts` | Associate a PDF font with its embedded program. |
+| 9.10 | clause | `text-extraction` | Recover characters and word boundaries from a text run. |
+| 10 | clause | — | The subclauses describe how the device receives final marks. |
+| 10.1 | clause | — | Introduces output-dependent imaging. |
+| 10.2 | clause | `device-color-spaces`, `device-color-conversion` | Use native device space for raster output. |
+| 10.3 | clause | `color-conversion` | Convert a calibrated colour to the output device space. |
+| 10.4 | clause | `device-color-conversion` | Translate between the native colour spaces. |
+| 10.5 | clause | `transfer-functions` | Apply per-channel tone mappings. |
+| 10.6 | clause | `halftones` | Choose and apply a halftone. |
+| 10.7 | clause | `scan-conversion` | Convert geometry and glyphs to pixel coverage. |
+| 10.8 | clause | `separation-rendering` | Produce individual colour plates. |
+| 11 | clause | — | The subclauses define transparent painting and compositing. |
+| 11.1 | clause | — | Introduces transparency. |
+| 11.2 | clause | `alpha-compositing`, `transparency-groups` | Explains the compositing model used by subsequent provisions. |
+| 11.3 | clause | `blend-modes`, `alpha-compositing` | Compute opacity, shape and colour when stacking marks. |
+| 11.4 | clause | `transparency-groups`, `alpha-compositing` | Composite isolated and knockout groups. |
+| 11.5 | clause | `soft-masks` | Use a mask to limit source opacity. |
+| 11.6 | clause | `graphics-state`, `soft-masks`, `transparency-groups` | Set graphics state entries and declare transparency groups in file objects. |
+| 11.7 | clause | `transparency-color` | Resolve the blending space and handle colourants. |
+| 12 | clause | — | The remaining provisions describe interaction with pages and documents. |
+| 12.1 | clause | — | Introduces interactive features. |
+| 12.2 | clause | `viewer-preferences` | Specify how the document should be displayed. |
+| 12.3 | clause | `destinations`, `outline`, `collections`, `navigators` | Navigate to a destination and organize navigation choices. |
+| 12.4 | clause | `page-labels`, `articles`, `presentations` | Attach navigation, timing and labels to individual pages. |
+| 12.5 | clause | `annotations`, `appearance-streams`, `text-annotations`, `link-annotations`, `free-text-annotations`, `line-annotations`, `square-circle-annotations`, `polygon-annotations`, `text-markup-annotations`, `caret-annotations`, `stamp-annotations`, `ink-annotations`, `popup-annotations`, `file-attachment-annotations`, `sound-annotations`, `movie-annotations`, `screen-annotations`, `widget-annotations`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`, `redaction-annotations`, `projection-annotations`, `rich-annotations` | Manage annotation subtypes, their states and their appearances. |
+| 12.6 | clause | `trigger-events`, `goto-actions`, `remote-goto-actions`, `embedded-goto-actions`, `goto-dpart-actions`, `launch-actions`, `thread-actions`, `uri-actions`, `sound-actions`, `movie-actions`, `hide-actions`, `named-actions`, `set-ocg-state-actions`, `rendition-actions`, `transition-actions`, `goto-3d-view-actions`, `ecmascript-actions`, `rich-media-execute-actions` | Invoke a typed action when an event occurs. |
+| 12.7 | clause | `variable-text`, `interactive-form`, `button-fields`, `text-fields`, `choice-fields`, `signature-fields`, `form-actions`, `fdf`, `non-interactive-forms` | Read and write fields, field data and form actions. |
+| 12.8 | clause | `digital-signatures`, `signature-transforms`, `document-security-store`, `document-timestamps`, `permissions`, `legal-attestations` | Create or verify signatures, permissions, validation data and attestations. |
+| 12.9 | clause | `measurement` | Interpret distances, scale and measurement units in a viewport. |
+| 12.10 | clause | `measurement`, `geospatial` | The measurement tests cover coordinate round trips; this provision also defines geographic reference systems and point data. |
+| 12.11 | clause | `document-requirements` | Declare document features that a processor needs. |
+| 13 | clause | — | The subclauses identify different kinds of media content. |
+| 13.1 | clause | `sounds`, `movies`, `rich-media` | Introduces media and describes the replacement of legacy types. |
+| 13.2 | clause | `renditions` | Select and configure media renditions. |
+| 13.3 | clause | `sounds` | Access legacy audio resources as PDF data. |
+| 13.4 | clause | `movies` | Access legacy movie resources as PDF data. |
+| 13.5 | clause | `alternate-presentations` | Select an alternate representation of the presentation. |
+| 13.6 | clause | `3d-artwork` | Store and select three-dimensional artwork and views. |
+| 13.7 | clause | `rich-media` | Package rich-media assets, instances and configurations. |
+| 14 | clause | — | The remaining provisions exchange logical content and production information. |
+| 14.1 | clause | — | Introduces the interchange facilities. |
+| 14.2 | clause | `procedure-sets` | Identify the legacy resource procedure sets. |
+| 14.3 | clause | `document-info`, `xmp-metadata` | Associate descriptive metadata with the document or an object. |
+| 14.4 | clause | `file-identifiers` | Identify a file and its revisions. |
+| 14.5 | clause | `page-piece` | Store private application data with a page or other object. |
+| 14.6 | clause | `marked-content` | Identify and nest marked sequences in content. |
+| 14.7 | clause | `logical-structure`, `structure-namespaces` | Maintain the structure tree, role mappings and namespaces. |
+| 14.8 | clause | `tagged-pdf` | Express standard logical roles, attributes and artifacts in tagged content. |
+| 14.9 | clause | `accessibility` | Provide alternate text, language and replacement text. |
+| 14.10 | clause | `web-capture` | Associate captured web resources with a document. |
+| 14.11 | clause | `page-boundaries`, `separation-dictionaries`, `output-intents`, `trapping`, `opi` | Describe production geometry, colour and other press data. |
+| 14.12 | clause | `document-parts` | Group pages and attach document-part metadata. |
+| 14.13 | clause | `associated-files` | Relate files to documents and objects with a declared relationship. |
+| Annex A | informative annex | — | Informative operator index repeats the operators defined in their respective clauses. |
+| Annex B | informative annex | `calculator-functions` | Informative operator list summarizes calculator functions. |
+| Annex C | informative annex | — | Portability advice guides producers and adds no independent file behavior. |
+| Annex D | normative annex | `character-tables`, `text-strings`, `simple-font-encodings` | Apply byte-to-character mappings in text strings and font encodings. |
+| Annex E | normative annex | `private-names`, `developer-extensions` | Use a prefix and a version declaration to identify added features. |
+| Annex F | normative annex | `linearization` | Arrange a file and its hint data for incremental delivery. |
+| Annex G | informative annex | `linearization` | Informative retrieval strategies consume the layout defined in Annex F. |
+| Annex H | informative annex | — | Worked examples illustrate the existing file and content syntax. |
+| Annex I | normative annex | `version-compatibility`, `file-header`, `document-catalog` | Relate PDF feature versions to compatibility semantics. |
+| Annex J | informative annex | `xobjects`, `images`, `form-xobjects` | Informative comparison of external object types. |
+| Annex K | normative annex | `xfa`, `interactive-form` | Handle the deprecated XML form payload in an AcroForm. |
+| Annex L | normative annex | `structure-children`, `structure-namespaces`, `tagged-pdf` | Enforce nesting and cardinality in the PDF 2.0 structure namespace. |
+| Annex M | informative annex | `structure-namespaces`, `tagged-pdf` | Informative namespace comparison explains differences between standard tags. |
+| Annex N | informative annex | `halftones` | Informative guidance on choosing halftones. |
+| Annex O | normative annex | `fragment-identifiers`, `destinations` | Interpret URL parameters that navigate or change the initial view. |
+| Annex P | informative annex | `transparency-color` | Example procedure for finding the effective blending space. |
+| Annex Q | normative annex | `page-transparency`, `transparency-groups` | Determine whether page painting requires compositing. |
+| Bibliography | references | — | Background references introduce no independent behavior. |
+| ISO/TS 24064:2023 | extension | `step-rich-media` | Connect the STEP AP242 payload, configuration and view to its RichMedia annotation. |
+| ISO/TS 32001:2022 | extension | `sha3-hashes` | SHA-3 and SHA-512 hash algorithms in PDF. |
+| ISO/TS 32002:2022 | extension | `ecc-signatures` | ECDSA and EdDSA signature algorithms in PDF. |
+| ISO/TS 32003:2023 | extension | `aes-gcm` | AES-GCM encryption in PDF. |
+| ISO/TS 32004:2024 | extension | `integrity-protection` | Integrity protection of encrypted documents with a message authentication code. |
+| ISO/TS 32005:2023 | clarification | `namespace-inclusion` | PDF 1.7 and 2.0 structure namespaces in one document. |
+| ISO/TS 32007:2024 | extension | `gltf-rich-media` | Connect a glTF asset and its resources to a RichMedia configuration and view. |
+| ISO 19005-1:2005 | profile part | `pdfa`, `pdfa-1a`, `pdfa-1b` | Archival PDF based on PDF 1.4, levels A and B. |
+| ISO 19005-1:2005/Cor 1:2007 | technical corrigendum | `pdfa`, `pdfa-1a`, `pdfa-1b` | Apply the first corrections to the PDF/A-1 requirements. |
+| ISO 19005-1:2005/Cor 2:2011 | technical corrigendum | `pdfa`, `pdfa-1a`, `pdfa-1b` | Apply the second corrections to the PDF/A-1 requirements. |
+| ISO 19005-2:2011 | profile part | `pdfa`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u` | Archival PDF based on PDF 1.7, levels A, B and U. |
+| ISO 19005-3:2012 | profile part | `pdfa`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u` | Archival PDF with embedded files, levels A, B and U. |
+| ISO 19005-4:2020 | profile part | `pdfa`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | Archival PDF 2.0 including the engineering and embedded-file variants. |
+| ISO 14289-1:2014 | profile part | `pdfua`, `pdfua-1` | Accessibility requirements for tagged PDF 1.7. |
+| ISO 14289-2:2024 | profile part | `pdfua`, `pdfua-2` | Accessibility requirements for tagged PDF 2.0. |
+
+### Correction register
+
+Compare a checkout of the upstream pages with the committed register using
+`python3 tools/spec_map/check_errata.py /path/to/pdf-issues`.
+
+The [JSON inventory](https://github.com/yhay81/pyropdf/blob/main/docs/spec-map.json) lists 389 corrections.
+Each record has its upstream issue number, page anchors, affected feature IDs, dimensions to check,
+and an original summary. Empty dimension lists identify changes to wording, cross-references or examples.
+Feature tests and release decisions remain on the feature rows. An erratum needs a targeted regression
+before a test can be cited for that specific correction. The register gives no automatic coverage credit.
+
+<details markdown="1"><summary>Corrections by upstream issue number</summary>
+
+| Issue | Corrected provision | Features | Dimensions to check | Related work |
+| --- | --- | --- | --- | --- |
+| [1](https://github.com/pdf-association/pdf-issues/issues/1) | [Unknown annotation subtypes and fallback behavior](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.1) | `annotations` | interpret | — |
+| [3](https://github.com/pdf-association/pdf-issues/issues/3) | [Resolving duplicate long and short inline-image keys](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.9.7) | `inline-images` | read, interpret, create, edit, preserve | — |
+| [4](https://github.com/pdf-association/pdf-issues/issues/4) | [Deprecation of legacy signature encodings](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.5) | `digital-signatures`, `signature-fields` | read, interpret, create, edit, preserve | — |
+| [5](https://github.com/pdf-association/pdf-issues/issues/5) | [Metric fields in descendant font descriptors](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.8.3.3) | `font-descriptors` | read, interpret, create, edit, preserve | — |
+| [8](https://github.com/pdf-association/pdf-issues/issues/8) | [Default namespace of a structure element](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.6.1) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [9](https://github.com/pdf-association/pdf-issues/issues/9) | [Stream boundaries within a page content array](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.8.3) | `content-streams` | read, interpret, create, edit, preserve | — |
+| [10](https://github.com/pdf-association/pdf-issues/issues/10) | [Length for streams backed by external files](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.3.8.2) | `basic-objects` | read, interpret, create, edit, preserve | — |
+| [11](https://github.com/pdf-association/pdf-issues/issues/11) | [Font descriptor names for Type 3 fonts](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.8.1) | `font-descriptors` | read, interpret, create, edit, preserve | — |
+| [12](https://github.com/pdf-association/pdf-issues/issues/12) | [Default halftone selection](https://pdf-issues.pdfa.org/32000-2-2020/clause10.html#H10.6.5.6) | `halftones` | read, interpret, create, edit, preserve | — |
+| [13](https://github.com/pdf-association/pdf-issues/issues/13) | [Restrictions on soft-mask image entries](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.9.5.1) | `images` | read, interpret, create, edit, preserve | — |
+| [14](https://github.com/pdf-association/pdf-issues/issues/14) | [Typography of a term in the specification](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.9.5.1) | `associated-files`, `images`, `page-boundaries`, `viewer-preferences` | Editorial | — |
+| [16](https://github.com/pdf-association/pdf-issues/issues/16) | [Byte encoding of crypt-filter recipients](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.6) | `crypt-filters`, `public-key-security-handler` | read, interpret, create, edit, preserve | [#864](https://github.com/yhay81/pyropdf/issues/864) |
+| [17](https://github.com/pdf-association/pdf-issues/issues/17) | [Border-style selection for link annotations](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.5) | `link-annotations` | read, interpret, create, edit, preserve | — |
+| [18](https://github.com/pdf-association/pdf-issues/issues/18) | [Colour space of 3D data](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.6.3.1) | `3d-artwork` | read, interpret, create, edit, preserve | — |
+| [19](https://github.com/pdf-association/pdf-issues/issues/19) | [Default colour spaces for inline-image samples](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.9.7) | `images`, `inline-images` | read, interpret, create, edit, preserve | — |
+| [20](https://github.com/pdf-association/pdf-issues/issues/20) | [Separation of ASCII-filtered inline data from surrounding operators](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.9.7) | `inline-images` | read, interpret, create, edit, preserve | — |
+| [22](https://github.com/pdf-association/pdf-issues/issues/22) | [When an annotation needs a stored appearance](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.2) | `annotations` | read, interpret, create, edit, preserve | — |
+| [23](https://github.com/pdf-association/pdf-issues/issues/23) | [Presentation of annotations without an appearance](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.2) | `annotations` | interpret | — |
+| [24](https://github.com/pdf-association/pdf-issues/issues/24) | [AES mode used to decrypt the permissions block](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.4.3.3) | `standard-security-handler` | read, interpret, create, edit, preserve | — |
+| [25](https://github.com/pdf-association/pdf-issues/issues/25) | [Metadata flag in recipient-key derivation](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.5.4) | `public-key-security-handler` | read, interpret, create, edit, preserve | [#864](https://github.com/yhay81/pyropdf/issues/864) |
+| [28](https://github.com/pdf-association/pdf-issues/issues/28) | [Optional partial field names](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.4.1) | `interactive-form` | read, interpret, create, edit, preserve | — |
+| [29](https://github.com/pdf-association/pdf-issues/issues/29) | [Interpretation of the CIEJab colour model](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.4.9) | `jpx-filter` | read, interpret, create, edit, preserve | — |
+| [30](https://github.com/pdf-association/pdf-issues/issues/30) | [Parameters of exponential interpolation functions](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.10.3) | `exponential-functions` | read, interpret, create, edit, preserve | — |
+| [33](https://github.com/pdf-association/pdf-issues/issues/33) | [Field names in signature transform references](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.2.4) | `signature-transforms` | read, interpret, create, edit, preserve | [#849](https://github.com/yhay81/pyropdf/issues/849) |
+| [34](https://github.com/pdf-association/pdf-issues/issues/34) | [Default colours for annotation borders and interiors](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.2) | `annotations` | interpret | — |
+| [35](https://github.com/pdf-association/pdf-issues/issues/35) | [Artifacts in the ordering of tagged children](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.4.8.4) | `structure-children`, `tagged-pdf` | interpret | — |
+| [36](https://github.com/pdf-association/pdf-issues/issues/36) | [Valid types for transition directions](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.4.4.1) | `presentations` | read, interpret, create, edit, preserve | — |
+| [37](https://github.com/pdf-association/pdf-issues/issues/37) | [Defaults of subitems in a collection](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.11.6) | `collection-items` | read, interpret, create, edit, preserve | — |
+| [38](https://github.com/pdf-association/pdf-issues/issues/38) | [Relationship of background colour and space in a 3D view](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.6.4.3) | `3d-artwork` | read, interpret, create, edit, preserve | — |
+| [39](https://github.com/pdf-association/pdf-issues/issues/39) | [Blending of a 3D annotation background](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.6.4.3) | `3d-artwork` | interpret | — |
+| [42](https://github.com/pdf-association/pdf-issues/issues/42) | [Conditions requiring an annotation appearance](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.18) | `free-text-annotations`, `projection-annotations`, `screen-annotations` | read, interpret, create, edit, preserve | — |
+| [43](https://github.com/pdf-association/pdf-issues/issues/43) | [Operand types for Type 3 glyph metrics](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.6.4) | `type3-fonts` | read, interpret, create, edit, preserve | — |
+| [44](https://github.com/pdf-association/pdf-issues/issues/44) | [Glyph name in a Type 3 example](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.6.4) | `type3-fonts` | Editorial | — |
+| [45](https://github.com/pdf-association/pdf-issues/issues/45) | [Table-row structure semantics](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.4.8.3) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [47](https://github.com/pdf-association/pdf-issues/issues/47) | [Meaning of a font descriptor](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.6.2.1) | `type1-fonts` | read, interpret, create, edit, preserve | — |
+| [48](https://github.com/pdf-association/pdf-issues/issues/48) | [Standard-font explanatory text](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.6.2.1) | `type1-fonts` | Editorial | — |
+| [49](https://github.com/pdf-association/pdf-issues/issues/49) | [Visibility controls in a 3D cross section](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.6.4.6) | `3d-artwork` | read, interpret, create, edit, preserve | — |
+| [50](https://github.com/pdf-association/pdf-issues/issues/50) | [Default visibility of a 3D intersection](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.6.4.6) | `3d-artwork` | read, interpret, create, edit, preserve | — |
+| [51](https://github.com/pdf-association/pdf-issues/issues/51) | [Annotation blend modes during transparency detection](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexQ.html#HQ.2) | `annotations`, `page-transparency` | interpret | — |
+| [53](https://github.com/pdf-association/pdf-issues/issues/53) | [Password algorithm explanation for older revisions](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.4.3.2) | `standard-security-handler` | read, interpret, create, edit, preserve | — |
+| [54](https://github.com/pdf-association/pdf-issues/issues/54) | [Non-interactive form wording](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.9) | `non-interactive-forms` | read, interpret, create, edit, preserve | — |
+| [55](https://github.com/pdf-association/pdf-issues/issues/55) | [Ordering certification and timestamp signatures](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.1) | `digital-signatures` | read, interpret, create, edit, preserve | [#849](https://github.com/yhay81/pyropdf/issues/849) |
+| [56](https://github.com/pdf-association/pdf-issues/issues/56) | [Widget characteristics with a stored appearance](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.2) | `annotations` | read, interpret, create, edit, preserve | — |
+| [58](https://github.com/pdf-association/pdf-issues/issues/58) | [Required RichMedia asset tree](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.7.2.3.4) | `rich-media` | read, interpret, create, edit, preserve | — |
+| [59](https://github.com/pdf-association/pdf-issues/issues/59) | [Activation scripts for rich media](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.7.2.2.2) | `rich-media` | read, interpret, create, edit, preserve | — |
+| [62](https://github.com/pdf-association/pdf-issues/issues/62) | [Legacy structure roles in a contents-list example](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexH.html#HH.8.2) | `tagged-pdf` | Editorial | — |
+| [63](https://github.com/pdf-association/pdf-issues/issues/63) | [Supported rendering intents](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.6.5.8) | `rendering-intents` | read, interpret, create, edit, preserve | — |
+| [64](https://github.com/pdf-association/pdf-issues/issues/64) | [Companion material for the structure nesting matrix](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexL.html) | `structure-children` | Editorial | — |
+| [65](https://github.com/pdf-association/pdf-issues/issues/65) | [Namespace identification for PDF 2.0 structure roles](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.6.2) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [69](https://github.com/pdf-association/pdf-issues/issues/69) | [Naming private page-piece entries](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.5) | `page-piece` | read, interpret, create, edit, preserve | — |
+| [71](https://github.com/pdf-association/pdf-issues/issues/71) | [Mixed data and header cells in a table row](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.4.8.3) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [72](https://github.com/pdf-association/pdf-issues/issues/72) | [Standard ownership of MathML attributes](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.6.3) | `structure-namespaces`, `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [73](https://github.com/pdf-association/pdf-issues/issues/73) | [Heading for page numbering and indices](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.4.2) | `page-labels` | Editorial | — |
+| [74](https://github.com/pdf-association/pdf-issues/issues/74) | [Crypt filters for encryption version 5](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.6) | `crypt-filters` | read, interpret, create, edit, preserve | — |
+| [75](https://github.com/pdf-association/pdf-issues/issues/75) | [Editorial corrections to notation and examples](https://pdf-issues.pdfa.org/32000-2-2020/clause04.html#H4.1) | `content-streams`, `presentations`, `tagged-pdf` | Editorial | — |
+| [77](https://github.com/pdf-association/pdf-issues/issues/77) | [Predefined CMap supplement compatibility](https://pdf-issues.pdfa.org/19005-4-2020/clause06.html#H6.2.10.3.1) | `cid-fonts`, `cmaps`, `pdfa`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | read, interpret, create, edit, preserve | — |
+| [79](https://github.com/pdf-association/pdf-issues/issues/79) | [Alternate image selection with optional content](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.9.5.4) | `images` | interpret | — |
+| [80](https://github.com/pdf-association/pdf-issues/issues/80) | [Spelling of the shading operator](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.2) | `content-streams`, `shading-patterns` | Editorial | — |
+| [81](https://github.com/pdf-association/pdf-issues/issues/81) | [Page resources when a page has no content](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.3.3) | `page-objects`, `page-tree` | read, interpret, create, edit, preserve | — |
+| [83](https://github.com/pdf-association/pdf-issues/issues/83) | [Permitted table nesting beneath a paragraph](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexL.html) | `structure-children` | read, interpret, create, edit, preserve | — |
+| [84](https://github.com/pdf-association/pdf-issues/issues/84) | [Strong-emphasis tagging example](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.4.7.2) | `tagged-pdf` | Editorial | — |
+| [85](https://github.com/pdf-association/pdf-issues/issues/85) | [Reference for a category of painting operators](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.2) | `content-streams`, `shading-patterns` | Editorial | — |
+| [86](https://github.com/pdf-association/pdf-issues/issues/86) | [Name values in document-part metadata](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.12.4.2) | `document-parts` | read, interpret, create, edit, preserve | — |
+| [87](https://github.com/pdf-association/pdf-issues/issues/87) | [Name of a Unicode character](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.10.3) | `text-extraction` | Editorial | — |
+| [89](https://github.com/pdf-association/pdf-issues/issues/89) | [Naming the default standard crypt filter](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.4.1) | `standard-security-handler` | read, interpret, create, edit, preserve | — |
+| [90](https://github.com/pdf-association/pdf-issues/issues/90) | [Placement of a requirement for markup annotations](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.2) | `annotations` | read, interpret, create, edit, preserve | — |
+| [91](https://github.com/pdf-association/pdf-issues/issues/91) | [Default 3D camera projection](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.6.4.1) | `3d-artwork` | read, interpret, create, edit, preserve | — |
+| [93](https://github.com/pdf-association/pdf-issues/issues/93) | [Deprecation of structure-element revision numbers](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.2) | `logical-structure` | read, interpret, create, edit, preserve | — |
+| [94](https://github.com/pdf-association/pdf-issues/issues/94) | [Appearance requirements for a projection annotation](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.24) | `projection-annotations` | read, interpret, create, edit, preserve | — |
+| [95](https://github.com/pdf-association/pdf-issues/issues/95) | [Historical RC4 licensing reference](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.3.1) | `encryption-dictionary` | Editorial | — |
+| [96](https://github.com/pdf-association/pdf-issues/issues/96) | [Platform-specific terminology for wide characters](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.9.2.2.1) | `text-strings` | Editorial | — |
+| [98](https://github.com/pdf-association/pdf-issues/issues/98) | [Numeric limit for ASCII85 decoding](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.4.3) | `ascii85-filter` | read, interpret, create, edit, preserve | — |
+| [101](https://github.com/pdf-association/pdf-issues/issues/101) | [Previous-revision offsets in file trailers](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.4) | `xref-table` | read, interpret, create, edit, preserve | — |
+| [103](https://github.com/pdf-association/pdf-issues/issues/103) | [Result of filling and stroking a path](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.5.3.1) | `paths` | interpret | — |
+| [104](https://github.com/pdf-association/pdf-issues/issues/104) | [Using Annex Q to identify page transparency in archival files](https://pdf-issues.pdfa.org/19005-4-2020/clause06.html#H6.2.9) | `page-transparency`, `pdfa`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | interpret | — |
+| [105](https://github.com/pdf-association/pdf-issues/issues/105) | [Invalid catalog language values](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.2) | `accessibility`, `document-catalog` | read, interpret, create, edit, preserve | — |
+| [106](https://github.com/pdf-association/pdf-issues/issues/106) | [Which dictionary values must be indirect](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.5) | `basic-objects`, `cid-fonts`, `document-catalog`, `page-objects`, `page-tree`, `tagged-pdf`, `type1-fonts`, `type3-fonts`, `xref-table` | read, interpret, create, edit, preserve | — |
+| [108](https://github.com/pdf-association/pdf-issues/issues/108) | [Operator index reference for marked-content sequences](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexA.html#HA.2) | `content-streams` | Editorial | — |
+| [109](https://github.com/pdf-association/pdf-issues/issues/109) | [Editorial revisions across clauses](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.2) | `developer-extensions`, `movies`, `rich-media`, `sounds`, `xref-table` | Editorial | — |
+| [110](https://github.com/pdf-association/pdf-issues/issues/110) | [Catalog eligibility for object stream compression](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.7) | `object-streams` | read, interpret, create, edit, preserve | — |
+| [111](https://github.com/pdf-association/pdf-issues/issues/111) | [Permitted content in a Type 3 CharProc](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.6.4) | `type3-fonts` | read, interpret, create, edit, preserve | — |
+| [113](https://github.com/pdf-association/pdf-issues/issues/113) | [Duplicate wording in the cross-reference description](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.4) | `xref-table` | Editorial | — |
+| [114](https://github.com/pdf-association/pdf-issues/issues/114) | [Direct values in object-stream dictionaries](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.7) | `object-streams` | read, interpret, create, edit, preserve | — |
+| [117](https://github.com/pdf-association/pdf-issues/issues/117) | [Deprecated digest declarations in signature references](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.1) | `digital-signatures` | read, interpret, create, edit, preserve | — |
+| [121](https://github.com/pdf-association/pdf-issues/issues/121) | [Inheritance of signature handler names](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.1) | `digital-signatures` | read, interpret, create, edit, preserve | — |
+| [122](https://github.com/pdf-association/pdf-issues/issues/122) | [Inheritance of submission flags and character sets](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.6.2) | `form-actions` | read, interpret, create, edit, preserve | — |
+| [123](https://github.com/pdf-association/pdf-issues/issues/123) | [PDF/A-4 identification namespace and conformance property](https://pdf-issues.pdfa.org/19005-4-2020/clause06.html#H6.7.3) | `pdfa`, `pdfa-4`, `pdfa-4e`, `pdfa-4f`, `xmp-metadata` | read, interpret, create, edit, preserve | [#844](https://github.com/yhay81/pyropdf/issues/844) |
+| [124](https://github.com/pdf-association/pdf-issues/issues/124) | [Coordinate indices in annotation rectangles](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.2) | `annotations` | read, interpret, create, edit, preserve | — |
+| [126](https://github.com/pdf-association/pdf-issues/issues/126) | [Corrections to examples and typesetting](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.6.1) | `logical-structure`, `marked-content` | Editorial | — |
+| [127](https://github.com/pdf-association/pdf-issues/issues/127) | [Selecting a rich-media view during activation](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.7.2.2.2) | `rich-media` | read, interpret, create, edit, preserve | — |
+| [128](https://github.com/pdf-association/pdf-issues/issues/128) | [Resource dictionaries for Type 3 glyph programs](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.8.3) | `content-streams`, `type3-fonts` | read, interpret, create, edit, preserve | — |
+| [131](https://github.com/pdf-association/pdf-issues/issues/131) | [Field locking and subsequent signature validation updates](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.5) | `signature-fields` | read, interpret, create, edit, preserve | [#849](https://github.com/yhay81/pyropdf/issues/849) |
+| [133](https://github.com/pdf-association/pdf-issues/issues/133) | [Requirements for logical link elements](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.5) | `link-annotations`, `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [134](https://github.com/pdf-association/pdf-issues/issues/134) | [Blending space of isolated transparency groups](https://pdf-issues.pdfa.org/32000-2-2020/clause11.html#H11.6.6) | `transparency-groups` | interpret | — |
+| [135](https://github.com/pdf-association/pdf-issues/issues/135) | [Language values at the document root](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.2) | `document-catalog` | read, interpret, create, edit, preserve | — |
+| [139](https://github.com/pdf-association/pdf-issues/issues/139) | [Neighbor links in outline items](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.3.3) | `outline` | read, interpret, create, edit, preserve | — |
+| [140](https://github.com/pdf-association/pdf-issues/issues/140) | [Structure destinations in local navigation actions](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.6.4.2) | `goto-actions` | read, interpret, create, edit, preserve | — |
+| [141](https://github.com/pdf-association/pdf-issues/issues/141) | [Meaning of the Part structure role](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.4.4) | `tagged-pdf` | Editorial | — |
+| [142](https://github.com/pdf-association/pdf-issues/issues/142) | [Cross-reference from 3D to rich-media content](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.6.2) | `3d-artwork` | Editorial | — |
+| [143](https://github.com/pdf-association/pdf-issues/issues/143) | [Name of the opening parenthesis in string syntax](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.3.4.2) | `basic-objects` | Editorial | — |
+| [144](https://github.com/pdf-association/pdf-issues/issues/144) | [Sample Type 3 font declaration](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.6.4) | `type3-fonts` | Editorial | — |
+| [145](https://github.com/pdf-association/pdf-issues/issues/145) | [Default view selected by media activation](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.7.2.2.2) | `rich-media` | read, interpret, create, edit, preserve | — |
+| [146](https://github.com/pdf-association/pdf-issues/issues/146) | [Offsets for supplemental cross-reference streams](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.8.4) | `xref-streams` | read, interpret, create, edit, preserve | — |
+| [147](https://github.com/pdf-association/pdf-issues/issues/147) | [Formatting of cross-reference subsection records](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.4) | `xref-table` | read, interpret, create, edit, preserve | — |
+| [149](https://github.com/pdf-association/pdf-issues/issues/149) | [Trailer size and cross-reference terminology](https://pdf-issues.pdfa.org/32000-2-2020/clause03.html#H3.13) | `xref-streams`, `xref-table` | read, interpret, create, edit, preserve | — |
+| [150](https://github.com/pdf-association/pdf-issues/issues/150) | [Animation entries for 3D nodes](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.6.4.1) | `3d-artwork` | read, interpret, create, edit, preserve | — |
+| [151](https://github.com/pdf-association/pdf-issues/issues/151) | [Role mapping within the default legacy namespace](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.6.1) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [152](https://github.com/pdf-association/pdf-issues/issues/152) | [Integer-valued entries across dictionaries](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.8.1) | `font-descriptors`, `signature-transforms`, `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [153](https://github.com/pdf-association/pdf-issues/issues/153) | [Numeric version of the linearization layout](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexF.html#HF.3.3) | `linearization` | read, interpret, create, edit, preserve | — |
+| [154](https://github.com/pdf-association/pdf-issues/issues/154) | [Valid join limit for stroked paths](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.4.3.5) | `graphics-state` | read, interpret, create, edit, preserve | — |
+| [155](https://github.com/pdf-association/pdf-issues/issues/155) | [Media types in embedded-file stream dictionaries](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.11.4.1) | `embedded-files` | read, interpret, create, edit, preserve | — |
+| [156](https://github.com/pdf-association/pdf-issues/issues/156) | [Naming nodes referenced by a 3D media instance](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.11.4.1) | `3d-artwork`, `embedded-files` | read, interpret, create, edit, preserve | — |
+| [158](https://github.com/pdf-association/pdf-issues/issues/158) | [Signature algorithm selection from seed values](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.5) | `signature-fields` | read, interpret, create, edit, preserve | — |
+| [159](https://github.com/pdf-association/pdf-issues/issues/159) | [Digest choices in signature seed data](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.5) | `signature-fields` | read, interpret, create, edit, preserve | — |
+| [161](https://github.com/pdf-association/pdf-issues/issues/161) | [Character notation for PDF text strings](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.9.2.2.1) | `text-strings` | read, interpret, create, edit, preserve | — |
+| [162](https://github.com/pdf-association/pdf-issues/issues/162) | [Structure targets in named destinations](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.3.2.4) | `destinations` | read, interpret, create, edit, preserve | — |
+| [163](https://github.com/pdf-association/pdf-issues/issues/163) | [Ownership of settings for a rich-media annotation](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.7.2.1) | `rich-media` | read, interpret, create, edit, preserve | — |
+| [164](https://github.com/pdf-association/pdf-issues/issues/164) | [Encryption constraints on extension declarations](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.3) | `developer-extensions` | read, interpret, create, edit, preserve | — |
+| [165](https://github.com/pdf-association/pdf-issues/issues/165) | [Text showing and glyph displacement](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.4.3) | `text-objects` | interpret | — |
+| [166](https://github.com/pdf-association/pdf-issues/issues/166) | [Relationship of rich-media configurations and instances](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.7.2.3.1) | `rich-media` | read, interpret, create, edit, preserve | — |
+| [170](https://github.com/pdf-association/pdf-issues/issues/170) | [Appearance states for unselected radio buttons](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.2.4) | `button-fields` | read, interpret, create, edit, preserve | — |
+| [173](https://github.com/pdf-association/pdf-issues/issues/173) | [Deprecation of nested FDF data](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.8.3.1) | `fdf` | read, interpret, create, edit, preserve | — |
+| [174](https://github.com/pdf-association/pdf-issues/issues/174) | [Which fields participate in a reset](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.6.3) | `form-actions` | read, interpret, create, edit, preserve | — |
+| [176](https://github.com/pdf-association/pdf-issues/issues/176) | [Media type for form data interchange](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.8) | `fdf` | read, interpret, create, edit, preserve | — |
+| [178](https://github.com/pdf-association/pdf-issues/issues/178) | [Weights reported in font descriptors](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.8.1) | `font-descriptors` | read, interpret, create, edit, preserve | — |
+| [179](https://github.com/pdf-association/pdf-issues/issues/179) | [Best-effort settings referenced by media clip data](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.2.4.2) | `renditions` | Editorial | — |
+| [181](https://github.com/pdf-association/pdf-issues/issues/181) | [ICC editions and embedded profile versions](https://pdf-issues.pdfa.org/32000-2-2020/clause00.html#H0.4) | `color-conversion`, `icc-based-color-space` | read, interpret, create, edit, preserve | — |
+| [184](https://github.com/pdf-association/pdf-issues/issues/184) | [Interpretation of encryption key lengths](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.6) | `crypt-filters` | read, interpret, create, edit, preserve | — |
+| [187](https://github.com/pdf-association/pdf-issues/issues/187) | [Types and applicability of document requirements](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.11.1) | `document-requirements` | read, interpret, create, edit, preserve | — |
+| [188](https://github.com/pdf-association/pdf-issues/issues/188) | [Default placement of block and inline structures](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.5.4.2) | `tagged-pdf` | interpret | — |
+| [189](https://github.com/pdf-association/pdf-issues/issues/189) | [Layout attributes and writing direction](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.5.4.2) | `tagged-pdf` | Editorial | — |
+| [190](https://github.com/pdf-association/pdf-issues/issues/190) | [Zero descent in font metrics](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.8.1) | `font-descriptors` | read, interpret, create, edit, preserve | — |
+| [191](https://github.com/pdf-association/pdf-issues/issues/191) | [Numeric domains across PDF entries](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.3) | `text-fields` | read, interpret, create, edit, preserve | — |
+| [193](https://github.com/pdf-association/pdf-issues/issues/193) | [Representing arbitrary bytes in PDF syntax](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.2.2) | `lexical-conventions` | read, interpret, create, edit, preserve | — |
+| [195](https://github.com/pdf-association/pdf-issues/issues/195) | [Meaning of 3D processor requirements](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.11.2) | `3d-artwork`, `document-requirements` | read, interpret, create, edit, preserve | — |
+| [196](https://github.com/pdf-association/pdf-issues/issues/196) | [Context of public-key permission bits](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.5.3) | `public-key-security-handler` | read, interpret, create, edit, preserve | [#864](https://github.com/yhay81/pyropdf/issues/864) |
+| [200](https://github.com/pdf-association/pdf-issues/issues/200) | [Matching tagged cells to table headers](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.4.8.3) | `tagged-pdf` | interpret | — |
+| [211](https://github.com/pdf-association/pdf-issues/issues/211) | [Signature contents excluded from encryption](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.2) | `digital-signatures`, `encryption-dictionary` | read, interpret, create, edit, preserve | — |
+| [214](https://github.com/pdf-association/pdf-issues/issues/214) | [Byte and text representations of tree keys](https://pdf-issues.pdfa.org/32000-2-2020/clause00.html) | `name-dictionary`, `name-trees`, `renditions`, `text-strings` | read, interpret, create, edit, preserve | — |
+| [215](https://github.com/pdf-association/pdf-issues/issues/215) | [Precedence of image mask definitions](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.9.5.1) | `images` | interpret | — |
+| [216](https://github.com/pdf-association/pdf-issues/issues/216) | [Decoding unused streams with damaged data](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.4.1) | `ascii85-filter`, `basic-objects` | read, interpret, create, edit, preserve | — |
+| [218](https://github.com/pdf-association/pdf-issues/issues/218) | [Shape of the references in signature permissions](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.6) | `permissions` | read, interpret, create, edit, preserve | — |
+| [219](https://github.com/pdf-association/pdf-issues/issues/219) | [Signature subfilter declarations](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.5.2) | `digital-signatures`, `public-key-security-handler` | read, interpret, create, edit, preserve | — |
+| [222](https://github.com/pdf-association/pdf-issues/issues/222) | [Web Capture command dictionary cross-reference](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.10.5.3) | `web-capture` | Editorial | — |
+| [223](https://github.com/pdf-association/pdf-issues/issues/223) | [Column headings for standard layout attributes](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.5.4.1) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [224](https://github.com/pdf-association/pdf-issues/issues/224) | [Terminology for standard structure attributes](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.3.3) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [225](https://github.com/pdf-association/pdf-issues/issues/225) | [Membership of optional-content radio groups](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.11.4.3) | `optional-content` | read, interpret, create, edit, preserve | — |
+| [226](https://github.com/pdf-association/pdf-issues/issues/226) | [Syntax of structure attribute objects](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.6.1) | `logical-structure`, `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [228](https://github.com/pdf-association/pdf-issues/issues/228) | [Embedding newer ICC profiles within legacy profiles](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.6.5.5) | `icc-based-color-space` | read, interpret, create, edit, preserve | — |
+| [229](https://github.com/pdf-association/pdf-issues/issues/229) | [Registered names and dictionary-specific exceptions](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexE.html#HF.3) | `private-names` | read, interpret, create, edit, preserve | — |
+| [236](https://github.com/pdf-association/pdf-issues/issues/236) | [Removal of the SHA-3 change to signature-reference DigestMethod values](https://pdf-issues.pdfa.org/32001-2022/clause05.html#H5.1.3) | `digital-signatures`, `sha3-hashes` | read, interpret, create, edit, preserve | [#867](https://github.com/yhay81/pyropdf/issues/867) |
+| [239](https://github.com/pdf-association/pdf-issues/issues/239) | [Meaning of a declared extension level](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.5) | `developer-extensions` | read, interpret, create, edit, preserve | — |
+| [242](https://github.com/pdf-association/pdf-issues/issues/242) | [Direct storage of the extension dictionary](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.2) | `document-catalog` | read, interpret, create, edit, preserve | — |
+| [246](https://github.com/pdf-association/pdf-issues/issues/246) | [Direct length in cross-reference streams](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.8.2) | `xref-streams` | read, interpret, create, edit, preserve | — |
+| [251](https://github.com/pdf-association/pdf-issues/issues/251) | [Dates with an unspecified time zone](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.9.4) | `dates` | read, interpret, create, edit, preserve | — |
+| [254](https://github.com/pdf-association/pdf-issues/issues/254) | [Resolving structure attribute classes](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.6.2) | `logical-structure` | read, interpret, create, edit, preserve | — |
+| [256](https://github.com/pdf-association/pdf-issues/issues/256) | [Base addresses for relative URI actions](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.6.4.8) | `uri-actions` | read, interpret, create, edit, preserve | — |
+| [257](https://github.com/pdf-association/pdf-issues/issues/257) | [MIME requirements on embedded media clip data](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.2.4.2) | `renditions` | read, interpret, create, edit, preserve | — |
+| [258](https://github.com/pdf-association/pdf-issues/issues/258) | [Named page destinations in target dictionaries](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.6.4.4) | `embedded-goto-actions` | read, interpret, create, edit, preserve | — |
+| [259](https://github.com/pdf-association/pdf-issues/issues/259) | [Spelling convention for path joins](https://pdf-issues.pdfa.org/32000-2-2020/clause00.html) | `paths` | Editorial | — |
+| [260](https://github.com/pdf-association/pdf-issues/issues/260) | [Halftone origin in the graphics state](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.4.1) | `graphics-state` | read, interpret, create, edit, preserve | — |
+| [261](https://github.com/pdf-association/pdf-issues/issues/261) | [Document parts in the catalog diagram](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.1) | `document-catalog`, `document-parts` | Editorial | — |
+| [264](https://github.com/pdf-association/pdf-issues/issues/264) | [Punctuation in FDF descriptions](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.8.3.1) | `fdf` | Editorial | — |
+| [265](https://github.com/pdf-association/pdf-issues/issues/265) | [Navigation action targeting a 3D view](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.6.4.16) | `goto-3d-view-actions` | read, interpret, create, edit, preserve | — |
+| [269](https://github.com/pdf-association/pdf-issues/issues/269) | [Case of the conditional calculator operator](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.10.5.2) | `calculator-functions` | Editorial | — |
+| [271](https://github.com/pdf-association/pdf-issues/issues/271) | [Minimal-file examples](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.3.2) | `page-objects`, `page-tree` | Editorial | — |
+| [272](https://github.com/pdf-association/pdf-issues/issues/272) | [Extra bytes on syntax lines](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.2) | `file-header` | read, interpret, create, edit, preserve | — |
+| [275](https://github.com/pdf-association/pdf-issues/issues/275) | [Attachment panels in viewer preferences](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.2) | `viewer-preferences` | read, interpret, create, edit, preserve | — |
+| [276](https://github.com/pdf-association/pdf-issues/issues/276) | [Representation of byte strings](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.9.2.4) | `text-strings` | read, interpret, create, edit, preserve | — |
+| [277](https://github.com/pdf-association/pdf-issues/issues/277) | [Consecutive code mappings in ToUnicode ranges](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.10.3) | `cmaps`, `text-extraction` | read, interpret, create, edit, preserve | — |
+| [278](https://github.com/pdf-association/pdf-issues/issues/278) | [Text describing predefined code maps](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.7.5.2) | `cmaps` | Editorial | — |
+| [280](https://github.com/pdf-association/pdf-issues/issues/280) | [Pattern resources in a colour-space dictionary](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.8.3) | `content-streams` | read, interpret, create, edit, preserve | — |
+| [282](https://github.com/pdf-association/pdf-issues/issues/282) | [Navigation actions for rich-media 3D views](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.6.4.16) | `goto-3d-view-actions` | read, interpret, create, edit, preserve | — |
+| [283](https://github.com/pdf-association/pdf-issues/issues/283) | [Type-specific 3D markup references](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.6.7.3.6) | `3d-artwork` | Editorial | — |
+| [284](https://github.com/pdf-association/pdf-issues/issues/284) | [3D coordinate units and geographic markup](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.10.2) | `geospatial`, `rich-media` | read, interpret, create, edit, preserve | — |
+| [285](https://github.com/pdf-association/pdf-issues/issues/285) | [Unicode mapping for a PDFDocEncoding control code](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexD.html#HD.3) | `character-tables` | read, interpret, create, edit, preserve | — |
+| [286](https://github.com/pdf-association/pdf-issues/issues/286) | [MathML as an owner of structure attributes](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.5.2) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [287](https://github.com/pdf-association/pdf-issues/issues/287) | [Requirement for an annotation border](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.2) | `annotations` | read, interpret, create, edit, preserve | — |
+| [288](https://github.com/pdf-association/pdf-issues/issues/288) | [Actions that reference named destinations](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.3.2.4) | `destinations` | Editorial | — |
+| [289](https://github.com/pdf-association/pdf-issues/issues/289) | [Precedence among structure attribute classes](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.6.2) | `logical-structure` | interpret | — |
+| [290](https://github.com/pdf-association/pdf-issues/issues/290) | [Distinction between metadata and part properties](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.12.4.1) | `document-parts` | read, interpret, create, edit, preserve | — |
+| [291](https://github.com/pdf-association/pdf-issues/issues/291) | [Inherited page entries in a linearized file](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.8.3) | `content-streams`, `form-xobjects`, `linearization` | read, interpret, create, edit, preserve | — |
+| [292](https://github.com/pdf-association/pdf-issues/issues/292) | [Resources required by form XObjects](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.10.2) | `form-xobjects` | read, interpret, create, edit, preserve | — |
+| [293](https://github.com/pdf-association/pdf-issues/issues/293) | [Whitespace in the ASCII85 terminator](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.4.3) | `ascii85-filter` | read, interpret, create, edit, preserve | — |
+| [294](https://github.com/pdf-association/pdf-issues/issues/294) | [ICC data stream table heading](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.7.3.1) | `tiling-patterns` | Editorial | — |
+| [295](https://github.com/pdf-association/pdf-issues/issues/295) | [Type 3 glyph programs in transparency detection](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexQ.html#HQ.5) | `page-transparency`, `type3-fonts` | interpret | — |
+| [296](https://github.com/pdf-association/pdf-issues/issues/296) | [Encoding of XML metadata packets](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.3.2) | `xmp-metadata` | read, interpret, create, edit, preserve | — |
+| [297](https://github.com/pdf-association/pdf-issues/issues/297) | [Versions supporting annotation replies](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.2) | `annotations` | read, interpret, create, edit, preserve | — |
+| [298](https://github.com/pdf-association/pdf-issues/issues/298) | [Introduction of the file specification type name](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.11.3) | `file-specifications` | read, interpret, create, edit, preserve | — |
+| [299](https://github.com/pdf-association/pdf-issues/issues/299) | [Version declarations for annotation border styles](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.5) | `free-text-annotations`, `link-annotations` | read, interpret, create, edit, preserve | — |
+| [300](https://github.com/pdf-association/pdf-issues/issues/300) | [Leading zeroes in numeric objects](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.3.3) | `basic-objects` | read, interpret, create, edit, preserve | — |
+| [301](https://github.com/pdf-association/pdf-issues/issues/301) | [Case of a marked-content operand](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.6.1) | `marked-content` | Editorial | — |
+| [302](https://github.com/pdf-association/pdf-issues/issues/302) | [Nesting of compatibility, text and graphics-state operators](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.8.2) | `content-streams`, `marked-content`, `version-compatibility` | read, interpret, create, edit, preserve | — |
+| [303](https://github.com/pdf-association/pdf-issues/issues/303) | [Conditions for opening and closing marked content](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.6.1) | `marked-content` | read, interpret, create, edit, preserve | — |
+| [304](https://github.com/pdf-association/pdf-issues/issues/304) | [Sub-page navigation semantics](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.4.4.2) | `presentations` | read, interpret, create, edit, preserve | — |
+| [305](https://github.com/pdf-association/pdf-issues/issues/305) | [Status of structure attribute revision numbers](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.6.2) | `logical-structure` | read, interpret, create, edit, preserve | — |
+| [306](https://github.com/pdf-association/pdf-issues/issues/306) | [Character notation for an abbreviated image key](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.9.7) | `inline-images` | Editorial | — |
+| [307](https://github.com/pdf-association/pdf-issues/issues/307) | [Null values in tree leaf arrays](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.9.6) | `name-trees`, `number-trees` | read, interpret, create, edit, preserve | — |
+| [308](https://github.com/pdf-association/pdf-issues/issues/308) | [Null members of structure content arrays](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.2) | `logical-structure` | read, interpret, create, edit, preserve | — |
+| [309](https://github.com/pdf-association/pdf-issues/issues/309) | [Colourants in NChannel spaces](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.6.6.5) | `devicen-color-space` | read, interpret, create, edit, preserve | — |
+| [310](https://github.com/pdf-association/pdf-issues/issues/310) | [Transfer functions in halftone dictionaries](https://pdf-issues.pdfa.org/32000-2-2020/clause10.html#H10.6.5.3) | `halftones` | interpret | — |
+| [311](https://github.com/pdf-association/pdf-issues/issues/311) | [Selection of component-specific halftones](https://pdf-issues.pdfa.org/32000-2-2020/clause10.html#H10.6.5.6) | `halftones` | interpret | — |
+| [313](https://github.com/pdf-association/pdf-issues/issues/313) | [Additional-action references from field dictionaries](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.4.1) | `interactive-form` | Editorial | — |
+| [318](https://github.com/pdf-association/pdf-issues/issues/318) | [Byte representation of the default appearance](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.6) | `free-text-annotations`, `interactive-form`, `variable-text` | read, interpret, create, edit, preserve | — |
+| [319](https://github.com/pdf-association/pdf-issues/issues/319) | [End markers when counting stream bytes](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.3.8.2) | `basic-objects` | read, interpret, create, edit, preserve | — |
+| [320](https://github.com/pdf-association/pdf-issues/issues/320) | [Ordering article beads](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.3.3) | `articles`, `page-objects`, `page-tree` | interpret | — |
+| [321](https://github.com/pdf-association/pdf-issues/issues/321) | [Constraints on geographic coordinate systems](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.10.3) | `geospatial` | read, interpret, create, edit, preserve | — |
+| [322](https://github.com/pdf-association/pdf-issues/issues/322) | [Types used by common PDF structures](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.9.1) | `basic-objects`, `text-strings` | read, interpret, create, edit, preserve | — |
+| [324](https://github.com/pdf-association/pdf-issues/issues/324) | [Reference for composite font data](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.7.6.1) | `type0-fonts` | Editorial | — |
+| [325](https://github.com/pdf-association/pdf-issues/issues/325) | [Sequence of operations in revision 6 key hashing](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.4.3.4) | `standard-security-handler` | read, interpret, create, edit, preserve | — |
+| [327](https://github.com/pdf-association/pdf-issues/issues/327) | [Boundaries between numeric tokens](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.3.3) | `basic-objects` | read, interpret, create, edit, preserve | — |
+| [328](https://github.com/pdf-association/pdf-issues/issues/328) | [Choosing file identifiers](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.4) | `file-identifiers` | read, interpret, create, edit, preserve | — |
+| [330](https://github.com/pdf-association/pdf-issues/issues/330) | [Type of language values in tagged content](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.9.2.2) | `accessibility` | read, interpret, create, edit, preserve | — |
+| [331](https://github.com/pdf-association/pdf-issues/issues/331) | [PDF version introducing linearization](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexF.html#HF.3.2) | `linearization` | Editorial | — |
+| [333](https://github.com/pdf-association/pdf-issues/issues/333) | [Reference for explicit image masking](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.9.6.2) | `image-masks` | Editorial | — |
+| [334](https://github.com/pdf-association/pdf-issues/issues/334) | [Standard tags for marked sequences](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.6.1) | `marked-content` | read, interpret, create, edit, preserve | — |
+| [335](https://github.com/pdf-association/pdf-issues/issues/335) | [Valid locations for marked-content operators](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.6.1) | `marked-content` | read, interpret, create, edit, preserve | — |
+| [336](https://github.com/pdf-association/pdf-issues/issues/336) | [Namespace-specific nesting of subscripts under code](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexL.html) | `namespace-inclusion`, `structure-children` | read, interpret, create, edit, preserve | [#839](https://github.com/yhay81/pyropdf/issues/839) |
+| [337](https://github.com/pdf-association/pdf-issues/issues/337) | [Symbolic flags for complete and subset fonts](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.8.1) | `font-descriptors` | read, interpret, create, edit, preserve | — |
+| [339](https://github.com/pdf-association/pdf-issues/issues/339) | [Page association of structural content](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.5.3) | `logical-structure` | read, interpret, create, edit, preserve | — |
+| [340](https://github.com/pdf-association/pdf-issues/issues/340) | [Names reserved for private extensions](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexE.html#HF.3) | `private-names` | read, interpret, create, edit, preserve | — |
+| [341](https://github.com/pdf-association/pdf-issues/issues/341) | [Terminology for incremental revisions](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.6) | `incremental-update` | Editorial | — |
+| [343](https://github.com/pdf-association/pdf-issues/issues/343) | [Relationships between structure parents and referenced objects](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.5.4) | `logical-structure` | read, interpret, create, edit, preserve | — |
+| [345](https://github.com/pdf-association/pdf-issues/issues/345) | [Description of blending calculations and diagrams](https://pdf-issues.pdfa.org/32000-2-2020/clause11.html#H11.3.5) | `blend-modes` | interpret | — |
+| [346](https://github.com/pdf-association/pdf-issues/issues/346) | [Inheritance of list continuation attributes](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.5.5) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [347](https://github.com/pdf-association/pdf-issues/issues/347) | [Inheritance of artifact properties](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.5.8) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [348](https://github.com/pdf-association/pdf-issues/issues/348) | [Catalog references to a structure-tree root](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.2) | `document-catalog` | read, interpret, create, edit, preserve | — |
+| [349](https://github.com/pdf-association/pdf-issues/issues/349) | [Where root-child constraints apply](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.4.3) | `structure-children`, `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [354](https://github.com/pdf-association/pdf-issues/issues/354) | [Attribute owner in a structure object](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.6.1) | `logical-structure` | read, interpret, create, edit, preserve | — |
+| [356](https://github.com/pdf-association/pdf-issues/issues/356) | [Spacing in a replacement-text example](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.9.4) | `accessibility` | Editorial | — |
+| [357](https://github.com/pdf-association/pdf-issues/issues/357) | [CSS ownership of standard structure attributes](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.5.2) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [358](https://github.com/pdf-association/pdf-issues/issues/358) | [Numeric type terminology across clauses](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.10.2) | `geospatial`, `opi` | read, interpret, create, edit, preserve | — |
+| [360](https://github.com/pdf-association/pdf-issues/issues/360) | [Defaults when applying a graphics-state dictionary](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.4.5) | `graphics-state` | read, interpret, create, edit, preserve | — |
+| [362](https://github.com/pdf-association/pdf-issues/issues/362) | [Resources associated with a 3D stream](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.6.3.1) | `3d-artwork` | read, interpret, create, edit, preserve | — |
+| [364](https://github.com/pdf-association/pdf-issues/issues/364) | [Replacement text in a hyphenation example](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.9.4) | `accessibility` | Editorial | — |
+| [365](https://github.com/pdf-association/pdf-issues/issues/365) | [Brace delimiters in calculator functions](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.2.2) | `calculator-functions`, `lexical-conventions` | read, interpret, create, edit, preserve | — |
+| [366](https://github.com/pdf-association/pdf-issues/issues/366) | [Sample depth of predictive filter parameters](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.4.4.3) | `flate-filter`, `images`, `lzw-filter` | read, interpret, create, edit, preserve | — |
+| [367](https://github.com/pdf-association/pdf-issues/issues/367) | [Scope of legacy procedure sets](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.2) | `procedure-sets` | read, interpret, create, edit, preserve | — |
+| [368](https://github.com/pdf-association/pdf-issues/issues/368) | [Graphics-state membership of the text matrix](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.4.2) | `graphics-state`, `text-objects` | read, interpret, create, edit, preserve | — |
+| [371](https://github.com/pdf-association/pdf-issues/issues/371) | [Valid flatness tolerance](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.4.1) | `graphics-state`, `scan-conversion` | interpret | — |
+| [372](https://github.com/pdf-association/pdf-issues/issues/372) | [Description of text rendering modes](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.3.6) | `text-state` | Editorial | — |
+| [373](https://github.com/pdf-association/pdf-issues/issues/373) | [Operands for text positioning](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.4.2) | `text-objects` | Editorial | — |
+| [374](https://github.com/pdf-association/pdf-issues/issues/374) | [Property lists associating files with marked content](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.13.5) | `associated-files` | read, interpret, create, edit, preserve | — |
+| [376](https://github.com/pdf-association/pdf-issues/issues/376) | [Units and default of horizontal text scaling](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.3.4) | `text-objects`, `text-state` | read, interpret, create, edit, preserve | — |
+| [379](https://github.com/pdf-association/pdf-issues/issues/379) | [Syntactic integer forms in object headers](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.3.10) | `basic-objects` | read, interpret, create, edit, preserve | — |
+| [382](https://github.com/pdf-association/pdf-issues/issues/382) | [Binary representation of embedded-file checksums](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.11.4.1) | `embedded-files` | read, interpret, create, edit, preserve | — |
+| [384](https://github.com/pdf-association/pdf-issues/issues/384) | [Names of the standard font set](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.6.2.2) | `type1-fonts` | Editorial | — |
+| [386](https://github.com/pdf-association/pdf-issues/issues/386) | [Button field values in interoperable forms](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.2.2) | `button-fields` | read, interpret, create, edit, preserve | — |
+| [389](https://github.com/pdf-association/pdf-issues/issues/389) | [Page-number references in linearization data](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexF.html#HF.3.3) | `linearization` | Editorial | — |
+| [391](https://github.com/pdf-association/pdf-issues/issues/391) | [Relationships for embedded and associated files](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.11.3) | `associated-files`, `file-specifications`, `pdfa`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | read, interpret, create, edit, preserve | [#844](https://github.com/yhay81/pyropdf/issues/844) |
+| [392](https://github.com/pdf-association/pdf-issues/issues/392) | [Presence of a text field value](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.3) | `text-fields` | read, interpret, create, edit, preserve | — |
+| [393](https://github.com/pdf-association/pdf-issues/issues/393) | [Restrictions for variable text fields](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.4.3) | `variable-text` | read, interpret, create, edit, preserve | — |
+| [396](https://github.com/pdf-association/pdf-issues/issues/396) | [Namespace registration in the structure tree](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.2) | `logical-structure` | read, interpret, create, edit, preserve | — |
+| [397](https://github.com/pdf-association/pdf-issues/issues/397) | [Namespace notation for XML metadata](https://pdf-issues.pdfa.org/32000-2-2020/clause04.html#H4.2) | `xmp-metadata` | read, interpret, create, edit, preserve | — |
+| [398](https://github.com/pdf-association/pdf-issues/issues/398) | [UTF-8 bytes in a sample metadata packet](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.3.3) | `document-info` | Editorial | — |
+| [399](https://github.com/pdf-association/pdf-issues/issues/399) | [Applicability of an extension's base PDF version](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.4) | `developer-extensions`, `incremental-update` | read, interpret, create, edit, preserve | — |
+| [402](https://github.com/pdf-association/pdf-issues/issues/402) | [Metadata and trailer document identifiers](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexH.html#HH.2) | `annotations`, `basic-objects`, `xmp-metadata` | read, interpret, create, edit, preserve | — |
+| [403](https://github.com/pdf-association/pdf-issues/issues/403) | [Metadata and file-association exceptions by object type](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.1) | `associated-files`, `developer-extensions`, `digital-signatures`, `linearization`, `xref-streams` | read, interpret, create, edit, preserve | — |
+| [404](https://github.com/pdf-association/pdf-issues/issues/404) | [Digest identifiers for SHAKE256 and the EdDSA signature profiles](https://pdf-issues.pdfa.org/32001-2022/clause05.html#H5.1.4) | `ecc-signatures`, `sha3-hashes` | read, interpret, create, edit, preserve | [#867](https://github.com/yhay81/pyropdf/issues/867) |
+| [410](https://github.com/pdf-association/pdf-issues/issues/410) | [Typesetting in the seed certificate table](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.5) | `signature-fields` | Editorial | — |
+| [414](https://github.com/pdf-association/pdf-issues/issues/414) | [Temporary-file policy for media clips](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.2.4.2) | `renditions` | read, interpret, create, edit, preserve | — |
+| [415](https://github.com/pdf-association/pdf-issues/issues/415) | [Name syntax versus operators in tagging examples](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexH.html) | `tagged-pdf` | Editorial | — |
+| [418](https://github.com/pdf-association/pdf-issues/issues/418) | [Missing structural tags in a worked example](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexH.html#HH.8.2) | `tagged-pdf` | Editorial | — |
+| [419](https://github.com/pdf-association/pdf-issues/issues/419) | [Correspondence of an example to its structure diagram](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexH.html#HH.8.2) | `tagged-pdf` | Editorial | — |
+| 422 | [Typography of names in an annotation appearance example](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.5) | `appearance-streams` | Editorial | — |
+| [424](https://github.com/pdf-association/pdf-issues/issues/424) | [Named filters in a crypt dictionary example](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.6) | `crypt-filters` | Editorial | — |
+| [425](https://github.com/pdf-association/pdf-issues/issues/425) | [Content-list structure example](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexH.html#HH.8.2) | `tagged-pdf` | Editorial | — |
+| [428](https://github.com/pdf-association/pdf-issues/issues/428) | [Renderer-dependent output from overlapping pattern tiles](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.7.3.1) | `pdfa`, `pdfa-4`, `pdfa-4e`, `pdfa-4f`, `tiling-patterns` | read, interpret, create, edit, preserve | — |
+| [431](https://github.com/pdf-association/pdf-issues/issues/431) | [Meaning of page references in structural content](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.5.2) | `logical-structure` | read, interpret, create, edit, preserve | — |
+| [434](https://github.com/pdf-association/pdf-issues/issues/434) | [Path termination and painting rules](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.5.3.1) | `paths` | interpret | — |
+| [437](https://github.com/pdf-association/pdf-issues/issues/437) | [Distinguishing interactive roles in tagged content](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.4.7.2) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [438](https://github.com/pdf-association/pdf-issues/issues/438) | [Dictionary key uniqueness after name decoding](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.3.7) | `basic-objects` | read, interpret, create, edit, preserve | — |
+| [439](https://github.com/pdf-association/pdf-issues/issues/439) | [Treatment of catalog entries under encryption](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.7) | `document-catalog`, `object-streams` | read, interpret, create, edit, preserve | — |
+| [440](https://github.com/pdf-association/pdf-issues/issues/440) | [Meaning of conditional entries in structure matrices](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexL.html) | `namespace-inclusion`, `structure-children` | read, interpret, create, edit, preserve | — |
+| [444](https://github.com/pdf-association/pdf-issues/issues/444) | [Alternative path representations for ink annotations](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.13) | `ink-annotations`, `polygon-annotations` | read, interpret, create, edit, preserve | — |
+| [446](https://github.com/pdf-association/pdf-issues/issues/446) | [Explanatory note on calculator functions](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.10.5.1) | `calculator-functions` | Editorial | — |
+| [448](https://github.com/pdf-association/pdf-issues/issues/448) | [Version identification for long-term signature validation data](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.4.1) | `digital-signatures`, `document-security-store`, `document-timestamps` | read, interpret, create, edit, preserve | — |
+| [449](https://github.com/pdf-association/pdf-issues/issues/449) | [Organization of media-player selection properties](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.2.7.2.1) | `renditions` | Editorial | — |
+| [452](https://github.com/pdf-association/pdf-issues/issues/452) | [Section reference for structure content items](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.5.1) | `logical-structure` | Editorial | — |
+| [453](https://github.com/pdf-association/pdf-issues/issues/453) | [Width for glyphs absent from a font](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.8.1) | `font-descriptors` | read, interpret, create, edit, preserve | — |
+| [461](https://github.com/pdf-association/pdf-issues/issues/461) | [Minus sign in the document string encoding](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexD.html#HD.3) | `character-tables` | read, interpret, create, edit, preserve | — |
+| [462](https://github.com/pdf-association/pdf-issues/issues/462) | [Relevant entries in ToUnicode stream dictionaries](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.10.3) | `text-extraction` | read, interpret, create, edit, preserve | — |
+| [463](https://github.com/pdf-association/pdf-issues/issues/463) | [Location of structure parent information](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.10.2) | `form-xobjects`, `logical-structure` | read, interpret, create, edit, preserve | — |
+| [468](https://github.com/pdf-association/pdf-issues/issues/468) | [Behavior of multiple selection in a choice field](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.4) | `choice-fields` | interpret | — |
+| [469](https://github.com/pdf-association/pdf-issues/issues/469) | [Length of an encrypted stream](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.3) | `encryption-dictionary` | read, interpret, create, edit, preserve | — |
+| [470](https://github.com/pdf-association/pdf-issues/issues/470) | [Content represented by the Formula role](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.4.8.6) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [474](https://github.com/pdf-association/pdf-issues/issues/474) | [Nonstandard weight increments in font descriptors](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.8.1) | `font-descriptors` | read, interpret, create, edit, preserve | — |
+| [475](https://github.com/pdf-association/pdf-issues/issues/475) | [Reserved public-key permission bits in encrypted files](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.5.3) | `integrity-protection`, `public-key-security-handler` | read, interpret, create, edit, preserve | [#864](https://github.com/yhay81/pyropdf/issues/864), [#866](https://github.com/yhay81/pyropdf/issues/866) |
+| [477](https://github.com/pdf-association/pdf-issues/issues/477) | [Hierarchy of collection navigator provisions](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.3.5.3) | `collections`, `navigators` | Editorial | — |
+| [479](https://github.com/pdf-association/pdf-issues/issues/479) | [Reference to the annotation reply relationship](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.3) | `annotations` | Editorial | — |
+| [481](https://github.com/pdf-association/pdf-issues/issues/481) | [Ways to include embedded-file streams](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.11.4.1) | `alternate-presentations`, `embedded-files` | read, interpret, create, edit, preserve | — |
+| [482](https://github.com/pdf-association/pdf-issues/issues/482) | [URL entries identifying an external output profile](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.11.5) | `output-intents` | read, interpret, create, edit, preserve | — |
+| [483](https://github.com/pdf-association/pdf-issues/issues/483) | [Replacement and alternative text in a content stream](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.9.4) | `accessibility` | read, interpret, create, edit, preserve | — |
+| [484](https://github.com/pdf-association/pdf-issues/issues/484) | [Named resources for artifact properties](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.2.2.2) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [494](https://github.com/pdf-association/pdf-issues/issues/494) | [Octal escapes in encoded text strings](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.3.4.2) | `basic-objects` | read, interpret, create, edit, preserve | — |
+| [500](https://github.com/pdf-association/pdf-issues/issues/500) | [Cross-reference stream processing](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.8.3) | `xref-streams` | read, interpret, create, edit, preserve | — |
+| [513](https://github.com/pdf-association/pdf-issues/issues/513) | [Labels in the line-end style table](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.7) | `line-annotations` | Editorial | — |
+| [515](https://github.com/pdf-association/pdf-issues/issues/515) | [Interior colour for closed arrow line ends](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.7) | `line-annotations` | read, interpret, create, edit, preserve | — |
+| [518](https://github.com/pdf-association/pdf-issues/issues/518) | [Registry information in a composite font](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.7.3) | `cid-fonts`, `cmaps` | read, interpret, create, edit, preserve | — |
+| [519](https://github.com/pdf-association/pdf-issues/issues/519) | [Publication date of the CMap and CID font reference](https://pdf-issues.pdfa.org/32000-2-2020/clause02.html) | `cid-fonts`, `cmaps` | Editorial | — |
+| [522](https://github.com/pdf-association/pdf-issues/issues/522) | [Trailer size explanatory note](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.5) | `xref-streams`, `xref-table` | read, interpret, create, edit, preserve | — |
+| [524](https://github.com/pdf-association/pdf-issues/issues/524) | [Data type of the annotation rectangle difference](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.11) | `caret-annotations`, `free-text-annotations`, `square-circle-annotations` | read, interpret, create, edit, preserve | — |
+| [527](https://github.com/pdf-association/pdf-issues/issues/527) | [ASCII85 example terminator](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.4.1) | `ascii85-filter`, `basic-objects` | read, interpret, create, edit, preserve | — |
+| [529](https://github.com/pdf-association/pdf-issues/issues/529) | [Other file associations on an encryption wrapper](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.7) | `associated-files`, `unencrypted-wrapper` | read, interpret, create, edit, preserve | — |
+| [533](https://github.com/pdf-association/pdf-issues/issues/533) | [Local points for geographic mapping](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.10.2) | `geospatial` | read, interpret, create, edit, preserve | — |
+| [534](https://github.com/pdf-association/pdf-issues/issues/534) | [Mapping mode of a geospatial measure](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.10.2) | `geospatial` | read, interpret, create, edit, preserve | — |
+| [536](https://github.com/pdf-association/pdf-issues/issues/536) | [Centering a rectangle-fit destination](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.3.2.2) | `destinations` | interpret | — |
+| [541](https://github.com/pdf-association/pdf-issues/issues/541) | [Index reference for starting a text object](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexA.html#HA.2) | `content-streams` | Editorial | — |
+| [542](https://github.com/pdf-association/pdf-issues/issues/542) | [Block padding for AES encryption](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.3.1) | `encryption-dictionary` | read, interpret, create, edit, preserve | — |
+| [549](https://github.com/pdf-association/pdf-issues/issues/549) | [Painting an undefined path](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.5.3.1) | `paths` | interpret | — |
+| [550](https://github.com/pdf-association/pdf-issues/issues/550) | [Escaped carriage returns in strings used to show text](https://pdf-issues.pdfa.org/32000-2-2020/clause09.html#H9.4.3) | `text-objects` | read, interpret, create, edit, preserve | — |
+| [551](https://github.com/pdf-association/pdf-issues/issues/551) | [Resolving named colour resources in a content stream](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.6.8) | `colour-operators` | read, interpret, create, edit, preserve | — |
+| [553](https://github.com/pdf-association/pdf-issues/issues/553) | [Naming variable-font instances that are embedded as static fonts](https://pdf-issues.pdfa.org/32000-2-2020/clause02.html) | `embedded-fonts`, `truetype-fonts` | read, interpret, create, edit, preserve | — |
+| [562](https://github.com/pdf-association/pdf-issues/issues/562) | [Byte mappings in the document character table](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexD.html#HD.3) | `character-tables` | read, interpret, create, edit, preserve | — |
+| [563](https://github.com/pdf-association/pdf-issues/issues/563) | [Graphics operators within an example path](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexH.html#HH.3) | `text-objects` | Editorial | — |
+| [567](https://github.com/pdf-association/pdf-issues/issues/567) | [Language-dependent visibility versus content language](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.11.4.4) | `accessibility`, `optional-content` | interpret | — |
+| [568](https://github.com/pdf-association/pdf-issues/issues/568) | [File associations on XML metadata streams](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.13.1) | `associated-files`, `xmp-metadata` | read, interpret, create, edit, preserve | — |
+| [577](https://github.com/pdf-association/pdf-issues/issues/577) | [Nonstroking alpha for a form object](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.2) | `annotations` | read, interpret, create, edit, preserve | — |
+| [593](https://github.com/pdf-association/pdf-issues/issues/593) | [Alphabetic numbering in page labels](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.4.2) | `page-labels` | interpret | — |
+| [594](https://github.com/pdf-association/pdf-issues/issues/594) | [References to object streams](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.7) | `object-streams` | read, interpret, create, edit, preserve | — |
+| [598](https://github.com/pdf-association/pdf-issues/issues/598) | [Date entries for an embedded file](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.11.4.1) | `embedded-files` | read, interpret, create, edit, preserve | — |
+| [602](https://github.com/pdf-association/pdf-issues/issues/602) | [Terminology for elliptic curve signatures](https://pdf-issues.pdfa.org/32002-2022/clause01.html) | `ecc-signatures` | Editorial | — |
+| [608](https://github.com/pdf-association/pdf-issues/issues/608) | [Punctuation in the description of caret rectangle offsets](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.11) | `caret-annotations` | Editorial | — |
+| [609](https://github.com/pdf-association/pdf-issues/issues/609) | [Naming the root of the document-part hierarchy](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.12.2) | `document-parts` | read, interpret, create, edit, preserve | — |
+| [610](https://github.com/pdf-association/pdf-issues/issues/610) | [Terminology in the part-root dictionary](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.12.4.1) | `document-parts` | Editorial | — |
+| [611](https://github.com/pdf-association/pdf-issues/issues/611) | [Meaning of document-part node labels](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.12.4.1) | `document-parts` | read, interpret, create, edit, preserve | — |
+| [612](https://github.com/pdf-association/pdf-issues/issues/612) | [Structure of the document-part child list](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.12.4.1) | `document-parts` | read, interpret, create, edit, preserve | — |
+| [614](https://github.com/pdf-association/pdf-issues/issues/614) | [Storage of the document-part root reference](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.2) | `document-catalog` | read, interpret, create, edit, preserve | — |
+| [618](https://github.com/pdf-association/pdf-issues/issues/618) | [Cross-reference for field event actions](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.4.1) | `interactive-form` | Editorial | — |
+| [619](https://github.com/pdf-association/pdf-issues/issues/619) | [Version status of image identifiers](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.3.3) | `images`, `page-objects`, `page-tree`, `soft-masks` | read, interpret, create, edit, preserve | — |
+| [623](https://github.com/pdf-association/pdf-issues/issues/623) | [Term for a boolean PDF value](https://pdf-issues.pdfa.org/32000-2-2020/clause03.html#H3.6) | `basic-objects` | Editorial | — |
+| [627](https://github.com/pdf-association/pdf-issues/issues/627) | [Type notation in the object stream definition](https://pdf-issues.pdfa.org/32000-2-2020/clause03.html#H3.46) | `object-streams` | Editorial | — |
+| [632](https://github.com/pdf-association/pdf-issues/issues/632) | [Role name for printed list fields](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.5.6) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [637](https://github.com/pdf-association/pdf-issues/issues/637) | [MathML media type for an associated file](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.13.10) | `associated-files` | read, interpret, create, edit, preserve | — |
+| [638](https://github.com/pdf-association/pdf-issues/issues/638) | [Description of a cross-reference stream example](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.7) | `object-streams` | Editorial | — |
+| [640](https://github.com/pdf-association/pdf-issues/issues/640) | [Device grey terminology](https://pdf-issues.pdfa.org/32000-2-2020/clause10.html#H10.4.2.2) | `device-color-conversion` | Editorial | — |
+| [643](https://github.com/pdf-association/pdf-issues/issues/643) | [Cross-reference for padding a legacy password](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.4.4.2) | `standard-security-handler` | read, interpret, create, edit, preserve | — |
+| [645](https://github.com/pdf-association/pdf-issues/issues/645) | [Typography in 3D measurement definitions](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.6.7.3.3) | `3d-artwork` | Editorial | — |
+| [649](https://github.com/pdf-association/pdf-issues/issues/649) | [Note numbering for CAdES profiles](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.3.4.4) | `digital-signatures` | Editorial | — |
+| [655](https://github.com/pdf-association/pdf-issues/issues/655) | [Note numbering in measurement properties](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.9.1) | `measurement` | Editorial | — |
+| [656](https://github.com/pdf-association/pdf-issues/issues/656) | [Table headings for geographic data and requirements](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.10) | `document-requirements`, `geospatial` | Editorial | — |
+| [660](https://github.com/pdf-association/pdf-issues/issues/660) | [Normative definitions outside an annotation example](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.5) | `appearance-streams` | Editorial | — |
+| [661](https://github.com/pdf-association/pdf-issues/issues/661) | [Object terminators in signature validation examples](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.4.4) | `digital-signatures` | Editorial | — |
+| [662](https://github.com/pdf-association/pdf-issues/issues/662) | [Best-effort settings for displaying media](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.2.6.1) | `renditions` | read, interpret, create, edit, preserve | — |
+| [669](https://github.com/pdf-association/pdf-issues/issues/669) | [Byte value of a closing brace](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.10.5.2) | `calculator-functions` | Editorial | — |
+| [670](https://github.com/pdf-association/pdf-issues/issues/670) | [Indentation of a developer extension example](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.6) | `developer-extensions` | Editorial | — |
+| [672](https://github.com/pdf-association/pdf-issues/issues/672) | [Version status of web capture entries](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.2) | `document-catalog`, `name-dictionary`, `web-capture` | read, interpret, create, edit, preserve | — |
+| [673](https://github.com/pdf-association/pdf-issues/issues/673) | [Typography in the collection schema table](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.3.5.1) | `collections` | Editorial | — |
+| [674](https://github.com/pdf-association/pdf-issues/issues/674) | [Text in the standard security dictionary table](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.4.2) | `standard-security-handler` | Editorial | — |
+| [676](https://github.com/pdf-association/pdf-issues/issues/676) | [Typography of a movie annotation field](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.6.17) | `movie-annotations` | Editorial | — |
+| [677](https://github.com/pdf-association/pdf-issues/issues/677) | [Byte string type for a sound action](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.6.4.6) | `launch-actions` | Editorial | — |
+| [679](https://github.com/pdf-association/pdf-issues/issues/679) | [Primitive argument types for rich-media commands](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.6.4.18) | `rich-media-execute-actions` | read, interpret, create, edit, preserve | — |
+| [680](https://github.com/pdf-association/pdf-issues/issues/680) | [Minimum signature seed dictionary version](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.5) | `signature-fields` | read, interpret, create, edit, preserve | — |
+| [681](https://github.com/pdf-association/pdf-issues/issues/681) | [Signature policy entry spelling](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.5) | `signature-fields` | Editorial | — |
+| [682](https://github.com/pdf-association/pdf-issues/issues/682) | [Diagram of tensor patch control points](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.7.4.5.8) | `tensor-patch-shading` | Editorial | — |
+| [683](https://github.com/pdf-association/pdf-issues/issues/683) | [Inheritance of form action flags](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.6.3) | `form-actions` | read, interpret, create, edit, preserve | — |
+| [685](https://github.com/pdf-association/pdf-issues/issues/685) | [Page reference in the FDF annotation table](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.8.3.4) | `fdf` | Editorial | — |
+| [686](https://github.com/pdf-association/pdf-issues/issues/686) | [Dictionary indentation in an optional-content example](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.11.3.2) | `optional-content` | Editorial | — |
+| [687](https://github.com/pdf-association/pdf-issues/issues/687) | [Dictionary delimiter in linearization example](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexF.html#HF.3.1) | `linearization` | Editorial | — |
+| [688](https://github.com/pdf-association/pdf-issues/issues/688) | [Initial opacity of a transparency group](https://pdf-issues.pdfa.org/32000-2-2020/clause11.html#H11.4.8) | `alpha-compositing`, `transparency-groups` | interpret | — |
+| [689](https://github.com/pdf-association/pdf-issues/issues/689) | [Description of a division structure element](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.4.4) | `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [690](https://github.com/pdf-association/pdf-issues/issues/690) | [Depth component in a 3D coordinate transform](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.6.5) | `3d-artwork` | interpret | — |
+| [691](https://github.com/pdf-association/pdf-issues/issues/691) | [Choosing a digest for document identifiers](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.4) | `file-identifiers` | read, interpret, create, edit, preserve | — |
+| [699](https://github.com/pdf-association/pdf-issues/issues/699) | [Parenthesis in the linearization introduction](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexF.html#HF.3.1) | `linearization` | Editorial | — |
+| [700](https://github.com/pdf-association/pdf-issues/issues/700) | [Numbering of fragment-parameter tables](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexO.html) | `fragment-identifiers` | Editorial | — |
+| [703](https://github.com/pdf-association/pdf-issues/issues/703) | [Numbering of inline structure examples](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.8.4.7.2) | `tagged-pdf` | Editorial | — |
+| [707](https://github.com/pdf-association/pdf-issues/issues/707) | [Content stream in an optional-content example](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.11.3.2) | `optional-content` | Editorial | — |
+| [719](https://github.com/pdf-association/pdf-issues/issues/719) | [MathML reference for mathematical content](https://pdf-issues.pdfa.org/32000-2-2020/clause02.html) | `structure-namespaces`, `tagged-pdf` | read, interpret, create, edit, preserve | — |
+| [720](https://github.com/pdf-association/pdf-issues/issues/720) | [Indirect values used by cross-reference streams](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.8.2) | `xref-streams` | read, interpret, create, edit, preserve | — |
+| [731](https://github.com/pdf-association/pdf-issues/issues/731) | [Comments inside hexadecimal strings](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.3.4.3) | `basic-objects` | read, interpret, create, edit, preserve | — |
+| [732](https://github.com/pdf-association/pdf-issues/issues/732) | [Requirements on developer extension dictionaries](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.3) | `developer-extensions` | read, interpret, create, edit, preserve | — |
+| [741](https://github.com/pdf-association/pdf-issues/issues/741) | [Outlines targeting a structure element](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.3.3) | `outline` | read, interpret, create, edit, preserve | — |
+| [742](https://github.com/pdf-association/pdf-issues/issues/742) | [Metadata terminology in the interchange chapter](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.3.1) | `xmp-metadata` | Editorial | — |
+| [758](https://github.com/pdf-association/pdf-issues/issues/758) | [Field-name resolution in signature locks](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.4.2) | `interactive-form`, `signature-fields`, `signature-transforms` | read, interpret, create, edit, preserve | [#849](https://github.com/yhay81/pyropdf/issues/849) |
+| [759](https://github.com/pdf-association/pdf-issues/issues/759) | [End of line following a PDF comment](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.2.4) | `lexical-conventions` | read, interpret, create, edit, preserve | — |
+| [766](https://github.com/pdf-association/pdf-issues/issues/766) | [Signature validity after adding validation material](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.5.3) | `document-timestamps` | read, interpret, create, edit, preserve | [#849](https://github.com/yhay81/pyropdf/issues/849) |
+| [783](https://github.com/pdf-association/pdf-issues/issues/783) | [Encryption restrictions on cross-reference streams](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.2) | `encryption-dictionary` | read, interpret, create, edit, preserve | — |
+| [784](https://github.com/pdf-association/pdf-issues/issues/784) | [String values exempt from encryption](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.8.2) | `xref-streams` | read, interpret, create, edit, preserve | — |
+| [792](https://github.com/pdf-association/pdf-issues/issues/792) | [Revision 6 password hashing and notes for implementers](https://pdf-issues.pdfa.org/32000-2-2020/clause04.html##4.1.1) | `standard-security-handler` | read, interpret, create, edit, preserve | — |
+| [800](https://github.com/pdf-association/pdf-issues/issues/800) | [Embedded file encryption selection for version 4](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.6.2) | `crypt-filters`, `encryption-dictionary` | read, interpret, create, edit, preserve | — |
+| [801](https://github.com/pdf-association/pdf-issues/issues/801) | [Time used to validate an existing timestamp](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.4.2) | `digital-signatures` | read, interpret, create, edit, preserve | — |
+| [802](https://github.com/pdf-association/pdf-issues/issues/802) | [Reference to the certification transform dictionary](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.6) | `permissions` | read, interpret, create, edit, preserve | — |
+| [826](https://github.com/pdf-association/pdf-issues/issues/826) | [Delimiters between successive numeric values](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.3.3) | `basic-objects` | read, interpret, create, edit, preserve | — |
+| [835](https://github.com/pdf-association/pdf-issues/issues/835) | [Integer extension level in the glTF example](https://pdf-issues.pdfa.org/32007-2024/clause04.html#H4.8) | `developer-extensions`, `gltf-rich-media` | read, interpret, create, edit, preserve | [#863](https://github.com/yhay81/pyropdf/issues/863) |
+| [837](https://github.com/pdf-association/pdf-issues/issues/837) | [Filter order for ASCII-encoded inline images](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.9.7) | `inline-images`, `opi` | read, interpret, create, edit, preserve | — |
+| [839](https://github.com/pdf-association/pdf-issues/issues/839) | [ICC version of a profile used in a PDF colour space](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.6.5.5) | `icc-based-color-space` | read, interpret, create, edit, preserve | — |
+| [845](https://github.com/pdf-association/pdf-issues/issues/845) | [Calendar used in PDF dates](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.9.4) | `dates` | read, interpret, create, edit, preserve | — |
+| [850](https://github.com/pdf-association/pdf-issues/issues/850) | [Constant opacity for annotations with explicit appearances](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.5) | `appearance-streams` | read, interpret, create, edit, preserve | — |
+| [855](https://github.com/pdf-association/pdf-issues/issues/855) | [Maximum plaintext length in bits for AES-GCM encryption](https://pdf-issues.pdfa.org/32003-2023/clause05.html#H5.2) | `aes-gcm` | read, interpret, create, edit, preserve | [#865](https://github.com/yhay81/pyropdf/issues/865) |
+
+</details>
+
 ## Exclusions
 
 - `flate-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.
@@ -241,3 +817,5 @@ The machine and human checks are documented in the [corpus review](https://githu
 - `xref-table` interpret: n/a, 7.5.4: the cross-reference table indexes indirect objects in the file, whose resolution Read covers.
 - `object-streams` interpret: n/a, 7.5.7: object streams store indirect objects in compressed form, whose unpacking Read covers.
 - `xref-streams` interpret: n/a, 7.5.8: cross-reference streams index indirect objects in the file, whose resolution Read covers.
+- `procedure-sets` create: non-goal, #256: Creation of deprecated features is excluded by the specification completion milestone.
+- `xfa` create: non-goal, #256: Creation of deprecated features is excluded by the specification completion milestone.

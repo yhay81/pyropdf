@@ -9,6 +9,7 @@ it, and the map names that test.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import shutil
 import subprocess
@@ -37,7 +38,14 @@ def copy_root(root: Path) -> Path:
     """Copy what the generator reads and the map to another root, and return it."""
     shutil.copytree(ROOT / "tools/arlington/model", root / "tools/arlington/model")
     shutil.copytree(ROOT / "tests", root / "tests", ignore=shutil.ignore_patterns("assets", "__pycache__"))
-    for path in (FEATURES, MAP, COVERAGE):
+    for path in (
+        FEATURES,
+        FEATURES.with_name("baseline.toml"),
+        FEATURES.with_name("provisions.tsv"),
+        FEATURES.with_name("errata.tsv"),
+        MAP,
+        COVERAGE,
+    ):
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / path, root / path)
     return root
@@ -187,6 +195,82 @@ def test_every_listed_clause_has_a_feature_and_every_feature_a_listed_clause() -
     assert named == set(spec_map["clauses"])
     for standard in ("ISO/TS 32001", "ISO/TS 32005", "ISO 19005", "ISO 14289", "ISO 15930", "ISO 16612"):
         assert standard in spec_map["clauses"]
+
+
+def test_the_edition_crosswalk_requires_missing_features_even_after_regeneration(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    path = root / FEATURES
+    text = path.read_text(encoding="utf-8")
+    text = text.replace('"ISO/TS 32007" = "RichMedia glTF assets"\n', "")
+    start = text.index("[features.gltf-rich-media]")
+    end = text.find("\n[", start)
+    path.write_text(text[:start] + (text[end:] if end >= 0 else ""), encoding="utf-8")
+
+    result = generate(root)
+    assert result.returncode == 1
+    assert "ISO/TS 32007:2024 requires missing features: gltf-rich-media" in result.stderr
+
+
+def test_dated_inventory_matches_the_edition_and_published_errata() -> None:
+    inventory = json.loads((ROOT / MAP).read_text(encoding="utf-8"))["inventory"]
+    rows = {row["provision"]: row for row in inventory["provisions"]}
+    assert len(rows) == len(inventory["provisions"])
+    # ISO 32000-2:2020, published contents pp. iii-vi, grouped at the second heading level.
+    expected = {"Foreword", "Introduction", "Bibliography", *(str(i) for i in range(1, 15))}
+    for chapter, last in {4: 2, 6: 3, 7: 12, 8: 11, 9: 10, 10: 8, 11: 7, 12: 11, 13: 7, 14: 13}.items():
+        expected.update(f"{chapter}.{number}" for number in range(1, last + 1))
+    expected.update(f"Annex {letter}" for letter in "ABCDEFGHIJKLMNOPQ")
+    assert {key for key, row in rows.items() if row["source"] == "base"} == expected
+    assert {key for key, row in rows.items() if row["kind"] == "normative annex"} == {f"Annex {v}" for v in "DEFIKLOQ"}
+    for annex in "DEFIKLOQ":
+        assert rows[f"Annex {annex}"]["features"]
+    assert rows["ISO/TS 24064:2023"]["features"] == ["step-rich-media"]
+    assert rows["ISO/TS 32007:2024"]["features"] == ["gltf-rich-media"]
+    assert rows["ISO 19005-1:2005/Cor 2:2011"]["features"] == ["pdfa", "pdfa-1a", "pdfa-1b"]
+    assert rows["ISO 19005-4:2020"]["features"] == ["pdfa", "pdfa-4", "pdfa-4e", "pdfa-4f"]
+    assert rows["ISO 14289-2:2024"]["features"] == ["pdfua", "pdfua-2"]
+    mapped = features()
+    for row in rows.values():
+        for name in row["features"]:
+            assert set(DIMENSIONS) <= mapped[name].keys()
+    assert mapped["xfa"]["create"]["decision"] == "#256"
+
+    # Fingerprint of (issue, clause page and anchor) from the pinned PDF Association pages.
+    # A missing correction still fails after regenerating the JSON and coverage page.
+    corrections = inventory["corrections"]
+    assert len({row["issue"] for row in corrections}) == len(corrections)
+    locations = sorted(f"{row['issue']} {loc}\n" for row in corrections for loc in row["locations"])
+    assert (
+        hashlib.sha256("".join(locations).encode()).hexdigest()
+        == "3445c4e2bd5d97519d19636b8bfe0f3d95639b4dbc7c980355b4a427235811be"
+    )
+    assert any(row["issue"] == 51 and row["dimensions"] == ["interpret"] for row in corrections)
+    assert all(row["summary"] and row["locations"] for row in corrections)
+
+
+def test_upstream_correction_comparison_ignores_navigation_and_reports_new_locations(tmp_path: Path) -> None:
+    script = ROOT / "tools/spec_map/check_errata.py"
+    shutil.copyfile(script, tmp_path / script.name)
+    (tmp_path / "baseline.toml").write_text('[sources.errata]\ndirectories = ["edition"]\n', encoding="utf-8")
+    (tmp_path / "errata.tsv").write_text("issue\tlocations\n1\tedition/clause01.html#H1\n", encoding="utf-8")
+    folder = tmp_path / "docs/edition"
+    folder.mkdir(parents=True)
+    (folder / "index.md").touch()
+    source = folder / "clause01.md"
+    page = (
+        '<nav><span data-issue="99">contents</span></nav><div class="isostyle"><h2 id="H1">Clause 1</h2>'
+        '<ins data-issue="1">first correction</ins>'
+    )
+    source.write_text(page, encoding="utf-8")
+    command = [sys.executable, str(tmp_path / script.name), str(tmp_path)]
+    assert subprocess.run(command, capture_output=True, check=False).returncode == 0  # noqa: S603
+    source.write_text(
+        page + '<h2 id="H2"></h2><a href="https://github.com/pdf-association/pdf-issues/issues/2">2</a>',
+        encoding="utf-8",
+    )
+    result = subprocess.run(command, capture_output=True, check=False, text=True)  # noqa: S603
+    assert result.returncode == 1
+    assert result.stdout == "New: #2 edition/clause01.html#H2\n"
 
 
 def test_a_feature_takes_the_default_status_only_where_no_test_proves_it() -> None:

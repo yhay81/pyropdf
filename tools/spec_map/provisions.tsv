@@ -1,0 +1,134 @@
+source	provision	kind	features	summary
+base	Foreword	front matter		The publication and committee history introduce no file-level requirement.
+base	Introduction	front matter		The edition history and examples explain how the standard is used.
+base	1	clause		Scope sets the boundaries of the format and its consumers.
+base	2	clause		External specifications are incorporated where the relevant feature invokes them.
+base	3	clause		Terminology is resolved against its substantive clause.
+base	4	clause		Notation is shared across the specification.
+base	4.1	clause		General conventions for reading requirements.
+base	4.2	clause		Conventions for names, literals, arrays and byte notation.
+base	5	clause	file-header document-catalog version-compatibility	Recognize the declared file version and its relationship to available features.
+base	6	clause		Conformance requirements apply across all feature rows.
+base	6.1	clause		Introduces the document and processor conformance rules.
+base	6.2	clause		Whether a PDF conforms depends on all features used in that file.
+base	6.3	clause		Processor obligations depend on the reader, writer and interactive capabilities exercised.
+base	7	clause		File primitives and their composition are split across the subclauses below.
+base	7.1	clause		Introduces the organization of the syntax chapter.
+base	7.2	clause	lexical-conventions	Tokenization of the PDF byte stream.
+base	7.3	clause	basic-objects	Represent and reference the primitive and composite PDF values.
+base	7.4	clause	flate-filter asciihex-filter ascii85-filter lzw-filter run-length-filter ccitt-fax-filter jbig2-filter dct-filter jpx-filter crypt-filter	Decode and encode stream bytes with each named filter.
+base	7.5	clause	file-header xref-table incremental-update object-streams xref-streams	Locate objects, the trailer, and the revision chain.
+base	7.6	clause	standard-security-handler encryption-dictionary public-key-security-handler crypt-filters unencrypted-wrapper	Read and maintain protected content, key information and cleartext wrappers.
+base	7.7	clause	page-tree document-catalog page-objects name-dictionary	Start at the catalog and traverse pages and document-level names.
+base	7.8	clause	content-streams	Resolve the operations in a stream and their named resources.
+base	7.9	clause	text-strings dates name-trees number-trees	Interpret common value representations and indexed trees.
+base	7.10	clause	sampled-functions exponential-functions stitching-functions calculator-functions	Evaluate PDF functions and their parameters.
+base	7.11	clause	file-specifications embedded-files related-files collection-items	Identify, embed and associate file specifications and collection entries.
+base	7.12	clause	developer-extensions	Declare a developer extension and its level.
+base	8	clause		The remaining subclauses describe the graphics model and its operators.
+base	8.1	clause		Introduces the model and the graphics features.
+base	8.2	clause	content-streams graphics-state paths text-objects images	Graphics objects delimit sequences of operations and determine valid operator contexts.
+base	8.3	clause	coordinate-systems	Translate points and distances between coordinate spaces.
+base	8.4	clause	graphics-state	Maintain the current painting parameters across saves and restores.
+base	8.5	clause	paths	Construct, clip and paint paths.
+base	8.6	clause	device-color-spaces calgray-color-space calrgb-color-space lab-color-space icc-based-color-space indexed-color-space pattern-color-space separation-color-space devicen-color-space overprint rendering-intents colour-operators	Specify colours, component values, intent and overprint.
+base	8.7	clause	tiling-patterns function-shading axial-shading radial-shading free-form-triangle-shading lattice-triangle-shading coons-patch-shading tensor-patch-shading shading-patterns	Paint repeated geometry and sampled or function-based gradients.
+base	8.8	clause	xobjects	Invoke named external objects from content.
+base	8.9	clause	images image-masks inline-images	Sample, mask and place raster data.
+base	8.10	clause	form-xobjects reference-xobjects	Reuse a form stream and its local resource environment.
+base	8.11	clause	optional-content	Determine which optional content is visible.
+base	9	clause		Text features are organized by operators, fonts and extraction below.
+base	9.1	clause		Introduces the PDF text model.
+base	9.2	clause	text-state text-objects simple-font-encodings type0-fonts	Select a font resource and use it to paint a string.
+base	9.3	clause	text-state	Control glyph positioning, scale and painting mode.
+base	9.4	clause	text-objects	Establish text matrices and show glyphs.
+base	9.5	clause	font-descriptors simple-font-encodings cid-fonts	Font families share the descriptor and encoding structures covered below.
+base	9.6	clause	type1-fonts truetype-fonts type3-fonts simple-font-encodings	Map codes and render text with a simple font.
+base	9.7	clause	cid-fonts cmaps type0-fonts	Route multibyte codes through a CMap to a descendant font.
+base	9.8	clause	font-descriptors	Read and maintain font metrics and font flags.
+base	9.9	clause	embedded-fonts	Associate a PDF font with its embedded program.
+base	9.10	clause	text-extraction	Recover characters and word boundaries from a text run.
+base	10	clause		The subclauses describe how the device receives final marks.
+base	10.1	clause		Introduces output-dependent imaging.
+base	10.2	clause	device-color-spaces device-color-conversion	Use native device space for raster output.
+base	10.3	clause	color-conversion	Convert a calibrated colour to the output device space.
+base	10.4	clause	device-color-conversion	Translate between the native colour spaces.
+base	10.5	clause	transfer-functions	Apply per-channel tone mappings.
+base	10.6	clause	halftones	Choose and apply a halftone.
+base	10.7	clause	scan-conversion	Convert geometry and glyphs to pixel coverage.
+base	10.8	clause	separation-rendering	Produce individual colour plates.
+base	11	clause		The subclauses define transparent painting and compositing.
+base	11.1	clause		Introduces transparency.
+base	11.2	clause	alpha-compositing transparency-groups	Explains the compositing model used by subsequent provisions.
+base	11.3	clause	blend-modes alpha-compositing	Compute opacity, shape and colour when stacking marks.
+base	11.4	clause	transparency-groups alpha-compositing	Composite isolated and knockout groups.
+base	11.5	clause	soft-masks	Use a mask to limit source opacity.
+base	11.6	clause	graphics-state soft-masks transparency-groups	Set graphics state entries and declare transparency groups in file objects.
+base	11.7	clause	transparency-color	Resolve the blending space and handle colourants.
+base	12	clause		The remaining provisions describe interaction with pages and documents.
+base	12.1	clause		Introduces interactive features.
+base	12.2	clause	viewer-preferences	Specify how the document should be displayed.
+base	12.3	clause	destinations outline collections navigators	Navigate to a destination and organize navigation choices.
+base	12.4	clause	page-labels articles presentations	Attach navigation, timing and labels to individual pages.
+base	12.5	clause	annotations appearance-streams text-annotations link-annotations free-text-annotations line-annotations square-circle-annotations polygon-annotations text-markup-annotations caret-annotations stamp-annotations ink-annotations popup-annotations file-attachment-annotations sound-annotations movie-annotations screen-annotations widget-annotations printer-mark-annotations trap-network-annotations watermark-annotations redaction-annotations projection-annotations rich-annotations	Manage annotation subtypes, their states and their appearances.
+base	12.6	clause	trigger-events goto-actions remote-goto-actions embedded-goto-actions goto-dpart-actions launch-actions thread-actions uri-actions sound-actions movie-actions hide-actions named-actions set-ocg-state-actions rendition-actions transition-actions goto-3d-view-actions ecmascript-actions rich-media-execute-actions	Invoke a typed action when an event occurs.
+base	12.7	clause	variable-text interactive-form button-fields text-fields choice-fields signature-fields form-actions fdf non-interactive-forms	Read and write fields, field data and form actions.
+base	12.8	clause	digital-signatures signature-transforms document-security-store document-timestamps permissions legal-attestations	Create or verify signatures, permissions, validation data and attestations.
+base	12.9	clause	measurement	Interpret distances, scale and measurement units in a viewport.
+base	12.10	clause	measurement geospatial	The measurement tests cover coordinate round trips; this provision also defines geographic reference systems and point data.
+base	12.11	clause	document-requirements	Declare document features that a processor needs.
+base	13	clause		The subclauses identify different kinds of media content.
+base	13.1	clause	sounds movies rich-media	Introduces media and describes the replacement of legacy types.
+base	13.2	clause	renditions	Select and configure media renditions.
+base	13.3	clause	sounds	Access legacy audio resources as PDF data.
+base	13.4	clause	movies	Access legacy movie resources as PDF data.
+base	13.5	clause	alternate-presentations	Select an alternate representation of the presentation.
+base	13.6	clause	3d-artwork	Store and select three-dimensional artwork and views.
+base	13.7	clause	rich-media	Package rich-media assets, instances and configurations.
+base	14	clause		The remaining provisions exchange logical content and production information.
+base	14.1	clause		Introduces the interchange facilities.
+base	14.2	clause	procedure-sets	Identify the legacy resource procedure sets.
+base	14.3	clause	document-info xmp-metadata	Associate descriptive metadata with the document or an object.
+base	14.4	clause	file-identifiers	Identify a file and its revisions.
+base	14.5	clause	page-piece	Store private application data with a page or other object.
+base	14.6	clause	marked-content	Identify and nest marked sequences in content.
+base	14.7	clause	logical-structure structure-namespaces	Maintain the structure tree, role mappings and namespaces.
+base	14.8	clause	tagged-pdf	Express standard logical roles, attributes and artifacts in tagged content.
+base	14.9	clause	accessibility	Provide alternate text, language and replacement text.
+base	14.10	clause	web-capture	Associate captured web resources with a document.
+base	14.11	clause	page-boundaries separation-dictionaries output-intents trapping opi	Describe production geometry, colour and other press data.
+base	14.12	clause	document-parts	Group pages and attach document-part metadata.
+base	14.13	clause	associated-files	Relate files to documents and objects with a declared relationship.
+base	Annex A	informative annex		Informative operator index repeats the operators defined in their respective clauses.
+base	Annex B	informative annex	calculator-functions	Informative operator list summarizes calculator functions.
+base	Annex C	informative annex		Portability advice guides producers and adds no independent file behavior.
+base	Annex D	normative annex	character-tables text-strings simple-font-encodings	Apply byte-to-character mappings in text strings and font encodings.
+base	Annex E	normative annex	private-names developer-extensions	Use a prefix and a version declaration to identify added features.
+base	Annex F	normative annex	linearization	Arrange a file and its hint data for incremental delivery.
+base	Annex G	informative annex	linearization	Informative retrieval strategies consume the layout defined in Annex F.
+base	Annex H	informative annex		Worked examples illustrate the existing file and content syntax.
+base	Annex I	normative annex	version-compatibility file-header document-catalog	Relate PDF feature versions to compatibility semantics.
+base	Annex J	informative annex	xobjects images form-xobjects	Informative comparison of external object types.
+base	Annex K	normative annex	xfa interactive-form	Handle the deprecated XML form payload in an AcroForm.
+base	Annex L	normative annex	structure-children structure-namespaces tagged-pdf	Enforce nesting and cardinality in the PDF 2.0 structure namespace.
+base	Annex M	informative annex	structure-namespaces tagged-pdf	Informative namespace comparison explains differences between standard tags.
+base	Annex N	informative annex	halftones	Informative guidance on choosing halftones.
+base	Annex O	normative annex	fragment-identifiers destinations	Interpret URL parameters that navigate or change the initial view.
+base	Annex P	informative annex	transparency-color	Example procedure for finding the effective blending space.
+base	Annex Q	normative annex	page-transparency transparency-groups	Determine whether page painting requires compositing.
+base	Bibliography	references		Background references introduce no independent behavior.
+standards	ISO/TS 24064:2023	extension	step-rich-media	Connect the STEP AP242 payload, configuration and view to its RichMedia annotation.
+standards	ISO/TS 32001:2022	extension	sha3-hashes	SHA-3 and SHA-512 hash algorithms in PDF.
+standards	ISO/TS 32002:2022	extension	ecc-signatures	ECDSA and EdDSA signature algorithms in PDF.
+standards	ISO/TS 32003:2023	extension	aes-gcm	AES-GCM encryption in PDF.
+standards	ISO/TS 32004:2024	extension	integrity-protection	Integrity protection of encrypted documents with a message authentication code.
+standards	ISO/TS 32005:2023	clarification	namespace-inclusion	PDF 1.7 and 2.0 structure namespaces in one document.
+standards	ISO/TS 32007:2024	extension	gltf-rich-media	Connect a glTF asset and its resources to a RichMedia configuration and view.
+standards	ISO 19005-1:2005	profile part	pdfa pdfa-1a pdfa-1b	Archival PDF based on PDF 1.4, levels A and B.
+standards	ISO 19005-1:2005/Cor 1:2007	technical corrigendum	pdfa pdfa-1a pdfa-1b	Apply the first corrections to the PDF/A-1 requirements.
+standards	ISO 19005-1:2005/Cor 2:2011	technical corrigendum	pdfa pdfa-1a pdfa-1b	Apply the second corrections to the PDF/A-1 requirements.
+standards	ISO 19005-2:2011	profile part	pdfa pdfa-2a pdfa-2b pdfa-2u	Archival PDF based on PDF 1.7, levels A, B and U.
+standards	ISO 19005-3:2012	profile part	pdfa pdfa-3a pdfa-3b pdfa-3u	Archival PDF with embedded files, levels A, B and U.
+standards	ISO 19005-4:2020	profile part	pdfa pdfa-4 pdfa-4e pdfa-4f	Archival PDF 2.0 including the engineering and embedded-file variants.
+standards	ISO 14289-1:2014	profile part	pdfua pdfua-1	Accessibility requirements for tagged PDF 1.7.
+standards	ISO 14289-2:2024	profile part	pdfua pdfua-2	Accessibility requirements for tagged PDF 2.0.
