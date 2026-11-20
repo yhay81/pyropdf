@@ -408,6 +408,72 @@ def test_doc_mdp_field_mdp_field_lock_and_prepare_signature(pki: LocalPki) -> No
         assert author_sig.doc_mdp is DocMdpPermission.FORM_FILLING_AND_SIGNATURES
 
 
+@pytest.mark.parametrize("filename", ["bill-hr815.pdf", "f1040.pdf"])
+def test_security_store_refuses_incompatible_pdf20_promotion(filename: str) -> None:
+    source = DOCUMENT.with_name(filename).read_bytes()
+    with pyropdf.open(source) as doc:
+        # Keep a redo step so the refusal has to preserve both sides of the history.
+        doc.catalog["Lang"] = "en-GB"
+        doc.history.undo()
+        history = doc.history.save()
+        full = doc.to_bytes()
+        defects = doc.check().defects
+
+        with pytest.raises(PdfError, match=r"cannot promote the document to PDF 2\.0 for /DSS"):
+            doc.security_store = SecurityStore(ocsps=(bytes.fromhex("30030a0106"),))
+
+        assert doc.history.save() == history
+        assert doc.security_store is None
+        assert doc.to_bytes(incremental=True) == source
+        assert doc.to_bytes() == full
+        for incremental in (False, True):
+            with pyropdf.open(doc.to_bytes(incremental=incremental)) as reopened:
+                assert reopened.check().defects == defects
+
+
+def test_security_store_promotion_checks_share_one_object_budget() -> None:
+    source = _pdf_with_version("1.7")
+    with pyropdf.open(source, limits=pyropdf.DocumentLimits(max_objects=5)) as doc:
+        # Either walk fits, but the two visits to each of the three objects do not.
+        assert doc.check().objects == 3
+        with pytest.raises(LimitError) as caught:
+            doc.security_store = SecurityStore()
+        assert caught.value.code == "object_count"
+        assert doc.to_bytes(incremental=True) == source
+        assert doc.history.steps == ()
+
+
+def test_security_store_promotes_despite_unrelated_existing_defect() -> None:
+    with pyropdf.open(_pdf_with_version("1.7")) as doc:
+        doc.catalog["PageMode"] = Name("Other")
+        defects = doc.check().defects
+        assert [defect.clause for defect in defects] == ["Catalog/PageMode"]
+        doc.security_store = SecurityStore()
+        for incremental in (False, True):
+            with pyropdf.open(doc.to_bytes(incremental=incremental)) as reopened:
+                report = reopened.check()
+                assert report.version == "2.0"
+                assert report.defects == defects
+                assert reopened.security_store == SecurityStore()
+
+
+def test_pdf20_security_store_preserves_shared_ocsp_in_both_saves() -> None:
+    response = bytes.fromhex("30030a0106")
+    key = "A" * 40
+    store = SecurityStore(ocsps=(response,), vri={key: ValidationInfo(ocsps=(response,))})
+    with pyropdf.open(DOCUMENT) as doc:
+        assert doc.check().version == "2.0"
+        doc.security_store = store
+        for incremental in (False, True):
+            with pyropdf.open(doc.to_bytes(incremental=incremental)) as reopened:
+                assert reopened.security_store == store
+                dss = reopened.catalog["DSS"]
+                xref = dss["OCSPs"][0].xref
+                assert xref is not None
+                assert dss["VRI"][key]["OCSP"][0].xref == xref
+                assert not reopened.check()
+
+
 @pytest.mark.spec("document-security-store", "read", "interpret", "create", "edit", "preserve")
 def test_document_security_store_deduplication_and_signature_preservation(pki: LocalPki) -> None:
     # 1. Unsigned document: create, deduplicate streams, replace, delete, undo/redo.
@@ -712,6 +778,10 @@ def test_additional_permissions_dss_malformed_and_encrypted_edges(pki: LocalPki)
         doc.form["SigField"].lock = FieldLock()
         doc.form["SigField"].lock = None
         assert doc.form["SigField"].lock is None
+        with pytest.raises(PdfError, match="FontType1"):
+            doc.security_store = SecurityStore()
+
+    with pyropdf.open(DOCUMENT) as doc:
         doc.security_store = SecurityStore(certificates=(pki.root.public_bytes(DER),))
         with (
             pyropdf.open(doc.to_bytes(), limits=pyropdf.DocumentLimits(max_total_decompressed_size=32)) as bounded_dss,
