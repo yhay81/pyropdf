@@ -145,6 +145,76 @@ def _two_radios(*, form: str = "8 0 R", fields: str = "[4 0 R 5 0 R]", title: st
     )
 
 
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_repair_preserves_the_radio_default_appearance(*, incremental: bool) -> None:
+    doc = pyropdf.open(_two_radios())
+    for number in (4, 5):
+        doc.objects[number]["DA"] = b"0 g"
+    assert doc.form.repair_radio_groups() == 1
+    saved = pyropdf.open(doc.to_bytes(incremental=incremental))
+    parent = saved.form["plan"].obj
+    assert parent["DA"] == b"0 g"
+    for widget in saved.form["plan"].widgets:
+        assert widget.obj["Parent"] == parent
+        assert "DA" not in widget.obj
+    assert not [defect for defect in saved.check().defects if defect.clause.startswith("FieldBtn")]
+
+
+def test_repair_uses_the_form_default_for_widgets_without_local_appearance() -> None:
+    doc = pyropdf.open(_two_radios())
+    doc.catalog["AcroForm"]["DA"] = b"0 g"
+    doc.objects[4]["DA"] = b"0 g"
+    assert doc.form.repair_radio_groups() == 1
+    assert doc.form["plan"].obj["DA"] == b"0 g"
+    assert all("DA" not in widget.obj for widget in doc.form["plan"].widgets)
+
+
+def test_conflicting_radio_appearances_remain_intact_on_refusal() -> None:
+    doc = pyropdf.open(_two_radios())
+    doc.catalog["AcroForm"]["DA"] = b"0 g"
+    doc.objects[4]["DA"] = b"1 g"
+    before = doc.to_bytes(incremental=True)
+    history = doc.history.save()
+    with pytest.raises(pyropdf.MalformedPdfError, match="different default appearances"):
+        doc.form.repair_radio_groups()
+    assert doc.to_bytes(incremental=True) == before
+    assert doc.history.save() == history
+
+
+@pytest.mark.parametrize(
+    ("flags", "schema"), [(49152, "FieldBtnRadio"), (65536, "FieldBtnPush"), (0, "FieldBtnCheckbox")]
+)
+@pytest.mark.parametrize("standalone", [False, True], ids=["merged-widget", "parent"])
+def test_required_appearance_is_checked_against_the_button_subtype(
+    flags: int, schema: str, *, standalone: bool
+) -> None:
+    doc = pyropdf.open(_two_radios())
+    if standalone:
+        assert doc.form.repair_radio_groups() == 1
+    field = doc.form["plan"].obj
+    field["Ff"] = flags
+    defects = [d.clause for d in doc.check().defects if d.xref == field.xref and d.clause.endswith("/DA")]
+    assert defects == [f"{schema}/DA"]
+
+
+def test_merged_fields_inherit_the_button_type_and_flags() -> None:
+    doc = pyropdf.open(_two_radios())
+    parent = doc.objects[doc.objects.add({"T": "parent", "FT": pyropdf.Name("Btn"), "Ff": 49152})]
+    doc.catalog["AcroForm"]["Fields"] = [parent]
+    parent["Kids"] = [doc.objects[4], doc.objects[5]]
+    for number in (4, 5):
+        child = doc.objects[number]
+        if number == 4:
+            del child["FT"]
+            del child["Ff"]
+        else:
+            child["FT"] = None
+            child["Ff"] = None
+        child["Parent"] = parent
+    defects = {(d.xref, d.clause) for d in doc.check().defects if d.clause.endswith("/DA")}
+    assert {(4, "FieldBtnRadio/DA"), (5, "FieldBtnRadio/DA")} <= defects
+
+
 @pytest.mark.parametrize("entry", ["form", "fields"])
 def test_radio_repair_preserves_arrays_and_form_dictionaries_behind_aliases(entry: str) -> None:
     data = _two_radios(form="9 0 R") if entry == "form" else _two_radios(fields="6 0 R")
