@@ -21,6 +21,7 @@ import pickle
 from typing import TYPE_CHECKING
 
 import pytest
+from test_layers import CORPUS
 
 import pyropdf
 from pyropdf import Color, Dictionary, LayerMembership, Name, StaleObjectError, TagRole, VisibilityPolicy
@@ -143,6 +144,59 @@ def test_membership_scopes_write_a_membership_dictionary() -> None:
     doc.layers.switch(draft.xref, on=True)
     assert page.text().split() == ["Both", "Either"]
     assert doc.layers.visible(membership)
+
+
+@pytest.mark.parametrize("existing_group", [False, True], ids=["empty-membership", "existing-group"])
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_optional_content_drawing_promotes_a_pdf_13_input(*, existing_group: bool, incremental: bool) -> None:
+    source = pyropdf.open(CORPUS / "patent-us223898.pdf")
+    if existing_group:
+        source.layers.add("Overlay")
+        del source.catalog["Version"]
+    base = source.to_bytes()
+    doc = pyropdf.open(base)
+    scope = doc.layers[0] if existing_group else LayerMembership()
+    with doc.pages[0].draw() as canvas, canvas.layer(scope):
+        canvas.rect((10, 10, 20, 20), fill=RED)
+
+    saved = pyropdf.open(doc.to_bytes(incremental=incremental))
+    assert saved.check().version == "1.5"
+    assert not saved.check().defects
+    properties = saved.catalog["OCProperties"]
+    assert isinstance(properties["D"], Dictionary)
+    resource = saved.pages[0].obj["Resources"]["Properties"]["PyroL1"]
+    if existing_group:
+        assert [group.xref for group in properties["OCGs"]] == [resource.xref]
+        assert resource.xref == saved.layers[0].xref
+    else:
+        assert len(properties["OCGs"]) == 0
+        assert resource["Type"] == Name("OCMD")
+    assert b"/OC /PyroL1 BDC" in saved.pages[0].obj["Contents"][-1].read()
+    assert doc.history.steps == ("draw",)
+    doc.history.undo()
+    assert doc.to_bytes(incremental=True) == base
+
+
+def test_a_plain_or_aborted_canvas_keeps_the_old_declaration() -> None:
+    base = (CORPUS / "patent-us223898.pdf").read_bytes()
+    doc = pyropdf.open(base)
+    with (
+        pytest.raises(ValueError, match="alpha"),
+        doc.pages[0].draw() as canvas,
+        canvas.layer(LayerMembership()),
+    ):
+        canvas.opacity(-1)
+    assert doc.to_bytes(incremental=True) == base
+    assert not doc.history.can_undo
+    with doc.pages[0].draw() as canvas:
+        canvas.rect((10, 10, 20, 20), fill=RED)
+    assert "Version" not in doc.catalog
+    assert "OCProperties" not in doc.catalog
+
+
+def test_a_layered_canvas_keeps_a_sufficient_version() -> None:
+    doc, _ = _drawn(visible=True)
+    assert "Version" not in doc.catalog
 
 
 def test_memberships_validate_their_fields() -> None:
