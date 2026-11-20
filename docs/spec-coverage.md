@@ -8,10 +8,10 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 22 | 67 | 712 |
+| read | 0 | 0 | 0 | 19 | 67 | 715 |
 | interpret | 1 | 13 | 0 | 14 | 691 | 82 |
-| create | 0 | 0 | 0 | 643 | 93 | 65 |
-| edit | 0 | 0 | 0 | 652 | 91 | 58 |
+| create | 0 | 0 | 0 | 642 | 93 | 66 |
+| edit | 0 | 0 | 0 | 649 | 91 | 61 |
 | preserve | 0 | 0 | 0 | 6 | 687 | 108 |
 
 ## Clauses
@@ -182,10 +182,10 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 14.4 | File identifiers | `file-identifiers` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.5 | Page-piece dictionaries | `page-piece` | 1 planned | 1 planned | 1 planned | 1 partial | 1 planned |
 | 14.6 | Marked content | `marked-content` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 14.7 | Logical structure | `logical-structure` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 14.7 | Logical structure | `logical-structure` | 1 done | 1 partial | 1 partial | 1 done | 1 done |
 | 14.7.4 | Structure namespaces | `structure-namespaces` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 14.8 | Tagged PDF | `tagged-pdf` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
-| 14.9 | Accessibility support | `accessibility` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 14.8 | Tagged PDF | `tagged-pdf` | 1 done | 1 partial | 1 partial | 1 done | 1 done |
+| 14.9 | Accessibility support | `accessibility` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 14.10 | Web capture | `web-capture` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.11.2 | Page boundaries | `page-boundaries` | 1 partial | 1 done | 1 done | 1 partial | 1 done |
 | 14.11.4 | Separation dictionaries | `separation-dictionaries` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |

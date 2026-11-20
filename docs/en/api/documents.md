@@ -91,6 +91,19 @@ before that nothing else refers to.
 
 Settable.
 
+### `Document.structure`
+
+```python
+Document.structure: StructureTree
+```
+
+The logical structure tree as its top-level `StructureElement` handles.
+
+Each element exposes its hierarchy, marked-content items, and
+accessibility attributes, and `doc.structure.role_map` reads and
+edits `/RoleMap`. `del doc.structure` removes `/StructTreeRoot`
+and frees unreferenced structure objects in one transaction.
+
 ### `Document.fallback_fonts`
 
 ```python

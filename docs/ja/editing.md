@@ -253,6 +253,28 @@ with pyropdf.open("input.pdf") as doc:
     print([item.title for item in doc.outline])
 ```
 
+## 構造ツリーとアクセシビリティ {#structure-and-accessibility}
+
+`doc.structure` は論理構造ツリーの最上位要素を `StructureElement` ハンドルの列として返し、
+`walk()` は全要素を行きがけ順にたどり、`doc.structure.role_map` は `/RoleMap` を読み書きします。
+各要素の `role`・`title`・`language`（BCP 47 言語タグ）・`alt`・`actual_text`・
+`expanded`（`/E` 略語展開）・`page` は代入と `del` で編集でき、`children` と `move()` は
+`/P`・`/K`・`/ParentTree`・`/IDTree` の整合性を保ったまま要素を追加・並べ替え・移動・削除します。
+
+```python
+import pyropdf
+from pyropdf import TagRole
+
+with pyropdf.open("input.pdf") as doc:
+    doc.structure.role_map["Callout"] = TagRole.NOTE
+    root = doc.structure.add("Document")
+    heading = root.children.add(TagRole.HEADING_1, page=0, title="Summary")
+    abbr = heading.children.add(TagRole.SPAN, expanded="portable document format")
+    note = root.children.add("Callout", page=0, language="en-US", alt="Payment terms")
+    print([elem.standard_role for elem in doc.structure.walk()])
+    print(abbr.expanded, note.language, note.alt)
+```
+
 ## 添付ファイル
 
 ```python

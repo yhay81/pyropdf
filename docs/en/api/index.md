@@ -223,6 +223,15 @@ method and property of its classes with its full description.
 - [`OutlineEntry`](outline.md#outlineentry): One item of an outline to write, as `doc.outline = [...]` takes it.
 - [`OutlineItem`](outline.md#outlineitem): A handle on one item of the outline, as `doc.outline` yields it.
 
+## [Structure](structure.md)
+
+- [`MarkedContentReference`](structure.md#markedcontentreference): A marked-content item of a structure element (`/K` integer or `/Type /MCR` dictionary).
+- [`ObjectReference`](structure.md#objectreference): An indirect PDF object item of a structure element (`/Type /OBJR` dictionary).
+- [`RoleMap`](structure.md#rolemap): The structure tree's `/RoleMap` dictionary as a live mutable mapping.
+- [`StructureChildren`](structure.md#structurechildren): The child `StructureElement` handles of one `StructureElement` in `/K` order.
+- [`StructureElement`](structure.md#structureelement): A handle on an indirect `StructElem` dictionary in `Document.structure`.
+- [`StructureTree`](structure.md#structuretree): The document's logical structure tree as its top-level elements, as `doc.structure` returns it.
+
 ## [Attachments](attachments.md)
 
 - [`Attachment`](attachments.md#attachment): A handle on one embedded file of a document, as `doc.attachments[name]` returns it.

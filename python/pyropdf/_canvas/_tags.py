@@ -8,6 +8,8 @@ from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, cast
 
 from pyropdf import _core
+from pyropdf._errors import LimitError
+from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, _encode
 
 if TYPE_CHECKING:
@@ -21,6 +23,7 @@ if TYPE_CHECKING:
 #: The shape of a BCP 47 language tag, and its longest form.
 _LANGUAGE_TAG = re.compile(r"[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*", re.ASCII)
 _MAX_LANGUAGE_TAG = 256
+_MAX_TAG_TEXT = 16 * 1024 * 1024
 
 
 class TagRole(enum.StrEnum):
@@ -183,6 +186,7 @@ def _tag_scope(  # noqa: PLR0913 - the entries of a structure element.
     lang: str | None,
     title: str | None,
     actual_text: str | None,
+    expanded: str | None = None,
     scope: TableHeaderScope | str | None,
     numbering: ListNumbering | str | None,
 ) -> _TagScope:
@@ -192,11 +196,16 @@ def _tag_scope(  # noqa: PLR0913 - the entries of a structure element.
     except ValueError as exc:
         msg = f"role must be a TagRole: {role!r}"
         raise ValueError(msg) from exc
-    texts = {"Alt": alt, "Lang": lang, "T": title, "ActualText": actual_text}
+    texts = {"Alt": alt, "Lang": lang, "T": title, "ActualText": actual_text, "E": expanded}
     for key, value in texts.items():
-        if value is not None and not isinstance(value, str):
-            msg = f"{key} must be a string or None: {value!r}"
-            raise TypeError(msg)
+        if value is not None:
+            if not isinstance(value, str):
+                msg = f"{key} must be a string or None: {value!r}"
+                raise TypeError(msg)
+            if len(value) > _MAX_TAG_TEXT:
+                code = "text_input_size"
+                msg = f"{key} exceeds the {_MAX_TAG_TEXT}-character safety limit"
+                raise LimitError(code, msg)
     if lang is not None and (len(lang) > _MAX_LANGUAGE_TAG or _LANGUAGE_TAG.fullmatch(lang) is None):
         msg = f"lang must be a BCP 47 language tag: {lang!r}"
         raise ValueError(msg)
@@ -238,7 +247,9 @@ def _write_structure(page: Page, elements: list[_Element], mcids: int, form: int
     objects = document.objects
     catalog = document.catalog
     root = catalog.get("StructTreeRoot")
+    minimum = (1, 3)
     if not isinstance(root, Dictionary):
+        minimum = max(minimum, (1, 4))
         catalog["StructTreeRoot"] = objects[objects.add({"Type": Name("StructTreeRoot"), "K": []})]
         root = cast("Dictionary", catalog["StructTreeRoot"])
         if not isinstance(catalog.get("MarkInfo"), Dictionary):
@@ -253,6 +264,10 @@ def _write_structure(page: Page, elements: list[_Element], mcids: int, form: int
     written: list[_Element] = []
     while pending:
         element, parent = pending.pop()
+        if "E" in element.entries:
+            minimum = max(minimum, (1, 5))
+        elif any(key in element.entries for key in ("Lang", "ActualText", "A")):
+            minimum = max(minimum, (1, 4))
         value: dict[str, object] = {"Type": Name("StructElem"), "S": Name(element.role), "P": parent}
         value["Pg"] = page.obj
         value.update(element.entries)
@@ -260,6 +275,7 @@ def _write_structure(page: Page, elements: list[_Element], mcids: int, form: int
         nodes[id(element)] = node
         written.append(element)
         pending.extend((kid, node) for kid in reversed(element.kids) if isinstance(kid, _Element))
+    _require_version(document, catalog, minimum)
     for element in written:
         node = nodes[id(element)]
         values: list[object] = []
