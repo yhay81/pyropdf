@@ -326,4 +326,6 @@ Create a PDF 2.0 unencrypted wrapper document carrying `payload` (ISO 32000-2 §
 Draws `cover_text` on a single A4 cover page, embeds `payload.data` with
 `/Subtype /application#2Fpdf`, `/AFRelationship /EncryptedPayload`, and
 `/EP`, lists the file specification in `Catalog['AF']`, and configures
-`Catalog['Collection']` with `/View /H` and `/D` naming the payload.
+`Catalog['Collection']` with `/View /H` and an opaque name-tree key for
+`/D`. The file specification holds the display filename. The tree key is
+also available as `Collection.initial_document`.
