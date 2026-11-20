@@ -135,7 +135,9 @@ def test_downsamples_and_reduces_a_jpeg() -> None:
     report = doc.rewrite_images(dpi_threshold=150, dpi_target=100, quality=65)
 
     after_data = stored(doc)
-    assert report == ImageRewriteReport(1, 1, len(before_data), len(after_data))
+    assert report == ImageRewriteReport(
+        considered=1, rewritten=1, bytes_before=len(before_data), bytes_after=len(after_data)
+    )
     assert (report.skipped, report.bytes_saved) == (0, len(before_data) - len(after_data))
     assert size(doc) == (100, 100)
     assert stream(doc)["Filter"] == "DCTDecode"
@@ -212,7 +214,7 @@ def test_downsamples_a_flate_raster_losslessly(*, gray: bool, predictor: int | N
     report = doc.rewrite_images(dpi_threshold=96, dpi_target=64)
 
     after = stored(doc)
-    assert report == ImageRewriteReport(1, 1, len(encoded), len(after))
+    assert report == ImageRewriteReport(considered=1, rewritten=1, bytes_before=len(encoded), bytes_after=len(after))
     assert size(doc) == (64, 64)
     image = stream(doc)
     assert image["Filter"] == "FlateDecode"
@@ -318,7 +320,9 @@ def test_many_placements_count_one_object() -> None:
 def test_a_document_without_images_is_a_no_op() -> None:
     doc = pyropdf.Document()
     doc.pages.new((100, 100))
-    assert doc.rewrite_images(quality=75) == ImageRewriteReport(0, 0, 0, 0)
+    assert doc.rewrite_images(quality=75) == ImageRewriteReport(
+        considered=0, rewritten=0, bytes_before=0, bytes_after=0
+    )
 
 
 @pytest.mark.parametrize(
@@ -378,7 +382,7 @@ def test_nothing_to_do_returns_zero_counts() -> None:
     doc = jpeg_document([(72, 72)])
     original = doc.to_bytes()
 
-    assert doc.rewrite_images() == ImageRewriteReport(0, 0, 0, 0)
+    assert doc.rewrite_images() == ImageRewriteReport(considered=0, rewritten=0, bytes_before=0, bytes_after=0)
     assert doc.to_bytes() == original
 
 

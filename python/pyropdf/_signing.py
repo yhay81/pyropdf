@@ -481,7 +481,7 @@ _MAX_SHAPE_DEPTH = 32
 _MAX_APPEARANCE_OBJECTS = 64
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SignatureVerification:
     """What :meth:`Signature.verify` found.
 
@@ -517,7 +517,7 @@ class SignatureVerification:
         return self.intact and self.covers_revision and self.valid is True and self.trusted is not False
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Signature:
     """A signature of the opened file: its field, its signature dictionary, and the revision that it signs.
 
@@ -614,7 +614,7 @@ def signatures(document: Document) -> list[Signature]:
         revision = None
         if len(ranges) == 4 and found is not None:  # noqa: PLR2004 - two ranges of start and length
             revision = _revision(found[0], origin + ranges[2] + ranges[3], ends)
-        sig = Signature(name, value.xref, ranges, revision)
+        sig = Signature(field=name, xref=value.xref, byte_range=ranges, revision=revision)
         object.__setattr__(sig, "_document", document)
         out.append(sig)
     return out
@@ -723,16 +723,16 @@ def _verify(signature: Signature, anchors: list[bytes] | None) -> SignatureVerif
     later = {number for _, numbers in revisions[(signature.revision or 0) + 1 :] for number in numbers}
     modifications = _classify(data[: c + length], data, later) if signature.revision is not None and later else "none"
     return SignatureVerification(
-        intact,
-        covers,
-        valid,
-        trusted,
-        signer,
-        None if signing_time is None else datetime.fromtimestamp(signing_time, UTC),
-        stamp_time,
-        stamp_valid,
-        modifications,
-        tuple(problems),
+        intact=intact,
+        covers_revision=covers,
+        valid=valid,
+        trusted=trusted,
+        signer=signer,
+        signing_time=None if signing_time is None else datetime.fromtimestamp(signing_time, UTC),
+        timestamp=stamp_time,
+        timestamp_valid=stamp_valid,
+        modifications=modifications,
+        problems=tuple(problems),
     )
 
 
@@ -789,16 +789,16 @@ def _verify_doc_timestamp(  # noqa: PLR0913 - all pieces of one timestamp verifi
     later = {number for _, numbers in revisions[(signature.revision or 0) + 1 :] for number in numbers}
     modifications = _classify(data[:end_offset], data, later) if signature.revision is not None and later else "none"
     return SignatureVerification(
-        intact,
-        covers,
-        valid,
-        trusted,
-        signer,
-        None if signing_time is None else datetime.fromtimestamp(signing_time, UTC),
-        stamp_time,
-        stamp_valid,
-        modifications,
-        tuple(problems),
+        intact=intact,
+        covers_revision=covers,
+        valid=valid,
+        trusted=trusted,
+        signer=signer,
+        signing_time=None if signing_time is None else datetime.fromtimestamp(signing_time, UTC),
+        timestamp=stamp_time,
+        timestamp_valid=stamp_valid,
+        modifications=modifications,
+        problems=tuple(problems),
     )
 
 

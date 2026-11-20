@@ -199,7 +199,7 @@ def test_replacing_with_jpeg_stores_it_as_it_is() -> None:
     assert stream["Interpolate"] is False  # The image's other entries stay.
     for page in pyropdf.open(doc.to_bytes()).pages:
         image = page.images()[0]
-        assert image.stored() == StoredImage("DCTDecode", jpeg, None)
+        assert image.stored() == StoredImage(filter="DCTDecode", data=jpeg, parameters=None)
         assert all(abs(a - b) <= 24 for a, b in zip(bytes(image.pixmap()), SAMPLES, strict=True))
 
 

@@ -591,7 +591,7 @@ Members: `PART`, `ARTICLE`, `SECTION`, `DIV`, `BLOCK_QUOTE`, `CAPTION`, `TOC`, `
 ## `TextFit`
 
 ```python
-TextFit(spare_height: float)
+TextFit(*, spare_height: float)
 ```
 
 How text fits a `Canvas.textbox`: the height left below its last line.

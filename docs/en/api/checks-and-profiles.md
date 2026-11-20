@@ -28,6 +28,7 @@ The category of a `StructuralDefect`.
 
 ```python
 OutputIntent(
+    *,
     subtype: str | None,
     identifier: str | None,
     condition: str | None,
@@ -47,6 +48,7 @@ that is missing, or neither a string nor a name, is `None`.
 
 ```python
 Profiles(
+    *,
     pdfa: str | None,
     pdfua: str | None,
     pdfx: str | None,
@@ -74,6 +76,7 @@ Return whether the document claims a profile or has an output intent.
 
 ```python
 StructuralDefect(
+    *,
     xref: int | None,
     path: str,
     clause: str,
@@ -95,6 +98,7 @@ names, such as `"Table 29"`, or an empty string.
 
 ```python
 StructuralReport(
+    *,
     defects: tuple[StructuralDefect, ...],
     version: str,
     objects: int,

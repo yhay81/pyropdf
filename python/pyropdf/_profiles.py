@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 _DEFAULT_MAX_XMP_SIZE = 16 * 1024 * 1024
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class OutputIntent:
     """One entry of the catalog's ``/OutputIntents``.
 
@@ -32,7 +32,7 @@ class OutputIntent:
     profile: int | None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Profiles:
     """The profile claims of a document's XMP metadata, and its output intents.
 
@@ -79,8 +79,11 @@ def _metadata(document: Document, max_size: int | None) -> str | None:
 def pdfa_claim(document: Document, max_size: int | None = _DEFAULT_MAX_XMP_SIZE) -> tuple[int, str] | None:
     """Return the PDF/A ``(part, conformance)`` pair declared in XMP metadata, or ``None``."""
     xmp = _metadata(document, max_size)
-    if xmp is None:
-        return None
+    return _pdfa_parts(xmp) if xmp else None
+
+
+def _pdfa_parts(xmp: str) -> tuple[int, str] | None:
+    """Read the PDF/A part and original conformance spelling from the given packet."""
     part = _property(xmp, "pdfaid:part")
     if part is None or not part.isdigit():
         return None
@@ -111,7 +114,7 @@ def _output_intent(entry: Dictionary) -> OutputIntent:
 def profiles(document: Document, max_size: int | None = _DEFAULT_MAX_XMP_SIZE) -> Profiles:
     """Return the profiles of ``document``; see :attr:`Document.profiles`."""
     xmp = _metadata(document, max_size) or ""
-    claim = pdfa_claim(document, max_size) if xmp else None
+    claim = _pdfa_parts(xmp) if xmp else None
     pdfa = f"PDF/A-{claim[0]}{claim[1].upper()}" if claim else None
     ua = _property(xmp, "pdfuaid:part")
     pdfx = _property(xmp, "pdfxid:GTS_PDFXVersion")

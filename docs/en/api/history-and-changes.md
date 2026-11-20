@@ -12,6 +12,7 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 ```python
 ChangeReport(
+    *,
     signatures: tuple[SignatureChange, ...],
     claims: tuple[ClaimChange, ...],
     permissions: tuple[SignaturePermission, ...] = (),
@@ -31,7 +32,7 @@ Return whether the report names anything.
 ## `ClaimChange`
 
 ```python
-ClaimChange(claim: str, reason: str, objects: tuple[int, ...])
+ClaimChange(*, claim: str, reason: str, objects: tuple[int, ...])
 ```
 
 A PDF/A or PDF/UA claim of the metadata that the edits break.
@@ -166,6 +167,7 @@ Forget every step, keeping the document as it is.
 
 ```python
 Revision(
+    *,
     index: int,
     end: int | None,
     added: tuple[int, ...],
@@ -211,7 +213,7 @@ raises `DocumentClosedError`.
 ## `SignatureChange`
 
 ```python
-SignatureChange(field: str, xref: int, reason: str, objects: tuple[int, ...])
+SignatureChange(*, field: str, xref: int, reason: str, objects: tuple[int, ...])
 ```
 
 An opened signature affected by the save mode or edits to covered objects.
@@ -232,6 +234,7 @@ Whether the save preserves the bytes of the signed revision.
 
 ```python
 SignaturePermission(
+    *,
     signature: str,
     xref: int,
     transform: str,

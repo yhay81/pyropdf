@@ -12,6 +12,7 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 ```python
 ImageRewriteReport(
+    *,
     considered: int,
     rewritten: int,
     bytes_before: int,
@@ -44,7 +45,7 @@ ImageRewriteReport.bytes_saved: int
 ## `PageImage`
 
 ```python
-PageImage(page: Page, index: int, item: Image, annotations: bool)
+PageImage(*, page: Page, index: int, item: Image, annotations: bool)
 ```
 
 One image that a page paints: its content item and its place among the page's images.
@@ -73,7 +74,7 @@ Return the image's data as stored, or `None` for an inline image or one without 
 ## `StoredImage`
 
 ```python
-StoredImage(filter: str, data: bytes, parameters: Dictionary | None)
+StoredImage(*, filter: str, data: bytes, parameters: Dictionary | None)
 ```
 
 An image's data as the document stores it, for an image filter that a file format holds.
