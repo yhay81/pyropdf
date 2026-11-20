@@ -279,6 +279,35 @@ class Dictionary(_Handle, MutableMapping[str, Any]):
 
     __slots__ = ()
 
+    @property
+    def xmp(self) -> str | None:
+        """Return the UTF-8 XMP packet of this PDF resource, or ``None`` when absent.
+
+        For example, ``page.obj.xmp`` reads page metadata. The packet must
+        contain an XML RDF element and fit in 1 MiB. Invalid packets raise
+        :class:`MalformedPdfError` and oversized packets raise :class:`LimitError`
+        with code ``stream_data_size`. Assign a packet or delete the property
+        to change this resource's association. Other owners keep their packet.
+        """
+        from pyropdf._metadata import read_component_xmp  # noqa: PLC0415
+
+        return read_component_xmp(self)
+
+    @xmp.setter
+    def xmp(self, packet: str) -> None:
+        from pyropdf._metadata import write_component_xmp  # noqa: PLC0415
+
+        if not isinstance(packet, str):
+            msg = f"xmp must be a str: {type(packet).__name__}"
+            raise TypeError(msg)
+        write_component_xmp(self._document, self, packet)
+
+    @xmp.deleter
+    def xmp(self) -> None:
+        from pyropdf._metadata import write_component_xmp  # noqa: PLC0415
+
+        write_component_xmp(self._document, self, None)
+
     def __getitem__(self, key: str) -> Any:  # noqa: ANN401 - a PDF value is any of several types.
         """Return the resolved value of ``key``."""
         return self._get(_key(key))

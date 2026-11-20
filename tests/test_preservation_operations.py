@@ -1088,12 +1088,23 @@ def prepare_metadata(doc: pyropdf.Document) -> None:
 
 
 def edit_metadata(doc: pyropdf.Document) -> set[int]:
-    touched = indirect_numbers(doc.trailer.get("Info"), doc.catalog.get("Metadata"))
+    from test_metadata import XMP  # noqa: PLC0415
+
+    page = doc.pages[0].obj
+    touched = {number(page)} | indirect_numbers(page.get("Metadata"))
+    # Exercise creation, removal and replacement without affecting document XMP.
+    page.xmp = XMP
+    del page.xmp
+    page.xmp = XMP.replace(">Old<", ">Page title<")
+    touched |= indirect_numbers(doc.trailer.get("Info"), doc.catalog.get("Metadata"))
     doc.metadata["modified"] = "D:20250202000000Z"
     return touched
 
 
 def check_metadata(doc: pyropdf.Document) -> None:
+    page_packet = doc.pages[0].obj.xmp
+    assert page_packet is not None
+    assert ">Page title<" in page_packet
     assert doc.trailer["Info"]["ModDate"].text == "D:20250202000000Z"
     assert doc.xmp
     assert "2025-02-02T00:00:00" in doc.xmp

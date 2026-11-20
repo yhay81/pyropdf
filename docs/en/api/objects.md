@@ -126,6 +126,22 @@ Dictionary.__len__() -> int
 
 Return the number of entries or elements.
 
+### `Dictionary.xmp`
+
+```python
+Dictionary.xmp: str | None
+```
+
+The UTF-8 XMP packet of this PDF resource, or `None` when absent.
+
+For example, `page.obj.xmp` reads page metadata. The packet must
+contain an XML RDF element and fit in 1 MiB. Invalid packets raise
+`MalformedPdfError` and oversized packets raise `LimitError`
+with code `stream_data_size`. Assign a packet or delete the property
+to change this resource's association. Other owners keep their packet.
+
+Settable.
+
 ### `Dictionary.__getitem__`
 
 ```python
@@ -338,6 +354,22 @@ Stream.__len__() -> int
 ```
 
 Return the number of entries or elements.
+
+### `Stream.xmp`
+
+```python
+Stream.xmp: str | None
+```
+
+The UTF-8 XMP packet of this PDF resource, or `None` when absent.
+
+For example, `page.obj.xmp` reads page metadata. The packet must
+contain an XML RDF element and fit in 1 MiB. Invalid packets raise
+`MalformedPdfError` and oversized packets raise `LimitError`
+with code `stream_data_size`. Assign a packet or delete the property
+to change this resource's association. Other owners keep their packet.
+
+Settable.
 
 ### `Stream.__getitem__`
 
