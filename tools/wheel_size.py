@@ -64,9 +64,9 @@ def check_notices(path: Path) -> None:
 
 def only_wheel(directory: Path) -> Path:
     """Require each build to produce exactly one pyropdf wheel."""
-    wheels = sorted(directory.glob("pyropdf-*.whl"))
-    if len(wheels) != 1:
-        msg = f"expected one pyropdf wheel in {directory}, found {len(wheels)}"
+    wheels = sorted(directory.glob("*.whl"))
+    if len(wheels) != 1 or not wheels[0].name.startswith("pyropdf-"):
+        msg = f"expected one pyropdf wheel in {directory}, found {[wheel.name for wheel in wheels]}"
         raise ValueError(msg)
     return wheels[0]
 
@@ -85,7 +85,9 @@ def check_size(head: Wheel, abi: str, base: Wheel | None, justification: str) ->
         msg = f"{head.filename} exceeds the {MAX_BYTES}-byte (9 MiB) abi3 budget"
         raise ValueError(msg)
     if base and head.size_bytes - base.size_bytes > MAX_GROWTH and not justification:
-        msg = 'growth exceeds 0.25 MiB; add "Wheel growth justification: <reason>" to the PR description'
+        msg = (
+            'growth exceeds 0.25 MiB. Explain why in a PR description line starting with "Wheel growth justification:"'
+        )
         raise ValueError(msg)
 
 
@@ -104,6 +106,8 @@ def main() -> None:
     report = {"head": asdict(head)}
     if base:
         report.update(base=asdict(base), growth_bytes=head.size_bytes - base.size_bytes)
+        if os.getenv("BASE_REVISION") and os.getenv("HEAD_REVISION"):
+            report.update(base_revision=os.environ["BASE_REVISION"], head_revision=os.environ["HEAD_REVISION"])
         if reason:
             report["justification"] = reason
     sys.stdout.write(json.dumps(report, ensure_ascii=True, indent=2) + "\n")

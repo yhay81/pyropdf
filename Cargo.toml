@@ -44,7 +44,7 @@ strip = "symbols"
 panic = "unwind"
 
 # Size-optimize the PDF engine, font code and RTen operator implementations.
-# The rasterizer, numerical kernels and final binding keep speed optimization.
+# The rasterizer, matrix-multiplication kernels and binding retain speed optimization.
 [profile.release.package.pyropdf-engine]
 opt-level = "s"
 

@@ -7,6 +7,8 @@ on:
     types: [opened, reopened, synchronize, edited]
     paths:
       - Cargo.*
+      - .cargo/**
+      - .gitattributes
       - crates/**
       - python/**
       - pyproject.toml
@@ -16,6 +18,7 @@ on:
       - NOTICE
       - tools/arlington/**
       - tools/wheel_size.py
+      - tools/native-wheel-args.txt
       - .github/workflows/release.yml
       - .github/workflows/wheel-size.yml
 
@@ -45,21 +48,36 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          # GitHub tests the PR applied to its current base, including packaging
+          # changes that landed after the contributor branched.
+          ref: ${{ github.sha }}
           path: head
-          fetch-depth: 0
+          fetch-depth: 2
           persist-credentials: false
-      - name: Find the base of the PR diff
+      - name: Identify the exact base of the tested merge
         id: base
         shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: echo "revision=$(git -C head merge-base HEAD "$BASE_SHA")" >> "$GITHUB_OUTPUT"
+        run: |
+          revision=$(git -C head rev-parse HEAD^1)
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.base.outputs.revision }}
           path: base
           persist-credentials: false
+      - name: Read native release arguments from each revision
+        id: native
+        shell: bash
+        run: |
+          for checkout in base head; do
+            # Releases before #858 passed these flags directly in release.yml.
+            if [[ $checkout == base && ! -f base/tools/native-wheel-args.txt ]]; then
+              args='--release --locked --out dist'
+            else
+              args=$(cat "$checkout/tools/native-wheel-args.txt")
+            fi
+            echo "$checkout=$args" >> "$GITHUB_OUTPUT"
+          done
       - name: Build base release wheel
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
@@ -67,7 +85,7 @@ jobs:
           target: ${{ matrix.platform.target }}
           rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
-          args: --release --locked --compression-level 9 --out dist
+          args: ${{ steps.native.outputs.base }}
           manylinux: auto
       - name: Build head release wheel
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
@@ -76,7 +94,7 @@ jobs:
           target: ${{ matrix.platform.target }}
           rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
-          args: --release --locked --compression-level 9 --out dist
+          args: ${{ steps.native.outputs.head }}
           manylinux: auto
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -84,6 +102,8 @@ jobs:
       - name: Check compressed size and growth
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REVISION: ${{ steps.base.outputs.revision }}
+          HEAD_REVISION: ${{ github.sha }}
         shell: bash
         run: python head/tools/wheel_size.py head/dist --abi abi3 --base base/dist | tee size.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

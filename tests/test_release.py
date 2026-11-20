@@ -143,6 +143,11 @@ def test_compressed_wheel_limits_and_pr_justification(
     with pytest.raises(ValueError, match="9 MiB"):
         tool()
 
+    (other_platform,) = base.glob("*.whl")
+    other_platform.rename(other_platform.with_name(other_platform.name.replace("win_amd64", "macosx_11_0_arm64")))
+    with pytest.raises(ValueError, match="incomparable wheel tags"):
+        tool()
+
 
 def test_larger_free_threaded_wheel_reports_size_and_checks_notices(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -163,6 +168,12 @@ def test_pr_wheels_match_the_native_release_builds() -> None:
     assert len(re.findall(targets, native)) == 5
     assert re.findall(targets, native) == re.findall(targets, comparison)
     for setting in re.findall(r"^ *(?:- )?([\w-]+: .*)$", native, flags=re.MULTILINE):
-        if setting.startswith(("uses: PyO3/", "rust-toolchain:", "maturin-version:", "args:", "manylinux:")):
+        if setting.startswith(("uses: PyO3/", "rust-toolchain:", "maturin-version:", "manylinux:")):
             assert comparison.count(setting) == 2
+    assert "cat tools/native-wheel-args.txt" in native
+    assert "args: ${{ steps.native.outputs.args }}" in native
+    assert "ref: ${{ github.sha }}" in comparison
+    assert "git -C head rev-parse HEAD^1" in comparison
+    assert "args: ${{ steps.native.outputs.base }}" in comparison
+    assert "args: ${{ steps.native.outputs.head }}" in comparison
     assert native.index("tools/wheel_size.py") < native.index("actions/upload-artifact")
