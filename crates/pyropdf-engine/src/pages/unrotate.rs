@@ -226,6 +226,81 @@ impl Turn<'_> {
             .map(|at| self.copies[at].1)
     }
 
+    /// Replace a page-local entry without changing other owners of its target.
+    fn replace_local(
+        &mut self,
+        transaction: &mut Transaction,
+        slot: &mut Value,
+        new: Value,
+    ) -> Result<()> {
+        if let Value::Reference(old) = slot {
+            self.unused.try_push(old.number())?;
+            let copy = transaction.allocate()?;
+            transaction.write(copy.number(), &new, self.budget)?;
+            *slot = Value::Reference(copy);
+        } else {
+            *slot = new;
+        }
+        Ok(())
+    }
+
+    fn viewport_points(
+        &mut self,
+        transaction: &mut Transaction,
+        slot: Option<&mut Value>,
+        length: usize,
+    ) -> Result<bool> {
+        let Some(slot) = slot else { return Ok(false) };
+        if let Some(Value::Array(points)) = self.resolved(Some(slot))?
+            && points.len() == length
+            && let Some(moved) = mapped_points(&self.matrix, &points, self.budget)?
+        {
+            self.replace_local(transaction, slot, moved)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn viewports(&mut self, transaction: &mut Transaction, page: &mut Dict) -> Result<()> {
+        let Some(slot) = page.get_mut("VP") else {
+            return Ok(());
+        };
+        let Some(Value::Array(mut items)) = self.resolved(Some(slot))? else {
+            return Ok(());
+        };
+        let mut changed = false;
+        for item in items.iter_mut() {
+            self.budget.poll()?;
+            let Some(Value::Dict(mut viewport)) = self.resolved(Some(item))? else {
+                continue;
+            };
+            // The order of the two /BBox corners specifies the measuring axes
+            // (ISO 32000-2, Table 265). Normalizing would discard that direction.
+            if !self.viewport_points(transaction, viewport.get_mut("BBox"), 4)? {
+                continue;
+            }
+            // A rectilinear measure's explicit origin is in default user space.
+            // Geographic coordinates and point data belong to the measurement.
+            if let Some(measure_slot) = viewport.get_mut("Measure")
+                && let Some(Value::Dict(mut measure)) = self.resolved(Some(measure_slot))?
+                && match self.resolved(measure.get("Subtype"))? {
+                    None => true,
+                    Some(Value::Name(kind)) => kind.as_bytes() == b"RL",
+                    _ => false,
+                }
+                && self.viewport_points(transaction, measure.get_mut("O"), 2)?
+            {
+                self.replace_local(transaction, measure_slot, Value::Dict(measure))?;
+            }
+            self.replace_local(transaction, item, Value::Dict(viewport))?;
+            changed = true;
+        }
+        if changed {
+            self.replace_local(transaction, slot, Value::Array(items))?;
+        }
+        Ok(())
+    }
+
     /// Moves the geometry of annotation `dict` to the new user space and
     /// turns its appearances.
     fn annotation(&mut self, transaction: &mut Transaction, dict: &mut Dict) -> Result<()> {
@@ -730,6 +805,8 @@ fn apply_unrotation(
             }
         }
     }
+
+    state.viewports(transaction, &mut dict)?;
 
     // The media and crop boxes may be inherited; the page sets its own.
     #[expect(
