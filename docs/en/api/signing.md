@@ -8,6 +8,104 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 # Signing
 
+## `DocMdpPermission`
+
+Changes permitted after a DocMDP certification signature (`/P`, ISO 32000-2 Table 257).
+
+Members: `NO_CHANGES`, `FORM_FILLING_AND_SIGNATURES`, `ANNOTATIONS_FORM_FILLING_AND_SIGNATURES`.
+
+## `EncryptedPayload`
+
+```python
+EncryptedPayload(
+    data: bytes,
+    *,
+    subtype: str = 'adbe.pkcs7.s5',
+    filename: str = 'encrypted.pdf',
+    version: str | None = None,
+    description: str | None = None,
+)
+```
+
+An encrypted PDF payload carried by a PDF 2.0 unencrypted wrapper document (ISO 32000-2 §7.6.7).
+
+`data` holds the encrypted payload bytes (capped at 64 MiB), `subtype`
+names the cryptographic filter (`/Subtype`, such as `"adbe.pkcs7.s5"`),
+`filename` names the embedded file, `version` sets the optional PDF name
+`/Version`, and `description` sets `/Desc` on the file specification.
+
+## `FieldLock`
+
+```python
+FieldLock(action: FieldMdpAction = FieldMdpAction.ALL, fields: Sequence[str] = ())
+```
+
+Form-field locking specification for `Field.lock` (`SigFieldLock`) and `FieldMDP` transforms.
+
+`FieldMdpAction.ALL` locks every field and forbids `fields`;
+`INCLUDE` and `EXCLUDE` require one to 4,096 non-empty field names.
+
+## `FieldMdpAction`
+
+Which form fields a `FieldLock` locks after signing (`/Action`, ISO 32000-2 Table 236).
+
+Members: `ALL`, `INCLUDE`, `EXCLUDE`.
+
+## `LegalAttestation`
+
+```python
+LegalAttestation(
+    *,
+    javascript_actions: int | None = None,
+    launch_actions: int | None = None,
+    uri_actions: int | None = None,
+    movie_actions: int | None = None,
+    sound_actions: int | None = None,
+    hide_annotation_actions: int | None = None,
+    goto_remote_actions: int | None = None,
+    alternate_images: int | None = None,
+    external_streams: int | None = None,
+    truetype_fonts: int | None = None,
+    external_ref_xobjects: int | None = None,
+    external_opi_dicts: int | None = None,
+    non_embedded_fonts: int | None = None,
+    dev_dep_gs_op: int | None = None,
+    dev_dep_gs_ht: int | None = None,
+    dev_dep_gs_tr: int | None = None,
+    dev_dep_gs_ucr: int | None = None,
+    dev_dep_gs_bg: int | None = None,
+    dev_dep_gs_fl: int | None = None,
+    annotations: int | None = None,
+    optional_content: bool | None = None,
+    attestation: str | None = None,
+)
+```
+
+Legal content attestation dictionary on `Catalog['Legal']` (ISO 32000-2 Table 264, PDF 1.5).
+
+Each count is a non-negative integer or `None` when omitted; `attestation`
+holds explanatory text and `optional_content` whether optional content is present.
+
+## `SecurityStore`
+
+```python
+SecurityStore(
+    *,
+    certificates: Iterable[bytes] = (),
+    ocsps: Iterable[bytes] = (),
+    crls: Iterable[bytes] = (),
+    vri: Mapping[str, ValidationInfo] | Iterable[tuple[str, ValidationInfo]] = (),
+)
+```
+
+The Document Security Store `Catalog['DSS']` for long-term signature validation (ISO 32000-2 Table 261).
+
+Holds DER-encoded X.509 `certificates` (`/Certs`), OCSP responses
+`ocsps` (`/OCSPs`), CRLs `crls` (`/CRLs`), and per-signature
+`ValidationInfo` entries keyed by `vri_key` in `vri` (`/VRI`).
+Writing deduplicates identical DER byte strings into shared indirect Flate
+streams and promotes the catalog's `/Version` to `2.0`.
+
 ## `Signature`
 
 ```python
@@ -23,6 +121,30 @@ A signature of the opened file: its field, its signature dictionary, and the rev
 
 `revision` counts the file's revisions from 0, the oldest, and is
 `None` when the byte ranges end where no revision does.
+
+### `Signature.is_timestamp`
+
+```python
+Signature.is_timestamp: bool
+```
+
+Whether this signature is an RFC 3161 document timestamp (`/DocTimeStamp`).
+
+### `Signature.doc_mdp`
+
+```python
+Signature.doc_mdp: DocMdpPermission | None
+```
+
+The `DocMDP` permission declared in this signature's `/Reference`, or `None`.
+
+### `Signature.field_locks`
+
+```python
+Signature.field_locks: tuple[FieldLock, ...]
+```
+
+The `FieldMDP` `FieldLock` entries signed by this signature's `/Reference`.
 
 ### `Signature.verify`
 
@@ -157,3 +279,50 @@ Timestamper: TypeAlias = Callable[[bytes, str], bytes]
 A time-stamp callback: it receives the digest of the signature value and
 the name of its hash algorithm (`"sha256"` or `"sha384"`) and returns
 the DER of an RFC 3161 time-stamp token over that digest.
+
+## `ValidationInfo`
+
+```python
+ValidationInfo(
+    *,
+    certificates: Iterable[bytes] = (),
+    ocsps: Iterable[bytes] = (),
+    crls: Iterable[bytes] = (),
+    timestamp: bytes | None = None,
+    created: str | datetime | None = None,
+)
+```
+
+Validation-related information for one signature in `/DSS /VRI` (ISO 32000-2 Table 262).
+
+`timestamp` (`/TS`) and `created` (`/TU`) are mutually exclusive per
+ETSI EN 319 142-1 and the Arlington PDF Model (`VRI.tsv`).
+
+## `vri_key`
+
+```python
+vri_key(signature_contents: bytes) -> str
+```
+
+Return the 40-character uppercase SHA-1 hexadecimal `/VRI` key for `signature_contents`.
+
+ISO 32000-2 Table 261 defines each key of `/DSS /VRI` as the uppercase
+hexadecimal SHA-1 digest of the raw byte string in a signature's
+`/Contents` entry (for example `bytes(sig_dict["Contents"])`).
+
+## `wrap_encrypted_payload`
+
+```python
+wrap_encrypted_payload(
+    payload: EncryptedPayload,
+    *,
+    cover_text: str = 'This PDF document contains an encrypted payload.',
+) -> Document
+```
+
+Create a PDF 2.0 unencrypted wrapper document carrying `payload` (ISO 32000-2 §7.6.7).
+
+Draws `cover_text` on a single A4 cover page, embeds `payload.data` with
+`/Subtype /application#2Fpdf`, `/AFRelationship /EncryptedPayload`, and
+`/EP`, lists the file specification in `Catalog['AF']`, and configures
+`Catalog['Collection']` with `/View /H` and `/D` naming the payload.

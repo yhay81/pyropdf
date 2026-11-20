@@ -196,6 +196,16 @@ Whether this is a signature field whose value is a signature dictionary.
 `Document.signatures` lists the signatures, and
 `Signature.verify` checks one.
 
+### `Field.lock`
+
+```python
+Field.lock: FieldLock | None
+```
+
+A signature field's `/Lock` `FieldLock` (PDF 1.5), or `None`; `del` removes it.
+
+Settable.
+
 ### `Field.widgets`
 
 ```python

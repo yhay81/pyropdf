@@ -16,11 +16,27 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pyropdf import _core
+from pyropdf._collections import _require_collection_version
 from pyropdf._core import _Signer
 from pyropdf._errors import PdfError
+from pyropdf._fallback_fonts import _set_fallback
 from pyropdf._form import FieldType
 from pyropdf._metadata import pdf_date
-from pyropdf._objects import Array, Dictionary, Name, Stream
+from pyropdf._objects import Array, Dictionary, Name, Stream, _catalog
+from pyropdf._signature_structures import (
+    DocMdpPermission,
+    FieldLock,
+    _validate_doc_mdp,
+    build_reference_entries,
+    ensure_pades_version,
+    inherit_prepared_field_settings,
+    is_timestamp_sig,
+    parse_rfc3161_tst_info,
+    read_certification,
+    read_doc_mdp_from_sig,
+    read_field_locks_from_sig,
+    write_perms_doc_mdp,
+)
 
 if TYPE_CHECKING:
     from pyropdf._document import Document
@@ -202,12 +218,49 @@ def _signature_field(document: Document, field: str, signature: Dictionary) -> N
     acroform["SigFlags"] = (flags if isinstance(flags, int) and not isinstance(flags, bool) else 0) | _SIGNATURE_FLAGS
 
 
+def _validate_reserve(reserve: object) -> int:
+    if isinstance(reserve, bool) or not isinstance(reserve, int):
+        msg = f"reserve must be an integer: {reserve!r}"
+        raise TypeError(msg)
+    if not 0 < reserve <= _MAX_RESERVE:
+        msg = f"reserve must be from 1 through {_MAX_RESERVE} bytes: {reserve}"
+        raise ValueError(msg)
+    return reserve
+
+
+def _resolve_sign_settings(
+    document: Document,
+    field: str,
+    checked_mdp: DocMdpPermission | None,
+    field_lock: FieldLock | None,
+    reason_text: str | None,
+) -> tuple[DocMdpPermission | None, FieldLock | None, str | None]:
+    effective_mdp = checked_mdp
+    effective_lock = field_lock
+    effective_reason = reason_text
+    if field in document.form:
+        existing = document.form[field]
+        if existing.type is FieldType.SIGNATURE and not existing.is_signed:
+            effective_mdp, effective_lock, effective_reason = inherit_prepared_field_settings(
+                existing.obj,
+                effective_mdp,
+                effective_lock,
+                effective_reason,
+            )
+    if effective_mdp is not None and (read_certification(document) is not None or bool(document.signatures)):
+        msg = "cannot add a DocMDP certification signature to a document that is already signed or certified"
+        raise ValueError(msg)
+    return effective_mdp, effective_lock, effective_reason
+
+
 def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
     document: Document,
     field: str,
     signer: Signer,
     *,
     timestamper: Timestamper | None,
+    doc_mdp: DocMdpPermission | None = None,
+    field_lock: FieldLock | None = None,
     reason: str | None,
     location: str | None,
     contact: str | None,
@@ -223,38 +276,54 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
     if timestamper is not None and not callable(timestamper):
         msg = f"timestamper must be callable or None: {type(timestamper).__name__}"
         raise TypeError(msg)
-    if isinstance(reserve, bool) or not isinstance(reserve, int):
-        msg = f"reserve must be an integer: {reserve!r}"
+    checked_mdp = None if doc_mdp is None else _validate_doc_mdp(doc_mdp)
+    if field_lock is not None and not isinstance(field_lock, FieldLock):
+        msg = f"field_lock must be a FieldLock or None: {type(field_lock).__name__}"
         raise TypeError(msg)
-    if not 0 < reserve <= _MAX_RESERVE:
-        msg = f"reserve must be from 1 through {_MAX_RESERVE} bytes: {reserve}"
-        raise ValueError(msg)
-    entries: dict[str, Any] = {
-        "Type": Name("Sig"),
-        "Filter": Name("Adobe.PPKLite"),
-        "SubFilter": Name("ETSI.CAdES.detached"),
-        # The core finds these two entries in the saved bytes as written here, in this order.
-        "ByteRange": list(_BYTE_RANGE_PLACEHOLDER),
-        "Contents": b"0" * (2 * reserve),
-        "M": pdf_date(datetime.now(UTC)),
-    }
-    for key, name, value in (
-        ("Reason", "reason", reason),
-        ("Location", "location", location),
-        ("ContactInfo", "contact", contact),
-    ):
-        text = _optional_text(name, value)
-        if text is not None:
-            entries[key] = text
+    reserve = _validate_reserve(reserve)
+    reason_text = _optional_text("reason", reason)
+    location_text = _optional_text("location", location)
+    contact_text = _optional_text("contact", contact)
     document._ensure_open()  # noqa: SLF001
-    if document.encryption_method is not None:
+    if document.encryption_method is not None or document.needs_password:
         msg = "pyropdf does not sign encrypted documents"
         raise ValueError(msg)
     core = document._core()  # noqa: SLF001
     _core.begin_signing(core)
     try:
+        effective_mdp, effective_lock, effective_reason = _resolve_sign_settings(
+            document,
+            field,
+            checked_mdp,
+            field_lock,
+            reason_text,
+        )
+        optional_entries = {
+            key: text
+            for key, text in (
+                ("Reason", effective_reason),
+                ("Location", location_text),
+                ("ContactInfo", contact_text),
+            )
+            if text is not None
+        }
+        entries: dict[str, Any] = {
+            "Type": Name("Sig"),
+            "Filter": Name("Adobe.PPKLite"),
+            "SubFilter": Name("ETSI.CAdES.detached"),
+            # The core finds these two entries in the saved bytes as written here, in this order.
+            "ByteRange": list(_BYTE_RANGE_PLACEHOLDER),
+            "Contents": b"0" * (2 * reserve),
+            "M": pdf_date(datetime.now(UTC)),
+            **optional_entries,
+        }
+        if effective_mdp is not None or effective_lock is not None:
+            ensure_pades_version(document)
+            entries["Reference"] = build_reference_entries(document, effective_mdp, effective_lock)
         signature = document.objects[document.objects.add(entries)]
         _signature_field(document, field, signature)
+        if effective_mdp is not None:
+            write_perms_doc_mdp(document, signature)
         signed = _core.sign_document(core, reserve, signer._core, timestamper)  # noqa: SLF001
     except BaseException:
         # Signing ends its transaction only once it replaced the document.
@@ -264,13 +333,146 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
     return signed
 
 
+def _find_placeholder(data: bytes, reserve: int) -> tuple[slice, slice]:
+    """Locate the single ``/ByteRange`` and ``/Contents`` placeholder slices in ``data``."""
+    start, first, second, third = _BYTE_RANGE_PLACEHOLDER
+    prefix = f"/ByteRange [{start} {first} {second} {third}] /Contents (".encode("ascii")
+    digits = 2 * reserve
+    found: tuple[slice, slice] | None = None
+    pos = 0
+    while (idx := data.find(prefix, pos)) != -1:
+        open_paren = idx + len(prefix) - 1
+        close_paren = open_paren + 1 + digits
+        if (
+            close_paren < len(data)
+            and data[close_paren] == ord(")")
+            and data[open_paren + 1 : close_paren] == b"0" * digits
+        ):
+            if found is not None:
+                msg = "the saved document holds more than one signature placeholder"
+                raise PdfError(msg)
+            byte_range_slice = slice(idx + len(b"/ByteRange "), open_paren - len(b" /Contents "))
+            contents_slice = slice(open_paren, close_paren + 1)
+            found = (byte_range_slice, contents_slice)
+        pos = idx + 1
+    if found is None:
+        msg = "the saved document holds no signature placeholder"
+        raise PdfError(msg)
+    return found
+
+
+def _fill_timestamp(
+    saved_bytes: bytes,
+    reserve: int,
+    timestamper: Timestamper,
+    unchanged: Callable[[], bool],
+) -> bytes:
+    """Patch ``/ByteRange`` and ``/Contents`` with an RFC 3161 ``TimeStampToken`` over ``saved_bytes``."""
+    import hashlib  # noqa: PLC0415
+
+    data = bytearray(saved_bytes)
+    br_slice, contents_slice = _find_placeholder(saved_bytes, reserve)
+    c_start = contents_slice.start
+    c_end = contents_slice.stop
+    written = f"[0 {c_start} {c_end} {len(data) - c_end}".encode("ascii")
+    br_len = br_slice.stop - br_slice.start
+    padding_len = (br_len - 1) - len(written)
+    if padding_len < 0:
+        msg = "the document is too large to timestamp"
+        raise PdfError(msg)
+    data[br_slice.start : br_slice.start + len(written)] = written
+    data[br_slice.start + len(written) : br_slice.stop - 1] = b" " * padding_len
+
+    digest = hashlib.sha256(bytes(data[:c_start]) + bytes(data[c_end:])).digest()
+    raw_token = timestamper(digest, "sha256")
+    if not unchanged():
+        msg = "the document changed while it was being timestamped"
+        raise PdfError(msg)
+    if not isinstance(raw_token, (bytes, bytearray, memoryview)):
+        msg = f"the timestamper must return bytes: {type(raw_token).__name__}"
+        raise TypeError(msg)
+    token = bytes(raw_token)
+    try:
+        _, imprint_alg, hashed_message, _ = parse_rfc3161_tst_info(token)
+        _core.signature_read(token)
+    except (ValueError, PdfError) as error:
+        msg = f"the time-stamp token is not RFC 3161: {error}"
+        raise ValueError(msg) from error
+    if imprint_alg != "sha256" or hashed_message != digest:
+        msg = "the time-stamp token does not stamp the document's sha256 digest"
+        raise ValueError(msg)
+    if len(token) > reserve:
+        msg = (
+            f"the signature needs {len(token)} bytes, more than the {reserve} reserved; timestamp with a larger reserve"
+        )
+        raise ValueError(msg)
+    hex_body = token.hex().encode("ascii") + b"0" * (2 * (reserve - len(token)))
+    data[c_start:c_end] = b"<" + hex_body + b">"
+    return bytes(data)
+
+
+def timestamp(
+    document: Document,
+    timestamper: Timestamper,
+    *,
+    field: str = "DocTimeStamp",
+    reserve: int = DEFAULT_RESERVE,
+) -> bytes:
+    """Append an RFC 3161 ``/DocTimeStamp`` revision to ``document`` and return the timestamped bytes."""
+    if not callable(timestamper):
+        msg = f"timestamper must be callable: {type(timestamper).__name__}"
+        raise TypeError(msg)
+    if not isinstance(field, str):
+        msg = f"field must be a str: {type(field).__name__}"
+        raise TypeError(msg)
+    reserve = _validate_reserve(reserve)
+    document._ensure_open()  # noqa: SLF001
+    if document.encryption_method is not None or document.needs_password:
+        msg = "pyropdf does not timestamp encrypted documents"
+        raise ValueError(msg)
+    core = document._core()  # noqa: SLF001
+    _core.begin_signing(core)
+    try:
+        _require_collection_version(document, _catalog(document), (2, 0))
+        entries: dict[str, Any] = {
+            "Type": Name("DocTimeStamp"),
+            "Filter": Name("Adobe.PPKLite"),
+            "SubFilter": Name("ETSI.RFC3161"),
+            "V": 0,
+            "ByteRange": list(_BYTE_RANGE_PLACEHOLDER),
+            "Contents": b"0" * (2 * reserve),
+        }
+        sig_obj = document.objects[document.objects.add(entries)]
+        _signature_field(document, field, sig_obj)
+        incremental_args = (True, None, None, False, None, False, False, None, False, False, False, False)
+        saved_bytes = bytes(core.to_bytes(*incremental_args))
+        stamped = _fill_timestamp(
+            saved_bytes,
+            reserve,
+            timestamper,
+            lambda: bytes(core.to_bytes(*incremental_args)) == saved_bytes,
+        )
+        max_history = document.history.max_size
+        new_core = _core._Document.open_buffer(stamped, document._limits, None)  # noqa: SLF001
+        _core.set_history_limit(new_core, max_history)
+    except BaseException:
+        _core.end_transaction(core, False)  # noqa: FBT003 - the core's flag
+        raise
+    _core.end_transaction(core, False)  # noqa: FBT003 - release the previous base's transaction lock.
+    fallback = document._fallback  # noqa: SLF001
+    document._doc = new_core  # noqa: SLF001
+    document._drawn = None  # noqa: SLF001
+    _set_fallback(document, fallback)
+    return stamped
+
+
 #: The levels of modification after a signed revision, least first, as pyHanko's default diff policy reports
 #: them: it has no rule that explains an annotation, so an added or changed one other than a widget is "other".
 _LEVELS = ("none", "form filling", "other")
 #: The keys of a field or widget that filling a form changes.
 _FILLING_KEYS = frozenset({"V", "AS", "AP", "MK", "Kids", "Fields", "NeedAppearances", "SigFlags", "DR", "DA"})
 #: The keys of the catalog that a signature or its validation data adds.
-_SIGNING_KEYS = frozenset({"DSS", "Extensions", "Perms"})
+_SIGNING_KEYS = frozenset({"DSS", "Extensions", "Legal", "Perms", "Version"})
 #: The most certificates in one chain.
 _MAX_CHAIN = 16
 #: The most levels of nested containers that comparing two revisions of an object reads.
@@ -328,6 +530,35 @@ class Signature:
     byte_range: tuple[int, ...]
     revision: int | None
     _document: Document = field(init=False, repr=False, compare=False)
+
+    def _dictionary(self) -> Dictionary | None:
+        document = getattr(self, "_document", None)
+        if document is None:
+            return None
+        if self.xref is not None and self.xref in document.objects:
+            obj = document.objects[self.xref]
+            if isinstance(obj, Dictionary):
+                return obj
+        if self.field in document.form:
+            val = _inherited(document.form[self.field].obj, "V")
+            if isinstance(val, Dictionary):
+                return val
+        return None
+
+    @property
+    def is_timestamp(self) -> bool:
+        """Return whether this signature is an RFC 3161 document timestamp (``/DocTimeStamp``)."""
+        return is_timestamp_sig(self._dictionary())
+
+    @property
+    def doc_mdp(self) -> DocMdpPermission | None:
+        """Return the ``DocMDP`` permission declared in this signature's ``/Reference``, or ``None``."""
+        return read_doc_mdp_from_sig(self._dictionary())
+
+    @property
+    def field_locks(self) -> tuple[FieldLock, ...]:
+        """Return the ``FieldMDP`` :class:`FieldLock` entries signed by this signature's ``/Reference``."""
+        return read_field_locks_from_sig(self._dictionary())
 
     def verify(self, trust: Sequence[bytes] | None = None) -> SignatureVerification:
         """Verify the signature against the opened file, with ``trust`` the DER or PEM certificates to trust.
@@ -448,6 +679,18 @@ def _verify(signature: Signature, anchors: list[bytes] | None) -> SignatureVerif
     signed = data[a:b] + data[c : c + length]
     try:
         contents = bytes.fromhex(data[b + 1 : c - 1].decode("latin-1")) if b + 1 < c - 1 else b""
+        if signature.is_timestamp:
+            return _verify_doc_timestamp(
+                signature,
+                signed,
+                contents,
+                covers=covers,
+                revisions=revisions,
+                data=data,
+                end_offset=c + length,
+                anchors=anchors,
+                problems=problems,
+            )
         parsed, token = _core.signature_read(contents)
     except ValueError:
         return _failure("the /Contents between the byte ranges is not a hexadecimal string", covers=covers, valid=False)
@@ -479,6 +722,72 @@ def _verify(signature: Signature, anchors: list[bytes] | None) -> SignatureVerif
         )
     later = {number for _, numbers in revisions[(signature.revision or 0) + 1 :] for number in numbers}
     modifications = _classify(data[: c + length], data, later) if signature.revision is not None and later else "none"
+    return SignatureVerification(
+        intact,
+        covers,
+        valid,
+        trusted,
+        signer,
+        None if signing_time is None else datetime.fromtimestamp(signing_time, UTC),
+        stamp_time,
+        stamp_valid,
+        modifications,
+        tuple(problems),
+    )
+
+
+def _digest_matches(alg: str, data: bytes, expected: bytes | None, problems: list[str]) -> bool:
+    computed = _digest(alg, data)
+    if computed is None:
+        problems.append(f"the digest algorithm {alg} is not one that pyropdf computes")
+        return False
+    return expected is None or computed == expected
+
+
+def _verify_doc_timestamp(  # noqa: PLR0913 - all pieces of one timestamp verification.
+    signature: Signature,
+    signed: bytes,
+    contents: bytes,
+    *,
+    covers: bool,
+    revisions: list[tuple[int | None, list[int]]],
+    data: bytes,
+    end_offset: int,
+    anchors: list[bytes] | None,
+    problems: list[str],
+) -> SignatureVerification:
+    """Verify an RFC 3161 ``/DocTimeStamp`` signature over ``signed``."""
+    try:
+        tst_info_der, imprint_alg, hashed_message, stamp_time = parse_rfc3161_tst_info(contents)
+        parsed, _ = _core.signature_read(contents)
+    except (ValueError, PdfError) as error:
+        return _failure(str(error), covers=covers, valid=False)
+    digest_name, message_digest, signing_time, certificates, signer_index, check, _ = parsed
+    imprint_ok = _digest_matches(imprint_alg, signed, hashed_message, problems)
+    tst_ok = _digest_matches(digest_name, tst_info_der, message_digest, problems)
+    intact = imprint_ok and tst_ok
+    if check is None:
+        valid: bool | None = False
+        problems.append("the SignedData holds no certificate of its signer")
+    else:
+        valid = _check(check, tst_info_der, problems)
+        if message_digest is None:
+            intact = imprint_ok and valid is True
+    if not intact:
+        problems.append("the signed bytes' digest does not match the signature's")
+    if valid is False:
+        problems.append("the CMS signature does not verify with the signer's certificate")
+    stamp_valid: bool | None = False if (not intact or valid is False) else valid
+    if stamp_valid is False:
+        problems.append("the time-stamp token does not verify for this signature")
+    signer = None if signer_index is None else _core.certificate_read(certificates[signer_index])[0]
+    trusted = None
+    if anchors is not None:
+        trusted = signer_index is not None and _trusted(
+            certificates[signer_index], certificates, anchors, stamp_time, problems
+        )
+    later = {number for _, numbers in revisions[(signature.revision or 0) + 1 :] for number in numbers}
+    modifications = _classify(data[:end_offset], data, later) if signature.revision is not None and later else "none"
     return SignatureVerification(
         intact,
         covers,
@@ -620,7 +929,65 @@ def _classify(before_data: bytes, after_data: bytes, written: set[int]) -> str:
     return _LEVELS[level]
 
 
-def _object_level(old: Any, new: Any, appearance: bool) -> int:  # noqa: ANN401, FBT001, PLR0911
+def _is_invisible_timestamp_widget(item: object) -> bool:
+    """Return whether ``item`` is an invisible widget annotation of a ``/DocTimeStamp`` field."""
+    if not isinstance(item, Dictionary) or isinstance(item, Stream):
+        return False
+    if item.get("Subtype") != "Widget" or item.get("FT") != "Sig" or "AP" in item:
+        return False
+    rect = item.get("Rect")
+    if not isinstance(rect, Array) or len(rect) != 4:  # noqa: PLR2004
+        return False
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and float(v) == 0.0 for v in rect):
+        return False
+    val = item.get("V")
+    return isinstance(val, Dictionary) and is_timestamp_sig(val)
+
+
+def _fields_only_added_invisible_timestamps(old: Any, new: Any) -> bool:  # noqa: ANN401
+    old_refs = [item.xref for item in old or () if isinstance(item, Dictionary)]
+    new_items = [item for item in new or () if isinstance(item, Dictionary)]
+    kept = {item.xref for item in new_items}
+    if len(old_refs) != len(old or ()) or not kept.issuperset(old_refs):
+        return False
+    added = [item for item in new_items if item.xref not in set(old_refs)]
+    return all(_is_invisible_timestamp_widget(item) for item in added)
+
+
+def _acroform_level(old: Any, new: Any) -> int:  # noqa: ANN401
+    if not isinstance(new, Dictionary):
+        return 2
+    if old is None:
+        changed = set(new)
+        old_fields = None
+    elif isinstance(old, Dictionary):
+        changed = {key for key in set(old) | set(new) if _shape(old.get(key), 1) != _shape(new.get(key), 1)}
+        old_fields = old.get("Fields")
+    else:
+        return 2
+    if changed <= {"Fields", "SigFlags"} and _fields_only_added_invisible_timestamps(old_fields, new.get("Fields")):
+        return 0
+    return 1 if changed <= _FILLING_KEYS else 2
+
+
+def _changed_dict_level(kind: object, old: Dictionary, new: Dictionary, changed: set[str]) -> int:
+    if kind == "Catalog":
+        rest = changed - _SIGNING_KEYS
+        if not rest:
+            return 0
+        return _acroform_level(old.get("AcroForm"), new.get("AcroForm")) if rest == {"AcroForm"} else 2
+    if kind == "DSS":
+        return 0 if changed <= {"Type", "VRI", "Certs", "OCSPs", "CRLs"} else 2
+    if kind == "Page":
+        return _annotations_level(old.get("Annots"), new.get("Annots")) if changed <= {"Annots"} else 2
+    if changed <= {"Fields", "SigFlags"} and _fields_only_added_invisible_timestamps(
+        old.get("Fields"), new.get("Fields")
+    ):
+        return 0
+    return 1 if changed <= _FILLING_KEYS else 2
+
+
+def _object_level(old: Any, new: Any, appearance: bool) -> int:  # noqa: ANN401, FBT001
     """Return the level of one written object: ``old`` is ``None`` for a new one."""
     kind = new.get("Type") if isinstance(new, Dictionary) else None
     subtype = new.get("Subtype") if isinstance(new, Dictionary) else None
@@ -628,18 +995,15 @@ def _object_level(old: Any, new: Any, appearance: bool) -> int:  # noqa: ANN401,
     if annotation and subtype != "Widget":
         return 2
     if old is None:
+        if _is_invisible_timestamp_widget(new):
+            return 0
         return 1 if annotation or (isinstance(new, Dictionary) and ("FT" in new or kind == "Sig")) else 0
     if not isinstance(new, Dictionary) or not isinstance(old, Dictionary):
         return 2
     if isinstance(new, Stream):
         return 1 if appearance and subtype == "Form" else 2
     changed = {key for key in set(old) | set(new) if _shape(old.get(key), 1) != _shape(new.get(key), 1)}
-    if kind == "Catalog":
-        rest = changed - _SIGNING_KEYS
-        return 0 if not rest else 1 if rest <= {"AcroForm"} else 2
-    if kind == "Page":
-        return _annotations_level(old.get("Annots"), new.get("Annots")) if changed <= {"Annots"} else 2
-    return 1 if changed <= _FILLING_KEYS else 2
+    return _changed_dict_level(kind, old, new, changed)
 
 
 def _annotations_level(old: Any, new: Any) -> int:  # noqa: ANN401
@@ -650,6 +1014,8 @@ def _annotations_level(old: Any, new: Any) -> int:  # noqa: ANN401
     if len(old_refs) != len(old or ()) or not kept.issuperset(old_refs):
         return 2
     added = [item for item in new_items if item.xref not in set(old_refs)]
+    if all(_is_invisible_timestamp_widget(item) for item in added):
+        return 0
     return 1 if all(item.get("Subtype") == "Widget" for item in added) else 2
 
 

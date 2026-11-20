@@ -308,10 +308,19 @@ method and property of its classes with its full description.
 
 ## [Signing](signing.md)
 
+- [`DocMdpPermission`](signing.md#docmdppermission): Changes permitted after a DocMDP certification signature (`/P`, ISO 32000-2 Table 257).
+- [`EncryptedPayload`](signing.md#encryptedpayload): An encrypted PDF payload carried by a PDF 2.0 unencrypted wrapper document (ISO 32000-2 §7.6.7).
+- [`FieldLock`](signing.md#fieldlock): Form-field locking specification for `Field.lock` (`SigFieldLock`) and `FieldMDP` transforms.
+- [`FieldMdpAction`](signing.md#fieldmdpaction): Which form fields a `FieldLock` locks after signing (`/Action`, ISO 32000-2 Table 236).
+- [`LegalAttestation`](signing.md#legalattestation): Legal content attestation dictionary on `Catalog['Legal']` (ISO 32000-2 Table 264, PDF 1.5).
+- [`SecurityStore`](signing.md#securitystore): The Document Security Store `Catalog['DSS']` for long-term signature validation (ISO 32000-2 Table 261).
 - [`Signature`](signing.md#signature): A signature of the opened file: its field, its signature dictionary, and the revision that it signs.
 - [`SignatureVerification`](signing.md#signatureverification): What `Signature.verify` found.
 - [`Signer`](signing.md#signer): A signing key or callback, with its certificate chain, which `Document.sign` signs with.
 - [`Timestamper`](signing.md#timestamper): A time-stamp callback: it receives the digest of the signature value and the name of its hash algorithm (`"sha256"` or `"sha384"`) and returns the DER of an RFC 3161 time-stamp token over that digest.
+- [`ValidationInfo`](signing.md#validationinfo): Validation-related information for one signature in `/DSS /VRI` (ISO 32000-2 Table 262).
+- [`vri_key`](signing.md#vri_key): Return the 40-character uppercase SHA-1 hexadecimal `/VRI` key for `signature_contents`.
+- [`wrap_encrypted_payload`](signing.md#wrap_encrypted_payload): Create a PDF 2.0 unencrypted wrapper document carrying `payload` (ISO 32000-2 §7.6.7).
 
 ## [Limits and errors](limits-and-errors.md)
 

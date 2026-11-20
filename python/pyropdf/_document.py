@@ -94,9 +94,26 @@ from pyropdf._profiles import profiles as _profiles
 from pyropdf._recolor import RecolorReport, RecolorTarget, recolor
 from pyropdf._revisions import revisions as _revisions
 from pyropdf._sanitize import SanitizeReport, sanitize
+from pyropdf._signature_structures import (
+    DocMdpPermission,
+    EncryptedPayload,
+    FieldLock,
+    LegalAttestation,
+    SecurityStore,
+    delete_legal_attestation,
+    delete_security_store,
+    read_certification,
+    read_encrypted_payload,
+    read_legal_attestation,
+    read_security_store,
+    write_legal_attestation,
+    write_security_store,
+)
+from pyropdf._signature_structures import prepare_signature as _prepare_signature
 from pyropdf._signing import DEFAULT_RESERVE
 from pyropdf._signing import sign as _sign
 from pyropdf._signing import signatures as _signatures
+from pyropdf._signing import timestamp as _timestamp
 from pyropdf._structure import StructureTree, _delete_structure_tree
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 from pyropdf._threads import Threads, _delete_all_threads
@@ -1081,12 +1098,97 @@ class Document:
         """
         return _signatures(self)
 
+    @property
+    def certification(self) -> DocMdpPermission | None:
+        """Return the author certification permission from ``Catalog['Perms']['DocMDP']``, or ``None``."""
+        self._ensure_open()
+        return read_certification(self)
+
+    @property
+    def security_store(self) -> SecurityStore | None:
+        """Return or set the Document Security Store ``Catalog['DSS']`` (PDF 2.0), or ``None``; ``del`` removes it.
+
+        Assigning a :class:`SecurityStore` writes DER certificates, OCSP
+        responses, CRLs, and per-signature ``/VRI`` entries as deduplicated
+        indirect Flate streams in one transaction, keeping earlier signatures
+        intact across ``save(incremental=True)``.
+        """
+        self._ensure_open()
+        return read_security_store(self)
+
+    @security_store.setter
+    def security_store(self, store: SecurityStore | None) -> None:
+        self._ensure_open()
+        write_security_store(self, store)
+
+    @security_store.deleter
+    def security_store(self) -> None:
+        self._ensure_open()
+        delete_security_store(self)
+
+    @property
+    def legal_attestation(self) -> LegalAttestation | None:
+        """Return or set ``Catalog['Legal']`` (PDF 1.5), or ``None`` when absent; ``del`` removes it."""
+        self._ensure_open()
+        return read_legal_attestation(self)
+
+    @legal_attestation.setter
+    def legal_attestation(self, attestation: LegalAttestation | None) -> None:
+        self._ensure_open()
+        write_legal_attestation(self, attestation)
+
+    @legal_attestation.deleter
+    def legal_attestation(self) -> None:
+        self._ensure_open()
+        delete_legal_attestation(self)
+
+    @property
+    def encrypted_payload(self) -> EncryptedPayload | None:
+        """Return the :class:`EncryptedPayload` of a PDF 2.0 unencrypted wrapper document (§7.6.7), or ``None``."""
+        self._ensure_open()
+        return read_encrypted_payload(self)
+
+    def prepare_signature(  # noqa: PLR0913 - signature preparation options are keyword-only.
+        self,
+        field: str,
+        *,
+        doc_mdp: DocMdpPermission | None = None,
+        field_lock: FieldLock | None = None,
+        is_timestamp: bool = False,
+        reason: str | None = None,
+        location: str | None = None,
+        contact: str | None = None,
+        reserve: int = DEFAULT_RESERVE,
+    ) -> int:
+        """Prepare an unsigned signature field for an external signer in one transaction and return its ``xref``.
+
+        Creates an invisible signature field ``field`` on the first page when
+        none exists, writes ``/Lock`` for ``field_lock`` and ``/SV`` seed values
+        for ``doc_mdp``, ``is_timestamp``, and ``reason``, and returns the field
+        dictionary's object number so external signers such as pyHanko (or a
+        subsequent :meth:`sign` call) can fill it cleanly.
+        """
+        self._ensure_open()
+        return _prepare_signature(
+            self,
+            field,
+            doc_mdp=doc_mdp,
+            field_lock=field_lock,
+            is_timestamp=is_timestamp,
+            reason=reason,
+            location=location,
+            contact=contact,
+            reserve=reserve,
+        )
+
     def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
         self,
         field: str,
         signer: Signer,
         *,
         timestamper: Timestamper | None = None,
+        doc_mdp: DocMdpPermission | None = None,
+        field_lock: FieldLock | None = None,
         reason: str | None = None,
         location: str | None = None,
         contact: str | None = None,
@@ -1101,7 +1203,9 @@ class Document:
         ``signer`` covers every byte but its own (ETSI EN 319 142-1). The
         signature dictionary's ``/M`` is the current time, and ``reason``,
         ``location``, and ``contact`` become ``/Reason``, ``/Location``, and
-        ``/ContactInfo``.
+        ``/ContactInfo``. ``doc_mdp`` certifies an unsigned document with a
+        ``DocMDP`` transform and ``Catalog['Perms']['DocMDP']``, and
+        ``field_lock`` records a ``FieldMDP`` transform.
 
         ``timestamper`` receives the digest of the signature value and the
         name of its hash algorithm, and returns an RFC 3161 time-stamp token
@@ -1124,11 +1228,30 @@ class Document:
             field,
             signer,
             timestamper=timestamper,
+            doc_mdp=doc_mdp,
+            field_lock=field_lock,
             reason=reason,
             location=location,
             contact=contact,
             reserve=reserve,
         )
+
+    def timestamp(
+        self,
+        timestamper: Timestamper,
+        *,
+        field: str = "DocTimeStamp",
+        reserve: int = DEFAULT_RESERVE,
+    ) -> bytes:
+        """Append an RFC 3161 ``/DocTimeStamp`` revision to the document and return its bytes (ISO 32000-2 §12.8.5).
+
+        ``timestamper`` receives the SHA-256 digest of the signed byte ranges
+        and ``"sha256"``, and returns the DER of an RFC 3161 ``TimeStampToken``
+        stamping that digest; pyropdf makes no network access. Afterwards the
+        document reads the timestamped revision and earlier signatures remain
+        intact.
+        """
+        return _timestamp(self, timestamper, field=field, reserve=reserve)
 
     def render(  # noqa: PLR0913 - the rendering and batch options are all keyword-only
         self,
