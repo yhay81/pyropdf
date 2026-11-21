@@ -113,15 +113,16 @@ fn stream_extent(
     } else {
         raw.len()
     };
+    // A direct length and its closing delimiter already passed hayro's reader.
     let end = start
         .checked_add(length)
         .filter(|&end| end <= bytes.len())
-        .ok_or_else(|| Error::malformed("invalid stream length"))?;
+        .ok_or_else(|| Error::malformed("invalid indirect stream length"))?;
     let mut reader = Reader::new(bytes);
     reader.jump(end);
     reader.skip_white_spaces();
     reader
         .forward_tag(b"endstream")
-        .ok_or_else(|| Error::malformed("the stream length does not end at endstream"))?;
+        .ok_or_else(|| Error::malformed("the indirect stream length does not end at endstream"))?;
     Ok(reader.offset())
 }
