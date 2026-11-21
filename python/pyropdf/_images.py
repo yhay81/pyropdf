@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from pyropdf import _core
 from pyropdf._errors import PdfError
+from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._xobjects import (
@@ -334,8 +335,35 @@ _BITS = 8
 _SAMPLE_BITS = frozenset({2, 4, 8, 16})
 _JPEG_COMPONENTS = frozenset({1, 3, _CMYK})
 _MAX_QUALITY = 100
-_LOSSLESS_FORMATS = ("flate", "jpeg")
-_BITONAL_FORMATS = ("fax", "flate")
+_LOSSLESS_FORMATS = ("flate", "jpeg", "jpx")
+_BITONAL_FORMATS = ("fax", "fax-g3", "fax-g3-2d", "jbig2", "flate")
+_IMAGE_FILTERS = {
+    "jpeg": "DCTDecode",
+    "jpx": "JPXDecode",
+    "fax": "CCITTFaxDecode",
+    "fax-g3": "CCITTFaxDecode",
+    "fax-g3-2d": "CCITTFaxDecode",
+    "jbig2": "JBIG2Decode",
+    "flate": "FlateDecode",
+    "flate1": "FlateDecode",
+}
+_FAX_K = {"fax": -1, "fax-g3": 0, "fax-g3-2d": 2}
+
+
+def _fax_parameters(form: str, size: tuple[int, int]) -> dict[str, object] | None:
+    if form not in _FAX_K:
+        return None
+    parameters: dict[str, object] = {"K": _FAX_K[form], "Columns": size[0], "Rows": size[1]}
+    if form != "fax":
+        parameters["EndOfLine"] = True
+    return parameters
+
+
+def _filter_version(document: Document, filter_name: str) -> None:
+    if filter_name in ("JBIG2Decode", "JPXDecode"):
+        _require_version(document, document.catalog, (1, 4 if filter_name == "JBIG2Decode" else 5))
+
+
 _PAM_TYPES = {1: "GRAYSCALE", 2: "GRAYSCALE_ALPHA", 3: "RGB", 4: "RGB_ALPHA"}
 #: Inverts the bits of a byte: PBM's 1 is black, and a DeviceGray sample's 1 is white.
 _INVERT = bytes(range(255, -1, -1))
@@ -350,7 +378,7 @@ class _Candidate:
 
     image: PageImage
     kind: str
-    """``"lossy"``, ``"lossless"``, or ``"bitonal"``."""
+    """The selected image family, including JPEG 2000 sources that can keep JPX output."""
     gray: bool
     samples: bool
     """Whether the stored samples are resampled, in the image's own color space, rather than hayro's colors."""
@@ -363,6 +391,7 @@ class _Candidate:
 
 @dataclass(frozen=True, slots=True)
 class _Options:
+    document: Document
     threshold: float | None
     target: float
     quality: int | None
@@ -372,7 +401,7 @@ class _Options:
     bitonal_format: str
 
     def jpeg(self, kind: str) -> bool:
-        return kind == "lossy" or (kind == "lossless" and self.lossless_format == "jpeg")
+        return kind in ("lossy", "jpx") or (kind == "lossless" and self.lossless_format == "jpeg")
 
 
 @dataclass(slots=True)
@@ -516,7 +545,7 @@ def _classify(stream: Stream, item: Image, selected: dict[str, bool]) -> tuple[s
     if reason is not None:
         return reason
     samples = _keeps_samples(item, image_filter, bitonal=bitonal)
-    return kind, gray, samples, samples and indexed
+    return "jpx" if image_filter == "JPXDecode" and not bitonal else kind, gray, samples, samples and indexed
 
 
 def _keeps_samples(item: Image, image_filter: str, *, bitonal: bool) -> bool:
@@ -665,13 +694,25 @@ def _bitonal(pixels: _Pixels) -> bytes:
     return pbm.split(b"\n", 2)[2].translate(_INVERT)
 
 
-def _encode(pixels: _Pixels, form: str, quality: int, limit: int, *, adobe: bool = False) -> bytes | None:
-    """Return the color samples encoded as ``form``: ``"jpeg"``, ``"flate"``, ``"fax"``, or ``"flate1"`` for 1 bit.
+def _encode(  # noqa: PLR0913 - image layout, encoder settings, and the document budget.
+    document: Document, pixels: _Pixels, form: str, quality: int, limit: int, *, adobe: bool = False
+) -> bytes | None:
+    """Encode color or bitonal samples in the selected representation.
 
     CMYK JPEG data carries an Adobe marker when ``adobe``, as its source did.
     """
     if form == "fax":
         return _core.encode_ccitt_g4(_bitonal(pixels), pixels.width, pixels.height, limit)
+    if form in ("fax-g3", "fax-g3-2d", "jbig2", "jpx"):
+        samples = pixels.color if form == "jpx" else _bitonal(pixels)
+        return _core.encode_image_samples(
+            document._core(),  # noqa: SLF001
+            form,
+            samples,
+            (pixels.width, pixels.height),
+            pixels.components,
+            limit,
+        )
     if form == "flate1":
         return zlib.compress(_bitonal(pixels), 9)
     if form == "jpeg":
@@ -679,9 +720,17 @@ def _encode(pixels: _Pixels, form: str, quality: int, limit: int, *, adobe: bool
     return zlib.compress(pixels.color, 9)
 
 
-def _form(kind: str, components: int, options: _Options, *, indexed: bool = False) -> str:
+def _form(kind: str, components: int, options: _Options, *, indexed: bool = False, stored_samples: bool = False) -> str:
     if kind == "bitonal":
-        return "fax" if options.bitonal_format == "fax" else "flate1"
+        return "flate1" if options.bitonal_format == "flate" else options.bitonal_format
+    if (
+        kind in ("lossless", "jpx")
+        and options.lossless_format == "jpx"
+        and components in (1, 3)
+        and not stored_samples
+        and not indexed
+    ):
+        return "jpx"
     return "jpeg" if options.jpeg(kind) and components in _JPEG_COMPONENTS and not indexed else "flate"
 
 
@@ -823,7 +872,9 @@ def _rewrite(
     )
     limit = int(before * (1 - _MIN_SAVING))
     pixels = (_nearest if candidate.indexed else _resized)(_source(candidate, stream), size)
-    form = _form(candidate.kind, pixels.components, options, indexed=candidate.indexed)
+    form = _form(
+        candidate.kind, pixels.components, options, indexed=candidate.indexed, stored_samples=candidate.samples
+    )
     data = _encode_candidate(candidate, pixels, form, options, limit)
     alpha = None if pixels.alpha is None else zlib.compress(pixels.alpha, 9)
     resampled = [
@@ -845,12 +896,13 @@ def _rewrite(
         "Width": size[0],
         "Height": size[1],
         "BitsPerComponent": 1 if candidate.kind == "bitonal" else _depth(candidate, form),
-        "Filter": Name({"jpeg": "DCTDecode", "fax": "CCITTFaxDecode"}.get(form, "FlateDecode")),
+        "Filter": Name(_IMAGE_FILTERS[form]),
     }
     if not candidate.samples:
         entries["ColorSpace"] = Name("DeviceGray" if pixels.components == 1 else "DeviceRGB")
-    if form == "fax":
-        entries["DecodeParms"] = {"K": -1, "Columns": size[0], "Rows": size[1]}
+    if (parameters := _fax_parameters(form, size)) is not None:
+        entries["DecodeParms"] = parameters
+    _filter_version(document, _IMAGE_FILTERS[form])
     stream.update(entries)
     if alpha is not None:
         stream["SMask"] = _add_mask(document, size, (alpha, "FlateDecode", None), stencil=False)
@@ -873,7 +925,7 @@ def _encode_candidate(candidate: _Candidate, pixels: _Pixels, form: str, options
     stored = candidate.image.stored() if candidate.samples and form == "jpeg" else None
     adobe = stored is not None and stored.filter == "DCTDecode" and _jpeg_frame(stored.data)[3]
     quality = _DEFAULT_QUALITY if options.quality is None else options.quality
-    return _encode(pixels, form, quality, limit, adobe=adobe)
+    return _encode(options.document, pixels, form, quality, limit, adobe=adobe)
 
 
 def _depth(candidate: _Candidate, form: str) -> int:
@@ -894,13 +946,11 @@ def _encode_mask(
     pixels = _resized(_mask_pixels(mask, stencil=stencil), size)
     if not stencil:
         return zlib.compress(pixels.color, 9), "FlateDecode", None
-    form = "fax" if options.bitonal_format == "fax" else "flate1"
-    data = _encode(pixels, form, 0, limit)
+    form = _form("bitonal", 1, options)
+    data = _encode(options.document, pixels, form, 0, limit)
     if data is None:
         return None
-    if form == "fax":
-        return data, "CCITTFaxDecode", {"K": -1, "Columns": size[0], "Rows": size[1]}
-    return data, "FlateDecode", None
+    return data, _IMAGE_FILTERS[form], _fax_parameters(form, size)
 
 
 def _add_mask(
@@ -921,6 +971,7 @@ def _add_mask(
     added = document.objects[number]
     added.write(data, filter=None)
     added["Filter"] = Name(filter_name)
+    _filter_version(document, filter_name)
     if parameters is not None:
         added["DecodeParms"] = parameters
     return added
@@ -1068,9 +1119,12 @@ def _rewrite_inline(image: InlineImage, lengths: tuple[float, float], options: _
         return image
     pixels = _resized(pixels, size)
     form = _form(kind, pixels.components, options)
+    # ISO 32000-2, 8.9.7: JBIG2Decode and JPXDecode are XObject filters.
+    if form in ("jbig2", "jpx"):
+        form = "flate1" if kind == "bitonal" else "flate"
     limit = int(len(image.data) * (1 - _MIN_SAVING))
     quality = _DEFAULT_QUALITY if options.quality is None else options.quality
-    data = _encode(pixels, form, quality, limit)
+    data = _encode(options.document, pixels, form, quality, limit)
     if data is None or len(data) > limit:
         return image
     dictionary: dict[str, object] = {"W": size[0], "H": size[1], "BPC": 1 if kind == "bitonal" else 8}
@@ -1078,9 +1132,9 @@ def _rewrite_inline(image: InlineImage, lengths: tuple[float, float], options: _
         dictionary["IM"] = True
     else:
         dictionary["CS"] = Name("G" if pixels.components == 1 else "RGB")
-    dictionary["F"] = Name({"jpeg": "DCT", "fax": "CCF"}.get(form, "Fl"))
-    if form == "fax":
-        dictionary["DP"] = {"K": -1, "Columns": size[0], "Rows": size[1]}
+    dictionary["F"] = Name("CCF" if form in _FAX_K else "DCT" if form == "jpeg" else "Fl")
+    if (parameters := _fax_parameters(form, size)) is not None:
+        dictionary["DP"] = parameters
     dictionary.update({key: value for key, value in entries.items() if key in ("I", "Interpolate", "Intent")})
     tally.kept(len(image.data), len(data))
     return InlineImage(dictionary, data)
@@ -1313,7 +1367,7 @@ class _Nested:
         """Rewrite each stencil mask image, and each form's inline images once; draw the forms that change anew."""
         if options.selected["bitonal"]:
             for stream, width, height in self.stencils.values():
-                _rewrite_stencil(stream, (width, height), options, self.tally)
+                _rewrite_stencil(document, stream, (width, height), options, self.tally)
         for number in self.order:
             self.copy(document, number, options)
         for page, drawn in self.pages:
@@ -1344,7 +1398,9 @@ class _Nested:
         self.copies[number] = document.objects[added]
 
 
-def _rewrite_stencil(stream: Stream, lengths: tuple[float, float], options: _Options, tally: _Tally) -> None:
+def _rewrite_stencil(
+    document: Document, stream: Stream, lengths: tuple[float, float], options: _Options, tally: _Tally
+) -> None:
     """Resample a stencil mask image in place as its largest placement and the options say."""
     tally.considered += 1
     width, height = stream.get("Width"), stream.get("Height")
@@ -1367,6 +1423,7 @@ def _rewrite_stencil(stream: Stream, lengths: tuple[float, float], options: _Opt
     stream.update(
         {"Width": size[0], "Height": size[1], "ImageMask": True, "BitsPerComponent": 1, "Filter": Name(filter_name)}
     )
+    _filter_version(document, filter_name)
     if parameters is not None:
         stream["DecodeParms"] = parameters
     tally.kept(before, len(data))
@@ -1409,7 +1466,7 @@ def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments, and pyropdf'
     _check_formats(lossless_format, bitonal_format)
     if threshold is None and quality is None and not set_to_gray:
         return ImageRewriteReport(considered=0, rewritten=0, bytes_before=0, bytes_after=0)
-    options = _Options(threshold, target, quality, selected, set_to_gray, lossless_format, bitonal_format)
+    options = _Options(document, threshold, target, quality, selected, set_to_gray, lossless_format, bitonal_format)
     tally = _Tally()
     inline: list[int] = []
     candidates = _candidates(document, options, tally, inline)

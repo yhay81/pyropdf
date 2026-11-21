@@ -5,6 +5,7 @@ mod codecs;
 mod encode;
 pub mod fax;
 pub mod images;
+pub mod jpx;
 mod ops;
 #[cfg(test)]
 mod tests;
