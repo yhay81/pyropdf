@@ -357,11 +357,10 @@ objects = []
 clause = "7.6.5"
 description = "Public-key security: recipients, their certificates, and their permissions."
 objects = ["EncryptionPublicKey"]
-read = { status = "partial", missing = "RSA PKCS#1 v1.5 with CMS AES-CBC opens s3, s4 and s5, including RC4, AESV2 and AESV3 file data. Additional CMS algorithms remain unverified.", milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Reads s3, s4 and s5, RSA PKCS#1 v1.5/OAEP and ECDH, AES-128/192/256-CBC, and tested DES, 3DES, RC2 and RC4 envelopes. Additional legacy RC2 effective bits and RC4 key lengths remain.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "AESV3 renders from the authenticated store version. Pre-V5 file keys require the engine object source for direct interpretation.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Writes RSA recipient groups with AESV2 or AESV3 file encryption and CMS AES-256-CBC. Additional interoperable CMS algorithms remain unverified.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Edits and reopens AESV2 and AESV3 recipients. Envelopes using other CMS key transport or content ciphers remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes preserve the tested recipient envelopes and untouched AES ciphertext. Preservation with additional CMS algorithms remains unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Edits and reopens RSA and ECDH recipients with AES-CBC and tested legacy CMS ciphers. Additional RC2 and RC4 key lengths remain.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Both save modes preserve independent RSA and ECDH envelopes and untouched ciphertext. Additional RC2 and RC4 key lengths remain.", milestone = "Phase 4: Specification" }
 
 [features.crypt-filters]
 clause = "7.6.6"
