@@ -98,16 +98,15 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement."
 
-[families.stored-colour-spaces]
+[families.devicen-mixing-hints]
 tracker = 249
-issue = 897
-title = "Write and edit calibrated and special colour spaces and their paint operators"
-features = [
-    "calgray-color-space", "calrgb-color-space", "lab-color-space", "icc-based-color-space",
-    "indexed-color-space", "separation-color-space", "devicen-color-space", "colour-operators",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Retain source operands and independently verify calibration, ICC profiles, palettes and tint transforms including DeviceN mixing hints. Construct and edit colour resources and exercise the corresponding operators."
+parent = 248
+issue = 1016
+kind = "upstream"
+title = "hayro: offer DeviceN mixing hints to colour-proofing devices"
+features = ["devicen-color-space"]
+dimensions = ["interpret"]
+behavior = "Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked."
 
 [families.text-fields-and-xfa]
 tracker = 249
