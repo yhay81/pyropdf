@@ -145,6 +145,15 @@ def _malformed_member(space: typed.ArrayView, family: str) -> None:
         space[3].N = b"not an exponent"
 
 
+def _relative_luminance(rgb: tuple[int, ...]) -> float:
+    """Decode an sRGB display sample to relative CIE Y."""
+    linear = [
+        channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+        for channel in (value / 255 for value in rgb)
+    ]
+    return sum(weight * channel for weight, channel in zip((0.2126, 0.7152, 0.0722), linear, strict=True))
+
+
 def _round_trip(family: str, tmp_path: Path, *, incremental: bool) -> None:
     doc = _start()
     table = _spaces(doc)
@@ -175,8 +184,15 @@ def _round_trip(family: str, tmp_path: Path, *, incremental: bool) -> None:
             assert tuple(map(float, operations[1].operands)) == values
         native = doc.pages[0].pixmap(dpi=72).pixel(20, 80)
         independent = _poppler(saved, tmp_path)
-        tolerance = {"CalGray": 12, "CalRGB": 3, "Lab": 7, "ICCBased": 3}.get(family, 0)
-        assert native == pytest.approx(independent, abs=tolerance)
+        if family == "CalGray":
+            # ISO 32000 defines calibrated gray by Y = A**Gamma (YW = 1).
+            # Display white-point adaptation can give the independent RGB output a cast.
+            expected_y = values[0] ** (2.2 if edited else 1)
+            assert _relative_luminance(native) == pytest.approx(expected_y, abs=0.045)
+            assert _relative_luminance(independent) == pytest.approx(expected_y, abs=0.045)
+        else:
+            tolerance = {"CalRGB": 3, "Lab": 7, "ICCBased": 3}.get(family, 0)
+            assert native == pytest.approx(independent, abs=tolerance)
         reference.append(independent)
     assert max(abs(a - b) for a, b in zip(*reference, strict=True)) > 10
     # The generated typed view rejects an operand of the wrong PDF type atomically.

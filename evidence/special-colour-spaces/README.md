@@ -25,6 +25,16 @@ display profile. On macOS ARM64, Poppler 26.11.0 and the hayro revision
 | Indexed RGB, palette entry 1 | (204,51,102) → (40,200,20) | (204,51,102) → (40,200,20) |
 | Separation, full-tint equivalent red → blue at tint 0.75 | (255,64,64) → (64,64,255) | (255,64,64) → (64,64,255) |
 
+For CalGray the ISO quantity under test is relative luminance, Y = A raised
+to Gamma when the white-point Y component is 1. The two expected values
+are 0.5000 and 0.2176. Poppler 26.11.0 measured 0.5029 and 0.2159; the
+native renderer measured 0.5395 and 0.2542. Ghostscript 10.08.0 rendered
+(187,188,187) and (128,129,128). The hosted Ubuntu Poppler 26.01.0 produced
+red 204 and blue 180 for the first RGB swatch, enough display cast to fail
+a per-channel comparison. Both readers are checked against the specified Y
+within 0.045 on the 0 to 1 scale using the
+[sRGB relative luminance transfer](https://www.w3.org/TR/WCAG21/relative-luminance.html).
+
 Lab tests retain the stated white point, change the a*/b* ranges and paint
 on the new boundaries. For the separate (55,55,-40) swatch, changing its
 WhitePoint from (0.9505,1,1.089) to (0.75,1,1.4) changed the Poppler
