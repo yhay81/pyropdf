@@ -66,6 +66,86 @@ def test_resource_tree_read_create_edit(kind: str, *, incremental: bool) -> None
         assert names[1].objgen[0] == resource.xref
 
 
+@pytest.mark.spec("name-dictionary", "interpret", "create", "edit")
+@pytest.mark.parametrize("indirect", [False, True])
+@pytest.mark.parametrize("incremental", [False, True])
+def test_web_capture_arrays_keep_set_and_member_references(*, indirect: bool, incremental: bool) -> None:
+    identifier = bytes(range(16))
+    url = b"https://example.org/capture"
+    buffer = io.BytesIO()
+    with pikepdf.Pdf.new() as pdf:
+        page = pdf.add_blank_page().obj
+        image = pdf.make_stream(
+            b"\x80",
+            Type=pikepdf.Name.XObject,
+            Subtype=pikepdf.Name.Image,
+            Width=1,
+            Height=1,
+            ColorSpace=pikepdf.Name.DeviceGray,
+            BitsPerComponent=8,
+        )
+        page.ID = image.ID = identifier
+        page.Resources = pikepdf.Dictionary(XObject=pikepdf.Dictionary(Picture=image))
+        source = pikepdf.Dictionary(AU=url)
+        pages = pdf.make_indirect(pikepdf.Dictionary(S=pikepdf.Name.SPS, ID=identifier, O=[page], SI=source))
+        images = pikepdf.Dictionary(
+            Type=pikepdf.Name.SpiderContentSet, S=pikepdf.Name.SIS, ID=identifier, O=[image], SI=source
+        )
+        sets = pikepdf.Array([pages, pdf.make_indirect(images) if indirect else images])
+        if indirect:
+            sets = pdf.make_indirect(sets)
+        pdf.Root.Names = pikepdf.Dictionary(
+            IDS=pikepdf.Dictionary(Names=[identifier, sets]), URLS=pikepdf.Dictionary(Names=[url, sets])
+        )
+        pdf.save(buffer, force_version="1.7")
+    original = buffer.getvalue()
+    with p.open(original) as doc:
+        for kind, key in (("IDS", identifier), ("URLS", url)):
+            resources = doc.named_resources(kind)
+            records = resources[key]
+            assert isinstance(records, p.Array)
+            resources[key] = records
+        saved = doc.to_bytes(incremental=incremental)
+    assert saved.startswith(original) == incremental
+    with pikepdf.open(io.BytesIO(saved), attempt_recovery=False) as pdf:
+        ids, urls = pdf.Root.Names.IDS.Names[1], pdf.Root.Names.URLS.Names[1]
+        assert ids.is_indirect == urls.is_indirect == indirect
+        assert ids.objgen == urls.objgen
+        for records in (ids, urls):
+            assert [member.S for member in records] == [pikepdf.Name.SPS, pikepdf.Name.SIS]
+            assert records[0].objgen == ids[0].objgen
+            assert records[1].is_indirect == indirect
+            assert records[1].objgen == ids[1].objgen
+            assert records[0].O[0].objgen == pdf.pages[0].obj.objgen
+            assert records[1].O[0].objgen == pdf.pages[0].Resources.XObject.Picture.objgen
+
+
+@pytest.mark.spec("name-dictionary", "create", "edit")
+def test_invalid_web_capture_array_members_leave_the_original_entry_intact() -> None:
+    with p.Document() as doc, p.Document() as other:
+        doc.pages.new()
+        good = _resource(doc, "IDS")
+        wrong_type = doc.objects[doc.objects.add({"Type": Name("Page"), "S": Name("SPS")})]
+        wrong_subtype = doc.objects[doc.objects.add({"S": Name("Unknown")})]
+        stream = doc.objects[doc.objects.add_stream(b"unused", {"S": Name("SIS")})]
+        foreign = _resource(other, "IDS")
+        foreign_array = other.objects[other.objects.add([foreign])]
+        resources = doc.named_resources("IDS")
+        leaf = doc.objects[doc.objects.add({"Names": [b"entry", [good]], "Limits": [b"entry", b"entry"]})]
+        doc.catalog["Names"] = {"IDS": {"Kids": [leaf]}}
+        before = doc.to_bytes()
+        for bad in (wrong_type, wrong_subtype, stream, 42, [good]):
+            with pytest.raises(ValueError, match="invalid resource object"):
+                resources[b"entry"] = [good, bad]
+        for cross_document in (foreign_array, (good, foreign)):
+            with pytest.raises(ValueError, match="another document"):
+                resources[b"entry"] = cross_document
+        with pytest.raises(p.LimitError) as caught:
+            resources[b"entry"] = [good] * 131_072
+        assert caught.value.code == "named_destination_edge_count"
+        assert doc.to_bytes() == before
+
+
 @pytest.mark.spec("name-dictionary", "interpret", "edit")
 def test_resource_tree_preserves_shared_nodes_and_refuses_cycles() -> None:
     with p.Document() as doc:
@@ -270,18 +350,23 @@ def test_remote_structure_ids_use_the_supplied_documents_byte_index() -> None:
 
 
 @pytest.mark.spec("name-dictionary", "interpret", "create", "edit")
-def test_retired_name_trees_remain_readable_in_pdf_2_but_new_entries_are_refused() -> None:
+@pytest.mark.parametrize("kind", ["IDS", "URLS"])
+def test_retired_name_trees_remain_readable_in_pdf_2_but_new_entries_are_refused(kind: str) -> None:
     with p.Document() as doc:
         doc.pages.new()
-        capture = _resource(doc, "IDS")
-        tree = doc.named_resources("IDS")
+        capture = _resource(doc, kind)
+        tree = doc.named_resources(kind)
         tree[b"captured"] = capture
         doc.catalog["Version"] = Name("2.0")
         before = doc.to_bytes()
         with pytest.raises(ValueError, match="deprecated"):
-            tree[b"another"] = capture
+            tree[b"another"] = [capture]
         assert doc.to_bytes() == before
         assert tree[b"captured"] == capture
+        tree[b"captured"] = (capture,)
+        records = tree[b"captured"]
+        assert isinstance(records, p.Array)
+        assert records[0] == capture
         del tree[b"captured"]
         assert not tree
 

@@ -257,8 +257,9 @@ Live byte-string keys and PDF objects in one catalog resource name tree.
 
 Use `Document.named_resources` with `AP`, `Templates`, `IDS`,
 `URLS`, `AlternatePresentations`, `Renditions` or `Dests`.
-Values use the document's object model. Reading a target has no viewer
-side effects. Malformed or cyclic trees raise `MalformedPdfError`.
+Values use the document's object model. An `IDS` or `URLS` value
+can also be an array of Web Capture page and image sets. Reading a target
+has no viewer side effects. Malformed or cyclic trees raise `MalformedPdfError`.
 
 ### `NamedResources.__iter__`
 

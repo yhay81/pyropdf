@@ -126,6 +126,37 @@ def _resource_key(key: object) -> bytes:
     return bytes(key)
 
 
+def _check_resource_owner(document: Document, value: Dictionary | Array) -> None:
+    if value._document is not document:  # noqa: SLF001 - a resource must belong to this store.
+        msg = "a catalog resource from another document cannot be written"
+        raise ValueError(msg)
+
+
+def _is_capture_set(document: Document, value: object) -> bool:
+    if not isinstance(value, Dictionary) or isinstance(value, Stream):
+        return False
+    _check_resource_owner(document, value)
+    return value.get("Type", Name("SpiderContentSet")) == Name("SpiderContentSet") and value.get("S") in (
+        Name("SPS"),
+        Name("SIS"),
+    )
+
+
+def _capture_value(document: Document, value: object, budget: _core._OperationBudget) -> bool:
+    if not isinstance(value, (Array, list, tuple)):
+        return isinstance(value, Dictionary) and value.is_indirect and _is_capture_set(document, value)
+    if isinstance(value, Array):
+        _check_resource_owner(document, value)
+    count = len(value)
+    budget.charge("named_destination_edge_count", count)
+    budget.charge("memory_size", 128 * count)
+    for member in value:
+        budget.poll()
+        if not _is_capture_set(document, member):
+            return False
+    return True
+
+
 def _edited_leaves(node: _Node, key: bytes, value: object, *, remove: bool) -> list[dict[str, object]]:
     names = node.obj.get("Names")
     # An empty root, including /Kids [], can receive its first leaf.
@@ -206,8 +237,9 @@ class NamedResources(Mapping[bytes, object]):
 
     Use :meth:`Document.named_resources` with ``AP``, ``Templates``, ``IDS``,
     ``URLS``, ``AlternatePresentations``, ``Renditions`` or ``Dests``.
-    Values use the document's object model. Reading a target has no viewer
-    side effects. Malformed or cyclic trees raise :class:`MalformedPdfError`.
+    Values use the document's object model. An ``IDS`` or ``URLS`` value
+    can also be an array of Web Capture page and image sets. Reading a target
+    has no viewer side effects. Malformed or cyclic trees raise :class:`MalformedPdfError`.
     """
 
     __slots__ = ("_document", "_kind")
@@ -273,6 +305,8 @@ class NamedResources(Mapping[bytes, object]):
                 if not remove and key not in indexed:
                     budget.check("named_destination_count", len(indexed) + 1)
                     budget.charge("named_destination_text_size", len(key))
+                if not remove:
+                    self._validate_value(value, budget)
                 return indexed, tree_nodes
 
             pairs, nodes = _core.read_operation(_unlocked(doc), prepare)
@@ -282,7 +316,6 @@ class NamedResources(Mapping[bytes, object]):
             catalog = _catalog(doc)
             owner = catalog.get("Names")
             if not remove:
-                self._validate_value(value)
                 if existing is None and kind in _DEPRECATED and _version(doc) >= (2, 0):
                     msg = f"new {kind} resource entries are deprecated in PDF 2.0"
                     raise ValueError(msg)
@@ -309,9 +342,12 @@ class NamedResources(Mapping[bytes, object]):
                 raise MalformedPdfError(msg)
             _publish(doc, owner, kind, tree, retired)
 
-    def _validate_value(self, value: object) -> None:
+    def _validate_value(self, value: object, budget: _core._OperationBudget) -> None:
         if self._kind == "Dests":
             if isinstance(value, (Dictionary, Array, dict, list, tuple)):
+                return
+        elif self._kind in {"IDS", "URLS"}:
+            if _capture_value(self._document, value, budget):
                 return
         elif isinstance(value, Dictionary) and value.is_indirect:
             if self._kind == "AP" and isinstance(value, Stream) and value.get("Subtype") == Name("Form"):
@@ -319,8 +355,6 @@ class NamedResources(Mapping[bytes, object]):
             if self._kind == "Templates" and value.get("Type") == Name("Page"):
                 return
             if self._kind == "Renditions" and value.get("S") in (Name("MR"), Name("SR")):
-                return
-            if self._kind in {"IDS", "URLS"} and value.get("S") in (Name("SIS"), Name("SPS")):
                 return
             if self._kind == "AlternatePresentations" and value.get("Type") == Name("SlideShow"):
                 return
