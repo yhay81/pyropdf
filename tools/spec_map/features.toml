@@ -553,7 +553,6 @@ objects = ["IndexedColorSpace"]
 clause = "8.6.6.2"
 description = "Pattern: painting with a tiling or shading pattern."
 objects = ["PatternColorSpace"]
-create = { status = "partial", missing = "Canvas paints gradients in Pattern color space, without creating tiling or uncolored pattern spaces.", milestone = "Phase 4: Specification" }
 
 [features.separation-color-space]
 clause = "8.6.6.4"

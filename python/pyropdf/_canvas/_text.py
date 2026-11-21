@@ -17,12 +17,14 @@ if TYPE_CHECKING:
     from typing import TypeAlias
 
     from pyropdf import _core
-    from pyropdf._content import Color, Gradient, Stroke
+    from pyropdf._content import Color, Gradient, PatternPaint, Stroke
     from pyropdf._geometry import Rect
     from pyropdf._objects import Objects
 
     _PlacedLine: TypeAlias = tuple[str, float, float, float]
-    _TextboxLayout: TypeAlias = tuple[Font, float, tuple[Color | Gradient | None, Stroke | None], list[_PlacedLine]]
+    _TextboxLayout: TypeAlias = tuple[
+        Font, float, tuple[Color | Gradient | PatternPaint | None, Stroke | None], list[_PlacedLine]
+    ]
 
 #: The alignments of :meth:`Canvas.textbox`, in the order of the core's codes.
 _ALIGNMENTS = ("left", "center", "right", "justify")
@@ -83,8 +85,8 @@ def _line_height(value: object) -> float | None:
 
 
 def _text_paint(
-    fill: Color | Gradient | None, stroke: Stroke | Color | Gradient | None
-) -> tuple[Color | Gradient | None, Stroke | None]:
+    fill: Color | Gradient | PatternPaint | None, stroke: Stroke | Color | Gradient | PatternPaint | None
+) -> tuple[Color | Gradient | PatternPaint | None, Stroke | None]:
     """Return the checked fill and stroke of text, which needs at least one."""
     if fill is None and stroke is None:
         msg = "text needs a fill or a stroke"
@@ -137,7 +139,7 @@ def _layout_textbox(  # noqa: PLR0913 - the text style options.
     size: float,
     align: str,
     line_height: float | None,
-    paint: tuple[Color | Gradient | None, Stroke | Color | Gradient | None],
+    paint: tuple[Color | Gradient | PatternPaint | None, Stroke | Color | Gradient | PatternPaint | None],
     rotation: int,
     max_text_size: int | None,
     operation: _core._OperationBudget | None,
