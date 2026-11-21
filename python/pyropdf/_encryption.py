@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Literal
 
-from pyropdf._errors import LimitError, MalformedPdfError, PasswordError
+from pyropdf._errors import LimitError, PasswordError
 
 if TYPE_CHECKING:
     from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
@@ -19,7 +19,6 @@ if TYPE_CHECKING:
 _MAX_PASSWORD_BYTES = 127
 _MIN_RSA_BITS = 2048
 _MAX_RSA_BITS = 8192
-_RECIPIENT_PAYLOAD_SIZE = 24
 _MAX_RECIPIENTS = 128
 #: RC4 methods, which pyropdf reads but never writes.
 _RC4_METHODS = frozenset({"rc4", "rc4-40", "rc4-128"})
@@ -183,14 +182,10 @@ class RecipientCredential:
         from cryptography.hazmat.primitives.serialization import pkcs7  # noqa: PLC0415
 
         try:
-            payload = pkcs7.pkcs7_decrypt_der(envelope, self.certificate, self.private_key, [])
+            return pkcs7.pkcs7_decrypt_der(envelope, self.certificate, self.private_key, [])
         except (ValueError, UnsupportedAlgorithm):
             # A malformed, unsupported, or inapplicable envelope grants no access.
             return None
-        if len(payload) != _RECIPIENT_PAYLOAD_SIZE:
-            msg = "the default public-key recipient payload must contain a 20-byte seed and four permission bytes"
-            raise MalformedPdfError(msg)
-        return payload
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
