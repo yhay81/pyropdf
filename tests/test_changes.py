@@ -297,6 +297,92 @@ def test_a_closed_document_refuses_a_report() -> None:
 
 
 @pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.parametrize("tabs", [False, True])
+@pytest.mark.parametrize("described", [False, True])
+def test_invisible_signature_widget_reports_the_description_and_page_tab_order(
+    *, incremental: bool, tabs: bool, described: bool
+) -> None:
+    with pyropdf.open(ASSETS.parent / "profile-sources/ua2-pass.pdf") as doc:
+        page = doc.pages[0].obj
+        field = doc.prepare_signature("Review")
+        if not tabs:
+            del page["Tabs"]
+        if described:
+            doc.objects[field]["Contents"] = "Approval by the reviewer"
+        losses = doc.changes(incremental=incremental).claims
+        assert all(loss.claim == "PDF/UA-2" for loss in losses)
+        expected = {}
+        if not tabs:
+            expected["the page containing a widget lacks a valid tab order"] = (page.xref,)
+        if not described:
+            expected["the invisible widget lacks a description in Contents"] = (field,)
+        assert {loss.reason: loss.objects for loss in losses} == expected
+
+        page["Tabs"] = Name("W")
+        doc.objects[field]["Contents"] = "Reviewed for publication"
+        assert doc.changes(incremental=incremental).claims == ()
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_unchanged_widget_defects_do_not_reappear_on_unrelated_edits(*, incremental: bool) -> None:
+    with pyropdf.open(ASSETS.parent / "profile-sources/ua2-pass.pdf") as doc:
+        doc.prepare_signature("Review")
+        del doc.pages[0].obj["Tabs"]
+        saved = doc.to_bytes()
+    with pyropdf.open(saved) as reopened:
+        reopened.pages[0].rotation = 90
+        assert reopened.changes(incremental=incremental).claims == ()
+
+
+def test_adding_a_described_widget_does_not_reintroduce_an_existing_page_tab_defect() -> None:
+    with pyropdf.open(ASSETS.parent / "profile-sources/ua2-pass.pdf") as source:
+        source.pages[0].annotations.add(pyropdf.Square((20, 20, 40, 40)))
+        del source.pages[0].obj["Tabs"]
+        saved = source.to_bytes()
+    with pyropdf.open(saved) as doc:
+        field = doc.prepare_signature("Review")
+        doc.objects[field]["Contents"] = "Approval by the reviewer"
+        assert doc.changes(incremental=True).claims == ()
+
+
+def test_invisible_widget_reports_the_changed_indirect_description_or_annotation_array() -> None:
+    with pyropdf.open(ASSETS.parent / "profile-sources/ua2-pass.pdf") as doc:
+        page = doc.pages[0].obj
+        annotations = doc.objects.add([])
+        page["Annots"] = doc.objects[annotations]
+        del page["Tabs"]
+        empty = doc.to_bytes()
+    with pyropdf.open(empty) as doc:
+        field = doc.prepare_signature("Review")
+        description = doc.objects.add([])
+        doc.objects[field]["Contents"] = doc.objects[description]
+        doc.objects[description] = "Approval by the reviewer"
+        (tab_loss,) = doc.changes(incremental=True).claims
+        assert "tab order" in tab_loss.reason
+        assert tab_loss.objects == (annotations,)
+        doc.pages[0].obj["Tabs"] = Name("A")
+        baseline = doc.to_bytes(incremental=True)
+    with pyropdf.open(baseline) as doc:
+        doc.objects[description] = None
+        (description_loss,) = doc.changes(incremental=True).claims
+        assert "description" in description_loss.reason
+        assert description_loss.objects == (description,)
+        doc.history.undo()
+        assert doc.changes(incremental=True).claims == ()
+
+
+@pytest.mark.parametrize("flavour", ["ua1", "ua2"])
+def test_visible_widgets_and_pdfua1_keep_the_untagged_annotation_warning(flavour: str) -> None:
+    with pyropdf.open(ASSETS.parent / f"profile-sources/{flavour}-pass.pdf") as doc:
+        field = doc.prepare_signature("Review")
+        widget = doc.objects[field]
+        widget["Contents"] = "Approval by the reviewer"
+        widget["Rect"] = [4, 8, 4, 8] if flavour == "ua1" else [4, 8, 4, 20]
+        losses = doc.changes(incremental=True).claims
+        assert any("not in the structure tree" in loss.reason and loss.objects == (field,) for loss in losses)
+
+
+@pytest.mark.parametrize("incremental", [False, True])
 def test_preexisting_untagged_annotation_is_not_reported_again(*, incremental: bool) -> None:
     with pyropdf.open(ASSETS.parent / "pdfua/pdfua-2.pdf") as source:
         item = source.pages[0].annotations.add(pyropdf.Square((10, 10, 20, 20)))
