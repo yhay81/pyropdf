@@ -240,9 +240,16 @@ pub(super) fn decode(
         Some(&Value::Reference(length)) => resolve(source, length, budget)?,
         _ => None,
     };
-    let decrypt = |raw: &[u8]| match security {
+    let decrypt = |dict: &Dict, raw: &[u8]| match security {
         Some(handler) => handler
-            .decrypt(Kind::Stream, reference, raw, budget)
+            .transform_data(
+                Kind::Stream,
+                Some(dict),
+                (reference, reference),
+                raw,
+                budget,
+                false,
+            )
             .map(Some),
         None => Ok(None),
     };
@@ -286,7 +293,7 @@ fn dictionary(bytes: &Bytes, stream: &syntax::Stream<'_>, budget: &Budget) -> Re
 
 /// Decrypts a stream's raw data, or returns `None` for a stream that is not
 /// encrypted.
-type Decrypt<'a> = dyn Fn(&[u8]) -> Result<Option<Vec<u8>>> + 'a;
+type Decrypt<'a> = dyn Fn(&Dict, &[u8]) -> Result<Option<Vec<u8>>> + 'a;
 
 /// Returns the decoded data of `stream`, which hayro-syntax parsed from
 /// `bytes` and whose `/Length` names `length`, and charges it to `budget`.
@@ -313,7 +320,7 @@ fn data(
                 && lex::keyword(bytes, lex::skip_white(bytes, end), b"endstream").is_some()
         });
     let end = declared.unwrap_or(start + raw.len());
-    let decrypted = decrypt(&bytes[start..end])?;
+    let decrypted = decrypt(&dict, &bytes[start..end])?;
     let decoded = match declared {
         _ if decrypted.is_some() || end != start + raw.len() => {
             let data = decrypted
