@@ -65,10 +65,10 @@ jobs:
         with:
           version: "0.13.9"
           cache-suffix: python-${{ matrix.python }}
-      - name: Install qpdf and poppler
-        # The consistency harness checks saved documents with qpdf, and the
-        # embedded font tests compare poppler's render with hayro's.
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends qpdf poppler-utils
+      - name: Install independent PDF readers and raster devices
+        # qpdf checks saved objects, Poppler renders fonts and RGB colours,
+        # and Ghostscript supplies spot plates, screening and CMYK controls.
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends qpdf poppler-utils ghostscript
       - name: Build and install
         # Install the wheel rather than an editable build, so that the tests
         # import what a release would ship.
