@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Literal, cast
 
 from pyropdf import _core
 from pyropdf._errors import MalformedPdfError
-from pyropdf._objects import Array, Dictionary, Name, Stream
+from pyropdf._objects import Dictionary, Name, Stream
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
 
     from pyropdf._document import Document
     from pyropdf._page import Page
@@ -28,7 +29,7 @@ def _mode(mode: Mode) -> str:
 
 
 def _box(value: object) -> tuple[float, float, float, float]:
-    if not isinstance(value, (Array, list, tuple)) or len(value) != 4:  # noqa: PLR2004
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence) or len(value) != 4:  # noqa: PLR2004
         msg = "an appearance box must have four coordinates"
         raise ValueError(msg)
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in value):

@@ -105,6 +105,7 @@ def test_interaction_appearance_rejects_bad_forms_and_malformed_dictionary() -> 
     note = doc.pages[0].annotations.add(p.Note((5, 5)))
     with pytest.raises(ValueError, match="this document"):
         note.set_appearance("rollover", form(p.open(source())))
+    assert list(note.set_appearance("rollover", b"", bbox=range(4))["BBox"]) == [0, 1, 2, 3]
     note.set_appearance("down", form(doc))
     with pytest.raises(ValueError, match="single-state"):
         note.set_appearance("down", b"x", state="Off")
