@@ -9,7 +9,7 @@ use hayro_syntax::object as syntax;
 use super::{Entry, Location, Source, Ticker, decoded, find, lex};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::security::{Handler, Kind};
-use crate::value::{Bytes, Dict, FilterLookup, Reference, Value};
+use crate::value::{Bytes, Dict, FilterLookup, Reference, Stream, Value};
 use crate::{Error, Result};
 
 /// An object stream, decoded: its data, and the member table at its start.
@@ -241,12 +241,15 @@ pub(super) fn decode(
         Some(&Value::Reference(length)) => resolve(source, length, budget)?,
         _ => None,
     };
-    let selectors = crate::value::filters::resolved(&dict, lookup, budget)?;
-    let decrypt = |raw: &[u8]| match security {
+    let (dict, resolved_selectors) = match crate::value::filters::resolved(&dict, lookup, budget)? {
+        Cow::Owned(resolved) => (resolved, true),
+        Cow::Borrowed(_) => (dict, false),
+    };
+    let decrypt = |dict: &Dict, raw: &[u8]| match security {
         Some(handler) => handler
             .transform_data(
                 Kind::Stream,
-                Some(&selectors),
+                Some(dict),
                 (reference, reference),
                 raw,
                 budget,
@@ -255,11 +258,15 @@ pub(super) fn decode(
             .map(Some),
         None => Ok(None),
     };
-    let normalized = match &selectors {
-        Cow::Owned(dict) => Some(dict),
-        Cow::Borrowed(_) => None,
-    };
-    let data = data(&bytes, &stream, length, &decrypt, normalized, budget)?;
+    let data = data(
+        &bytes,
+        &stream,
+        dict,
+        length,
+        &decrypt,
+        resolved_selectors,
+        budget,
+    )?;
     let mut members = BudgetVec::new(budget);
     let mut ticker = Ticker::default();
     let mut pos = 0;
@@ -299,23 +306,20 @@ fn dictionary(bytes: &Bytes, stream: &syntax::Stream<'_>, budget: &Budget) -> Re
 
 /// Decrypts a stream's raw data, or returns `None` for a stream that is not
 /// encrypted.
-type Decrypt<'a> = dyn Fn(&[u8]) -> Result<Option<Vec<u8>>> + 'a;
+type Decrypt<'a> = dyn Fn(&Dict, &[u8]) -> Result<Option<Vec<u8>>> + 'a;
 
 /// Returns the decoded data of `stream`, which hayro-syntax parsed from
 /// `bytes` and whose `/Length` names `length`, and charges it to `budget`.
 ///
-/// When the length decides the data and hayro-syntax, which cannot resolve
-/// it, read other data, the stream decodes from a copy whose dictionary
-/// ends with the length as a direct value, which hayro-syntax reads in
-/// place of the reference: of a key that a dictionary repeats, it keeps the
-/// last value. A stream that `decrypt` decrypts decodes from such a copy
-/// of its decrypted data.
+/// When decryption or the resolved length changes the bytes, rebuild the
+/// stream with one direct `/Length` before passing it to hayro's decoder.
 fn data(
     bytes: &Bytes,
     stream: &syntax::Stream<'_>,
+    mut dict: Dict,
     length: Option<u64>,
     decrypt: &Decrypt<'_>,
-    selectors: Option<&Dict>,
+    resolved_selectors: bool,
     budget: &Budget,
 ) -> Result<Bytes> {
     let raw = stream.raw_data();
@@ -330,35 +334,24 @@ fn data(
                 && lex::keyword(bytes, lex::skip_white(bytes, end), b"endstream").is_some()
         });
     let end = declared.unwrap_or(start + raw.len());
-    let decrypted = decrypt(&bytes[start..end])?;
+    let decrypted = decrypt(&dict, &bytes[start..end])?;
     let decoded = match declared {
-        _ if let Some(dict) = selectors => {
-            let payload = decrypted.map(Bytes::new).unwrap_or_else(|| {
-                bytes
-                    .slice(start..end)
-                    .expect("the data is contained in the source")
-            });
-            crate::value::Stream::new(crate::value::copy_dict_for_edit(dict, budget)?, payload)
-                .decoded(budget)?
-        }
-        _ if decrypted.is_some() || end != start + raw.len() => {
-            let data = decrypted.as_deref().unwrap_or(&bytes[start..end]);
-            let dict = stream.dict().data();
-            let entries = dict
-                .strip_prefix(b"<<")
-                .and_then(|dict| dict.strip_suffix(b">>"))
-                .ok_or_else(|| Error::malformed("its dictionary is not in its bytes"))?;
-            let length = format!(" /Length {} >>\nstream\n", data.len());
-            let mut copy = BudgetVec::new(budget);
-            copy.try_reserve_exact(2 + entries.len() + length.len() + data.len() + 10)?;
-            copy.try_extend_from_slice(b"<<")?;
-            copy.try_extend_from_slice(entries)?;
-            copy.try_extend_from_slice(length.as_bytes())?;
-            copy.try_extend_from_slice(data)?;
-            copy.try_extend_from_slice(b"\nendstream")?;
-            let stream = super::stream(&copy)
-                .ok_or_else(|| Error::malformed("it does not read with its length"))?;
-            decoded(&stream, budget)?.into_owned()
+        _ if resolved_selectors || decrypted.is_some() || end != start + raw.len() => {
+            let data = decrypted
+                .map(Bytes::from)
+                .or_else(|| bytes.slice(start..end))
+                .ok_or_else(|| Error::malformed("its data is not in its bytes"))?;
+            if resolved_selectors {
+                Stream::new(dict, data).decoded(budget)?
+            } else {
+                dict.remove("Length");
+                let rebuilt = Value::from(Stream::new(dict, data));
+                let mut copy = BudgetVec::new(budget);
+                crate::write::value(&mut copy, &rebuilt)?;
+                let stream = super::stream(&copy)
+                    .ok_or_else(|| Error::malformed("it does not read with its length"))?;
+                decoded(&stream, budget)?.into_owned()
+            }
         }
         _ => match decoded(stream, budget)? {
             Cow::Borrowed(data) => {

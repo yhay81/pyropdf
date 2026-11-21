@@ -6,14 +6,12 @@
 //! that it grows from the input charges the operation's budget (F6).
 
 use std::fmt::{self, Write as _};
-use std::iter;
 use std::mem;
 use std::panic::{self, AssertUnwindSafe};
 
 use hayro_syntax::object::array::ArrayIter;
 use hayro_syntax::object::{self as syntax, FromBytes, MaybeRef, ObjRef, Object};
 
-use super::bytes::offset_in;
 use super::{
     Array, Bytes, Dict, LENGTH, Name, PdfString, Real, Reference, Stream, StringForm, Value,
     length_value,
@@ -21,6 +19,7 @@ use super::{
 use crate::budget::{Budget, BudgetVec, LimitCode, StreamKind};
 use crate::index::lex::is_white;
 use crate::{Error, LimitExceeded, Result};
+use hayro_syntax::reader::{Reader, ReaderExt};
 
 /// How many values the conversion converts between two polls of the budget.
 const POLL_INTERVAL: u32 = 1024;
@@ -82,7 +81,12 @@ impl Value {
         // of the base check the bytes against `object_parse_size` first.
         budget.poll()?;
         let result = guard(|| {
-            let object = MaybeRef::<Object<'_>>::from_bytes(source.as_slice());
+            // An indexed body can itself be a reference or a stream. Reading
+            // Object at the top level lets hayro distinguish a stream from
+            // a dictionary embedded inside another value.
+            let object = ObjRef::from_bytes(source)
+                .map(MaybeRef::Ref)
+                .or_else(|| Object::from_bytes(source).map(MaybeRef::NotRef));
             budget.poll()?;
             let object = object
                 .ok_or_else(|| Error::malformed("the bytes do not begin with a PDF value"))?;
@@ -102,7 +106,15 @@ impl Value {
     pub fn from_object(object: &Object<'_>, source: &Bytes, budget: &Budget) -> Result<Self> {
         budget.poll()?;
         let result = guard(|| {
-            Converter::new(source, budget, &|_| Ok(None)).convert(MaybeRef::NotRef(object.clone()))
+            let mut converter = Converter::new(source, budget, &|_| Ok(None));
+            let dict = match object {
+                Object::Dict(dict) => Some(dict),
+                Object::Stream(stream) => Some(stream.dict()),
+                _ => None,
+            };
+            converter.inline_image =
+                dict.is_some_and(|d| !d.is_empty() && !d.data().starts_with(b"<<"));
+            converter.convert(MaybeRef::NotRef(object.clone()))
         });
         budget.poll()?;
         result
@@ -215,6 +227,8 @@ struct Converter<'s, 'b> {
     fetch: &'s dyn Fn(Reference) -> Result<Option<Bytes>>,
     /// How many values the conversion has converted, for polling the budget.
     steps: u32,
+    /// Inline image values and their nested dictionaries contain direct operands.
+    inline_image: bool,
 }
 
 /// An array or a dictionary whose values are being converted.
@@ -225,10 +239,7 @@ enum Frame<'a, 'b> {
         lexeme: Option<Bytes>,
     },
     Dict {
-        dict: syntax::Dict<'a>,
-        /// The keys in the order of the bytes, each after the place that
-        /// sorted it.
-        keys: BudgetVec<'b, (usize, syntax::Name<'a>)>,
+        fields: BudgetVec<'b, DictField<'a>>,
         /// How many of the keys have had their values started.
         next: usize,
         entries: BudgetVec<'b, (Name, Value)>,
@@ -236,6 +247,13 @@ enum Frame<'a, 'b> {
         /// The stream whose dictionary this is.
         stream: Option<syntax::Stream<'a>>,
     },
+}
+
+/// A decoded key, its first position and the source of its last value.
+struct DictField<'a> {
+    key: Box<[u8]>,
+    first: usize,
+    value: &'a [u8],
 }
 
 /// What converting an object starts with: the value, or the frame of a
@@ -256,6 +274,7 @@ impl<'s, 'b> Converter<'s, 'b> {
             budget,
             fetch,
             steps: 0,
+            inline_image: false,
         }
     }
 
@@ -269,9 +288,9 @@ impl<'s, 'b> Converter<'s, 'b> {
         let mut parents = BudgetVec::new(self.budget);
         loop {
             self.tick()?;
-            if let Some(object) = current.next_object() {
+            if let Some(object) = current.next_object(self.inline_image) {
                 match self.start(object, parents.len() + 2)? {
-                    Start::Value(value) => current.accept(value, self.budget)?,
+                    Start::Value(value) => current.accept(value)?,
                     Start::Frame(frame) => parents.try_push(mem::replace(&mut current, frame))?,
                 }
                 continue;
@@ -279,7 +298,7 @@ impl<'s, 'b> Converter<'s, 'b> {
             let value = self.finish(current)?;
             match parents.pop() {
                 Some(mut parent) => {
-                    parent.accept(value, self.budget)?;
+                    parent.accept(value)?;
                     current = parent;
                 }
                 None => return Ok(value),
@@ -387,111 +406,97 @@ impl<'s, 'b> Converter<'s, 'b> {
         dict: syntax::Dict<'a>,
         stream: Option<syntax::Stream<'a>>,
     ) -> Result<Frame<'a, 'b>> {
-        let keys = self.key_order(&dict)?;
+        let fields = self.dict_fields(&dict)?;
         let mut entries = BudgetVec::new(self.budget);
         // A stream's dictionary may gain its `/Length`.
-        entries.try_reserve_exact(keys.len() + usize::from(stream.is_some()))?;
+        entries.try_reserve_exact(fields.len() + usize::from(stream.is_some()))?;
         Ok(Frame::Dict {
             lexeme: self.source.share(dict.data()),
-            dict,
-            keys,
+            fields,
             next: 0,
             entries,
             stream,
         })
     }
 
-    /// Returns the keys of `dict` in the order of its bytes.
-    ///
-    /// hayro-syntax 0.8 keeps the keys of a dictionary in a hash map. A key
-    /// that it borrows from the bytes, as it does every key written without
-    /// a `#` escape, points where it is written. When a key has an escape,
-    /// [`Converter::rank_keys`] finds the order from the entries.
-    fn key_order<'a>(
-        &self,
-        dict: &syntax::Dict<'a>,
-    ) -> Result<BudgetVec<'b, (usize, syntax::Name<'a>)>> {
-        let data = dict.data();
-        let mut keys = BudgetVec::new(self.budget);
-        keys.try_reserve_exact(dict.len())?;
-        let mut escaped = false;
-        for key in dict.keys() {
-            let place = offset_in(data, &key);
-            escaped |= place.is_none();
-            keys.try_push((place.unwrap_or(usize::MAX), key))?;
+    /// Reads the entries in source order with hayro's object reader. The
+    /// reader's keyed lookup has varied across releases for duplicated keys.
+    fn dict_fields<'a>(&self, dict: &syntax::Dict<'a>) -> Result<BudgetVec<'b, DictField<'a>>> {
+        let mut fields = BudgetVec::new(self.budget);
+        if dict.is_empty() {
+            return Ok(fields);
         }
-        if escaped {
-            self.rank_keys(dict, &mut keys)?;
+        fields.try_reserve_exact(dict.len())?;
+        let mut reader = Reader::new(dict.data());
+        let inline = reader.forward_tag(b"<<").is_none();
+        let terminator = if inline { b"ID" } else { b">>" };
+        loop {
+            self.budget.poll()?;
+            reader.skip_white_spaces_and_comments();
+            if reader.forward_tag(terminator).is_some() {
+                break;
+            }
+            let first = reader.offset();
+            let Some(name) = reader.skip::<syntax::Name<'_>>(self.inline_image) else {
+                // Hayro tolerates a stray object between dictionary entries.
+                reader
+                    .skip::<Object<'_>>(self.inline_image)
+                    .ok_or_else(|| Error::malformed("unreadable dictionary key"))?;
+                continue;
+            };
+            reader.skip_white_spaces_and_comments();
+            let start = reader.offset();
+            let token = if self.inline_image {
+                reader.skip::<Object<'_>>(true)
+            } else {
+                reader.skip::<MaybeRef<Object<'_>>>(false)
+            }
+            .ok_or_else(|| Error::malformed("unreadable dictionary value boundary"))?;
+            // Hayro can read a lone number sign as zero only with its delimiter.
+            let value = if matches!(token, b"+" | b"-") {
+                reader
+                    .range(start..reader.offset().saturating_add(1))
+                    .unwrap_or(token)
+            } else {
+                token
+            };
+            fields.try_push(DictField {
+                key: self.dict_key(name)?,
+                first,
+                value,
+            })?;
         }
-        // A key whose place stays unknown comes after the others, in the
-        // order of its bytes.
-        keys.sort_unstable_by(|(place, key), (other_place, other)| {
-            place
-                .cmp(other_place)
-                .then_with(|| key.as_ref().cmp(other.as_ref()))
-        });
-        Ok(keys)
+        // Group equal decoded names in their written order. Keep the first
+        // position for output and the last source for conversion.
+        fields.sort_unstable_by(|a, b| a.key.cmp(&b.key).then(a.first.cmp(&b.first)));
+        let mut kept = 0;
+        for next in 0..fields.len() {
+            if kept != 0 && fields[kept - 1].key == fields[next].key {
+                fields[kept - 1].value = fields[next].value;
+            } else {
+                fields.swap(kept, next);
+                kept += 1;
+            }
+        }
+        fields.truncate(kept);
+        fields.sort_unstable_by_key(|field| field.first);
+        Ok(fields)
     }
 
-    /// Places each key of `dict` by its first appearance among the
-    /// dictionary's entries, read once more as the elements of an array.
-    ///
-    /// Between `<<` and `>>`, a dictionary's bytes are its keys and values in
-    /// order, which hayro-syntax tokenizes as it does an array's elements
-    /// between `[` and `]`. As in hayro-syntax's dictionaries, anything but a
-    /// name where a key belongs is skipped. When this reading does not find
-    /// exactly the dictionary's keys, or hayro-syntax panics on it, the
-    /// places stay as they were.
-    fn rank_keys<'a>(
-        &self,
-        dict: &syntax::Dict<'a>,
-        keys: &mut [(usize, syntax::Name<'a>)],
-    ) -> Result<()> {
-        let data = dict.data();
-        let (Some(inner), true) = (
-            data.get(2..data.len().saturating_sub(2)),
-            data.starts_with(b"<<") && data.ends_with(b">>"),
-        ) else {
-            return Ok(());
-        };
-        let mut array = BudgetVec::new(self.budget);
-        array.try_reserve_exact(inner.len() + 2)?;
-        array.try_push(b'[')?;
-        array.try_extend_from_slice(inner)?;
-        array.try_push(b']')?;
-        keys.sort_unstable_by(|(_, key), (_, other)| key.as_ref().cmp(other.as_ref()));
-        let mut ranks = BudgetVec::new(self.budget);
-        ranks.try_reserve_exact(keys.len())?;
-        ranks.try_extend(iter::repeat_n(usize::MAX, keys.len()))?;
-        let read = panic::catch_unwind(AssertUnwindSafe(|| {
-            let elements = syntax::Array::from_bytes(&array)?;
-            let mut rank = 0;
-            let mut key_next = true;
-            for element in elements.raw_iter() {
-                if !key_next {
-                    key_next = true;
-                    continue;
-                }
-                let MaybeRef::NotRef(Object::Name(name)) = element else {
-                    continue;
-                };
-                let index = keys
-                    .binary_search_by(|(_, key)| key.as_ref().cmp(name.as_ref()))
-                    .ok()?;
-                if ranks[index] == usize::MAX {
-                    ranks[index] = rank;
-                }
-                rank += 1;
-                key_next = false;
-            }
-            key_next.then_some(())
-        }));
-        if matches!(read, Ok(Some(()))) && ranks.iter().all(|&rank| rank != usize::MAX) {
-            for ((place, _), &rank) in keys.iter_mut().zip(ranks.iter()) {
-                *place = rank;
-            }
+    /// Copies the decoded key. Plain names copy directly from the source.
+    /// An escaped name can make hayro allocate a temporary decoded buffer.
+    fn dict_key(&self, token: &[u8]) -> Result<Box<[u8]>> {
+        let spelling = &token[1..];
+        if !spelling.contains(&b'#') {
+            return Ok(copy(spelling, self.budget)?);
         }
-        Ok(())
+        let temporary = u64::try_from(spelling.len()).unwrap_or(u64::MAX);
+        self.budget.charge(LimitCode::MemorySize, temporary)?;
+        let key = syntax::Name::from_bytes(token)
+            .ok_or_else(|| Error::malformed("unreadable dictionary key"))
+            .and_then(|name| Ok(copy(&name, self.budget)?));
+        self.budget.release(LimitCode::MemorySize, temporary);
+        key
     }
 
     /// Returns the lexeme of `array`: its data, which hayro-syntax reports
@@ -614,37 +619,38 @@ impl<'s, 'b> Converter<'s, 'b> {
 impl<'a, 'b> Frame<'a, 'b> {
     /// Returns the next object of the container to convert, or `None` when
     /// it has no values left.
-    fn next_object(&mut self) -> Option<MaybeRef<Object<'a>>> {
+    fn next_object(&mut self, inline_image: bool) -> Option<MaybeRef<Object<'a>>> {
         match self {
             Self::Array { items, .. } => items.next(),
-            Self::Dict {
-                dict, keys, next, ..
-            } => {
-                let (_, key) = keys.get(*next)?;
+            Self::Dict { fields, next, .. } => {
+                let field = fields.get(*next)?;
                 *next += 1;
-                // A value that hayro-syntax skips but cannot read, such as a
-                // lone `+`, reads as null, which PDF reads as no value.
-                Some(
-                    dict.get_raw::<Object<'a>>(key.as_ref())
-                        .unwrap_or(MaybeRef::NotRef(Object::Null(syntax::Null))),
-                )
+                // A value that hayro can skip but cannot read counts as null.
+                let object = if inline_image {
+                    Reader::new(field.value)
+                        .read_without_context::<Object<'a>>()
+                        .map(MaybeRef::NotRef)
+                } else {
+                    MaybeRef::<Object<'a>>::from_bytes(field.value)
+                };
+                Some(object.unwrap_or(MaybeRef::NotRef(Object::Null(syntax::Null))))
             }
         }
     }
 
     /// Adds `value`, the value of the object that [`Frame::next_object`]
     /// returned last.
-    fn accept(&mut self, value: Value, budget: &'b Budget) -> Result<()> {
+    fn accept(&mut self, value: Value) -> Result<()> {
         match self {
             Self::Array { values, .. } => values.try_push(value)?,
             Self::Dict {
-                keys,
+                fields,
                 next,
                 entries,
                 ..
             } => {
-                let (_, key) = &keys[*next - 1];
-                entries.try_push((Name(copy(key, budget)?), value))?;
+                let key = mem::take(&mut fields[*next - 1].key);
+                entries.try_push((Name(key), value))?;
             }
         }
         Ok(())

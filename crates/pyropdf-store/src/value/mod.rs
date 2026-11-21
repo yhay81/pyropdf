@@ -442,7 +442,7 @@ impl<'a> IntoIterator for &'a Array {
 /// A dictionary: entries from names to values, in the order they were read
 /// or added.
 ///
-/// Each key appears once. When the bytes repeat a key, hayro-syntax keeps
+/// Each key appears once. When the bytes repeat a key, the store keeps
 /// its last value, and the entry stays where the key first appears.
 #[derive(Clone, Debug, Default)]
 pub struct Dict {
