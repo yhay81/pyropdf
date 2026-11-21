@@ -650,8 +650,8 @@ impl<'a> Mode<'a> {
     fn header<'v>(&self, version: &'v Version, xref_stream: bool) -> &'v [u8] {
         let original = version
             .base()
-            .file()
-            .and_then(|file| file.bytes().get(file.origin()..file.origin() + 8))
+            .header_bytes()
+            .and_then(|bytes| bytes.get(..8))
             .filter(|bytes| bytes.starts_with(b"%PDF-"))
             .unwrap_or(b"%PDF-1.7");
         if self.handler().is_some_and(Handler::uses_gcm) && original < b"%PDF-2.0" {

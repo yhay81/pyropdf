@@ -798,3 +798,16 @@ def test_recipient_cms_seed_shape_does_not_grant_default_permissions(length: int
             with pytest.raises(pyropdf.MalformedPdfError, match=message):
                 doc.unlock(owner)
             assert doc.needs_password
+
+
+@pytest.mark.spec("aes-gcm", "create")
+@pytest.mark.parametrize("linearized", [False, True])
+def test_gcm_promotes_only_the_output_header_of_a_new_document(*, linearized: bool) -> None:
+    with pyropdf.Document(version="1.4") as doc:
+        doc.pages.new((100, 100))
+        cfg = Encryption(user_password="reader", owner_password="owner", method="aes-gcm")
+        sealed = doc.to_bytes(encryption=cfg, linearize=linearized)
+        assert pyropdf.probe(sealed).version == "2.0"
+        with pyropdf.open(sealed, password="reader") as reopened:
+            assert reopened.catalog["Extensions"]["ISO_"][0]["ExtensionLevel"] == 32003
+        assert pyropdf.probe(doc.to_bytes(linearize=linearized)).version == "1.4"
