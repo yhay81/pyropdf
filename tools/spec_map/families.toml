@@ -263,37 +263,6 @@ features = [
 dimensions = ["create"]
 behavior = "Create an accessible archival document with a valid claim and have an independent validator verify the result."
 
-[families.early-profile-authoring]
-tracker = 255
-issue = 911
-title = "Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour"
-features = [
-    "pdfa-2b", "pdfua-1",
-]
-dimensions = ["create"]
-behavior = "Create and independently validate the earlier PDF/A and PDF/UA profile examples."
-
-[families.pdf-profile-corpus]
-tracker = 255
-issue = 911
-title = "Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour"
-features = [
-    "pdfa", "pdfua", "pdfa-1a", "pdfa-1b", "pdfa-2a", "pdfa-2u", "pdfa-3a", "pdfa-3b", "pdfa-3u", "pdfa-4e",
-    "pdfa-4f",
-]
-dimensions = ["read", "create"]
-behavior = "Exercise independently sourced conforming and negative fixtures beyond the original vector example. Validate public authoring per listed part and level using independent validation and retain allowable source variations."
-
-[families.pdf-profile-reading]
-tracker = 255
-issue = 911
-title = "Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour"
-features = [
-    "pdfa-2b", "pdfa-4", "pdfua-1", "pdfua-2",
-]
-dimensions = ["read"]
-behavior = "Exercise additional conforming and negative sources beyond the original per-flavour vector example."
-
 [families.print-profiles]
 tracker = 255
 issue = 910
