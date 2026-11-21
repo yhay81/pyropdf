@@ -12,19 +12,6 @@ features = [
 dimensions = ["read", "create", "edit"]
 behavior = "Resolve OCG Usage and configuration AS application dictionaries against their groups. Expose and modify the stored values, and verify configuration- and event-specific behavior through save/reopen."
 
-[families.functions-and-shadings]
-tracker = 246
-issue = 896
-title = "Complete PDF function, pattern and mesh shading authoring and evaluation"
-features = [
-    "sampled-functions", "exponential-functions", "stitching-functions", "calculator-functions",
-    "tiling-patterns", "function-shading", "axial-shading", "radial-shading", "free-form-triangle-shading",
-    "lattice-triangle-shading", "coons-patch-shading", "tensor-patch-shading", "shading-patterns",
-    "pattern-color-space",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Exercise sampled/calculator functions, function edits, tiling and uncolored patterns and shading types 1–7. Create and edit resources through the store, verify mesh and function evaluation independently and round-trip untouched data."
-
 [families.print-device-engine]
 tracker = 248
 issue = 1001
@@ -201,16 +188,8 @@ tracker = 252
 issue = 1056
 title = "Resolve indirect stream filter selectors and parameters in their document revision"
 features = ["crypt-filter", "crypt-filters"]
-dimensions = ["read", "create", "preserve"]
+dimensions = ["read", "create", "edit", "preserve"]
 behavior = "Resolve filter names and parameter references in the correct revision before reading or creating encrypted streams, and retain their reference identities through saves."
-
-[families.crypt-filter-payload-edits]
-tracker = 252
-issue = 992
-title = "Keep stream crypt-filter selection when replacing attachment or stream data"
-features = ["crypt-filter", "crypt-filters"]
-dimensions = ["edit"]
-behavior = "Retain the leading security filter and its parameters when replacing the decoded payload or compression, including an attachment restricted to a distinct recipient audience."
 
 [families.signature-dictionaries]
 tracker = 252
