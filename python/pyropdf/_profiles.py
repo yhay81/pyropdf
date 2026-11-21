@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from xml.parsers import expat
 
 from pyropdf._objects import Array, Dictionary, Name, Stream, String, _catalog
 
@@ -68,6 +70,80 @@ def _property(xmp: str, name: str) -> str | None:
     return next(group for group in match.groups() if group is not None).strip()
 
 
+_PDFA_ID = "http://www.aiim.org/pdfa/ns/id/"
+_PDFUA_ID = "http://www.aiim.org/pdfua/ns/id/"
+_RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+_IDENTIFIERS = {
+    f"{_PDFA_ID} part": "pdfaid:part",
+    f"{_PDFA_ID} conformance": "pdfaid:conformance",
+    f"{_PDFUA_ID} part": "pdfuaid:part",
+}
+
+
+class _IdentifierReader:
+    """Collect document-level RDF identification scalars without materializing an XML tree."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+        self.field: str | None = None
+        self.depth = 0
+        self.rdf_depth: int | None = None
+        self.description_depth: int | None = None
+        self.text = io.StringIO()
+
+    def start(self, name: str, attrs: dict[str, str]) -> None:
+        self.depth += 1
+        if name == f"{_RDF} RDF" and self.rdf_depth is None:
+            self.rdf_depth = self.depth
+        self.field = _IDENTIFIERS.get(name) if self.description_depth == self.depth - 1 else None
+        if self.field is not None:
+            self.text.seek(0)
+            self.text.truncate()
+        if name == f"{_RDF} Description" and (self.depth == 1 or self.rdf_depth == self.depth - 1):
+            self.description_depth = self.depth
+            for expanded, key in _IDENTIFIERS.items():
+                if expanded in attrs:
+                    self.values.setdefault(key, attrs[expanded].strip())
+
+    def characters(self, data: str) -> None:
+        if self.field is not None:
+            self.text.write(data)
+
+    def end(self, name: str) -> None:
+        if self.field is not None and _IDENTIFIERS.get(name) == self.field:
+            self.values.setdefault(self.field, self.text.getvalue().strip())
+        if self.depth == self.description_depth:
+            self.description_depth = None
+        if self.depth == self.rdf_depth:
+            self.rdf_depth = None
+        self.field = None
+        self.depth -= 1
+
+
+def _identifiers(packet: str) -> dict[str, str]:
+    """Read the three archival/accessibility scalars by their expanded XML names."""
+
+    def refuse_doctype(*_args: object) -> None:
+        msg = "XMP contains a document type declaration"
+        raise ValueError(msg)
+
+    reader = _IdentifierReader()
+    parser = expat.ParserCreate(namespace_separator=" ")
+    parser.StartElementHandler = reader.start
+    parser.CharacterDataHandler = reader.characters
+    parser.EndElementHandler = reader.end
+    parser.StartDoctypeDeclHandler = refuse_doctype
+    try:
+        parser.Parse(packet, True)  # noqa: FBT003 - final chunk.
+    except ValueError:
+        return {}
+    except expat.ExpatError:
+        # Older files supply RDF fragments with undeclared standard prefixes.
+        # Keep the historical claim reader for those incomplete packets.
+        return {key: value for key in _IDENTIFIERS.values() if (value := _property(packet, key)) is not None}
+    return reader.values
+
+
 def _metadata(document: Document, max_size: int | None) -> str | None:
     """Return the catalog's XMP metadata as text, or ``None`` without a metadata stream."""
     metadata = _catalog(document).get("Metadata")
@@ -79,15 +155,18 @@ def _metadata(document: Document, max_size: int | None) -> str | None:
 def pdfa_claim(document: Document, max_size: int | None = _DEFAULT_MAX_XMP_SIZE) -> tuple[int, str] | None:
     """Return the PDF/A ``(part, conformance)`` pair declared in XMP metadata, or ``None``."""
     xmp = _metadata(document, max_size)
-    return _pdfa_parts(xmp) if xmp else None
+    return _pdfa_parts(_identifiers(xmp)) if xmp else None
 
 
-def _pdfa_parts(xmp: str) -> tuple[int, str] | None:
+def _pdfa_parts(values: dict[str, str]) -> tuple[int, str] | None:
     """Read the PDF/A part and original conformance spelling from the given packet."""
-    part = _property(xmp, "pdfaid:part")
+    part = values.get("pdfaid:part")
     if part is None or not part.isdigit():
         return None
-    return int(part), _property(xmp, "pdfaid:conformance") or ""
+    try:
+        return int(part), values.get("pdfaid:conformance", "")
+    except ValueError:
+        return None
 
 
 def _text(entry: Dictionary, key: str) -> str | None:
@@ -114,9 +193,10 @@ def _output_intent(entry: Dictionary) -> OutputIntent:
 def profiles(document: Document, max_size: int | None = _DEFAULT_MAX_XMP_SIZE) -> Profiles:
     """Return the profiles of ``document``; see :attr:`Document.profiles`."""
     xmp = _metadata(document, max_size) or ""
-    claim = _pdfa_parts(xmp) if xmp else None
+    fields = _identifiers(xmp) if xmp else {}
+    claim = _pdfa_parts(fields)
     pdfa = f"PDF/A-{claim[0]}{claim[1].upper()}" if claim else None
-    ua = _property(xmp, "pdfuaid:part")
+    ua = fields.get("pdfuaid:part")
     pdfx = _property(xmp, "pdfxid:GTS_PDFXVersion")
     pdfvt = _property(xmp, "pdfvtid:GTS_PDFVTVersion")
     intents = _catalog(document).get("OutputIntents")
