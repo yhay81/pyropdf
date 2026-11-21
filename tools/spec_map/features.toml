@@ -386,8 +386,6 @@ clause = "7.5.8"
 description = "Cross-reference data as a stream, and hybrid-reference files."
 objects = ["XRefStream"]
 interpret = { status = "n/a", reason = "7.5.8: cross-reference streams index indirect objects in the file, whose resolution Read covers." }
-create = { status = "partial", missing = "Saves write pure cross-reference streams, without hybrid-reference `/XRefStm` sections.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Saves rewrite and renumber cross-reference streams, without writing hybrid-reference `/XRefStm` sections.", milestone = "Phase 4: Specification" }
 
 [features.encryption-dictionary]
 clause = "7.6.3"
