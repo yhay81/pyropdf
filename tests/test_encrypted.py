@@ -835,3 +835,26 @@ def test_invalid_legacy_cms_parameters_preserve_locked_state(case: str) -> None:
         assert doc.needs_password
         with pytest.raises(pyropdf.EncryptedDocumentError):
             _ = doc.catalog
+
+
+def test_recipient_open_before_timestamp_providers_register_their_content_types() -> None:
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    # A fresh process reproduces applications that first use CMS through the recipient API.
+    program = """
+from pathlib import Path
+import sys
+import pyropdf
+from cryptography import x509
+from cryptography.hazmat.primitives.serialization import load_der_private_key
+root = Path(sys.argv[1])
+cert = x509.load_der_x509_certificate((root / "recipient-owner.cer").read_bytes())
+key = load_der_private_key((root / "recipient-owner.key").read_bytes(), None)
+credential = pyropdf.RecipientCredential(certificate=cert, private_key=key)
+with pyropdf.open(root / "cms-oaep.pdf", credential=credential) as doc:
+    assert len(doc.pages) == 1
+from asn1crypto import cms, tsp
+assert cms.ContentType("tst_info").dotted == "1.2.840.113549.1.9.16.1.4"
+"""
+    subprocess.run([sys.executable, "-c", program, str(RECIPIENT_ASSETS)], check=True)  # noqa: S603
