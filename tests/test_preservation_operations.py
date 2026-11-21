@@ -157,7 +157,11 @@ def add_screen(doc: pyropdf.Document) -> set[int]:
     if pdf_version(doc) < (1, 5):
         touched.add(number(doc.catalog))
     clip = pyropdf.MediaAsset(filename="caption.txt", content_type="text/plain", data=MARKER.encode())
-    page.annotations.add(pyropdf.Screen(rect=pyropdf.Rect(10, 10, 30, 30), asset=clip))
+    screen = page.annotations.add(pyropdf.Screen(rect=pyropdf.Rect(10, 10, 30, 30), asset=clip))
+    action = screen.action
+    assert isinstance(action, pyropdf.RenditionAction)
+    with action.edit_rendition() as rendition:
+        rendition.N = MARKER
     return touched
 
 
@@ -169,6 +173,7 @@ def check_screen(doc: pyropdf.Document) -> None:
     assert isinstance(action, pyropdf.RenditionAction)
     assert action.annotation == screen.xref
     assert isinstance(action.rendition, pyropdf.typed.RenditionMedia)
+    assert action.rendition.N == MARKER
     clip = action.rendition.C
     assert isinstance(clip, pyropdf.typed.MediaClipData)
     file = clip.D
