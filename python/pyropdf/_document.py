@@ -203,6 +203,12 @@ class Document:
         self._fallback: dict[str, FallbackFont | _FontPackage] | None = None
         _set_fallback(self, None)
 
+    def _import_source(self, core: _Document) -> Document:
+        """Wrap the version captured by a foreign page import for its catalog reads."""
+        view = Document.__new__(Document)
+        view._setup(lambda _: core, self._limits)  # noqa: SLF001
+        return view
+
     @property
     def limits(self) -> DocumentLimits:
         """Return the limits that the document's operations start from."""
