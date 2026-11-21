@@ -9,6 +9,7 @@
 
 mod permissions;
 mod profiles;
+mod resources;
 
 pub use permissions::SignaturePermission;
 
