@@ -327,8 +327,10 @@ impl Links<'_, '_> {
                 kept.try_push(item)?;
                 continue;
             };
-            if let Some(Value::Name(name)) = annotation.get("Subtype")
-                && crate::annotations::is_linked_annotation(&annotation)
+            let subtype = self.resolved(annotation.get("Subtype"))?;
+            if let Some(Value::Name(name)) = &subtype
+                && annotation.get("Rect").is_some()
+                && crate::annotations::linked_subtype(name.as_bytes())
             {
                 let minimum = subtype_version(name.as_bytes());
                 // Preserve the edition of a 3D scene: its view, measurement
@@ -340,10 +342,7 @@ impl Links<'_, '_> {
                 };
                 self.media_version = self.media_version.max(Some(required));
             }
-            let link = matches!(
-                self.resolved(annotation.get("Subtype"))?,
-                Some(Value::Name(subtype)) if subtype.as_bytes() == b"Link"
-            );
+            let link = matches!(subtype, Some(Value::Name(name)) if name.as_bytes() == b"Link");
             if !link {
                 kept.try_push(item)?;
                 continue;

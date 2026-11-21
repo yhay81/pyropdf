@@ -372,8 +372,9 @@ impl Walk<'_, '_> {
                 Value::Stream(stream) => Some(stream.dict()),
                 _ => None,
             };
-            if dict.is_some_and(crate::annotations::is_linked_annotation)
-                && self.listed.binary_search(&reference).is_err()
+            if self.listed.binary_search(&reference).is_err()
+                && let Some(dict) = dict
+                && crate::annotations::is_linked_annotation(self.source, dict, self.budget)?
             {
                 return Err(Error::malformed(
                     "the import selection omits a referenced multimedia or print annotation",

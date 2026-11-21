@@ -669,7 +669,7 @@ pub(crate) fn keep_trap_last(
     if items.len() > original.len()
         && let Some(last) = original.len().checked_sub(1)
         && let Some(Value::Dict(dict)) = crate::pages::resolve(version, original.get(last), budget)?
-        && matches!(dict.get("Subtype"), Some(Value::Name(name)) if name.as_bytes() == b"TrapNet")
+        && matches!(crate::pages::resolve(version, dict.get("Subtype"), budget)?, Some(Value::Name(name)) if name.as_bytes() == b"TrapNet")
     {
         items.iter_mut().into_slice()[last..].rotate_left(1);
     }

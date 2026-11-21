@@ -213,7 +213,7 @@ fn annotation_targets<'b>(
             if let Value::Reference(reference) = entry
                 && let Some(target) = target(before, *reference, budget)?
                 && let Value::Dict(dict) = target.as_ref()
-                && crate::annotations::is_linked_annotation(dict)
+                && crate::annotations::is_linked_annotation(before, dict, budget)?
             {
                 targets.try_push(reference.number())?;
             }

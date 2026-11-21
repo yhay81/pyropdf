@@ -247,6 +247,69 @@ def test_trap_stays_last_through_ordinary_annotation_and_link_addition() -> None
             assert not reopened.check()
 
 
+def _indirect_print_subtypes() -> bytes:
+    with pikepdf.open(io.BytesIO(prepress_source())) as pdf:
+        for annot in pdf.pages[0].Annots:
+            annot.Subtype = pdf.make_indirect(annot.Subtype)
+        source = io.BytesIO()
+        pdf.save(source)
+    return source.getvalue()
+
+
+@pytest.mark.spec("watermark-annotations", "edit", "preserve")
+@pytest.mark.parametrize("incremental", [False, True])
+def test_import_of_an_indirect_watermark_subtype_promotes_the_recipient(*, incremental: bool) -> None:
+    receiver = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 220 200] /Resources <<>> >>",
+        }
+    ).replace(b"%PDF-1.7", b"%PDF-1.4", 1)
+    with pyropdf.open(_indirect_print_subtypes()) as src, pyropdf.open(receiver) as dst:
+        dst.pages.extend(src.pages[:2])
+        output = dst.to_bytes(incremental=incremental)
+    with pikepdf.open(io.BytesIO(output)) as pdf:
+        assert not pdf.check_pdf_syntax()
+        assert pdf.Root.Version == "/1.6"
+        watermark = pdf.pages[1].Annots[1]
+        assert watermark.Subtype.is_indirect
+        assert watermark.Subtype == "/Watermark"
+        assert watermark.P.objgen == pdf.pages[1].objgen
+
+
+@pytest.mark.spec("trap-network-annotations", "edit", "preserve")
+@pytest.mark.spec("printer-mark-annotations", "edit", "preserve")
+@pytest.mark.parametrize("incremental", [False, True])
+def test_indirect_print_subtypes_preserve_order_and_targeted_annotations(*, incremental: bool) -> None:
+    with pyropdf.open(_indirect_print_subtypes()) as doc, pyropdf.Document() as receiver:
+        first, _, other = doc.pages
+        del first.separations
+        mark = first.annotations[0].obj
+        doc.catalog["OpenAction"] = {"S": N("Hide"), "T": mark}
+        # The third page also reaches the mark on the first page.
+        other.obj["AA"] = {"O": {"S": N("Hide"), "T": mark}}
+        before = doc.to_bytes(incremental=True)
+        history = doc.history.steps
+        with pytest.raises(ValueError, match="still referenced"):
+            del first.annotations[0]
+        with pytest.raises(ValueError, match="retained object still references"):
+            del doc.pages[0]
+        with pytest.raises(pyropdf.PdfError, match="omits a referenced"):
+            receiver.pages.extend(other)
+        assert not receiver.pages
+        assert doc.history.steps == history
+        assert doc.to_bytes(incremental=True) == before
+        first.links.add((10, 10, 30, 30), pyropdf.Destination(0))
+        output = doc.to_bytes(incremental=incremental)
+    with pikepdf.open(io.BytesIO(output)) as pdf:
+        assert not pdf.check_pdf_syntax()
+        mark, water, link, trap = pdf.pages[0].Annots
+        assert [a.Subtype for a in (mark, water, link, trap)] == ["/PrinterMark", "/Watermark", "/Link", "/TrapNet"]
+        assert trap.Subtype.is_indirect
+        assert pdf.Root.OpenAction.T.objgen == pdf.pages[2].AA.O.T.objgen == mark.objgen
+
+
 @pytest.mark.spec("opi", "interpret")
 def test_opi_rejects_wrong_version_and_ignores_masks() -> None:
     with pyropdf.open(prepress_source()) as doc:

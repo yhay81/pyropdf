@@ -1180,7 +1180,7 @@ impl PageAnnots<'_> {
             let (position, dict) = self.find(index, id)?;
             budget.poll()?;
             positions.try_push(position)?;
-            if id.0 != 0 && super::is_linked_annotation(&dict) {
+            if id.0 != 0 && super::is_linked_annotation(self.pages().0, &dict, budget)? {
                 targets.try_push(id.0)?;
             }
             if let Some(Value::Reference(popup)) = dict.get("Popup")
