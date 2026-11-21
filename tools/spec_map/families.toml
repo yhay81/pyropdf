@@ -243,16 +243,6 @@ features = ["logical-structure", "tagged-pdf"]
 dimensions = ["interpret"]
 behavior = "Resolve external Form stream MCIDs and text enclosed by page-level Form invocations once hayro supplies stream provenance."
 
-[families.arlington-preservation]
-tracker = 254
-issue = 890
-title = "Prove full and incremental preservation by Arlington object type"
-features = [
-    "@arlington",
-]
-dimensions = ["preserve"]
-behavior = "Build or reuse a reachable valid example for each descriptor and compare its keys, reference targets and stream bytes after an unrelated edit in both save modes. Reuse equivalent cases with explicit type-to-fixture coverage."
-
 [families.display-space]
 tracker = 254
 issue = 851
