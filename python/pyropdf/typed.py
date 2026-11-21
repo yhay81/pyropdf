@@ -55,8 +55,9 @@ keys with their types for type checkers.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from functools import cache
-from typing import Any, ClassVar, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, Self, cast
 
 from pyropdf import _core
 from pyropdf._errors import LimitError, MalformedPdfError, PdfError
@@ -69,7 +70,12 @@ from pyropdf._objects import Name as _Name
 from pyropdf._objects import Real as _Real
 from pyropdf._objects import Stream as _Stream
 from pyropdf._objects import String as _String
-from pyropdf._objects import _decode, _key
+from pyropdf._objects import _decode, _encode, _key
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pyropdf._document import Document
 
 #: The object types of the model, sorted.
 TYPES: tuple[str, ...] = tuple(_core.schema_names())
@@ -77,6 +83,25 @@ TYPES: tuple[str, ...] = tuple(_core.schema_names())
 #: The longest chain of ``/Parent`` links that inheritance follows: the default
 #: ``DocumentLimits.max_object_depth``, which bounds the page tree's nesting.
 _MAX_INHERITANCE = 64
+
+# The specification completion decision (#256) excludes authoring these
+# deprecated features. Their existing objects can still be edited or removed.
+_NO_CREATE = frozenset(
+    {
+        "ActionNOP",
+        "ActionSetState",
+        "ActionMovie",
+        "ActionSound",
+        "AnnotMovie",
+        "AnnotSound",
+        "ArrayOfNamesForProcSet",
+        "ArrayOfXFA",
+        "Movie",
+        "MovieActivation",
+        "SlideShow",
+        "SoundObject",
+    }
+)
 
 #: Wrappers around a possible name that only gate it by version or extension.
 _GATED = re.compile(r"(?:fn:(?:SinceVersion|BeforeVersion|Deprecated|IsPDFVersion|Extension)\([^,()]*,)*([^,()@]+)\)*")
@@ -185,6 +210,21 @@ def __dir__() -> list[str]:
 _ABSENT: Any = object()
 
 
+def _check_new_encryption(name: str, obj: Any) -> None:  # noqa: ANN401 - PDF container of the selected descriptor.
+    """Apply the recorded exclusion of new RC4 encryption dictionaries."""
+    if name in {"EncryptionStandard", "EncryptionPublicKey"}:
+        filters = obj.get("CF")
+        if obj.get("V") in {1, 2, 3} or (
+            isinstance(filters, _Dictionary)
+            and any(isinstance(cf, _Dictionary) and cf.get("CFM") == _Name("V2") for cf in filters.values())
+        ):
+            msg = "creation of deprecated RC4 encryption is excluded"
+            raise PdfError(msg)
+    if name in {"CryptFilter", "CryptFilterPublicKey"} and obj.get("CFM") == _Name("V2"):
+        msg = "creation of deprecated RC4 encryption is excluded"
+        raise PdfError(msg)
+
+
 class View:
     """A typed view of one object: the base of the views of every object type."""
 
@@ -207,6 +247,83 @@ class View:
     def obj(self) -> _Dictionary | _Array:
         """Return the viewed handle."""
         return self._obj
+
+    @classmethod
+    def create(
+        cls,
+        document: Document,
+        values: Mapping[str, Any] | list[Any] | tuple[Any, ...] | _Array,
+        /,
+        *,
+        data: bytes | None = None,
+        attach: Callable[[Self], None] | None = None,
+    ) -> Self:
+        """Create an indirect object from PDF values and check its required references.
+
+        Supply dictionary keys, or an ordered sequence for an array, using
+        indirect handles for required references. Stream descriptors accept
+        decoded bytes as ``data``. The new object and its validation form one
+        undo step, including inside an existing transaction. An optional
+        ``attach(view)`` callback can register the new object in its owner's
+        collection and build reciprocal links before validation.
+        """
+        if not cls._type:
+            msg = "choose a concrete Arlington object type"
+            raise TypeError(msg)
+        if cls._type in _NO_CREATE:
+            msg = f"creation of deprecated {cls._type} objects is excluded"
+            raise PdfError(msg)
+        with document.transaction(f"Create {cls._type}"):
+            if isinstance(values, (_Dictionary, _Array)):
+                if data is not None:
+                    msg = "supply stream data with a dictionary, or copy an existing stream handle"
+                    raise TypeError(msg)
+                number = document.objects.add(values)
+            elif cls._handle is _Stream:
+                if not isinstance(values, Mapping):
+                    msg = f"{cls._type} requires a stream dictionary"
+                    raise TypeError(msg)
+                number = document.objects.add_stream(b"" if data is None else data, values, filter=None)
+            else:
+                if data is not None:
+                    msg = f"{cls._type} does not take stream data"
+                    raise TypeError(msg)
+                number = document.objects.add(values)
+            obj = document.objects[number]
+            if not _handled(cls, obj):
+                msg = f"{cls._type} requires a {cls._handle.__name__}"
+                raise TypeError(msg)
+            view = cls(obj)
+            if attach is not None:
+                attach(view)
+            _check_new_encryption(cls._type, obj)
+            _core.schema_created(obj._core(), view._indirect(), cls._type)  # noqa: SLF001
+            return view
+
+    def _indirect(self) -> tuple[int, int]:
+        handle = self._obj
+        if not handle.is_indirect or handle._root is None:  # noqa: SLF001
+            msg = "the operation requires an indirect object"
+            raise ValueError(msg)
+        return handle._root  # noqa: SLF001
+
+    def replace(self, value: object, /) -> None:
+        """Replace this indirect object's value, preserving its number and generation.
+
+        The replacement must satisfy this descriptor and every supported live
+        incoming link. Coupled or unknown relationships require their owning
+        operation. Accept PDF values, a container handle or a typed view.
+        """
+        handle = self._obj
+        if value is None:
+            msg = "a typed indirect object requires a container"
+            raise TypeError(msg)
+        written = _encode(handle._document, value.obj if isinstance(value, View) else value, 0, top_level=True)  # noqa: SLF001
+        _core.schema_change(handle._core(), self._indirect(), self._type, written)  # noqa: SLF001
+
+    def remove(self) -> None:
+        """Free this indirect object when it has no live incoming reference."""
+        _core.schema_change(self._obj._core(), self._indirect(), self._type, None)  # noqa: SLF001
 
     def _key(self, key: str | int) -> tuple[str | int, _Key | None]:
         """Return the step of ``key`` in the handle and its descriptor."""

@@ -1,0 +1,12 @@
+processor = "pyropdf Python API as a reader, writer and editor of page labels"
+components = ["hayro-syntax parses the PDF objects"]
+limitations = ["This scope covers page-label ranges and numbering. Other features, conformance profiles and optional runtime deployments are outside the claim."]
+
+[scope]
+name = "Release rehearsal for page labels"
+pdf-versions = ["2.0"]
+errata = "2026-11-20"
+extensions = []
+profiles = []
+tools = []
+features = ["page-labels"]
