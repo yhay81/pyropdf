@@ -1205,3 +1205,16 @@ def test_jp2_rewrite_observes_the_document_memory_limit_before_encoding() -> Non
         doc.rewrite_images(quality=75, lossless_format="jpx")
     assert refused.value.code == "memory_size"
     assert doc.to_bytes(incremental=True) == source
+
+
+def test_jpx_output_keeps_icc_samples_lossless_in_their_original_space() -> None:
+    samples = gradient(3)
+    doc = placed(jp2("RGB", samples), {"BitsPerComponent": 8, "Filter": Name("JPXDecode")})
+    profile = doc.objects[doc.objects.add_stream(b"not read", {"N": 3, "Alternate": Name("DeviceRGB")})]
+    stream(doc)["ColorSpace"] = [Name("ICCBased"), profile]
+    assert doc.rewrite_images(dpi_threshold=150, dpi_target=72, quality=90, lossless_format="jpx").rewritten == 1
+    written = stream(pyropdf.open(doc.to_bytes()))
+    assert written["Filter"] == "FlateDecode"
+    assert written["ColorSpace"][1].xref == profile.xref
+    expected = pyropdf.Pixmap.from_bytes(pam(SIDE, 3, samples)).scale(36, 36)
+    assert written.read() == bytes(expected)

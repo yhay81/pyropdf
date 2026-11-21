@@ -723,14 +723,8 @@ def _encode(  # noqa: PLR0913 - image layout, encoder settings, and the document
 def _form(kind: str, components: int, options: _Options, *, indexed: bool = False, stored_samples: bool = False) -> str:
     if kind == "bitonal":
         return "flate1" if options.bitonal_format == "flate" else options.bitonal_format
-    if (
-        kind in ("lossless", "jpx")
-        and options.lossless_format == "jpx"
-        and components in (1, 3)
-        and not stored_samples
-        and not indexed
-    ):
-        return "jpx"
+    if kind in ("lossless", "jpx") and options.lossless_format == "jpx":
+        return "jpx" if components in (1, 3) and not stored_samples and not indexed else "flate"
     return "jpeg" if options.jpeg(kind) and components in _JPEG_COMPONENTS and not indexed else "flate"
 
 
