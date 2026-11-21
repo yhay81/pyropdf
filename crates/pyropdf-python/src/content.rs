@@ -17,7 +17,6 @@ use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::value::{Bytes, Dict, Reference, Value};
 
-use crate::document::_Document;
 use crate::errors::{MalformedPdfError, limit_error, store_error};
 
 /// The nesting of arrays and dictionaries that the store converts in
@@ -65,12 +64,13 @@ pub fn parse_operations<'py>(
 #[pyfunction]
 pub fn page_operations<'py>(
     py: Python<'py>,
-    document: &_Document,
+    source: crate::pages::PageSource<'_>,
     number: u32,
     generation: u16,
 ) -> PyResult<Option<Content<'py>>> {
     crate::errors::boundary(|| {
-        let (version, index, budget) = crate::pages::index(document)?;
+        let budget = source.budget();
+        let (version, index) = source.index(&budget)?;
         let Some(at) = index.index_of(Reference::new(number, generation)) else {
             return Ok(None);
         };

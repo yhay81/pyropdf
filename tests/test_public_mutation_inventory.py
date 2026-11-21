@@ -626,6 +626,8 @@ READ_ONLY = {
     "Rect": "round intersects area norm normalized morph torect",
     "IRect": "intersects area norm normalized morph torect",
     "pyropdf": "open probe parse_fdf parse_xfdf parse_pdf_date pdf_date vri_key wrap_encrypted_payload",
+    "RetrievalSource": "resolve to_dict",
+    "RetrievalVersion": "page_operations same_as",
     "Revision": "open",
     "Signature": "verify",
     "Signer": "from_pem from_pkcs12 callback",
