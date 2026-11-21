@@ -171,8 +171,8 @@ pub(crate) fn store_graph<'a>(
     version: &'a Version,
     budget: &'a Budget,
 ) -> Result<impl Graph<Value = Value, Owned = Arc<Value>, Error = Error> + 'a, Error> {
-    let header = version.base().file().and_then(|index| {
-        let text = header_version(&index.bytes()[index.origin()..])?;
+    let header = version.base().header_bytes().and_then(|bytes| {
+        let text = header_version(bytes)?;
         parse_version(text.as_bytes())
     });
     let mut store = Store {
