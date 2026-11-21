@@ -11,7 +11,7 @@ bbdd9c6. This record links the evidence; it does not repeat it.
 | An edit followed by a page read serializes and parses only the objects the edit wrote, apart from hayro's re-read of the cross-reference data and the page tree, and the benchmark publishes its cost at 110, 440, and 1,760 pages | Holds; counted by `an_edit_then_a_page_read_parses_and_serializes_only_what_it_wrote` (#259) | [edit-render](../edit-render/README.md) |
 | A failed transaction leaves the current version unchanged without copying the document | Holds | [python-transaction](../python-transaction/README.md) |
 | The fuzz targets run in CI | Hold; the weekly run on `main` found a defect, [#88](https://github.com/yhay81/pyropdf/issues/88) | `.github/workflows/fuzz.yml` |
-| I2 is released, or releases withhold the untrusted-input claim | Open | [#15](https://github.com/yhay81/pyropdf/issues/15) |
+| I2 is released, or releases withhold the untrusted-input claim | Holds. Published releases withhold the claim pending [I2](https://github.com/yhay81/pyropdf/issues/15). | [v0.3.1 safety claims](https://github.com/yhay81/pyropdf/blob/v0.3.1/README.md#safety-claims), [#243](https://github.com/yhay81/pyropdf/issues/243), [PR #244](https://github.com/yhay81/pyropdf/pull/244) |
 
 ## Rerun
 
