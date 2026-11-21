@@ -203,12 +203,18 @@ method and property of its classes with its full description.
 
 - [`Destination`](links-and-destinations.md#destination): A place in this document: a zero-based page, a point, and a zoom.
 - [`Destinations`](links-and-destinations.md#destinations): The named destinations of a document, as `doc.destinations` returns them.
+- [`FragmentParameter`](links-and-destinations.md#fragmentparameter): One parameter of a PDF fragment, resolved in its original order.
 - [`Launch`](links-and-destinations.md#launch): Open a file with the application the viewer associates with it.
 - [`Link`](links-and-destinations.md#link): A handle on one link annotation of a page, as `page.links` lists it.
 - [`Links`](links-and-destinations.md#links): The link annotations of a page, in `/Annots` order, as `page.links` returns them.
 - [`NamedAction`](links-and-destinations.md#namedaction): A viewer action by name (ISO 32000-2 Table 213).
+- [`NamedResources`](links-and-destinations.md#namedresources): Live byte-string keys and PDF objects in one catalog resource name tree.
+- [`PdfFragment`](links-and-destinations.md#pdffragment): Ordered content selectors and viewer parameters from a PDF URI's fragment.
 - [`RemoteDestination`](links-and-destinations.md#remotedestination): A place in another PDF file: a zero-based page or a named destination.
+- [`StructureDestination`](links-and-destinations.md#structuredestination): A PDF 2.0 structure destination and its page-based fallback.
 - [`Target`](links-and-destinations.md#target): Where a link or trigger leads: a destination, a file to open, a viewer, transition, thread, script, hide, layer-state, or form action, or a URI string.
+- [`UriAction`](links-and-destinations.md#uriaction): A URI reference and the optional image-map click flag of a PDF URI action.
+- [`WindowsLaunch`](links-and-destinations.md#windowslaunch): Windows-specific fields in a launch action, retained as data (PDF 1.1 through 1.7).
 
 ## [Actions and triggers](actions-and-triggers.md)
 

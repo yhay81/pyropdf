@@ -53,7 +53,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("OCR", ("_ocr",)),
     ("Rendering", ("_pixmap",)),
     ("Annotations", ("_annotations", "_media")),
-    ("Links and destinations", ("_links", "_targets")),
+    ("Links and destinations", ("_links", "_targets", "_name_resources", "_viewer_actions", "_fragments")),
     ("Actions and triggers", ("_actions", "_media_actions")),
     ("Forms and widgets", ("_form", "_widgets", "_fdf")),
     ("Outline", ("_outline",)),
