@@ -242,7 +242,7 @@ pub(super) fn decode(
     };
     let decrypt = |raw: &[u8]| match security {
         Some(handler) => handler
-            .decrypt(Kind::Stream, reference, raw, budget)
+            .transform_data(Kind::Stream, Some(&dict), reference, raw, budget, false)
             .map(Some),
         None => Ok(None),
     };

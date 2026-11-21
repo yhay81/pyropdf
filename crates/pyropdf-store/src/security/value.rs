@@ -108,18 +108,23 @@ fn walk(
                 stream.dict().get("Type"),
                 Some(Value::Name(n)) if n.as_bytes() == b"Metadata"
             );
-            if handler.is_recipient() {
-                super::recipient::stream_filter(
-                    stream.dict_mut(),
-                    metadata && !handler.encrypts_metadata(),
-                    encrypt,
-                    budget,
-                )?;
+            if encrypt
+                && handler.is_recipient()
+                && metadata
+                && !handler.encrypts_metadata()
+                && super::filters::explicit(stream.dict(), budget)?.is_none()
+            {
+                super::filters::prepend_identity(stream.dict_mut(), budget)?;
             }
-            if !(metadata && !handler.encrypts_metadata()) {
-                let data = apply(Kind::Stream, stream.data())?;
-                stream.set_data(Bytes::new(data));
-            }
+            let data = handler.transform_data(
+                Kind::Stream,
+                Some(stream.dict()),
+                reference,
+                stream.data(),
+                budget,
+                encrypt,
+            )?;
+            stream.set_data(Bytes::new(data));
         }
         _ => {}
     }

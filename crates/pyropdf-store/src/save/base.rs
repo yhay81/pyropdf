@@ -249,6 +249,17 @@ fn unlock(index: &mut Index, password: Option<&[u8]>, budget: &Budget) -> Result
     if password.is_some() && encrypt.as_ref().is_some_and(|dict| matches!(dict.get("Filter"), Some(Value::Name(n)) if n.as_bytes() == b"Adobe.PubSec")) {
         return Err(Password::Recipient.into());
     }
+    if let Some(dict) = &encrypt
+        && matches!(dict.get("Filter"),Some(Value::Name(n)) if n.as_bytes()==b"Adobe.PubSec")
+        && matches!(dict.get("SubFilter"),Some(Value::Name(n)) if n.as_bytes()==b"adbe.pkcs7.s5")
+        && ["StmF", "StrF"].iter().all(|name| {
+            matches!(dict.get(*name), None | Some(Value::Null))
+                || matches!(dict.get(*name),Some(Value::Name(n)) if n.as_bytes()==b"Identity")
+        })
+    {
+        let handler = Handler::open_recipient(dict, |_| Ok(None), budget)?;
+        return index.unlock(handler, budget);
+    }
     let id = match index.trailer().get("ID") {
         Some(Value::Array(id)) => match id.get(0) {
             Some(Value::String(first)) => first.as_bytes(),
