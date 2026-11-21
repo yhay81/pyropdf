@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from pyropdf import typed
     from pyropdf._core import _Document as _CoreDocument
     from pyropdf._document import Document
+    from pyropdf._measurement import GeospatialMeasure
 
 #: Default bound on the bytes that ``Stream.read`` returns.
 _DEFAULT_MAX_STREAM_DATA_SIZE = 64 * 1024 * 1024
@@ -302,6 +303,31 @@ class Dictionary(_Handle, MutableMapping[str, Any]):
     """
 
     __slots__ = ()
+
+    @property
+    def geospatial_measure(self) -> GeospatialMeasure | None:
+        """Read the registration of this viewport, image, form or Geospatial3D annotation."""
+        from pyropdf._measurement import _owner_measure  # noqa: PLC0415
+
+        return _owner_measure(self)
+
+    @geospatial_measure.setter
+    def geospatial_measure(self, value: GeospatialMeasure) -> None:
+        from pyropdf._measurement import _set_owner_measure  # noqa: PLC0415
+
+        _set_owner_measure(self, value)
+
+    def geospatial_point(self, index: int, /) -> tuple[tuple[Decimal, ...], tuple[Decimal, ...]]:
+        """Return a registered owner-space point and its geographic or projected coordinates.
+
+        A viewport or form uses its PDF bounding box, an image uses the unit
+        square, and a Geospatial3D annotation uses its view world coordinates.
+        Geographic data returns latitude then longitude, projected data easting
+        then northing. A three-dimensional registration also returns elevation.
+        """
+        from pyropdf._measurement import _owner_point  # noqa: PLC0415
+
+        return _owner_point(self, index)
 
     @property
     def xmp(self) -> str | None:

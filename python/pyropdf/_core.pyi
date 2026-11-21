@@ -91,6 +91,7 @@ class _Document:
         renumber: bool = False,
         dedupe: bool = False,
         linearize: bool = False,
+        hybrid_reference: bool = False,
         /,
     ) -> None: ...
     def to_bytes(
@@ -107,6 +108,7 @@ class _Document:
         renumber: bool = False,
         dedupe: bool = False,
         linearize: bool = False,
+        hybrid_reference: bool = False,
         /,
     ) -> bytes: ...
     def _objects(self) -> list[tuple[int, int, bytes]]: ...

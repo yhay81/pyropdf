@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 42 | 37 | 753 |
-| interpret | 1 | 13 | 0 | 39 | 657 | 122 |
-| create | 0 | 0 | 12 | 644 | 73 | 103 |
-| edit | 0 | 0 | 0 | 669 | 60 | 103 |
-| preserve | 0 | 0 | 0 | 28 | 657 | 147 |
+| read | 0 | 0 | 0 | 41 | 37 | 754 |
+| interpret | 1 | 13 | 0 | 38 | 657 | 123 |
+| create | 0 | 0 | 12 | 643 | 73 | 104 |
+| edit | 0 | 0 | 0 | 668 | 60 | 104 |
+| preserve | 0 | 0 | 0 | 27 | 657 | 148 |
 
 ## Clauses
 
@@ -198,7 +198,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.8.6 | Permissions | `permissions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.7 | Legal content attestations | `legal-attestations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.9 | Measurement properties | `measurement` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.10 | Geospatial coordinates | `geospatial` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 12.10 | Geospatial coordinates | `geospatial` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.11 | Document requirements | `document-requirements` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 13.2 | Multimedia | `renditions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 13.3 | Sounds | `sounds` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
@@ -247,7 +247,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,907 unfinished cells in 832 features: 1 engine, 1,422 partial, 1,484 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,902 unfinished cells in 832 features: 1 engine, 1,417 partial, 1,484 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -407,8 +407,6 @@ Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 
 Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
 
-- [#930](https://github.com/yhay81/pyropdf/issues/930) Verify geographic and projected registration control points on their PDF owners. Verify required 2D and 3D controls, projected matrix precedence, geographic fallback, and the image, form and Geospatial3D owners beyond ordinary page viewports.
-    - read, interpret, create, edit, preserve — `geospatial`.
 - [#839](https://github.com/yhay81/pyropdf/issues/839) Expose developer extensions, associated files, page-piece dictionaries, document parts, and structure namespaces. Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations.
     - read, interpret, create, edit — `developer-extensions`, `page-piece`, `associated-files`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
     - preserve — `developer-extensions`, `page-piece`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.

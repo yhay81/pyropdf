@@ -659,6 +659,21 @@ manages `Catalog["Requirements"]` (`DocumentRequirement`, `RequirementType`,
 `RequirementHandler`), and `del page.viewports` or `del doc.requirements`
 removes the entry and frees unreferenced objects in one transaction.
 
+Read or assign `owner.geospatial_measure` on a viewport dictionary, image or
+form XObject stream, or a 3D or RichMedia annotation's `obj`. A 2D registration
+pairs each normalized local point with one ground point. For a 3D annotation,
+declare `RequirementType.GEOSPATIAL_3D` and use `dimensions=3` for world
+coordinates and elevation. `owner.geospatial_point(index)` returns the local
+point in the owner's PDF coordinate space and its ground coordinates. Geographic
+coordinates are latitude then longitude. Projected coordinates are easting then
+northing, with the optional projected matrix taking precedence over the ground
+array. A PDF 1.7 document that declares Adobe extension level 3 or later can
+store 2D geographic controls without changing editions. If PDF 2.0 is required,
+an upgrade that would introduce structural defects is refused in one transaction.
+Malformed registrations remain inspectable through the raw PDF dictionary.
+Decimal inputs retain their exact digits on save. For numeric tokens read from a
+PDF, precision currently follows the underlying reader. [Parser tracking issue](https://github.com/yhay81/pyropdf/issues/16)
+
 ```python
 from decimal import Decimal
 import pyropdf
@@ -704,6 +719,7 @@ with pyropdf.Document() as doc:
             measure=GeospatialMeasure(
                 CoordinateSystem(epsg=4326),
                 (lat, lon, lat, lon),
+                lpts=(0, 0, 1, 1),
                 pdu=("M", "SQM", "DEG"),
             ),
             point_data=PointData(("LAT", "LON", "ALT"), ((lat, lon, Decimal("42.5")),)),
