@@ -32,9 +32,9 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | --- | --- | --- | --- | --- | --- | --- |
 | read | 0 | 0 | 0 | 41 | 35 | 755 |
 | interpret | 8 | 19 | 0 | 36 | 43 | 725 |
-| create | 0 | 0 | 9 | 642 | 70 | 110 |
-| edit | 0 | 0 | 0 | 668 | 58 | 105 |
-| preserve | 0 | 0 | 0 | 26 | 654 | 151 |
+| create | 0 | 0 | 9 | 641 | 70 | 111 |
+| edit | 0 | 0 | 0 | 667 | 58 | 106 |
+| preserve | 0 | 0 | 0 | 26 | 653 | 152 |
 
 ## Clauses
 
@@ -55,7 +55,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.5.4 | Cross-reference table | `xref-table` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.6 | Incremental updates | `incremental-update` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.7 | Object streams | `object-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
-| 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 partial | 1 partial | 1 done |
+| 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.6.4 | Standard security handler | `standard-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
@@ -226,7 +226,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 14.13 | Associated files | `associated-files` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
 | Annex D | PDF character tables | `character-tables` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex E | Extension naming rules | `private-names` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 planned |
+| Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex I | Compatibility across PDF versions | `version-compatibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex K | XFA packets | `xfa` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
 | Annex L | Allowed structure children | `structure-children` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,281 unfinished cells in 831 features: 8 engine, 1,413 partial, 860 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,278 unfinished cells in 831 features: 8 engine, 1,411 partial, 859 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -367,9 +367,6 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - create — `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
     - edit — `flate-filter`, `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
     - preserve — `ascii85-filter`, `lzw-filter`, `run-length-filter`.
-- [#892](https://github.com/yhay81/pyropdf/issues/892) Verify hybrid-reference writing and linearized-file preservation. Write and reopen hybrid XRefStm sections and verify fast-web-view hints and offsets after supported saves. Reuse independent qpdf checks, including the modes where linearization cannot survive.
-    - create, edit — `xref-streams`.
-    - preserve — `linearization`.
 
 ### 253 Understanding
 
