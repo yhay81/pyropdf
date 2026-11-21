@@ -56,6 +56,17 @@ impl Graph for Store<'_> {
         }
     }
 
+    fn target(&self, reference: &Value) -> Result<Option<Arc<Value>>, Error> {
+        let Value::Reference(reference) = reference else {
+            return Ok(None);
+        };
+        match crate::objects::reference_target(self.version, *reference, self.budget) {
+            Ok(object) => Ok(object.map(|(_, value)| value)),
+            Err(error) if error.limit().is_some() => Err(error),
+            Err(_) => Ok(None),
+        }
+    }
+
     fn view<'v>(&self, value: &'v Value) -> View<'v> {
         match value {
             Value::Null => View::Null,
@@ -152,6 +163,14 @@ pub fn structural_check(
 }
 
 fn run(version: &Version, budget: &Budget) -> Result<(Report, PdfVersion), Error> {
+    let store = store_graph(version, budget)?;
+    Ok((check(&store)?, store.version()))
+}
+
+pub(crate) fn store_graph<'a>(
+    version: &'a Version,
+    budget: &'a Budget,
+) -> Result<impl Graph<Value = Value, Owned = Arc<Value>, Error = Error> + 'a, Error> {
     let header = version.base().file().and_then(|index| {
         let text = header_version(&index.bytes()[index.origin()..])?;
         parse_version(text.as_bytes())
@@ -174,7 +193,7 @@ fn run(version: &Version, budget: &Budget) -> Result<(Report, PdfVersion), Error
     {
         store.declared = store.declared.max(declared);
     }
-    Ok((check(&store)?, store.declared))
+    Ok(store)
 }
 
 fn parse_version(text: &[u8]) -> Option<PdfVersion> {

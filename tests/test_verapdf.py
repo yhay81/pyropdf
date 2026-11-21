@@ -163,6 +163,22 @@ def test_arlington_uses_the_promoted_screen_edition(tmp_path: Path, *, increment
     assert VERAPDF.arlington(output, "1b") == "arlington1.5"
 
 
+def test_archival_media_keys_report_only_the_changed_owner(tmp_path: Path) -> None:
+    files = VERAPDF.archival_media_controls(tmp_path)
+    for mode in ("full", "incremental"):
+        assert files[tmp_path / f"media-complete-{mode}.pdf"] == "4e"
+        dual_prefix = f"{VERAPDF.DUAL}-media"
+        assert files[tmp_path / f"{dual_prefix}-complete-{mode}.pdf"] == "ua2"
+        for key, rules in VERAPDF.ARCHIVAL_MEDIA_RULES.items():
+            path = tmp_path / f"media-{key}-{mode}.pdf"
+            assert files[path] == "4e"
+            assert VERAPDF.EXPECTED[f"4e {path.name}"][1] == rules
+            dual = tmp_path / f"{dual_prefix}-{key}-{mode}.pdf"
+            assert VERAPDF.dual_archival(files)[dual] == "4"
+            assert VERAPDF.EXPECTED[f"4 {dual.name}"][1] == {"6.3.1-1", "6.9-3"} | rules
+            assert VERAPDF.EXPECTED[f"ua2 {dual.name}"][1] == {"8.9.3.3-1", "8.9.2.4.19-2"}
+
+
 def test_verapdf_rules_include_full_iso_table_names_and_model_deviations() -> None:
     report = (
         "FAIL output.pdf ua2\n"
