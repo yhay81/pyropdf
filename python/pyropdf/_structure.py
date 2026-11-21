@@ -1253,7 +1253,7 @@ class StructureElement:
             return f"<stale StructureElement xref={self._id[0]}>"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StructureText:
     """One piece of logical text and its originating element or content reference.
 
@@ -1265,7 +1265,7 @@ class StructureText:
     text: str | None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StructureChildRule:
     """An Annex L relationship, its observed count and the applicable occurrence rule.
 

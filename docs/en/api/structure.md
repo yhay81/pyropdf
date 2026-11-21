@@ -176,6 +176,7 @@ Move child element `index` to child-element position `to` in one transaction.
 
 ```python
 StructureChildRule(
+    *,
     parent_xref: int | None,
     parent_role: str,
     child_role: str,
@@ -348,6 +349,7 @@ the 256-level depth limit.
 
 ```python
 StructureText(
+    *,
     element: StructureElement,
     item: MarkedContentReference | ObjectReference | None,
     text: str | None,

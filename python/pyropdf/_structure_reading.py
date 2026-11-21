@@ -10,7 +10,6 @@ from pyropdf._errors import LimitError, MalformedPdfError
 from pyropdf._objects import Dictionary, Name, String
 from pyropdf._operations import Operation
 from pyropdf._structure import (
-    _CODE_OBJECT_COUNT,
     _DEFAULT_MAX_ELEMENTS,
     _MAX_STRUCTURE_DEPTH,
     ObjectReference,
@@ -31,6 +30,7 @@ if TYPE_CHECKING:
     from pyropdf._structure import StructureItem
 
 _PDF2 = "http://iso.org/pdf2/ssn"
+_CODE_OBJECT_COUNT = "object_count"
 
 
 def _root_items(tree: StructureTree, budget: _core._OperationBudget) -> Iterator[StructureItem]:
@@ -203,7 +203,7 @@ def reading_order(tree: StructureTree, budget: _core._OperationBudget, *, expand
             text = _replacement(child, expand=expand)
             if text is None:
                 continue
-            row = StructureText(child, None, text)
+            row = StructureText(element=child, item=None, text=text)
             suppressed = depth
         else:
             assert owner is not None  # noqa: S101 - validated at the root.
@@ -215,7 +215,7 @@ def reading_order(tree: StructureTree, budget: _core._OperationBudget, *, expand
                     budget.charge("memory_size", 192)
                     pages[child.page] = _page_text(owner.document.pages[child.page], budget, expand=expand)
                 text = pages[child.page].get(child.mcid)
-            row = StructureText(owner, child, text)
+            row = StructureText(element=owner, item=child, text=text)
         budget.charge("memory_size", 160 + (4 * len(row.text) if row.text is not None else 0))
         result.append(row)
     return tuple(result)
@@ -262,7 +262,9 @@ class _Siblings:
                 self.counts.setdefault((required, True), 0)
         for (child, known), count in self.counts.items():
             rule, allowed = self.judge(child, count) if self.pdf2 and known else ("other namespace", None)
-            yield StructureChildRule(number, self.role, child, count, rule, allowed)
+            yield StructureChildRule(
+                parent_xref=number, parent_role=self.role, child_role=child, count=count, rule=rule, allowed=allowed
+            )
 
     def judge(self, child: str, count: int) -> tuple[str, bool | None]:
         rule, allowed = occurrence(self.role, child, count)
