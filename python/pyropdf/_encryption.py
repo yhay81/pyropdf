@@ -440,6 +440,8 @@ def _seal_envelope(payload: bytes, certificates: list[Certificate], cipher: str,
 
 
 def _check_certificate(certificate: Certificate) -> None:
+    # asn1crypto registers the RFC 3161 content OIDs on import, before its first CMS value freezes the reverse map.
+    from asn1crypto import tsp  # noqa: F401, PLC0415
     from cryptography import x509  # noqa: PLC0415
     from cryptography.hazmat.primitives.asymmetric import ec, rsa  # noqa: PLC0415
 
