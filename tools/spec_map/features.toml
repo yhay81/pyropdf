@@ -478,13 +478,11 @@ objects = ["DeviceGrayColorSpace", "DeviceRGBColorSpace", "DeviceCMYKColorSpace"
 clause = "8.6.5.2"
 description = "CalGray: calibrated gray."
 objects = ["CalGrayColorSpace", "CalGrayDict"]
-edit = { status = "partial", missing = "Content cleaning prunes unused CalGray entries, without creating or editing CalGray dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.calrgb-color-space]
 clause = "8.6.5.3"
 description = "CalRGB: calibrated RGB."
 objects = ["CalRGBColorSpace", "CalRGBDict"]
-edit = { status = "partial", missing = "Recoloring converts CalRGB colors to device spaces, without creating or editing CalRGB dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.lab-color-space]
 clause = "8.6.5.4"
@@ -495,13 +493,11 @@ objects = ["LabColorSpace", "LabDict"]
 clause = "8.6.5.5"
 description = "ICCBased: color described by an embedded ICC profile."
 objects = ["ICCBasedColorSpace", "ICCProfileStream"]
-edit = { status = "partial", missing = "Image rewriting resamples ICCBased images and recoloring converts ICCBased operators to device spaces, without embedding new ICCBased spaces.", milestone = "Phase 4: Specification" }
 
 [features.indexed-color-space]
 clause = "8.6.6.3"
 description = "Indexed: a color table over a base color space."
 objects = ["IndexedColorSpace"]
-edit = { status = "partial", missing = "Image rewriting resamples Indexed images and recoloring converts Indexed colors to device spaces, without creating new Indexed palettes.", milestone = "Phase 4: Specification" }
 
 [features.pattern-color-space]
 clause = "8.6.6.2"
@@ -513,14 +509,12 @@ create = { status = "partial", missing = "Canvas paints gradients in Pattern col
 clause = "8.6.6.4"
 description = "Separation: one colorant with its alternate space and tint transform."
 objects = ["SeparationColorSpace", "Separation"]
-edit = { status = "partial", missing = "Recoloring converts Separation spaces with exponential tint transforms, without other tint transforms or creating Separation spaces.", milestone = "Phase 4: Specification" }
 
 [features.devicen-color-space]
 clause = "8.6.6.5"
 description = "DeviceN: several colorants, with their attributes and mixing hints."
 objects = ["DeviceNColorSpace", "DeviceNDict", "DeviceNProcess", "DeviceNMixingHints", "ColorantsDict"]
-read = { status = "partial", missing = "DeviceN alternate spaces and tint transforms are read, without reading mixing hints.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "DeviceN alternate spaces and tint transforms are rendered, without evaluating mixing hints.", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 1016 }
 
 [features.overprint]
 clause = "8.6.7"
