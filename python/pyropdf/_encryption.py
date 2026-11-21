@@ -6,13 +6,19 @@ import enum
 import os
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
+from functools import cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 from pyropdf._errors import LimitError, MalformedPdfError, PasswordError
 
 if TYPE_CHECKING:
+    from asn1crypto import cms, core
+    from asn1crypto import x509 as asn1_x509
+    from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
+    from cryptography.hazmat.primitives.asymmetric.padding import AsymmetricPadding
     from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+    from cryptography.hazmat.primitives.hashes import HashAlgorithm
     from cryptography.x509 import Certificate
 
 #: The longest password, 127 UTF-8 bytes (ISO 32000-2 §7.6.4.3.3).
@@ -131,61 +137,375 @@ class Encryption:
 Encryption.KEEP = Encryption(method="keep")
 
 
+def _digest(name: str) -> HashAlgorithm:
+    from cryptography.hazmat.primitives import hashes  # noqa: PLC0415
+
+    algorithms = {
+        "sha1": hashes.SHA1,
+        "sha224": hashes.SHA224,
+        "sha256": hashes.SHA256,
+        "sha384": hashes.SHA384,
+        "sha512": hashes.SHA512,
+    }
+    return algorithms[name]()
+
+
+def _rsa_padding(algorithm: cms.KeyEncryptionAlgorithm) -> AsymmetricPadding:
+    from cryptography.hazmat.primitives.asymmetric import padding  # noqa: PLC0415
+
+    name = algorithm["algorithm"].native
+    if name == "rsaes_pkcs1v15":
+        if algorithm["parameters"].native is not None:
+            msg = "unexpected PKCS#1 v1.5 transport parameters"
+            raise ValueError(msg)
+        return padding.PKCS1v15()
+    if name != "rsaes_oaep":
+        msg = "unsupported CMS key transport"
+        raise ValueError(msg)
+    params = algorithm["parameters"]
+    mask = params["mask_gen_algorithm"]
+    source = params["p_source_algorithm"]
+    if mask["algorithm"].native != "mgf1" or source["algorithm"].native != "p_specified":
+        msg = "unsupported OAEP mask or source"
+        raise ValueError(msg)
+    digest = params["hash_algorithm"]
+    mgf_digest = mask["parameters"]
+    if digest["parameters"].native is not None or mgf_digest["parameters"].native is not None:
+        msg = "invalid OAEP hash parameters"
+        raise ValueError(msg)
+    return padding.OAEP(
+        mgf=padding.MGF1(_digest(mgf_digest["algorithm"].native)),
+        algorithm=_digest(digest["algorithm"].native),
+        label=source["parameters"].native,
+    )
+
+
+_MAX_CMS_BYTES = 65_536
+_ECDH_DIGEST = {
+    "1.3.133.16.840.63.0.2": "sha1",
+    "1.3.132.1.11.0": "sha224",
+    "1.3.132.1.11.1": "sha256",
+    "1.3.132.1.11.2": "sha384",
+    "1.3.132.1.11.3": "sha512",
+}
+_AES_WRAP = {128: "2.16.840.1.101.3.4.1.5", 192: "2.16.840.1.101.3.4.1.25", 256: "2.16.840.1.101.3.4.1.45"}
+
+
+@cache
+def _shared_info_type() -> type[core.Sequence]:
+    from asn1crypto import cms, core  # noqa: PLC0415
+
+    # RFC 5753 §7.2, including the optional entityUInfo and explicit key size.
+    class SharedInfo(core.Sequence):
+        _fields = [  # noqa: RUF012 - asn1crypto initializes its class schema from this list.
+            ("key_info", cms.KeyEncryptionAlgorithm),
+            ("entity_u", core.OctetString, {"explicit": 0, "optional": True}),
+            ("public_info", core.OctetString, {"explicit": 2}),
+        ]
+
+    return SharedInfo
+
+
+def _ecdh_key(secret: bytes, digest: str, wrap: cms.KeyEncryptionAlgorithm, ukm: bytes | None) -> bytes:
+    from asn1crypto import core  # noqa: PLC0415
+    from cryptography.hazmat.primitives.kdf.x963kdf import X963KDF  # noqa: PLC0415
+
+    size = next((bits for bits, oid in _AES_WRAP.items() if wrap["algorithm"].dotted == oid), None)
+    if size is None or not isinstance(wrap["parameters"], core.Void):
+        msg = "unsupported CMS AES key wrap parameters"
+        raise ValueError(msg)
+    info = _shared_info_type()({"key_info": wrap, "entity_u": ukm, "public_info": size.to_bytes(4, "big")})
+    return X963KDF(algorithm=_digest(digest), length=size // 8, sharedinfo=info.dump()).derive(secret)
+
+
+def _identifier_matches(
+    rid: cms.RecipientIdentifier | cms.KeyAgreementRecipientIdentifier, cert: asn1_x509.Certificate
+) -> bool:
+    if rid.name == "issuer_and_serial_number":
+        named = rid.chosen
+        return named["serial_number"].native == cert.serial_number and named["issuer"] == cert.issuer
+    if rid.name == "r_key_id":
+        identifier = rid.chosen["subject_key_identifier"].native
+    elif rid.name == "subject_key_identifier":
+        identifier = rid.chosen.native
+    else:
+        return False
+    return cert.key_identifier is not None and identifier == cert.key_identifier
+
+
+def _recipient_key(
+    info: cms.RecipientInfo, cert: asn1_x509.Certificate, credential: RecipientCredential
+) -> bytes | None:
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa  # noqa: PLC0415
+
+    recipient = info.chosen
+    key = credential.private_key
+    if info.name == "ktri" and isinstance(key, rsa.RSAPrivateKey):
+        rid = recipient["rid"]
+        if not _identifier_matches(rid, cert):
+            return None
+        if recipient["version"].native != ("v0" if rid.name == "issuer_and_serial_number" else "v2"):
+            return None
+        return key.decrypt(recipient["encrypted_key"].native, _rsa_padding(recipient["key_encryption_algorithm"]))
+    if info.name != "kari" or not isinstance(key, ec.EllipticCurvePrivateKey) or recipient["version"].native != "v3":
+        return None
+    return _agreement_key(recipient, cert, key)
+
+
+def _agreement_key(
+    recipient: cms.KeyAgreeRecipientInfo, cert: asn1_x509.Certificate, key: EllipticCurvePrivateKey
+) -> bytes | None:
+    from asn1crypto import cms  # noqa: PLC0415
+    from cryptography.hazmat.primitives import keywrap  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import ec  # noqa: PLC0415
+
+    encrypted = next(
+        (item for item in recipient["recipient_encrypted_keys"] if _identifier_matches(item["rid"], cert)), None
+    )
+    originator = recipient["originator"]
+    if encrypted is None or originator.name != "originator_key":
+        return None
+    public = originator.chosen
+    if public["algorithm"]["algorithm"].native != "ec":
+        return None
+    curve = public["algorithm"]["parameters"].native
+    if curve is not None and curve != key.curve.name:
+        return None
+    ephemeral = ec.EllipticCurvePublicKey.from_encoded_point(key.curve, public["public_key"].native)
+    algorithm = recipient["key_encryption_algorithm"]
+    digest = _ECDH_DIGEST[algorithm["algorithm"].dotted]
+    wrap = cms.KeyEncryptionAlgorithm.load(algorithm["parameters"].dump(), strict=True)
+    wrapping = _ecdh_key(key.exchange(ec.ECDH(), ephemeral), digest, wrap, recipient["ukm"].native)
+    return keywrap.aes_key_unwrap(wrapping, encrypted["encrypted_key"].native)
+
+
+def _decrypt_content(info: cms.EncryptedContentInfo, key: bytes) -> bytes:
+    from cryptography.hazmat.decrepit.ciphers import algorithms as legacy  # noqa: PLC0415
+    from cryptography.hazmat.primitives import padding  # noqa: PLC0415
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes  # noqa: PLC0415
+
+    algorithm = info["content_encryption_algorithm"]
+    name = algorithm["algorithm"].native
+    params = algorithm["parameters"]
+    data = info["encrypted_content"].native
+    if name == "rc4" and params.native in (None, b""):
+        operation = Cipher(legacy.ARC4(key), None).decryptor()
+        return operation.update(data) + operation.finalize()
+    lengths = {"aes128_cbc": 16, "aes192_cbc": 24, "aes256_cbc": 32, "tripledes_3key": 24, "des": 8, "rc2": 16}
+    if len(key) != lengths[name]:
+        msg = "the CMS content key length disagrees with its algorithm"
+        raise ValueError(msg)
+    if name == "rc2":
+        rc2_version_128 = 58
+        if params["rc2_parameter_version"].native != rc2_version_128:
+            msg = "the CMS provider supports 128 effective RC2 key bits"
+            raise ValueError(msg)
+        cipher = legacy.RC2(key)
+        iv = params["iv"].native
+    elif name in {"tripledes_3key", "des"}:
+        cipher = legacy.TripleDES(key * 3 if name == "des" else key)
+        iv = params.native
+    else:
+        cipher = algorithms.AES(key)
+        iv = params.native
+    operation = Cipher(cipher, modes.CBC(iv)).decryptor()
+    block = operation.update(data) + operation.finalize()
+    unpad = padding.PKCS7(cipher.block_size).unpadder()
+    return unpad.update(block) + unpad.finalize()
+
+
+def _open_envelope(envelope: bytes, credential: RecipientCredential) -> bytes | None:
+    from asn1crypto import cms  # noqa: PLC0415
+    from asn1crypto import x509 as asn1_x509  # noqa: PLC0415
+    from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
+    from cryptography.hazmat.primitives import keywrap, serialization  # noqa: PLC0415
+
+    if len(envelope) > _MAX_CMS_BYTES:
+        msg = "a CMS envelope exceeds 64 KiB"
+        code = "recipient_envelope_size"
+        raise LimitError(code, msg)
+    cert = asn1_x509.Certificate.load(credential.certificate.public_bytes(serialization.Encoding.DER))
+    refusals = (ValueError, TypeError, KeyError, IndexError, OverflowError, UnsupportedAlgorithm, keywrap.InvalidUnwrap)
+    try:
+        wrapper = cms.ContentInfo.load(envelope, strict=True)
+        if wrapper["content_type"].native != "enveloped_data":
+            return None
+        message = wrapper["content"]
+        encrypted = message["encrypted_content_info"]
+        if encrypted["content_type"].native != "data":
+            return None
+        recipients = message["recipient_infos"]
+        count = len(recipients)
+        if count <= _MAX_RECIPIENTS:
+            count = sum(len(r.chosen["recipient_encrypted_keys"]) if r.name == "kari" else 1 for r in recipients)
+        if count > _MAX_RECIPIENTS:
+            code = "recipient_count"
+            msg = "a CMS envelope exceeds 128 recipients"
+            raise LimitError(code, msg)
+        for recipient in recipients:
+            try:
+                key = _recipient_key(recipient, cert, credential)
+                if key is not None:
+                    return _decrypt_content(encrypted, key)
+            except refusals:
+                continue
+    except refusals:
+        return None
+    return None
+
+
+def _wrap_recipient(cert: Certificate, key: bytes, rsa_padding: str) -> cms.RecipientInfo:
+    from asn1crypto import cms, keys  # noqa: PLC0415
+    from asn1crypto import x509 as asn1_x509  # noqa: PLC0415
+    from cryptography.hazmat.primitives import keywrap, serialization  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa  # noqa: PLC0415
+
+    identity = asn1_x509.Certificate.load(cert.public_bytes(serialization.Encoding.DER))
+    rid = {"issuer_and_serial_number": {"issuer": identity.issuer, "serial_number": identity.serial_number}}
+    public = cert.public_key()
+    if isinstance(public, rsa.RSAPublicKey):
+        if rsa_padding == "oaep":
+            identifier = cms.KeyEncryptionAlgorithm(
+                {
+                    "algorithm": "rsaes_oaep",
+                    "parameters": {
+                        "hash_algorithm": {"algorithm": "sha256"},
+                        "mask_gen_algorithm": {"algorithm": "mgf1", "parameters": {"algorithm": "sha256"}},
+                    },
+                }
+            )
+        else:
+            identifier = cms.KeyEncryptionAlgorithm({"algorithm": "rsaes_pkcs1v15"})
+        return cms.RecipientInfo(
+            {
+                "ktri": {
+                    "version": "v0",
+                    "rid": rid,
+                    "key_encryption_algorithm": identifier,
+                    "encrypted_key": public.encrypt(key, _rsa_padding(identifier)),
+                }
+            }
+        )
+    if not isinstance(public, ec.EllipticCurvePublicKey):
+        msg = "unsupported recipient key"
+        raise TypeError(msg)
+    ephemeral = ec.generate_private_key(public.curve)
+    point = ephemeral.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    agreement = {"secp256r1": "1.3.132.1.11.1", "secp384r1": "1.3.132.1.11.2", "secp521r1": "1.3.132.1.11.3"}[
+        public.curve.name
+    ]
+    wrap = cms.KeyEncryptionAlgorithm({"algorithm": _AES_WRAP[256]})
+    ukm = os.urandom(16)
+    aes_key = _ecdh_key(ephemeral.exchange(ec.ECDH(), public), _ECDH_DIGEST[agreement], wrap, ukm)
+    return cms.RecipientInfo(
+        {
+            "kari": {
+                "version": "v3",
+                "originator": {"originator_key": keys.PublicKeyInfo.load(point)},
+                "ukm": ukm,
+                "key_encryption_algorithm": {"algorithm": agreement, "parameters": wrap},
+                "recipient_encrypted_keys": [{"rid": rid, "encrypted_key": keywrap.aes_key_wrap(aes_key, key)}],
+            }
+        }
+    )
+
+
+def _seal_envelope(payload: bytes, certificates: list[Certificate], cipher: str, rsa_padding: str) -> bytes:
+    from asn1crypto import cms  # noqa: PLC0415
+    from cryptography.hazmat.primitives import padding  # noqa: PLC0415
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes  # noqa: PLC0415
+
+    key = os.urandom({"aes-128": 16, "aes-192": 24, "aes-256": 32}[cipher])
+    iv = os.urandom(16)
+    pad = padding.PKCS7(algorithms.AES.block_size).padder()
+    encrypt = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    content = encrypt.update(pad.update(payload) + pad.finalize()) + encrypt.finalize()
+    recipients = [_wrap_recipient(cert, key, rsa_padding) for cert in certificates]
+    return cms.ContentInfo(
+        {
+            "content_type": "enveloped_data",
+            "content": {
+                "version": "v2" if any(r.name == "kari" for r in recipients) else "v0",
+                "recipient_infos": recipients,
+                "encrypted_content_info": {
+                    "content_type": "data",
+                    "content_encryption_algorithm": {"algorithm": f"aes{len(key) * 8}_cbc", "parameters": iv},
+                    "encrypted_content": content,
+                },
+            },
+        }
+    ).dump()
+
+
 def _check_certificate(certificate: Certificate) -> None:
     from cryptography import x509  # noqa: PLC0415
-    from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa  # noqa: PLC0415
 
     if not isinstance(certificate, x509.Certificate):
         msg = "recipient certificate must be a cryptography.x509.Certificate"
         raise TypeError(msg)
     key = certificate.public_key()
-    if not isinstance(key, rsa.RSAPublicKey) or not _MIN_RSA_BITS <= key.key_size <= _MAX_RSA_BITS:
-        msg = "recipient certificates require a 2048 to 8192-bit RSA key"
+    if isinstance(key, rsa.RSAPublicKey):
+        if not _MIN_RSA_BITS <= key.key_size <= _MAX_RSA_BITS:
+            msg = "recipient certificates require a 2048 to 8192-bit RSA key"
+            raise ValueError(msg)
+    elif not isinstance(key, ec.EllipticCurvePublicKey) or key.curve.name not in {
+        "secp256r1",
+        "secp384r1",
+        "secp521r1",
+    }:
+        msg = "recipient certificates require RSA or P-256, P-384 or P-521 ECDH"
         raise ValueError(msg)
     try:
         usage = certificate.extensions.get_extension_for_class(x509.KeyUsage).value
     except x509.ExtensionNotFound:
         return
-    if not usage.key_encipherment:
-        msg = "recipient certificate key usage does not permit key encipherment"
+    allowed = usage.key_encipherment if isinstance(key, rsa.RSAPublicKey) else usage.key_agreement
+    if not allowed:
+        msg = "recipient certificate key usage does not permit key encipherment or key agreement for this key"
         raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RecipientCredential:
-    """An X.509 recipient certificate and its matching RSA private key.
+    """An X.509 recipient certificate and its matching RSA or ECDH private key.
 
     Install the ``recipients`` extra, load the certificate and key with
     ``cryptography``, and pass this credential to ``open(credential=...)``,
     ``probe(credential=...)`` or ``Document.unlock``. RSA keys between
-    2048 and 8192 bits can unwrap CMS EnvelopedData with PKCS#1 v1.5
-    key transport and AES-CBC content encryption. The store retains the
-    authenticated file key. The private key stays with the caller.
+    2048 and 8192 bits use PKCS#1 v1.5 or RSAES-OAEP key transport. OAEP
+    reads the declared SHA-1, SHA-224, SHA-256, SHA-384 or SHA-512 digest,
+    independent MGF1 digest and label. P-256, P-384 and P-521 certificates
+    use ephemeral-static ECDH with X9.63 derivation and AES key wrap.
+
+    ISO 32000-2:2020 §7.6.5 defines the CMS content ciphers. AES-CBC accepts
+    128, 192 and 256 bits. For older files the provider reads DES-CBC,
+    three-key Triple DES-CBC, 128-effective-bit RC2-CBC, and RC4 with 40, 56,
+    64, 80, 128, 160, 192 or 256 bits. PDF 2.0 deprecates all four legacy
+    ciphers. The private key stays with the caller. The store retains the
+    authenticated file key.
     """
 
     certificate: Certificate
-    private_key: RSAPrivateKey = field(repr=False)
+    private_key: RSAPrivateKey | EllipticCurvePrivateKey = field(repr=False)
 
     def __post_init__(self) -> None:
         """Check the key type and its correspondence with the certificate."""
-        from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
+        from cryptography.hazmat.primitives.asymmetric import ec, rsa  # noqa: PLC0415
 
         _check_certificate(self.certificate)
-        if not isinstance(self.private_key, rsa.RSAPrivateKey):
-            msg = "private_key must be an RSA private key"
+        if not isinstance(self.private_key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey)):
+            msg = "private_key must be an RSA or ECDH private key"
             raise TypeError(msg)
         if self.private_key.public_key() != self.certificate.public_key():
             msg = "private key does not match the recipient certificate"
             raise PasswordError(msg)
 
     def _decrypt(self, envelope: bytes) -> bytes | None:
-        from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
-        from cryptography.hazmat.primitives.serialization import pkcs7  # noqa: PLC0415
-
-        try:
-            payload = pkcs7.pkcs7_decrypt_der(envelope, self.certificate, self.private_key, [])
-        except (ValueError, UnsupportedAlgorithm):
-            # A malformed, unsupported, or inapplicable envelope grants no access.
+        payload = _open_envelope(envelope, self)
+        if payload is None:
             return None
         if len(payload) != _RECIPIENT_PAYLOAD_SIZE:
             msg = "the default public-key recipient payload must contain a 20-byte seed and four permission bytes"
@@ -195,7 +515,7 @@ class RecipientCredential:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RecipientEncryption:
-    """Encrypt a full save for RSA certificate recipients with Adobe.PubSec, adbe.pkcs7.s5 and AES.
+    """Encrypt a full save for certificate recipients with Adobe.PubSec, adbe.pkcs7.s5 and AES.
 
     Install ``pyropdf[recipients]`` and supply up to 128 X.509 certificates.
     Recipients with the same permissions share a CMS envelope. The named filter for strings and
@@ -205,6 +525,16 @@ class RecipientEncryption:
     Both an incremental save and a full save with
     ``Encryption.KEEP`` preserve untouched ciphertext.
 
+    Select the PDF file cipher with ``method``. The separate ``cms_cipher``
+    selects AES-128-CBC, AES-192-CBC or AES-256-CBC for each CMS envelope
+    (RFC 3565). It defaults to AES-256-CBC. RSA certificates use
+    ``rsa_padding="pkcs1v15"`` by default, or ``"oaep"`` with SHA-256,
+    MGF1-SHA-256 and an empty label (RFC 3560). A P-256, P-384 or P-521
+    certificate uses ECDH with the corresponding SHA-256, SHA-384 or
+    SHA-512 digest, fresh user keying material and AES-256 key wrap
+    (RFC 5753). Certificate key usage, when present, must permit RSA
+    key encipherment or EC key agreement.
+
     Map each X.509 certificate to its permission flags. A value of ``None`` gives the recipient
     permission to change encryption and implies all other permissions (ISO 32000-2 Table 24 bit 2).
     Other recipients must keep the encryption when saving.
@@ -212,6 +542,8 @@ class RecipientEncryption:
 
     recipients: Mapping[Certificate, Permissions | None]
     encrypt_metadata: bool = True
+    cms_cipher: Literal["aes-128", "aes-192", "aes-256"] = "aes-256"
+    rsa_padding: Literal["pkcs1v15", "oaep"] = "pkcs1v15"
     method: Literal["aes-256", "aes-128"] = "aes-256"
 
     def __post_init__(self) -> None:
@@ -229,6 +561,12 @@ class RecipientEncryption:
         if self.method not in ("aes-256", "aes-128"):
             msg = "recipient method must be aes-256 or aes-128"
             raise ValueError(msg)
+        if self.cms_cipher not in ("aes-128", "aes-192", "aes-256"):
+            msg = "CMS content encryption must be aes-128, aes-192 or aes-256"
+            raise ValueError(msg)
+        if self.rsa_padding not in ("pkcs1v15", "oaep"):
+            msg = "RSA key transport padding must be pkcs1v15 or oaep"
+            raise ValueError(msg)
         for certificate, flags in self.recipients.items():
             _check_certificate(certificate)
             if flags is not None and not isinstance(flags, Permissions):
@@ -237,20 +575,13 @@ class RecipientEncryption:
         object.__setattr__(self, "recipients", MappingProxyType(dict(self.recipients)))
 
     def _envelopes(self, seed: bytes) -> Iterator[bytes]:
-        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
-        from cryptography.hazmat.primitives.ciphers.algorithms import AES256  # noqa: PLC0415
-        from cryptography.hazmat.primitives.serialization import pkcs7  # noqa: PLC0415
-
         groups: dict[int, list[Certificate]] = {}
         for cert, permissions in self.recipients.items():
             flags = 2 | int(Permissions.ALL) if permissions is None else int(permissions & Permissions.ALL)
             groups.setdefault(flags, []).append(cert)
         for flags, certificates in groups.items():
             payload = seed + (flags | 0xFFFF_F0C1).to_bytes(4, "big")
-            builder = pkcs7.PKCS7EnvelopeBuilder().set_data(payload).set_content_encryption_algorithm(AES256)
-            for cert in certificates:
-                builder = builder.add_recipient(cert)
-            yield builder.encrypt(serialization.Encoding.DER, [pkcs7.PKCS7Options.Binary])
+            yield _seal_envelope(payload, certificates, self.cms_cipher, self.rsa_padding)
 
     def _core(self) -> tuple[bytes, bytes, tuple[bool, bool], Iterator[bytes]]:
         seed = os.urandom(20)
