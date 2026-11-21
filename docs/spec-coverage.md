@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 39 | 35 | 757 |
-| interpret | 9 | 19 | 0 | 35 | 42 | 726 |
-| create | 0 | 0 | 21 | 27 | 63 | 720 |
-| edit | 0 | 0 | 0 | 48 | 56 | 727 |
-| preserve | 0 | 0 | 0 | 25 | 40 | 766 |
+| read | 0 | 0 | 0 | 39 | 35 | 763 |
+| interpret | 9 | 19 | 0 | 40 | 42 | 727 |
+| create | 0 | 0 | 25 | 27 | 63 | 722 |
+| edit | 0 | 0 | 0 | 48 | 56 | 733 |
+| preserve | 0 | 0 | 0 | 25 | 40 | 772 |
 
 ## Clauses
 
@@ -57,7 +57,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.5.7 | Object streams | `object-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.6.4 | Standard security handler | `standard-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 2 done, 5 partial | 3 done, 4 non-goal | 7 done | 7 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 7.6.6 | Crypt filters | `crypt-filters` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-419 unfinished cells in 831 features: 9 engine, 174 partial, 236 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+424 unfinished cells in 837 features: 9 engine, 179 partial, 236 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -361,6 +361,8 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - create — `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
     - edit — `flate-filter`, `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
     - preserve — `ascii85-filter`, `lzw-filter`, `run-length-filter`.
+- [#974](https://github.com/yhay81/pyropdf/issues/974) Render owner-authenticated standard-handler PDF revisions 2 to 4. Render authenticated R2 to R4 versions with the owner credentials before and after edits.
+    - interpret — `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`.
 
 ### 253 Understanding
 
@@ -1014,6 +1016,10 @@ before a test can be cited for that specific correction. The register gives no a
 - `_UniversalArray` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
 - `_UniversalDictionary` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
 - `flate-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.
+- `standard-rc4-r2` create: non-goal, #256: Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content.
+- `standard-rc4-r3` create: non-goal, #256: Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content.
+- `standard-rc4-r4` create: non-goal, #256: Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content.
+- `standard-aes-r5` create: non-goal, https://github.com/yhay81/pyropdf/blob/main/DESIGN.md#45-encryption: New AES-256 password encryption uses revision 6. The legacy revision 5 handler can be opened and kept while editing.
 - `lexical-conventions` interpret: n/a, 7.2: lexical conventions define file tokens only, whose parsing Read covers.
 - `basic-objects` interpret: n/a, 7.3: basic objects are syntax values, whose clause-specific meaning later clauses cover.
 - `asciihex-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.
