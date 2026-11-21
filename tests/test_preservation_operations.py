@@ -1988,25 +1988,46 @@ def prepare_xfa_packets(doc: pyropdf.Document) -> None:
     if form is None:
         form = doc.objects[doc.objects.add({"Fields": []})]
         doc.catalog["AcroForm"] = form
-    xml = b'<x:xdp xmlns:x="http://ns.adobe.com/xdp/"><config/><template/></x:xdp>'
-    resource = doc.objects[doc.objects.add_stream(xml)]
-    form["XFA"] = resource
-    form["SharedPacket"] = resource
+
+    def stream(data: bytes) -> pyropdf.Stream:
+        return doc.objects[doc.objects.add_stream(data)]
+
+    # Two legal packets share one original stream. Editing either must retain
+    # the other, without adding an extension key to a profiled AcroForm.
+    shared = stream(b"<config/>")
+    form["XFA"] = [
+        "xdp:xdp",
+        stream(b'<x:xdp xmlns:x="http://ns.adobe.com/xdp/">'),
+        "config",
+        shared,
+        "template",
+        stream(b"<template/>"),
+        "config",
+        shared,
+        "/xdp:xdp",
+        stream(b"</x:xdp>"),
+    ]
 
 
 def edit_xfa_packets(doc: pyropdf.Document) -> set[int]:
     form = doc.catalog["AcroForm"]
-    touched = {form.xref if form.xref is not None else number(doc.catalog)}
-    doc.form.replace_xfa_packet(0, b'<config id="edited"/>')
-    doc.form.remove_xfa_packet(1)
-    assert doc.form.xfa_packet(0) == b'<config id="edited"/>'
+    packets = form["XFA"]
+    touched = {form.xref if form.xref is not None else number(doc.catalog)} | indirect_numbers(packets, *packets)
+    shared = packets[3].xref
+    assert packets[7].xref == shared
+    doc.form.replace_xfa_packet(1, b'<config id="edited"/>')
+    assert doc.form.xfa_packet(1) == b'<config id="edited"/>'
+    assert form["XFA"][7].xref == shared
+    assert doc.form.xfa_packet(3) == b"<config/>"
+    doc.form.remove_xfa_packet(2)
+    assert doc.form.xfa_packet(2) == b"<config/>"
     assert doc.form.remove_xfa()
     return touched
 
 
 def check_xfa_packets(doc: pyropdf.Document) -> None:
     assert doc.form.xfa_packet_names == ()
-    assert doc.catalog["AcroForm"]["SharedPacket"].read().endswith(b"<config/><template/></x:xdp>")
+    assert "XFA" not in doc.catalog["AcroForm"]
 
 
 FAMILY_EDITS = {
