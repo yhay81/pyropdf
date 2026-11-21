@@ -48,7 +48,7 @@ from pyropdf._canvas._resources import (
     _resources_dict,
     _still_image,
 )
-from pyropdf._canvas._tags import _Scope, _tag_scope, _write_structure
+from pyropdf._canvas._tags import _Group, _Scope, _tag_scope, _write_structure
 from pyropdf._canvas._text import (
     _canvas_font,
     _GlyphRun,
@@ -72,6 +72,7 @@ from pyropdf._content import (
     Path,
     RadialGradient,
     ShadingPattern,
+    SoftMaskType,
     Stroke,
     TextRenderMode,
     TextRun,
@@ -89,7 +90,7 @@ from pyropdf._geometry import Matrix, Point, Rect
 from pyropdf._images import PageImage, _image_stream, add_image
 from pyropdf._layers import Layer, LayerMembership
 from pyropdf._metadata import _require_version
-from pyropdf._objects import Dictionary, Name
+from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, _real
 
 if TYPE_CHECKING:
@@ -122,6 +123,22 @@ def _max_content_size() -> int:
     return cast(
         "int", getattr(sys.modules.get("pyropdf._canvas"), "_DEFAULT_MAX_CONTENT_SIZE", _DEFAULT_MAX_CONTENT_SIZE)
     )
+
+
+def _mask_blending_space(group: Stream, space: object) -> bool:
+    devices = ("DeviceGray", "DeviceRGB", "DeviceCMYK")
+    if isinstance(space, Name) and space not in devices:
+        resources = group.get("Resources")
+        table = resources.get("ColorSpace") if isinstance(resources, Dictionary) else None
+        space = table.get(str(space)) if isinstance(table, Dictionary) else None
+    if isinstance(space, Name):
+        return space in devices
+    if not isinstance(space, Array) or len(space) != 2:  # noqa: PLR2004 - [family, parameters].
+        return False
+    family, parameters = space
+    if family in ("CalGray", "CalRGB"):
+        return isinstance(parameters, Dictionary)
+    return family == "ICCBased" and isinstance(parameters, Stream) and parameters.get("N") in (1, 3, 4)
 
 
 class Canvas:
@@ -200,7 +217,7 @@ class Canvas:
         self._page = page
         self._underlay = bool(underlay)
         # One buffer per open opacity group; the first is the page's content.
-        self._layers: list[tuple[list[bytes], float | None]] = [([], None)]
+        self._layers: list[tuple[list[bytes], _Group | None]] = [([], None)]
         self._depth = 0
         self._points = 0
         # The canvas's operation, while its with block runs; the bytes its
@@ -373,7 +390,7 @@ class Canvas:
         self._depth += 1
         self._unmark()
 
-    def _push(self, opening: bytes, closing: bytes, *, group: float | None, matrix: Matrix | None) -> None:
+    def _push(self, opening: bytes, closing: bytes, *, group: _Group | None, matrix: Matrix | None) -> None:
         self._enter_scope()
         self._matrices.append(self._matrix)
         if group is not None:
@@ -397,13 +414,14 @@ class Canvas:
         parts, group = self._layers.pop()
         if not parts:
             return
+        assert group is not None  # noqa: S101 - a scope without closing operators owns a group.
         size = sum(len(part) + 1 for part in parts)
         with self._scratch(size):
-            name = self._add_xobject(self._group_form(b"\n".join(parts)))
+            name = self._add_xobject(self._group_form(b"\n".join(parts), group))
         # The group's buffer is written and freed.
         self._buffered -= size
         self._release(size)
-        gstate = self._gstate(fill_alpha=cast("float", group), stroke_alpha=cast("float", group))
+        gstate = self._gstate(fill_alpha=group.alpha, stroke_alpha=group.alpha)
         self._emit(b"q\n/" + gstate.encode() + b" gs\n/" + name.encode() + b" Do\nQ")
 
     def _push_tag(self, element: _Element | None) -> None:
@@ -429,17 +447,18 @@ class Canvas:
         if self._tags.pop() is None:
             self._append(self._layers[-1][0], b"EMC")
 
-    def _group_form(self, content: bytes) -> int:
+    def _group_form(self, content: bytes, group: _Group) -> int:
         """Write ``content`` as a transparency group over the whole page, in display space."""
         _rotation, width, height = self._page._geometry()  # noqa: SLF001
         document = self._page.document
+        _require_version(document, document.catalog, (1, 4))
         return document.objects.add_stream(
             content,
             {
                 "Type": Name("XObject"),
                 "Subtype": Name("Form"),
                 "BBox": [0, 0, width, height],
-                "Group": {"S": Name("Transparency")},
+                "Group": group.attributes(),
                 "Resources": self._resources_value(),
             },
         )
@@ -1434,10 +1453,64 @@ class Canvas:
         written = Matrix(*(float(_fmt(value)) for value in values))
         return _Scope(self, b"q\n" + _numbers(*values) + b" cm", b"Q", matrix=written)
 
-    def opacity(self, alpha: float) -> AbstractContextManager[None]:
-        """Composite what the block draws as one group, then draw it at ``alpha``."""
+    def opacity(
+        self,
+        alpha: float,
+        *,
+        isolated: bool = False,
+        knockout: bool = False,
+        colorspace: Literal["gray", "rgb", "cmyk"] | None = None,
+    ) -> AbstractContextManager[None]:
+        """Composite the block as a transparency group and draw it at ``alpha``.
+
+        An isolated group starts with a transparent backdrop. In a knockout group
+        each element replaces earlier elements in its shape. An isolated group
+        may declare its device blending colour space. Other groups inherit it.
+        """
         self._check_open()
-        return _Scope(self, b"", b"", group=_unit(alpha, "alpha"))
+        if type(isolated) is not bool or type(knockout) is not bool:
+            msg = "isolated and knockout must be booleans"
+            raise TypeError(msg)
+        devices = {"gray": "DeviceGray", "rgb": "DeviceRGB", "cmyk": "DeviceCMYK"}
+        if colorspace is not None and (not isolated or colorspace not in devices):
+            msg = "an explicitly selected blending space must be gray, rgb or cmyk on an isolated group"
+            raise ValueError(msg)
+        group = _Group(_unit(alpha, "alpha"), isolated, knockout, devices.get(colorspace) if colorspace else None)
+        return _Scope(self, b"", b"", group=group)
+
+    def soft_mask(
+        self,
+        group: Stream,
+        *,
+        subtype: SoftMaskType | str = SoftMaskType.ALPHA,
+    ) -> AbstractContextManager[None]:
+        """Mask the block with an existing transparency Form XObject from this document.
+
+        Alpha uses the group's computed opacity. Luminosity uses its colour and
+        requires an explicit group blending space. The mask applies inside the
+        block and the enclosing graphics state resumes afterwards.
+        """
+        self._check_open()
+        document = self._page.document
+        if not isinstance(group, Stream) or group._document is not document or group.xref is None:  # noqa: SLF001
+            msg = "soft mask requires a Form stream in this document"
+            raise ValueError(msg)
+        attributes = group.get("Group")
+        if (
+            group.get("Subtype") != "Form"
+            or not isinstance(attributes, Dictionary)
+            or attributes.get("S") != "Transparency"
+        ):
+            msg = "soft mask requires a transparency group Form"
+            raise ValueError(msg)
+        mode = SoftMaskType(subtype)
+        if mode is SoftMaskType.LUMINOSITY and not _mask_blending_space(group, attributes.get("CS")):
+            msg = "a luminosity mask group requires a blending colour space"
+            raise ValueError(msg)
+        _require_version(document, document.catalog, (1, 4))
+        state = document.objects.add({"Type": Name("ExtGState"), "SMask": {"S": Name(mode.value.title()), "G": group}})
+        name = self._masks.setdefault(state, f"PyroM{len(self._masks) + 1}")
+        return _Scope(self, b"q\n/" + name.encode() + b" gs", b"Q")
 
     def blend(self, mode: BlendMode | str) -> AbstractContextManager[None]:
         """Blend what the block draws with the content below it."""

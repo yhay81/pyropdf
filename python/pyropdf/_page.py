@@ -69,6 +69,7 @@ from pyropdf._text import (
     text_options,
 )
 from pyropdf._text_edit import replace_text
+from pyropdf._transparency import uses_transparency
 from pyropdf._widgets import Widgets
 
 if TYPE_CHECKING:
@@ -1420,6 +1421,16 @@ class Page:
             raise self._stale() from error
         _warn_skipped(skipped)
         return build_tables(raw, strategy)
+
+    def uses_transparency(self) -> bool:
+        """Return whether the current page uses transparent imaging under ISO 32000-2 Annex Q.
+
+        Check paint operations, selected Forms, images, patterns, Type 3
+        character procedures and annotation appearances. The query follows only
+        the resources reached by painting. Cyclic resources and exhausted
+        limits raise an error.
+        """
+        return uses_transparency(self)
 
     @property
     def operations(self) -> Operations:

@@ -345,9 +345,9 @@ MUTATIONS = (
     ),
     (
         "canvas_resources",
-        "Opacity and blend modes register ExtGState entries for the drawing.",
+        "Opacity, blend modes and group soft masks register graphics state for the drawing.",
         "Canvas",
-        "opacity blend",
+        "opacity blend soft_mask",
     ),
     ("canvas_resources", "Use the layer's shared indirect OCG as the marked content property.", "Canvas", "layer"),
     (
@@ -616,7 +616,10 @@ READ_ONLY = {
     "Operations": "parse to_bytes",
     "Outline": "walk entries",
     "OutlineItem": "to_entry",
-    "Page": "images fonts pixmap ocr svg content paths text words layout chars search selection markdown tables",
+    "Page": (
+        "images fonts pixmap ocr svg content paths text words layout chars search selection markdown tables "
+        "uses_transparency"
+    ),
     "PageImage": "pixmap stored",
     "PageLabelRange": "label",
     "Pages": "labeled index",
