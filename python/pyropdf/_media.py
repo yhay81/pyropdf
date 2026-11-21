@@ -331,6 +331,7 @@ def _base_or_extension(doc: Document, level: int) -> tuple[int, int]:
 
 
 def _require_media_version(doc: Document, minimum: tuple[int, int]) -> None:
+    from pyropdf._annotations import _version  # noqa: PLC0415
     from pyropdf._measurement import _require_measurement_version  # noqa: PLC0415
 
     before = doc.check() if _version(doc) < minimum < (2, 0) else None
