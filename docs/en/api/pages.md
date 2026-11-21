@@ -472,6 +472,21 @@ converts its images and the color arrays of its annotations; see
 `Document.recolor`. Returns what it converted and what it
 left as it was.
 
+### `Page.clip_to_rect`
+
+```python
+Page.clip_to_rect(rect: Sequence[float]) -> int
+```
+
+Remove wholly outside, independently positioned direct text shows and return the removed glyph count.
+
+The finite rectangle is in display space and must intersect the page. A glyph is kept
+when its layout box intersects the rectangle. A show spanning both sides, a dependent
+show, a composite or Type 3 font, and other painting such as images, paths and Forms
+raise `PdfError` before any edit. The operation changes this page's contents
+in one undo step. Other uses of shared streams retain their content. Full saves may
+retain unused objects, and earlier incremental revisions still contain the original data.
+
 ### `Page.clean_contents`
 
 ```python
