@@ -714,6 +714,64 @@ def test_release_evidence_keeps_each_pytest_parameter_and_failed_teardown(tmp_pa
     assert "expected revision" in stale.stderr
 
 
+def test_prospective_merge_checks_both_branches_and_preserves_the_checkout(tmp_path: Path) -> None:
+    executable = shutil.which("git")
+    assert executable is not None
+
+    def git(*args: str) -> None:
+        subprocess.run([executable, *args], cwd=tmp_path, check=True, capture_output=True)  # noqa: S603
+
+    def check(base: str, head: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603
+            [sys.executable, str(GENERATOR.with_name("check_merge.py")), base, head],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    git("init", "--initial-branch=main")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.invalid")
+    sources = {
+        "tools/spec_map/generate.py": (
+            "from pathlib import Path\n"
+            "count = sum(int(p.read_text()) for p in Path('tests').glob('test_*.py'))\n"
+            "raise SystemExit(0 if count == int(Path('docs/spec-map.json').read_text()) else 'stale total')\n"
+        ),
+        "tools/arlington/model/COMMIT": "fixture",
+        "tests/test_a.py": "0",
+        "tests/test_b.py": "0",
+        "docs/spec-map.json": "0",
+        "docs/spec-coverage.md": "fixture",
+    }
+    for name, content in sources.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    git("add", ".")
+    git("commit", "-m", "Base with no completed cells")
+    git("branch", "candidate")
+    for branch, change in (("main", "a"), ("candidate", "b")):
+        git("checkout", branch)
+        (tmp_path / f"tests/test_{change}.py").write_text("1")
+        (tmp_path / "docs/spec-map.json").write_text("1")
+        git("commit", "-am", "Complete one cell")
+        assert check(branch, branch).returncode == 0
+
+    (tmp_path / "keep-local").write_text("untracked")
+    stale = check("main", "candidate")
+    assert stale.returncode == 1
+    assert "stale total" in stale.stderr
+    (tmp_path / "tests/test_a.py").write_text("2")
+    git("commit", "-am", "Conflicting edit to the same cell")
+    conflict = check("main", "candidate")
+    assert conflict.returncode == 1
+    assert "CONFLICT" in conflict.stderr
+    assert (tmp_path / "keep-local").read_text() == "untracked"
+    assert (tmp_path / "tests/test_a.py").read_text() == "2"
+
+
 def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_path: Path) -> None:
     root = copy_root(tmp_path)
     spec_map = json.loads((root / MAP).read_bytes())

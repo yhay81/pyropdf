@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import io
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pikepdf
@@ -236,3 +239,100 @@ def test_a_page_outside_the_page_tree_is_not_written() -> None:
     reopened = pyropdf.open(saved)
     assert reopened.catalog["Extra"] is None
     assert len(reopened.pages) == 1
+
+
+def assert_hint_offsets(data: bytes, *, page_count: int) -> None:
+    """Check the Annex F byte ranges as well as qpdf's independent computed hints."""
+    with pikepdf.open(io.BytesIO(data), attempt_recovery=False) as pdf:
+        assert pdf.check_linearization()
+        params = next(o for o in pdf.objects if isinstance(o, pikepdf.Dictionary) and "/Linearized" in o)
+        assert len(data) == params.L
+        assert page_count == params.N
+        assert pdf.pages[0].objgen[0] == params.O
+        hint, size = map(int, params.H)
+        assert 0 < hint < hint + size < params.E < params.T < params.L
+        hint_number = int(data[hint:].split(maxsplit=1)[0])
+        assert data[hint : hint + size].rstrip().endswith(b"endobj")
+        entry = pdf.get_xref_table()[hint_number, 0]
+        assert entry.offset == hint
+        assert isinstance(pdf.get_object(hint_number, 0), pikepdf.Stream)
+        assert re.match(rb"\s*\d+ \d+ obj\b", data[params.E :])
+        assert re.match(rb"\s*\d{10} \d{5} f", data[params.T :])
+
+
+@pytest.mark.spec("linearization", "preserve")
+def test_edits_rebuild_fast_web_view_offsets_or_preserve_the_original_revision() -> None:
+    out = io.BytesIO()
+    with pikepdf.open(CORPUS / "patent-us223898.pdf") as independent:
+        independent.save(out, linearize=True)
+    original = out.getvalue()
+    with pyropdf.open(original) as doc:
+        assert doc.to_bytes(incremental=True) == original
+        texts = page_texts(doc)
+        count = len(doc.pages)
+        doc.pages[-1].rotation = 90
+        doc.metadata["subject"] = "A later revision"
+        expected_boxes = [p.rect for p in doc.pages]
+        for mode, data in (
+            ("updated", doc.to_bytes(incremental=True)),
+            ("ordinary", doc.to_bytes()),
+            ("linearized", doc.to_bytes(linearize=True)),
+        ):
+            with pikepdf.open(io.BytesIO(data), attempt_recovery=False) as pdf:
+                assert pdf.is_linearized == (mode == "linearized")
+                assert pdf.check_pdf_syntax() == []
+                assert str(pdf.docinfo.Subject) == "A later revision"
+                assert pdf.pages[-1].Rotate == 90
+            with pyropdf.open(data) as reopened:
+                assert page_texts(reopened) == texts
+                assert [page.rect for page in reopened.pages] == expected_boxes
+            if mode == "linearized":
+                assert_hint_offsets(data, page_count=count)
+            elif mode == "updated":
+                assert data.startswith(original)
+                with pikepdf.open(io.BytesIO(data[: len(original)])) as base:
+                    assert base.check_linearization()
+        # Incremental output cannot replace the existing hint tables.
+        with pytest.raises(ValueError, match="linear"):
+            doc.to_bytes(incremental=True, linearize=True)
+
+
+@pytest.mark.spec("xref-streams", "create", "edit")
+@pytest.mark.parametrize("packed", [False, True], ids=["plain", "packed"])
+def test_hybrid_revisions_resolve_the_same_page_for_legacy_and_modern_readers(tmp_path: Path, *, packed: bool) -> None:
+    qpdf = shutil.which("qpdf")
+    if qpdf is None:
+        pytest.skip("qpdf is not on PATH")
+    with pyropdf.open(CORPUS / "patent-us223898.pdf") as doc:
+        original = doc.to_bytes(cross_reference="hybrid", object_streams=packed)
+    with pyropdf.open(original) as doc:
+        texts = page_texts(doc)
+        doc.pages[1].rotation = 90
+        updated = doc.to_bytes(incremental=True)
+        rebuilt = doc.to_bytes(cross_reference="hybrid", object_streams=packed)
+    assert updated.startswith(original)
+    for mode, data in (("original", original), ("incremental", updated), ("full", rebuilt)):
+        latest = int(data.rsplit(b"startxref", 1)[1].split()[0])
+        assert data[latest:].startswith(b"xref\n")
+        with pikepdf.open(io.BytesIO(data), attempt_recovery=False) as pdf:
+            assert pdf.check_pdf_syntax() == []
+            position = int(pdf.trailer.XRefStm)
+            assert 0 < position < latest
+            number = int(data[position:].split(maxsplit=1)[0])
+            assert pdf.get_object(number, 0).Type == pikepdf.Name.XRef
+            ref = pdf.pages[1].objgen
+            rotate = int(pdf.pages[1].get("/Rotate", 0))
+            if mode == "incremental":
+                assert pdf.trailer.Prev == int(original.rsplit(b"startxref", 1)[1].split()[0])
+                assert position >= len(original)
+            if mode != "original":
+                assert rotate == 90
+        file = tmp_path / f"{mode}.pdf"
+        file.write_bytes(data)
+        args = [qpdf, "--ignore-xref-streams", f"--show-object={ref[0]},{ref[1]}", str(file)]
+        legacy = subprocess.run(args, capture_output=True, check=True).stdout  # noqa: S603 - fixed local reader
+        assert b"/Type /Page " in legacy
+        if rotate:
+            assert f"/Rotate {rotate}".encode() in legacy
+        with pyropdf.open(data) as reopened:
+            assert page_texts(reopened) == texts
