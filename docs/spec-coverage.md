@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 39 | 35 | 757 |
+| read | 0 | 0 | 0 | 38 | 35 | 758 |
 | interpret | 9 | 19 | 0 | 35 | 42 | 726 |
 | create | 0 | 0 | 21 | 26 | 63 | 721 |
-| edit | 0 | 0 | 0 | 48 | 56 | 727 |
-| preserve | 0 | 0 | 0 | 25 | 653 | 153 |
+| edit | 0 | 0 | 0 | 47 | 56 | 728 |
+| preserve | 0 | 0 | 0 | 24 | 653 | 154 |
 
 ## Clauses
 
@@ -58,7 +58,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.6.4 | Standard security handler | `standard-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 done | 1 partial | 1 partial |
+| 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 7.6.6 | Crypt filters | `crypt-filters` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.2 | Document catalog | `document-catalog` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-1,031 unfinished cells in 831 features: 9 engine, 173 partial, 849 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+1,028 unfinished cells in 831 features: 9 engine, 170 partial, 849 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -344,8 +344,6 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - preserve — `sha3-hashes`.
 - [#866](https://github.com/yhay81/pyropdf/issues/866) Verify and maintain document integrity protection for encrypted PDFs under ISO/TS 32004. Verify and maintain integrity protection during encrypted saves and refuse tampered data.
     - read, interpret, create, edit, preserve — `integrity-protection`.
-- [#1014](https://github.com/yhay81/pyropdf/issues/1014) Read the remaining legacy RC2 and RC4 recipient envelope key lengths. Read and preserve older CMS RC2 effective key sizes and RC4 key lengths beyond the optional provider's defaults.
-    - read, edit, preserve — `public-key-security-handler`.
 - [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
     - interpret — `public-key-security-handler`.
 - [#893](https://github.com/yhay81/pyropdf/issues/893) Resolve stream Crypt overrides and embedded-file filter selection. Resolve and update EFF and per-stream filter choices. Check selection for both standard and public-key recipients once the recipient handler in #864 is available.

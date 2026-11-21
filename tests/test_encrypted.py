@@ -604,7 +604,21 @@ def test_public_key_equal_permissions_share_a_cms_envelope() -> None:
 @pytest.mark.spec("public-key-security-handler", "read", "edit", "preserve")
 @pytest.mark.parametrize(
     "mode",
-    ["oaep", "ecdh", "ecdh384", "ecdh521", "aes192-oaep", "aes128-oaep-default", "3des", "des", "rc4", "rc2-128"],
+    [
+        "oaep",
+        "ecdh",
+        "ecdh384",
+        "ecdh521",
+        "aes192-oaep",
+        "aes128-oaep-default",
+        "3des",
+        "des",
+        "rc4",
+        "rc4-104",
+        "rc2-40",
+        "rc2-64",
+        "rc2-128",
+    ],
 )
 @pytest.mark.parametrize("incremental", [False, True])
 def test_independent_cms_algorithms_preserve_ciphertext(mode: str, *, incremental: bool) -> None:
@@ -682,6 +696,18 @@ def test_independent_reader_checks_each_cms_writer(
         assert page["/Marker"] == "CMS fixture string"
 
 
+def cms_document(envelope: bytes) -> bytes:
+    """Build a minimal recipient PDF for checking refusal before page disclosure."""
+    return build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [] /Count 0 >>",
+            3: "<< /Filter /Adobe.PubSec /SubFilter /adbe.pkcs7.s4 /V 2 /Length 128 "
+            f"/Recipients [<{envelope.hex()}>] >>",
+        }
+    ).replace(b"/Root 1 0 R >>", b"/Root 1 0 R /Encrypt 3 0 R >>")
+
+
 @pytest.mark.parametrize("problem", ["too-many", "bad-transport", "bad-digest", "bad-content", "trailing"])
 def test_invalid_cms_algorithms_refuse_before_unlocking(problem: str) -> None:
     from asn1crypto import cms  # noqa: PLC0415
@@ -702,14 +728,7 @@ def test_invalid_cms_algorithms_refuse_before_unlocking(problem: str) -> None:
     elif problem == "bad-content":
         message["encrypted_content_info"]["content_encryption_algorithm"] = {"algorithm": "1.2.3.4"}
     encoded = envelope.dump(force=True) + (b"junk" if problem == "trailing" else b"")
-    source = build_raw_pdf(
-        {
-            1: "<< /Type /Catalog /Pages 2 0 R >>",
-            2: "<< /Type /Pages /Kids [] /Count 0 >>",
-            3: "<< /Filter /Adobe.PubSec /SubFilter /adbe.pkcs7.s4 /V 2 /Length 128 "
-            f"/Recipients [<{encoded.hex()}>] >>",
-        }
-    ).replace(b"/Root 1 0 R >>", b"/Root 1 0 R /Encrypt 3 0 R >>")
+    source = cms_document(encoded)
     with pyropdf.open(source) as doc:
         if problem == "too-many":
             with pytest.raises(pyropdf.LimitError) as refusal:
@@ -780,6 +799,42 @@ def test_mixed_transport_recipients_can_share_permissions() -> None:
             assert reopened.permissions == Permissions.COPY
             assert len(reopened.trailer["Encrypt"]["CF"]["DefaultCryptFilter"]["Recipients"]) == 1
             assert reopened.pages[0].obj["Marker"] == b"CMS fixture string"
+
+
+@pytest.mark.parametrize("case", ["version", "iv", "empty", "block", "padding", "rc2-key", "rc4-empty", "rc4-long"])
+def test_invalid_legacy_cms_parameters_preserve_locked_state(case: str) -> None:
+    from asn1crypto import cms  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa  # noqa: PLC0415
+
+    owner = recipient("owner")
+    mode = "rc4-104" if case.startswith("rc4") else "rc2-40"
+    with pyropdf.open(RECIPIENT_ASSETS / f"cms-{mode}.pdf", credential=owner) as original:
+        envelope = cms.ContentInfo.load(bytes(original.trailer["Encrypt"]["CF"]["DefaultCryptFilter"]["Recipients"][0]))
+    message = envelope["content"]
+    content = message["encrypted_content_info"]
+    data = content["encrypted_content"].native
+    if case == "version":
+        content["content_encryption_algorithm"]["parameters"]["rc2_parameter_version"] = 256
+    elif case == "iv":
+        content["content_encryption_algorithm"]["parameters"]["iv"] = b"short"
+    elif case == "empty":
+        content["encrypted_content"] = b""
+    elif case == "block":
+        content["encrypted_content"] = data[:-1]
+    elif case == "padding":
+        # These independent 24-byte payloads end with a full 8-byte padding block.
+        content["encrypted_content"] = data[:-9] + bytes([data[-9] ^ 8]) + data[-8:]
+    else:
+        public = owner.certificate.public_key()
+        assert isinstance(public, rsa.RSAPublicKey)
+        key = {"rc2-key": bytes(17), "rc4-empty": b"", "rc4-long": bytes(33)}[case]
+        message["recipient_infos"][0].chosen["encrypted_key"] = public.encrypt(key, padding.PKCS1v15())
+    with pyropdf.open(cms_document(envelope.dump(force=True))) as doc:
+        with pytest.raises(pyropdf.PasswordError):
+            doc.unlock(owner)
+        assert doc.needs_password
+        with pytest.raises(pyropdf.EncryptedDocumentError):
+            _ = doc.catalog
 
 
 def test_recipient_open_before_timestamp_providers_register_their_content_types() -> None:
