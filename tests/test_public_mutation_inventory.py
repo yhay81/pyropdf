@@ -97,6 +97,12 @@ MUTATIONS = (
     ),
     ("prepress", "Store the print Form and parent page in a printer's mark or watermark.", "Annotations", "add"),
     ("prepress", "Keep fixed placement local to its watermark.", "Annotation", "fixed_print= del:fixed_print"),
+    (
+        "rich_media_settings",
+        "A named alias and a configuration edit preserve the shared file and the annotation's settings.",
+        "Annotation",
+        "set_rich_media_asset add_rich_media_configuration edit_rich_media",
+    ),
     ("add_annotation", "Create the annotation, page Annots entry and appearance.", "Annotations", "add"),
     (
         "add_screen",

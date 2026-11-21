@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 
-from pyropdf import _core, typed
+from pyropdf import _core, _rich_media, typed
 from pyropdf._actions import (
     _SCREEN_TRIGGERS,
     ActionTriggers,
@@ -33,6 +33,8 @@ from pyropdf._geometry import Point, Quad, Rect, _rect_components
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._media import (
     MediaAnnotation,
+    MediaAsset,
+    MediaKind,
     MediaSpecification,
     ProjectionAnnotation,
     RichMedia,
@@ -57,6 +59,8 @@ from pyropdf._profiles import pdfa_claim
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from pyropdf._core import Pixmap, _Annotation, _Document
     from pyropdf._document import Document
     from pyropdf._page import Page
@@ -1411,6 +1415,55 @@ class Annotation:
         through `typed.ActionMovie`, `typed.ActionSound` and `typed.SlideShow`.
         """
         return media_annotation(self.obj)
+
+    @property
+    def rich_media_assets(self) -> Mapping[str, typed.FileSpecification]:
+        """Return a snapshot of the named file specifications in this RichMedia annotation."""
+        return _rich_media.assets(self)
+
+    @property
+    def rich_media_configuration(self) -> typed.RichMediaConfiguration:
+        """Return the initial configuration selected by Activation, defaulting to the first configuration."""
+        selected = _rich_media.initial_target(self, "Configuration", "Configurations")
+        if selected is None:
+            msg = "RichMedia requires a nonempty Configurations array"
+            raise ValueError(msg)
+        return typed.RichMediaConfiguration(selected)
+
+    @property
+    def rich_media_view(self) -> typed.ThreeDViewAddEntries | None:
+        """Return the selected initial 3D view, or the first content view when Activation omits it."""
+        selected = _rich_media.initial_target(self, "View", "Views")
+        return None if selected is None else typed.ThreeDViewAddEntries(selected)
+
+    def set_rich_media_asset(self, name: str, asset: MediaAsset | typed.FileSpecification | None) -> None:
+        """Insert or replace a named asset, or remove its name with `None`.
+
+        A MediaAsset embeds a new file. Pass an existing file specification to share it.
+        Removing its final name is refused if an activation script still needs the file.
+        """
+        _rich_media.set_asset(self, name, asset)
+
+    def add_rich_media_configuration(
+        self, name: str, *, kind: MediaKind, assets: Sequence[typed.FileSpecification]
+    ) -> typed.RichMediaConfiguration:
+        """Append a named configuration with one instance per file, in the supplied order.
+
+        Select the returned configuration through `RichMediaSettings.Activation.Configuration`
+        inside `edit_rich_media()`. Each instance references the original file specification.
+        """
+        return _rich_media.add_configuration(self, name, kind, assets)
+
+    def edit_rich_media(self) -> AbstractContextManager[typed.AnnotRichMedia]:
+        """Edit the stored RichMedia graph in one transaction.
+
+        For example, set `media.RichMediaSettings.Activation.View` to a view from
+        `media.RichMediaContent.Views` inside `with annotation.edit_rich_media() as media:`.
+        If settings are absent, create a dictionary with `doc.objects.add({})`, wrap
+        its object in `typed.RichMediaSettings`, and assign it to `media.RichMediaSettings`.
+        File streams, scripts and Flash instance parameters remain stored data.
+        """
+        return _rich_media.edit(self)
 
     def _filespec(self) -> Dictionary | None:
         """Return the file specification of a file attachment, ``/FS``, or ``None``."""
