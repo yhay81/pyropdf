@@ -955,8 +955,8 @@ impl Writer<'_> {
         let header = plan
             .version
             .base()
-            .file()
-            .and_then(|file| file.bytes().get(file.origin()..file.origin() + 8))
+            .header_bytes()
+            .and_then(|bytes| bytes.get(..8))
             .filter(|bytes| bytes.starts_with(b"%PDF-"))
             .unwrap_or(b"%PDF-1.7");
         out.bytes(header)?;
