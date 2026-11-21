@@ -774,7 +774,7 @@ pub fn annotation_read(
 }
 
 /// Returns the object number of the Type0 font named [`FACE_RESOURCE`] in a
-/// free-text annotation's normal appearance resources, or `None` when none is
+/// free-text or line annotation's normal appearance resources, or `None` when none is
 /// used or the page is gone.
 pub fn annotation_face(
     version: Arc<Version>,
@@ -789,7 +789,10 @@ pub fn annotation_face(
         return Ok(None);
     };
     let (_, dict) = annots.find(index, id)?;
-    if annots.name(&dict, "Subtype")?.as_deref() != Some(b"FreeText".as_slice()) {
+    if !matches!(
+        annots.name(&dict, "Subtype")?.as_deref(),
+        Some(b"FreeText" | b"Line")
+    ) {
         return Ok(None);
     }
     let Some(Value::Dict(appearances)) = annots.resolved(dict.get("AP"))? else {

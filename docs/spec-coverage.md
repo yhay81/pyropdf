@@ -30,10 +30,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 38 | 34 | 759 |
-| interpret | 9 | 19 | 0 | 35 | 41 | 727 |
-| create | 0 | 0 | 21 | 25 | 62 | 723 |
-| edit | 0 | 0 | 0 | 46 | 55 | 730 |
+| read | 0 | 0 | 0 | 37 | 34 | 760 |
+| interpret | 9 | 19 | 0 | 34 | 41 | 728 |
+| create | 0 | 0 | 21 | 24 | 62 | 724 |
+| edit | 0 | 0 | 0 | 45 | 55 | 731 |
 | preserve | 0 | 0 | 0 | 25 | 652 | 154 |
 
 ## Clauses
@@ -145,7 +145,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.5.6.4 | Text annotations | `text-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.5 | Link annotations | `link-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.6 | Free text annotations | `free-text-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.5.6.7 | Line annotations | `line-annotations` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 12.5.6.7 | Line annotations | `line-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.8 | Square and circle annotations | `square-circle-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.9 | Polygon and polyline annotations | `polygon-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.10 | Text markup annotations | `text-markup-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-1,022 unfinished cells in 831 features: 9 engine, 169 partial, 844 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+1,018 unfinished cells in 831 features: 9 engine, 165 partial, 844 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -292,8 +292,6 @@ Milestone [#248](https://github.com/yhay81/pyropdf/issues/248).
 
 Milestone [#249](https://github.com/yhay81/pyropdf/issues/249).
 
-- [#1025](https://github.com/yhay81/pyropdf/issues/1025) Shape rich and Unicode captions in line annotation appearances. Resolve and shape RC or multilingual captions, including embedded fonts, along the measured line after authoring and editing.
-    - read, interpret, create, edit — `line-annotations`.
 - [#902](https://github.com/yhay81/pyropdf/issues/902) Complete font program, encoding and CMap creation and editing. Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement.
     - read, interpret, preserve — `character-tables`.
     - create, edit — `type1-fonts`, `truetype-fonts`, `type3-fonts`, `simple-font-encodings`, `cmaps`, `embedded-fonts`, `character-tables`.

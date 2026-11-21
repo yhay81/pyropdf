@@ -990,14 +990,18 @@ LineDetails(
     caption: bool = False,
     position: Literal['Inline', 'Top'] = 'Inline',
     caption_offset: tuple[float, float] = (0.0, 0.0),
+    rich_text: str | None = None,
+    font: Font | None = None,
 )
 ```
 
 Leader lengths in default user space and the caption placement of a line.
 
 A positive leader extends clockwise from the drawn line to its endpoint.
-The caption comes from the annotation's contents. Its offset is along and
-perpendicular to the line, with positive values toward the end and above.
+A caption displays the XHTML in `rich_text` or the annotation's plain
+contents when XHTML is absent. Supply an embedded outline `font` for
+text outside WinAnsi. Its full program remains available for later edits.
+The offset is along and perpendicular to the line, toward the end and above.
 
 ## `LineEnding`
 
