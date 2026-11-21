@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import io
+from concurrent.futures import ThreadPoolExecutor
 
 import pikepdf
 import pytest
 from test_rich_models import _GLTF, _STEP, _data, _foreign_pdf, _Model
 
 import pyropdf as p
+from pyropdf import _core
 
 
 def _file_bytes(file: p.typed.FileSpecification) -> bytes:
@@ -99,3 +101,28 @@ def test_invalid_or_over_budget_import_rolls_back_pages_and_declarations(
         assert dst.catalog["Extensions"]["ISO_"][0]["XXKeep"] == 17
         assert dst.catalog["Requirements"][0]["XXData"].text == "local"
         assert [req.type.value for req in dst.requirements] == ["STEP"]
+
+
+def test_foreign_edit_between_graph_copy_and_catalog_merge_uses_the_copied_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with p.open(_foreign_pdf(_STEP)) as source, p.Document() as target, ThreadPoolExecutor(1) as writer:
+        original = _core.import_pages_with_source
+
+        def change_requirement() -> None:
+            source.catalog["Requirements"][0]["V"] = p.Name("2022.0")
+
+        def copy_then_edit(
+            destination: _core._Document, document: _core._Document, pages: list[tuple[int, int]], at: int
+        ) -> tuple[tuple[int, int, int, bool], _core._Document] | None:
+            imported = original(destination, document, pages, at)
+            writer.submit(change_requirement).result(timeout=5)
+            return imported
+
+        monkeypatch.setattr(_core, "import_pages_with_source", copy_then_edit)
+        target.pages.extend(source.pages[0])
+        assert source.catalog["Requirements"][0]["V"] == p.Name("2022.0")
+        with pikepdf.open(io.BytesIO(target.to_bytes())) as check:
+            assert str(check.Root.Requirements[0].V) == "/2020.0"
+            model = check.pages[0].Annots[0].RichMediaContent.Configurations[0].Instances[0].Asset
+            assert model.EF.F.read_bytes() == _data("triangle.step")
