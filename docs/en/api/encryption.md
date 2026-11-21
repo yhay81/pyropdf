@@ -33,10 +33,10 @@ and the owner password opens it with every right. `owner_password`
 defaults to `user_password`. Each password is capped at 127 UTF-8 bytes.
 
 `method` is `"aes-256"`, the AES-256 encryption of PDF 2.0 (revision
-6), or `"aes-128"`, AES-128 with crypt filters (revision 4). pyropdf
-reads RC4 but never writes it. `Encryption.KEEP` keeps the
-encryption that the document was opened with, copying its untouched
-encrypted bytes. Without `encryption`, a full save writes the document
+6), or `"aes-128"`, AES-128 with crypt filters (revision 4).
+`Encryption.KEEP` retains the existing handler, including legacy
+RC4 and AES-256 revision 5. It copies untouched encrypted bytes and
+encrypts new strings and streams with that handler. Without `encryption`, a full save writes the document
 decrypted, and an incremental save keeps its encryption.
 
 ### `Encryption.KEEP`

@@ -159,6 +159,18 @@ def standard_features(inventory: dict[str, Any], scope: dict[str, Any], selected
     return required
 
 
+def included_features(names: set[str], by_name: dict[str, dict[str, Any]]) -> set[str]:
+    """Expand each aggregate into its operations, including nested aggregates once."""
+    selected = names.copy()
+    pending = list(names)
+    while pending:
+        for member in by_name[pending.pop()].get("includes", []):
+            if member not in selected:
+                selected.add(member)
+                pending.append(member)
+    return selected
+
+
 def in_scope(spec_map: dict[str, Any], scope: dict[str, Any]) -> list[dict[str, Any]]:
     """Return every feature row needed to substantiate the published selectors."""
     validate_metadata(spec_map, scope)
@@ -173,9 +185,10 @@ def in_scope(spec_map: dict[str, Any], scope: dict[str, Any]) -> list[dict[str, 
     standard_objects = {obj for name in required for obj in by_name[name]["objects"]}
     names.update(clauses, required, standard_objects)
     names.update(obj for name in clauses for obj in by_name[name]["objects"])
+    names = included_features(names, by_name)
     exclusions = scope.get("exclusions", {})
     validate_exclusions(exclusions, names, spec_map["dimensions"])
-    omitted = (required | standard_objects) & exclusions.keys()
+    omitted = included_features(required | standard_objects, by_name) & exclusions.keys()
     if omitted:
         msg = f"claimed standard requires every applicable cell of: {', '.join(sorted(omitted))}"
         raise ScopeError(msg)

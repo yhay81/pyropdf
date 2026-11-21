@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 33 | 25 | 773 |
-| interpret | 9 | 19 | 0 | 28 | 34 | 741 |
-| create | 0 | 0 | 21 | 27 | 46 | 737 |
-| edit | 0 | 0 | 0 | 40 | 35 | 756 |
-| preserve | 0 | 0 | 0 | 19 | 27 | 785 |
+| read | 0 | 0 | 0 | 16 | 25 | 796 |
+| interpret | 9 | 19 | 0 | 33 | 34 | 742 |
+| create | 0 | 0 | 25 | 25 | 33 | 754 |
+| edit | 0 | 0 | 0 | 38 | 35 | 764 |
+| preserve | 0 | 0 | 0 | 17 | 27 | 793 |
 
 ## Clauses
 
@@ -50,16 +50,16 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.4.7 | JBIG2Decode filter | `jbig2-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.4.8 | DCTDecode filter | `dct-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.4.9 | JPXDecode filter | `jpx-filter` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.4.10 | Crypt filter | `crypt-filter` | 1 partial | 1 n/a | 1 partial | 1 partial | 1 partial |
+| 7.4.10 | Crypt filter | `crypt-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.2 | File header | `file-header` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.4 | Cross-reference table | `xref-table` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.6 | Incremental updates | `incremental-update` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.7 | Object streams | `object-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.6.4 | Standard security handler | `standard-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 2 done, 5 partial | 3 done, 4 non-goal | 7 done | 7 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
-| 7.6.6 | Crypt filters | `crypt-filters` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 7.6.6 | Crypt filters | `crypt-filters` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.2 | Document catalog | `document-catalog` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.3 | Page tree | `page-tree`, `page-objects` | 2 done | 2 done | 2 done | 2 done | 2 done |
@@ -232,10 +232,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex L | Allowed structure children | `structure-children` | 1 done | 1 partial | 1 planned | 1 planned | 1 done |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex Q | Page transparency detection | `page-transparency` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 partial | 3 partial | 3 planned | 3 partial | 3 partial |
+| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 done | 3 partial | 2 done, 1 planned | 3 partial | 3 partial |
 | ISO 15930 | PDF/X | `pdfx` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 partial | 12 partial | 12 planned | 12 partial | 12 partial |
+| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 done | 12 partial | 11 done, 1 planned | 12 partial | 12 partial |
 | ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-323 unfinished cells in 831 features: 9 engine, 147 partial, 167 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+292 unfinished cells in 837 features: 9 engine, 129 partial, 154 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -341,8 +341,6 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - read, create, edit, preserve — `public-key-security-handler`.
 - [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
     - interpret — `public-key-security-handler`.
-- [#1056](https://github.com/yhay81/pyropdf/issues/1056) Resolve indirect stream filter selectors and parameters in their document revision. Resolve filter names and parameter references in the correct revision before reading or creating encrypted streams, and retain their reference identities through saves.
-    - read, create, edit, preserve — `crypt-filter`, `crypt-filters`.
 - [#905](https://github.com/yhay81/pyropdf/issues/905) Resolve signature seed constraints and build properties through signing and editing. Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification.
     - read, interpret — `signature-fields`.
     - create, edit — `signature-fields`, `digital-signatures`.
@@ -351,6 +349,8 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 - [#982](https://github.com/yhay81/pyropdf/issues/982) Round-trip packed and wide predictor rows after adopting the hayro fix. Adopt the released row-local decoder through #603, then verify partially filled TIFF rows, externally filtered partial PNG pixel strides and predictor pixels wider than 255 bits in independent save and render controls.
     - read, interpret, create — `lzw-filter`.
     - edit — `flate-filter`, `lzw-filter`.
+- [#974](https://github.com/yhay81/pyropdf/issues/974) Render owner-authenticated standard-handler PDF revisions 2 to 4. Render authenticated R2 to R4 versions with the owner credentials before and after edits.
+    - interpret — `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`.
 
 ### 253 Understanding
 
@@ -373,12 +373,6 @@ Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 
 - [#846](https://github.com/yhay81/pyropdf/issues/846) Create accessible archival PDFs from a new Document through the public API. Create an accessible archival document with a valid claim and have an independent validator verify the result.
     - create — `pdfa-4`, `pdfua-2`.
-- [#911](https://github.com/yhay81/pyropdf/issues/911) Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour. Create and independently validate the earlier PDF/A and PDF/UA profile examples.
-    - create — `pdfa-2b`, `pdfua-1`.
-- [#911](https://github.com/yhay81/pyropdf/issues/911) Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour. Exercise independently sourced conforming and negative fixtures beyond the original vector example. Validate public authoring per listed part and level using independent validation and retain allowable source variations.
-    - read, create — `pdfa`, `pdfua`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4e`, `pdfa-4f`.
-- [#911](https://github.com/yhay81/pyropdf/issues/911) Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour. Exercise additional conforming and negative sources beyond the original per-flavour vector example.
-    - read — `pdfa-2b`, `pdfa-4`, `pdfua-1`, `pdfua-2`.
 - [#910](https://github.com/yhay81/pyropdf/issues/910) Validate PDF/X and PDF/VT profile rules through a print exchange round trip. Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour.
     - read, interpret, preserve — `pdfx`, `pdfvt`.
     - create, edit — `pdfx`, `pdfvt`, `output-intents`.
@@ -409,19 +403,19 @@ The machine and human checks are documented in the [corpus review](https://githu
 
 | Profile | read | interpret | create | edit | preserve |
 | --- | --- | --- | --- | --- | --- |
-| `pdfa-1a` | partial | partial | planned | partial | partial |
-| `pdfa-1b` | partial | partial | planned | partial | partial |
-| `pdfa-2a` | partial | partial | planned | partial | partial |
-| `pdfa-2b` | partial | partial | planned | partial | partial |
-| `pdfa-2u` | partial | partial | planned | partial | partial |
-| `pdfa-3a` | partial | partial | planned | partial | partial |
-| `pdfa-3b` | partial | partial | planned | partial | partial |
-| `pdfa-3u` | partial | partial | planned | partial | partial |
-| `pdfa-4` | partial | partial | planned | partial | partial |
-| `pdfa-4e` | partial | partial | planned | partial | partial |
-| `pdfa-4f` | partial | partial | planned | partial | partial |
-| `pdfua-1` | partial | partial | planned | partial | partial |
-| `pdfua-2` | partial | partial | planned | partial | partial |
+| `pdfa-1a` | done | partial | done | partial | partial |
+| `pdfa-1b` | done | partial | done | partial | partial |
+| `pdfa-2a` | done | partial | done | partial | partial |
+| `pdfa-2b` | done | partial | done | partial | partial |
+| `pdfa-2u` | done | partial | done | partial | partial |
+| `pdfa-3a` | done | partial | done | partial | partial |
+| `pdfa-3b` | done | partial | done | partial | partial |
+| `pdfa-3u` | done | partial | done | partial | partial |
+| `pdfa-4` | done | partial | planned | partial | partial |
+| `pdfa-4e` | done | partial | done | partial | partial |
+| `pdfa-4f` | done | partial | done | partial | partial |
+| `pdfua-1` | done | partial | done | partial | partial |
+| `pdfua-2` | done | partial | planned | partial | partial |
 
 ## Specification baseline
 
@@ -1003,6 +997,10 @@ before a test can be cited for that specific correction. The register gives no a
 - `_UniversalArray` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
 - `_UniversalDictionary` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
 - `flate-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.
+- `standard-rc4-r2` create: non-goal, #256: Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content.
+- `standard-rc4-r3` create: non-goal, #256: Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content.
+- `standard-rc4-r4` create: non-goal, #256: Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content.
+- `standard-aes-r5` create: non-goal, https://github.com/yhay81/pyropdf/blob/main/DESIGN.md#45-encryption: New AES-256 password encryption uses revision 6. The legacy revision 5 handler can be opened and kept while editing.
 - `lexical-conventions` interpret: n/a, 7.2: lexical conventions define file tokens only, whose parsing Read covers.
 - `basic-objects` interpret: n/a, 7.3: basic objects are syntax values, whose clause-specific meaning later clauses cover.
 - `asciihex-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.

@@ -579,7 +579,7 @@ fn stream(entries: &[(&str, Value)], data: &[u8]) -> Stream {
 
 fn recoded_stream(stream: &Stream, streams: Streams) -> Option<Stream> {
     let value = Value::Stream(Box::new(stream.clone()));
-    match recode::recoded(&value, streams, &Budget::default()).unwrap() {
+    match recode::recoded(&value, streams, &|_, _| Ok(None), &Budget::default()).unwrap() {
         Some(Value::Stream(stream)) => Some(*stream),
         Some(other) => panic!("not a stream: {other:?}"),
         None => None,
@@ -976,7 +976,8 @@ fn assert_renumbered(version: &Version, reread: &FileBase, decompress: bool) {
         let fetch = |reference| version.base().object(reference, &budget);
         let mut original = Value::parse_with_lengths(&original, &budget, &fetch).unwrap();
         if decompress
-            && let Some(decoded) = recode::recoded(&original, Streams::Decompress, &budget).unwrap()
+            && let Some(decoded) =
+                recode::recoded(&original, Streams::Decompress, &|_, _| Ok(None), &budget).unwrap()
         {
             original = decoded;
         }
