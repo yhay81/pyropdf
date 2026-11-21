@@ -23,6 +23,7 @@ import pyropdf
 from pyropdf import Access, Encryption, Permissions
 
 if TYPE_CHECKING:
+    from pyhanko.pdf_utils.generic import DictionaryObject
     from pyhanko.pdf_utils.reader import PdfFileReader
 
 ASSETS = Path(__file__).parent / "assets" / "encrypted"
@@ -772,7 +773,9 @@ def test_encryption_requires_a_resolved_filter_selector(tmp_path: Path) -> None:
     assert path.read_bytes() == b"unchanged"
 
 
-def _private_recipient_control(*, attachment_only: bool, implicit: bool) -> bytes:
+def _private_recipient_control(
+    *, attachment_only: bool, implicit: bool, page_data: bytes | None = None, private_page: bool = False
+) -> bytes:
     """Produce two independent recipient seeds with pyHanko (ISO Table 27)."""
     import io  # noqa: PLC0415
     import re  # noqa: PLC0415
@@ -812,7 +815,13 @@ def _private_recipient_control(*, attachment_only: bool, implicit: bool) -> byte
         normal.add_recipients(certs, policy=RecipientEncryptionPolicy())
     restricted.add_recipients(certs[:1], policy=RecipientEncryptionPolicy())
     writer._assign_security_handler(crypto)  # noqa: SLF001 - pyHanko accepts a custom crypt-filter configuration here.
-    page = PageObject(writer.add_object(generic.StreamObject(stream_data=b"0 g 1 2 3 4 re f\n")), [0, 0, 40, 50])
+    content = generic.StreamObject(stream_data=b"0 g 1 2 3 4 re f\n" if page_data is None else page_data)
+    if private_page:
+        content.compress()
+        content.add_crypt_filter(private, handler=crypto)
+    page = PageObject(
+        writer.add_object(content), [0, 0, 40, 50], resources=None if page_data is None else _source_font_resources()
+    )
     page[name("/FixtureName")] = generic.TextStringObject("fixture string")
     writer.insert_page(page)
     named = generic.StreamObject(stream_data=b"Named private data")
@@ -1054,3 +1063,125 @@ def test_invalid_related_file_pairs_refuse_a_new_default_without_overwriting_the
         with pytest.raises(pyropdf.MalformedPdfError, match="name and stream pairs"):
             doc.save(path, incremental=True, encryption=Encryption.KEEP)
         assert path.read_bytes() == initial
+
+
+_SOURCE_PAGE = b"0 g 2 3 10 8 re f\nBT /F1 7 Tf 3 23 Td (Filter) Tj ET\n"
+
+
+def _source_font_resources() -> DictionaryObject:
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+
+    name = generic.pdf_name
+    font = generic.DictionaryObject(
+        {name("/Type"): name("/Font"), name("/Subtype"): name("/Type1"), name("/BaseFont"): name("/Helvetica")}
+    )
+    return generic.DictionaryObject({name("/Font"): generic.DictionaryObject({name("/F1"): font})})
+
+
+def _filter_engine_pdf(method: str, selector: str, rotation: int = 0) -> bytes:
+    import io  # noqa: PLC0415
+
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.crypt.standard import StandardSecurityHandler, StandardSecuritySettingsRevision  # noqa: PLC0415
+    from pyhanko.pdf_utils.writer import PageObject, PdfFileWriter  # noqa: PLC0415
+
+    if method == "recipient":
+        return _private_recipient_control(
+            attachment_only=selector == "attachment",
+            implicit=False,
+            page_data=_SOURCE_PAGE,
+            private_page=selector == "private",
+        )
+    writer = PdfFileWriter(stream_xrefs=False)
+    stream = generic.StreamObject(stream_data=_SOURCE_PAGE)
+    stream.compress()
+    if method != "clear":
+        handler = StandardSecurityHandler.build_from_pw_legacy(
+            StandardSecuritySettingsRevision.RC4_OR_AES128,
+            writer.document_id[0],
+            "owner",
+            "user",
+            use_aes128=method == "AESV2",
+        )
+        writer._assign_security_handler(handler)  # noqa: SLF001 - choose the independent writer's R4 method.
+        if selector != "implicit":
+            name = generic.pdf_name("/StdCF" if selector == "named" else "/Identity")
+            stream.add_crypt_filter(name, handler=handler)
+    page = PageObject(writer.add_object(stream), [0, 0, 40, 50], resources=_source_font_resources())
+    page[generic.pdf_name("/Rotate")] = generic.NumberObject(rotation)
+    writer.insert_page(page)
+    result = io.BytesIO()
+    writer.write(result)
+    return result.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("method", "selector"),
+    [
+        ("AESV2", "named"),
+        ("AESV2", "Identity"),
+        ("AESV2", "implicit"),
+        ("V2", "named"),
+        ("V2", "Identity"),
+        ("V2", "implicit"),
+        ("recipient", "private"),
+        ("recipient", "attachment"),
+    ],
+)
+@pytest.mark.usefixtures("_pyhanko_oracle")
+def test_named_filter_engine_reference_pages(method: str, selector: str) -> None:
+    original = _filter_engine_pdf(method, selector)
+    password = None if method == "recipient" else "user"
+    credential = recipient("owner") if method == "recipient" else None
+    with pyropdf.open(original, password=password, credential=credential) as doc:
+        assert doc.pages[0].obj["Contents"].read() == _SOURCE_PAGE
+        doc.pages[0].rotation = 90
+        for incremental in (False, True):
+            saved = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
+            assert saved.startswith(original) == incremental
+            with pyropdf.open(saved, password=password, credential=credential) as reopened:
+                assert reopened.pages[0].rotation == 90
+                assert reopened.pages[0].obj["Contents"].read() == _SOURCE_PAGE
+            if method == "recipient":
+                with pyropdf.open(saved, credential=recipient("editor")) as limited:
+                    with pytest.raises(pyropdf.PasswordError):
+                        limited.catalog["FixtureEmbedded"].read()
+                    if selector == "private":
+                        with pytest.raises(pyropdf.PasswordError):
+                            limited.pages[0].obj["Contents"].read()
+                    else:
+                        assert limited.pages[0].obj["Contents"].read() == _SOURCE_PAGE
+
+
+@pytest.mark.spec("crypt-filters", "interpret")
+@pytest.mark.parametrize(
+    ("method", "selector", "identity"),
+    [
+        ("AESV2", "Identity", None),
+        ("AESV2", "implicit", None),
+        ("V2", "Identity", None),
+        ("V2", "implicit", None),
+        ("recipient", "attachment", None),
+        ("recipient", "attachment", "editor"),
+        ("recipient", "attachment", "owner"),
+    ],
+)
+@pytest.mark.usefixtures("_pyhanko_oracle")
+def test_available_filter_engine_pages_match_independent_controls(
+    method: str, selector: str, identity: str | None
+) -> None:
+    password = None if method == "recipient" else "user"
+    credential = recipient(identity) if identity is not None else None
+    with pyropdf.open(_filter_engine_pdf(method, selector), password=password, credential=credential) as doc:
+        for rotation in (0, 90):
+            if rotation:
+                doc.pages[0].rotation = rotation
+            with pyropdf.open(_filter_engine_pdf("clear", "implicit", rotation)) as reference:
+                expected = reference.pages[0]
+                assert expected.text() == "Filter\n"
+                pixels = expected.pixmap()
+                assert (pixels.width, pixels.height) == ((40, 50) if rotation == 0 else (50, 40))
+                point = (4, 43) if rotation == 0 else (5, 5)
+                assert pixels.pixel(*point) == (0, 0, 0)
+                assert doc.pages[0].pixmap().to_bytes() == pixels.to_bytes()
+                assert doc.pages[0].text() == expected.text()
