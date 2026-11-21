@@ -80,7 +80,7 @@ mod _core {
         OcrError, PasswordError, PdfError, StaleObjectError,
     };
     #[pymodule_export]
-    use super::fax::encode_ccitt_g4;
+    use super::fax::{encode_ccitt_g4, encode_image_samples};
     #[pymodule_export]
     use super::fonts::{
         _Font, _FontFile, mark_font_subset, set_fallback_faces, subset_font_program, type3_codes,
