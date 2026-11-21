@@ -607,6 +607,67 @@ def test_gcm_authenticates_independent_password_and_recipient_inputs() -> None:
         assert doc.objects[4]["FixtureValue"] == RECIPIENT_STRING
 
 
+@pytest.mark.parametrize("kind", ["standard", "recipient"])
+def test_gcm_engine_reference_pages(kind: str) -> None:
+    standard = kind == "standard"
+    source = (GCM_SOURCE if standard else RECIPIENT_ASSETS / "pyhanko-gcm.pdf").read_bytes()
+    credential = "ownerpw" if standard else recipient("owner")
+    paint = (0, 0, 255) if standard else (0, 0, 0)
+    token = pyropdf.CancellationToken()
+    with pyropdf.open(source, limits=pyropdf.DocumentLimits(cancellation=token)) as doc:
+        with pytest.raises(pyropdf.EncryptedDocumentError):
+            _ = doc.pages[0]
+        assert doc.unlock(credential) is Access.OWNER
+        page = doc.pages[0]
+        stream = page.obj["Contents"]
+        original = stream.read()
+        header = f"{stream.xref} {stream.generation} obj\n".encode()
+        untouched = source.split(header, 1)[1].split(b"\nendobj", 1)[0]
+        assert original not in untouched
+
+        def reference(expected: str, *, rotated: bool) -> bytes:
+            # The store authenticates the source. Only the comparison document is serialized.
+            with pyropdf.open(doc.to_bytes()) as clear:
+                saved_page = clear.pages[0]
+                raster = saved_page.pixmap()
+                assert raster.pixel(3, 3) == (paint if rotated else (255, 255, 255))
+                assert raster.pixel(3, raster.height - 4) == ((255, 255, 255) if rotated else paint)
+                assert saved_page.text() == expected
+                if expected:
+                    with pytest.raises(pyropdf.LimitError):
+                        saved_page.text(max_glyphs=1)
+                return raster.to_bytes()
+
+        before = reference("", rotated=False)
+        page.rotation = 90
+        rotated = reference("", rotated=True)
+        assert before != rotated
+        for incremental in (False, True):
+            saved = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+            assert untouched in saved
+            with pyropdf.open(saved) as reopened:
+                assert reopened.unlock(credential) is Access.OWNER
+                assert reopened.pages[0].rotation == 90
+                assert reopened.pages[0].obj["Contents"].read() == original
+
+        page.obj["Resources"] = {
+            "Font": {
+                "F1": {
+                    "Type": pyropdf.Name("Font"),
+                    "Subtype": pyropdf.Name("Type1"),
+                    "BaseFont": pyropdf.Name("Helvetica"),
+                }
+            }
+        }
+        stream.write(original + b"BT /F1 7 Tf 3 23 Td (Source) Tj ET\n", filter=None)
+        assert reference("Source\n", rotated=True) != rotated
+        token.cancel()
+        for operation in (page.pixmap, page.text):
+            with pytest.raises(pyropdf.LimitError) as caught:
+                operation()
+            assert caught.value.code == "cancelled"
+
+
 @pytest.mark.spec("aes-gcm", "interpret")
 @pytest.mark.parametrize("kind", ["string", "stream", "short-stream"])
 def test_gcm_rejects_bad_tags_before_releasing_data(kind: str, tmp_path: Path) -> None:
