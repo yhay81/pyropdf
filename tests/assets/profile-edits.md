@@ -7,7 +7,7 @@ source. The dual fixture `pdfua/pdfua-2-pdfa-4.pdf` runs under **both**
 forced profiles on exactly the same bytes. The individual PDF/A fixtures
 cover 1a, 1b, 2a, 2b, 2u, 3a, 3b, 3u, 4, 4e and 4f.
 
-The 188 prepared inputs and their rotation-only controls pass veraPDF 1.28.2.
+The 188 original resource and structure inputs and their rotation-only controls pass veraPDF 1.28.2.
 The matrix produces 1,301 explicit profile verdicts, with 805 passes and 496
 intentional rejections.
 The table records the complete failed-rule sets for the edit. Both full and
@@ -48,4 +48,43 @@ tests evaluate machine rules. The separate authoring work in
 corpus in [#911](https://github.com/yhay81/pyropdf/issues/911) retain their
 own acceptance criteria.
 
-Reproduce with `uv run python tools/verapdf.py --jar /path/to/greenfield-apps-1.28.2.jar`.
+## Fonts in annotation appearances
+
+Issue [#1035](https://github.com/yhay81/pyropdf/issues/1035) adds nine tagged
+checkbox variants on PDF/A-2b, PDF/UA-1 and the dual PDF/A-4 and PDF/UA-2
+fixture. Each checkbox has a field description, an appearance, and, on
+tagged sources, a Form structure element with a reciprocal object reference.
+The baseline embeds the same Noto Sans Hebrew subset as the nested Form
+tests. The edit removes only the descriptor's font program.
+
+| Checkbox appearance | Result after removing the program |
+| --- | --- |
+| Text shows in the selected state, in a stored unselected state, or in an invoked Form | Embedding rule fails |
+| A text-show operation has an empty string, or selects its font through an ExtGState | Embedding rule fails |
+| The font is an unused resource, is selected without a text-show operation, or appears only in an uninvoked Form | Pass |
+| Text uses rendering mode 3 (invisible) | Pass |
+
+The isolated rules are 6.2.11.4.1-1 for PDF/A-2b, 6.2.10.4.1-1 for
+PDF/A-4, 7.21.4.1-1 for PDF/UA-1 and 8.4.5.5.1-1 for PDF/UA-2.
+Both save modes produce the same result. Rotating a page after reopening
+a rejected file retains that rule and produces an empty pre-save report.
+The 27 prepared inputs and their edits and controls produce 220 forced
+profile results (140 pass, 80 expected rejections). All 165 files also
+pass their corresponding Arlington model.
+
+In the public Line annotation API, switching on a plain WinAnsi caption on
+the PDF/A-2b fixture introduces the same embedding rule. Switching the
+caption off provides the passing control. The pre-save report names the Line
+object when its normal appearance is replaced, and the individual descriptor
+when only the stored font program is removed. A second painted font remains
+independently attributable when another font already lacks a program. An
+unrelated widget label or vector operation does not own that loss.
+
+One rendering-mode control has a known validator difference. When the same
+font first shows invisible text in mode 3 and then paints visible text in
+mode 0 without another font selection, veraPDF 1.28.2 accepts the unembedded
+font. The pre-save report identifies the visible use. Checking whether an
+existing font stream contains a usable program is tracked separately in
+[#1041](https://github.com/yhay81/pyropdf/issues/1041).
+
+Reproduce with `uv run python tools/verapdf.py --jar /path/to/greenfield-apps-1.28.2.jar --arlington /path/to/arlington.jar`.

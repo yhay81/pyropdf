@@ -176,6 +176,7 @@ method and property of its classes with its full description.
 - [`Highlight`](annotations.md#highlight): A highlight over text, as `page.annotations.add` takes it.
 - [`Ink`](annotations.md#ink): Freehand strokes, each through one or more display points, as `page.annotations.add` takes it.
 - [`LineAnnotation`](annotations.md#lineannotation): A straight line between two display points, as `page.annotations.add` takes it.
+- [`LineDetails`](annotations.md#linedetails): Leader lengths in default user space and the caption placement of a line.
 - [`LineEnding`](annotations.md#lineending): The shape at an end of a line or polyline, `/LE` (ISO 32000-2 Table 179).
 - [`MarkupRects`](annotations.md#markuprects): Rectangles or quads that text markup covers: one, or a sequence of them.
 - [`MediaAsset`](annotations.md#mediaasset): An embedded media file shared by its file specification and media instances.
@@ -186,7 +187,9 @@ method and property of its classes with its full description.
 - [`NoteIcon`](annotations.md#noteicon): The icon of a note, `/Name` (ISO 32000-2 §12.5.6.4).
 - [`Polygon`](annotations.md#polygon): A closed polygon through two or more display points, as `page.annotations.add` takes it.
 - [`PolyLine`](annotations.md#polyline): An open line through two or more display points, as `page.annotations.add` takes it.
+- [`PopupInfo`](annotations.md#popupinfo): Effective markup shown in a pop-up window and its initial display state.
 - [`ProjectionAnnotation`](annotations.md#projectionannotation): A projection annotation that links back to a 3D measurement.
+- [`RedactionMark`](annotations.md#redactionmark): Mark a rectangle or quadrilaterals for later redaction.
 - [`RichMedia`](annotations.md#richmedia): A RichMedia annotation with a named asset, configuration, instance and optional 3D views.
 - [`Screen`](annotations.md#screen): A Screen annotation with an optional media clip and its rendition action.
 - [`Sound`](annotations.md#sound): The sound of a sound annotation, `/Sound`, as `Annotation.sound` reads it.
@@ -246,6 +249,7 @@ method and property of its classes with its full description.
 - [`FieldSpecification`](forms-and-widgets.md#fieldspecification): The specifications that `page.widgets.add` takes.
 - [`FieldType`](forms-and-widgets.md#fieldtype_1): The kind of a form field, from its `/FT` and the flags that refine it.
 - [`Form`](forms-and-widgets.md#form): The terminal fields of a document's interactive form, as `doc.form` returns them.
+- [`IconFit`](forms-and-widgets.md#iconfit): Pushbutton icon scaling and alignment, shared by its three display modes.
 - [`ListBox`](forms-and-widgets.md#listbox): A list of choices, as `page.widgets.add` takes it.
 - [`parse_fdf`](forms-and-widgets.md#parse_fdf): Parse an FDF file or byte buffer into `FdfData` (ISO 32000-2 section 12.7.8).
 - [`parse_xfdf`](forms-and-widgets.md#parse_xfdf): Parse an XFDF file, XML string, or byte buffer into `FdfData` (ISO 19444-1).

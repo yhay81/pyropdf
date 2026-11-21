@@ -36,6 +36,8 @@ pub enum Drawing {
     /// lacks, by state: `Off` and the state that its `/AS` names. A state
     /// that holds content is kept.
     States(Vec<(Name, WidgetAppearance)>),
+    /// Interaction-specific pushbutton appearances.
+    Modes(Vec<(Name, WidgetAppearance)>),
 }
 
 /// A drawn normal appearance of a widget: its content in the form's space,
@@ -46,6 +48,7 @@ pub struct WidgetAppearance {
     pub(super) size: (f64, f64),
     pub(super) matrix: Option<[f64; 6]>,
     pub(super) font: Option<(String, FontEntry)>,
+    pub(super) icon: Option<Reference>,
 }
 
 /// The font of an appearance's text.
@@ -76,6 +79,11 @@ impl WidgetAppearance {
             dict.insert(Name::from("Matrix"), numbers_array(&matrix));
         }
         let mut resources = Dict::new();
+        if let Some(icon) = self.icon {
+            let mut xobjects = Dict::new();
+            xobjects.insert(Name::from("Icon"), Value::Reference(icon));
+            resources.insert(Name::from("XObject"), Value::Dict(xobjects));
+        }
         if let Some((resource, entry)) = &self.font {
             let reference = match entry {
                 FontEntry::Standard(base_font) => standard_font(transaction, base_font, budget)?,
@@ -169,6 +177,16 @@ pub fn write(
                 reason = "the appearances grow by one entry at most"
             )]
             appearances.insert(Name::from("N"), Value::Reference(reference));
+        }
+        Drawing::Modes(modes) => {
+            for (mode, appearance) in modes {
+                let reference = appearance.write(transaction, budget)?;
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "at most the three fixed interaction modes"
+                )]
+                appearances.insert(mode, Value::Reference(reference));
+            }
         }
         Drawing::States(states) => {
             let mut normal = match appearances.get("N") {

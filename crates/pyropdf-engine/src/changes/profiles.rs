@@ -1,7 +1,7 @@
 //! Profile effects that depend on a catalog relationship, changed page content,
 //! or the previous value of a written object.
 
-use super::resources::{Device, Use};
+use super::resources::{Device, FontUse, Use, missing_appearance_font};
 use super::*;
 use crate::content::PageContent;
 use pyropdf_store::memo::Reads;
@@ -92,8 +92,8 @@ fn local_rules(
     version: &Version,
     dict: &Dict,
     budget: &Budget,
-) -> Result<[Option<&'static str>; 8]> {
-    let mut reasons = [None; 8];
+) -> Result<[Option<&'static str>; 9]> {
+    let mut reasons = [None; 9];
     match claim {
         Claim::A(part, level) => {
             reasons[0] = widget_action(claim, dict)
@@ -101,6 +101,13 @@ fn local_rules(
             reasons[1] =
                 (part > 1 && named(dict, "Type", b"Page") && dict.get("PresSteps").is_some())
                     .then_some("the page contains forbidden presentation steps");
+            if is_annotation_dict(dict)
+                && let Some(appearance) = entry(version, dict, "AP", budget)?
+                && let Value::Dict(modes) = &*appearance
+                && modes.keys().any(|name| name.as_bytes() != b"N")
+            {
+                reasons[8] = Some("PDF/A permits only the normal annotation appearance");
+            }
             if part == 1 {
                 reasons[2] = (named(dict, "Type", b"Catalog")
                     && dict.get("OCProperties").is_some())
@@ -166,7 +173,7 @@ pub(super) fn object_changes<'b>(
     let before = old
         .map(|d| local_rules(claim, opened, d, budget))
         .transpose()?
-        .unwrap_or([None; 8]);
+        .unwrap_or([None; 9]);
     for reason in local_rules(claim, version, dict, budget)?
         .into_iter()
         .flatten()
@@ -271,6 +278,9 @@ pub(super) struct PathReads<'a> {
     pub(super) version: &'a Version,
     pub(super) budget: &'a Budget,
     pub(super) owners: BudgetVec<'a, u32>,
+    pub(super) font_owners: BudgetVec<'a, u32>,
+    pub(super) appearance_fonts: BudgetVec<'a, FontUse>,
+    pub(super) changed_programs: BudgetVec<'a, u32>,
 }
 impl<'a> PathReads<'a> {
     pub(super) fn new(version: &'a Version, budget: &'a Budget) -> Self {
@@ -278,6 +288,9 @@ impl<'a> PathReads<'a> {
             version,
             budget,
             owners: BudgetVec::new(budget),
+            font_owners: BudgetVec::new(budget),
+            appearance_fonts: BudgetVec::new(budget),
+            changed_programs: BudgetVec::new(budget),
         }
     }
     pub(super) fn resolve<'v>(&mut self, value: Option<&'v Value>) -> Result<Option<Resolved<'v>>> {
@@ -893,6 +906,156 @@ fn colour_changes<'b>(
     Ok(())
 }
 
+// A form's private entries, a widget's label and a page's rotation do
+// not affect the selected font. Direct resources live in their parent object.
+fn appearance_owner_changed(before: Option<&Value>, after: Option<&Value>) -> bool {
+    let (a, b, keys): (&Dict, &Dict, &[&str]) = match (before, after) {
+        (Some(Value::Stream(a)), Some(Value::Stream(b))) if named(a.dict(), "Subtype", b"Form") => {
+            if a.data() != b.data() {
+                return true;
+            }
+            (
+                a.dict(),
+                b.dict(),
+                &["Subtype", "Resources", "Filter", "DecodeParms"],
+            )
+        }
+        (Some(Value::Dict(a)), Some(Value::Dict(b))) if is_annotation_dict(a) => (a, b, &["AP"]),
+        (Some(Value::Dict(a)), Some(Value::Dict(b))) if named(a, "Type", b"Catalog") => {
+            (a, b, &["Pages"])
+        }
+        (Some(Value::Stream(a)), Some(Value::Stream(b)))
+            if named(a.dict(), "Type", b"Metadata") && named(b.dict(), "Type", b"Metadata") =>
+        {
+            return false;
+        }
+        (Some(Value::Dict(a)), Some(Value::Dict(b)))
+            if named(a, "Type", b"Page") || named(a, "Type", b"Pages") =>
+        {
+            (a, b, &["Annots", "Resources", "Kids", "Parent"])
+        }
+        (Some(Value::Dict(a)), Some(Value::Dict(b))) if named(a, "Type", b"FontDescriptor") => {
+            (a, b, &["FontFile", "FontFile2", "FontFile3"])
+        }
+        (Some(Value::Dict(a)), Some(Value::Dict(b))) if named(a, "Type", b"Font") => {
+            (a, b, &["Subtype", "FontDescriptor", "DescendantFonts"])
+        }
+        _ => return true,
+    };
+    keys.iter().any(|key| a.get(key) != b.get(key))
+}
+
+/// Compare the normal Forms of reachable annotations in both versions. Merely
+/// editing an existing nonconforming file does not introduce its font defect.
+fn appearance_font_changes<'b>(
+    opened: &Version,
+    version: &Version,
+    written: &[u32],
+    found: &mut Reasons<'b>,
+    budget: &'b Budget,
+) -> Result<()> {
+    const REASON: &str = "a normal annotation appearance uses a font without an embedded program";
+    let mut relevant = false;
+    for &number in written {
+        let before = object(opened, number, budget)?;
+        let after = object(version, number, budget)?;
+        if appearance_owner_changed(before.as_deref(), after.as_deref()) {
+            relevant = true;
+            break;
+        }
+    }
+    if !relevant {
+        return Ok(());
+    }
+    let old_pages = PageIndex::build(&mut Reads::new(opened, budget))?;
+    let mut original = BudgetVec::new(budget);
+    for (index, page) in old_pages.pages().iter().enumerate() {
+        let mut annotations = BudgetVec::new(budget);
+        page_annot_refs(opened, page.dict(), &mut annotations, budget)?;
+        original.try_extend(annotations.iter().map(|&number| (number, index)))?;
+    }
+    original.as_mut_slice().sort_unstable();
+    let pages = PageIndex::build(&mut Reads::new(version, budget))?;
+    for page in pages.pages() {
+        let mut page_path = PathReads::new(version, budget);
+        if let Some(id) = page.object() {
+            page_path.owners.try_push(id.number())?;
+        }
+        let annots = page_path.resolve(page.dict().get("Annots"))?;
+        let Some(Value::Array(items)) = annots.as_deref() else {
+            continue;
+        };
+        for item in items.iter() {
+            budget.poll()?;
+            let Value::Reference(id) = item else {
+                continue;
+            };
+            let mut now = PathReads::new(version, budget);
+            now.owners.try_extend_from_slice(&page_path.owners)?;
+            let current = now.resolve(Some(item))?;
+            let Some(Value::Dict(annotation)) = current.as_deref() else {
+                continue;
+            };
+            let start = now.owners.len();
+            if !missing_appearance_font(&mut now, annotation, page, Some(&[]))? {
+                continue;
+            }
+            let mut old = PathReads::new(opened, budget);
+            let old_page = original
+                .binary_search_by_key(&id.number(), |&(number, _)| number)
+                .ok()
+                .and_then(|index| old_pages.get(original[index].1));
+            let previous = if old_page.is_some() {
+                old.resolve(Some(item))?
+            } else {
+                None
+            };
+            let before = previous.as_deref().and_then(value_dict);
+            let mut existing = BudgetVec::new(budget);
+            if let (Some(dict), Some(old_page)) = (before, old_page) {
+                missing_appearance_font(&mut old, dict, old_page, None)?;
+                existing.try_extend(
+                    old.appearance_fonts
+                        .into_vec()
+                        .into_iter()
+                        .filter_map(|use_| use_.shown.then_some((use_.font, use_.missing))),
+                )?;
+                existing.as_mut_slice().sort_unstable();
+            }
+            if !existing.is_empty() {
+                now.owners.truncate(start);
+                now.font_owners.truncate(0);
+                if !missing_appearance_font(&mut now, annotation, page, Some(&existing))? {
+                    if now.changed_programs.is_empty() {
+                        continue;
+                    }
+                    now.owners.truncate(0);
+                }
+            }
+            if !now.owners.is_empty()
+                && written.binary_search(&id.number()).is_ok()
+                && before.is_none_or(|d| d.get("AP") != annotation.get("AP"))
+            {
+                record(found, REASON, Some(id.number()), budget)?;
+            } else {
+                for &owner in now
+                    .owners
+                    .iter()
+                    .chain(now.changed_programs.iter())
+                    .filter(|n| written.binary_search(n).is_ok())
+                {
+                    let before = object(opened, owner, budget)?;
+                    let after = object(version, owner, budget)?;
+                    if appearance_owner_changed(before.as_deref(), after.as_deref()) {
+                        record(found, REASON, Some(owner), budget)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn dependencies<'b>(
     claim: Claim,
     opened: &Version,
@@ -901,6 +1064,7 @@ pub(super) fn dependencies<'b>(
     found: &mut Reasons<'b>,
     budget: &'b Budget,
 ) -> Result<()> {
+    appearance_font_changes(opened, version, written, found, budget)?;
     if claim == Claim::Ua(2) {
         let old = undescribed_files(opened, budget)?;
         for &(spec, holder) in undescribed_files(version, budget)?.iter() {

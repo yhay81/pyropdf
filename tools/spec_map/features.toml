@@ -783,8 +783,6 @@ objects = ["BorderStyle", "BorderEffect"]
 clause = "12.5.5"
 description = "Appearance streams of annotations: normal, rollover, and down."
 objects = ["Appearance", "AppearanceSubDict"]
-create = { status = "partial", missing = "Normal appearances and button state sub-dictionaries are generated, without generating rollover or down appearances.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Normal appearances are regenerated, cleaned, and recolored, without generating rollover or down appearances.", milestone = "Phase 4: Specification" }
 
 [features.text-annotations]
 clause = "12.5.6.4"
@@ -805,10 +803,10 @@ objects = ["AnnotFreeText"]
 clause = "12.5.6.7"
 description = "Line annotations, with their endings, leaders, and captions."
 objects = ["AnnotLine"]
-read = { status = "partial", missing = "Line endpoints and endings are read, without leader lines or captions.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Line endpoints, endings, and interior colors render, without leader lines or captions.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Line annotations with endpoints and endings are created, without leader lines or captions.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Line endpoints, endings, and styles are edited, without leader lines or captions.", milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Oriented leaders, extensions and caption positioning are supported. Rich-text and shaped Unicode line captions still require #1025.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Oriented leaders, extensions and caption positioning are supported. Rich-text and shaped Unicode line captions still require #1025.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Oriented leaders, extensions and caption positioning are supported. Rich-text and shaped Unicode line captions still require #1025.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Oriented leaders, extensions and caption positioning are supported. Rich-text and shaped Unicode line captions still require #1025.", milestone = "Phase 4: Specification" }
 
 [features.square-circle-annotations]
 clause = "12.5.6.8"
@@ -881,9 +879,6 @@ objects = ["AnnotScreen"]
 clause = "12.5.6.19"
 description = "Widget annotations: the appearance and characteristics of form fields."
 objects = ["AnnotWidget", "AppearanceCharacteristics", "IconFit"]
-read = { status = "partial", missing = "Widget rectangles, flags, borders, rotation, colors, and captions are read, without button icon streams or `/IF` icon fit dictionaries.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Form field creation writes widget annotations and `/MK` appearance characteristics, without button icon streams or `/IF` icon fit dictionaries.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Widget geometry, styles, captions, and appearances are edited, without button icon streams or `/IF` icon fit dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.printer-mark-annotations]
 clause = "12.5.6.20"
