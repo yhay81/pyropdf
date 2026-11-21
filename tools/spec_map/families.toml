@@ -12,19 +12,6 @@ features = [
 dimensions = ["read", "create", "edit"]
 behavior = "Resolve OCG Usage and configuration AS application dictionaries against their groups. Expose and modify the stored values, and verify configuration- and event-specific behavior through save/reopen."
 
-[families.functions-and-shadings]
-tracker = 246
-issue = 896
-title = "Complete PDF function, pattern and mesh shading authoring and evaluation"
-features = [
-    "sampled-functions", "exponential-functions", "stitching-functions", "calculator-functions",
-    "tiling-patterns", "function-shading", "axial-shading", "radial-shading", "free-form-triangle-shading",
-    "lattice-triangle-shading", "coons-patch-shading", "tensor-patch-shading", "shading-patterns",
-    "pattern-color-space",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Exercise sampled/calculator functions, function edits, tiling and uncolored patterns and shading types 1–7. Create and edit resources through the store, verify mesh and function evaluation independently and round-trip untouched data."
-
 [families.device-rendering]
 tracker = 248
 issue = 898
