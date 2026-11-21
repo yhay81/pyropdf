@@ -198,7 +198,7 @@ def _publish(doc: Document, owner: Dictionary, kind: str, tree: Dictionary | Non
     elif owner.is_indirect:
         catalog["Names"] = replacement
     if retired:
-        _core.object_free_unreferenced(_unlocked(doc), retired)
+        _core.object_free_nominated(_unlocked(doc), retired)
 
 
 class NamedResources(Mapping[bytes, object]):

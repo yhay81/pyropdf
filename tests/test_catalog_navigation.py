@@ -85,6 +85,25 @@ def test_resource_tree_preserves_shared_nodes_and_refuses_cycles() -> None:
         assert doc.to_bytes() == before
 
 
+@pytest.mark.spec("name-dictionary", "edit", "preserve")
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_resource_tree_copy_retains_a_detached_owner_of_shared_nodes(*, incremental: bool) -> None:
+    with p.Document() as seed:
+        page = seed.pages.new().obj
+        tree = seed.objects[seed.objects.add({"Names": [b"a", page]})]
+        detached = seed.objects.add({"PreviousNames": tree})
+        seed.catalog["Names"] = {"Templates": tree, "Pages": tree}
+        original = seed.to_bytes()
+    with p.open(original) as doc:
+        doc.named_resources("Templates")[b"b"] = doc.pages[0].obj
+        saved = doc.to_bytes(incremental=incremental)
+    with p.open(saved) as reopened:
+        previous = reopened.objects[detached]["PreviousNames"]
+        assert previous.xref == reopened.catalog["Names"]["Pages"].xref
+        assert [bytes(previous["Names"][0])] == [b"a"]
+        assert list(reopened.named_resources("Templates")) == [b"a", b"b"]
+
+
 @pytest.mark.spec("destinations", "read", "interpret", "create", "edit")
 @pytest.mark.parametrize("incremental", [False, True])
 def test_structure_destination_as_link_outline_and_named_resource(*, incremental: bool) -> None:
