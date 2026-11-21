@@ -528,10 +528,18 @@ fn encrypted_files_render_unedited_and_edited_as_their_decrypted_saves() {
         .filter(|path| path.extension().is_some_and(|e| e == "pdf"))
         .collect();
     files.sort();
-    assert_eq!(files.len(), 10);
+    assert_eq!(files.len(), 11);
     for path in files {
         let (document, password) = open_encrypted(&path);
         let version = document.current();
+        if path.ends_with("user-aes-gcm.pdf") {
+            assert!(matches!(
+                Bridged::new(&version, &page_index(&version), &budget),
+                Err(Error::AesGcm)
+            ));
+            assert_eq!(hayro_renders(decrypted(&document, &budget)).len(), 1);
+            continue;
+        }
         let unedited = bridge(&version);
         assert_eq!(unedited.stats().update, 0, "{}", path.display());
         assert_eq!(
