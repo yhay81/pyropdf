@@ -42,7 +42,8 @@ jobs:
 
   python:
     name: Python ${{ matrix.python }}
-    timeout-minutes: 20
+    # The floor interpreter also runs both validator jars and the pdf.js corpus.
+    timeout-minutes: ${{ matrix.python == '3.11' && 30 || 20 }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
