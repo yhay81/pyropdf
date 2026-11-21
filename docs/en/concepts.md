@@ -41,7 +41,10 @@ signature, as in `TextField("address", rect)`.
 For a PDF containing directly drawn text, start with a returned chunk and read its stored text-showing operation.
 
 ```python
-chunks = doc.to_chunks(provenance=True)
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    chunks = doc.to_chunks(provenance=True)
 source = next(
     source for chunk in chunks for element in chunk.elements
     for source in element.sources if source.operation is not None

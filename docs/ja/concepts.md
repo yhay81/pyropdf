@@ -40,7 +40,10 @@ description: pyropdf の API の背後にあるモデル：表示座標、版、
 ページのコンテンツストリームに直接描かれた文字がある PDF では、取得したチャンクから、その文字を表示した命令を確認できます。
 
 ```python
-chunks = doc.to_chunks(provenance=True)
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    chunks = doc.to_chunks(provenance=True)
 source = next(
     source for chunk in chunks for element in chunk.elements
     for source in element.sources if source.operation is not None
