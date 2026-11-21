@@ -537,16 +537,19 @@ def failed_rules(report: str) -> set[str]:
     return set(re.findall(r"^[ \t]+(?:FAIL|DEVIATION) ([^\r\n]+)$", report, re.MULTILINE))
 
 
-def run(jar: Path, files: dict[Path, str]) -> list[tuple[str, Path]]:
+def run(
+    jar: Path, files: dict[Path, str], *, outcomes: dict[str, tuple[str, set[str]]] | None = None
+) -> list[tuple[str, Path]]:
     """Verify the verdict and the complete failed-rule set under each flavour."""
     failures = []
+    outcomes = EXPECTED if outcomes is None else outcomes
     for flavour, paths in by_flavour(files).items():
         verdicts = validate(jar, flavour, paths)
         reports = detailed_reports(jar, flavour, [path for path in paths if not verdicts[path.name]])
         for path in paths:
             accepted = verdicts[path.name]
             key = f"{flavour} {path.name}"
-            expected = EXPECTED.get(key)
+            expected = outcomes.get(key)
             note = f" ({expected[0]})" if expected else ""
             sys.stdout.write(f"{'PASS' if accepted else 'FAIL'} {key}{note}\n")
             report = reports.get(path, "")
@@ -726,18 +729,63 @@ def controls(jar: Path, directory: Path) -> list[tuple[str, Path]]:
     return failures
 
 
+def source_matrix(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Validate independent sources, negative controls and newly authored files in both save modes."""
+    fixtures = runpy.run_path(str(ROOT / "tests/test_profile_sources.py"))
+    negative = {
+        "1a": "6.8.2.2-1",
+        "1b": "6.2.3.3-2",
+        "2a": "6.7.3.4-1",
+        "2b": "6.1.13-11",
+        "2u": "6.2.11.7.2-1",
+        "3a": "6.7.3.4-1",
+        "3b": "6.8-4",
+        "3u": "6.2.11.7.2-1",
+        "4": "6.2.4.3-2",
+        "4e": "6.7.3-3",
+        "4f": "6.9-5",
+        "ua1": "7.1-3",
+        "ua2": "8.4.5.7-2",
+    }
+    files = {}
+    outcomes = {}
+    for flavour, rule in negative.items():
+        inputs = {k: fixtures["source"](flavour, k).read_bytes() for k in ("pass", "fail")}
+        if flavour not in ("4", "ua2"):  # The dual PDF/A-4 and PDF/UA-2 authoring workflow belongs to #846.
+            profile = "pdfua-1" if flavour == "ua1" else f"pdfa-{flavour}"
+            with fixtures["authored"](profile) as doc:
+                inputs["authored"] = doc.to_bytes()
+        for kind, original in inputs.items():
+            with pyropdf.open(original) as doc:
+                doc.pages[0].rotation = 90
+                saves = {"original": original, "full": doc.to_bytes(), "incremental": doc.to_bytes(incremental=True)}
+            for mode, data in saves.items():
+                path = directory / f"independent-{flavour}-{kind}-{mode}.pdf"
+                path.write_bytes(data)
+                files[path] = flavour
+                if kind == "fail":
+                    outcomes[f"{flavour} {path.name}"] = ("source corpus negative control", {rule})
+    return run(jar, files, outcomes=outcomes)
+
+
 def main() -> int:
     """Validate the corpus and its saves, and return the exit status."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--jar", type=Path, required=True, help="veraPDF's greenfield-apps jar")
     parser.add_argument("--arlington", type=Path, help="veraPDF's greenfield-apps-arlington jar")
+    parser.add_argument(
+        "--profile-sources-only", action="store_true", help="run the per-flavour source and authoring matrix"
+    )
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
+        source_failures = source_matrix(args.jar.resolve(), Path(directory))
+        if args.profile_sources_only:
+            return int(bool(source_failures))
         files = saves(Path(directory))
         files.update(language_saves(Path(directory)))
         files.update(remove_signature_saves(Path(directory) / "pdfa-2b-sign_revision-incremental.pdf", Path(directory)))
         targeted = profile_saves(Path(directory))
-        failures = run(args.jar.resolve(), targeted)
+        failures = source_failures + run(args.jar.resolve(), targeted)
         failures += run(args.jar.resolve(), dual_archival(targeted))
         failures += run(args.jar.resolve(), files)
         failures += run(args.jar.resolve(), dual_archival(files))
