@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import runpy
+import struct
 import sys
 import tomllib
 from pathlib import Path
@@ -231,6 +234,65 @@ def test_abi3_recompression_preserves_installed_members_and_signed_record(
     path.write_bytes(input_bytes)
     assert repack(path) == (before, after)
     assert path.read_bytes() == delivered_bytes
+
+
+@pytest.mark.parametrize("metadata", ["utf8-comment", "local-time", "zero-dos-attributes", "prefix"])
+def test_valid_zip_metadata_keeps_the_original_wheel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata: str
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "tools"))
+    repack = runpy.run_path(str(ROOT / "tools/repack_wheel.py"))["repack"]
+    path = tmp_path / "pyropdf-1.0-cp311-abi3-win_amd64.whl"
+    member = ZipInfo("pyropdf/_core.pyd", (2025, 1, 2, 3, 4, 6))
+    member.comment = "é".encode()
+    modified = 1_735_787_045
+    central_time = struct.pack("<HHBI", 0x5455, 5, 1, modified)
+    if metadata == "local-time":
+        member.extra = central_time
+    with ZipFile(path, "w") as archive:
+        member.create_system = 0
+        archive.writestr(member, bytes(range(256)) * 32, compress_type=ZIP_DEFLATED, compresslevel=0)
+        if metadata == "zero-dos-attributes":
+            archive.getinfo(member.filename).external_attr = 0
+    raw = bytearray(path.read_bytes())
+    directory = raw.index(b"PK\x01\x02")
+    if metadata == "utf8-comment":
+        # The flag applies to the member comment even though its name is ASCII.
+        struct.pack_into("<H", raw, 6, 0x800)
+        struct.pack_into("<H", raw, directory + 8, 0x800)
+    elif metadata == "local-time":
+        # The local timestamp includes the access time alongside modification time.
+        local_time = struct.pack("<HHBII", 0x5455, 9, 3, modified, modified - 13)
+        start = 30 + len(member.filename)
+        raw[start : start + len(central_time)] = local_time
+        struct.pack_into("<H", raw, 28, len(local_time))
+        struct.pack_into("<I", raw, raw.rindex(b"PK\x05\x06") + 16, directory + len(local_time) - len(central_time))
+    elif metadata == "prefix":
+        raw[:0] = b"self-extracting ZIP prefix"
+    path.write_bytes(raw)
+    before, delivered = repack(path)
+    assert before == delivered
+    assert path.read_bytes() == raw
+
+
+@pytest.mark.parametrize("algorithm", ["sha256", "sha384", "sha512", "sha1"])
+def test_recompression_evidence_uses_the_record_hash_algorithm(tmp_path: Path, algorithm: str) -> None:
+    count = runpy.run_path(str(ROOT / "evidence/wheel-size/recompression.py"))["record_entries"]
+    path = tmp_path / "wheel.zip"
+    data = b"original contents"
+    digest = (
+        base64.urlsafe_b64encode(hashlib.new(algorithm, data, usedforsecurity=False).digest()).rstrip(b"=").decode()
+    )
+    record = "pyropdf-1.0.dist-info/RECORD"
+    with ZipFile(path, "w") as archive:
+        archive.writestr("pyropdf/data", data)
+        archive.writestr(record, f"pyropdf/data,{algorithm}={digest},{len(data)}\n{record},,\n")
+    with ZipFile(path) as archive:
+        if algorithm == "sha1":
+            with pytest.raises(ValueError, match="unsupported RECORD digest sha1"):
+                count(archive)
+        else:
+            assert count(archive) == 2
 
 
 def test_recompression_failure_leaves_the_input_wheel_intact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

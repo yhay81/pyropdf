@@ -9,9 +9,10 @@ import csv
 import hashlib
 import io
 import json
+import struct
 import sys
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import ZipFile, ZipInfo
 
 
 def record_entries(archive: ZipFile) -> int:
@@ -19,13 +20,21 @@ def record_entries(archive: ZipFile) -> int:
     (record,) = [name for name in archive.namelist() if name.endswith(".dist-info/RECORD")]
     checked = set()
     for name, digest, size in csv.reader(io.StringIO(archive.read(record).decode("utf-8"))):
+        if name in checked:
+            msg = f"repeated RECORD entry for {name}"
+            raise ValueError(msg)
         if name == record and digest == size == "":
             checked.add(name)
             continue
         data = archive.read(name)
-        expected = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode("ascii")
-        if name in checked or digest != f"sha256={expected}" or size != str(len(data)):
-            msg = f"incorrect or repeated RECORD entry for {name}"
+        algorithm, separator, expected = digest.partition("=")
+        calculated = hashlib.new(algorithm, data)
+        if not separator or calculated.digest_size < hashlib.sha256().digest_size:
+            msg = f"unsupported RECORD digest {algorithm} for {name}"
+            raise ValueError(msg)
+        actual = base64.urlsafe_b64encode(calculated.digest()).rstrip(b"=").decode("ascii")
+        if expected != actual or size != str(len(data)):
+            msg = f"incorrect RECORD entry for {name}"
             raise ValueError(msg)
         checked.add(name)
     members = {member.filename for member in archive.infolist() if not member.is_dir()}
@@ -51,6 +60,18 @@ def describe(path: Path) -> dict[str, int | str]:
         }
 
 
+def local_metadata(path: Path, member: ZipInfo) -> bytes:
+    """Read the local ZIP header and its original name and extra fields."""
+    with path.open("rb") as archive:
+        archive.seek(member.header_offset)
+        fixed = archive.read(30)
+        if not fixed.startswith(b"PK\x03\x04"):
+            msg = f"missing local header for {member.filename}"
+            raise ValueError(msg)
+        name_size, extra_size = struct.unpack_from("<HH", fixed, 26)
+        return fixed[:18] + fixed[22:] + archive.read(name_size + extra_size)
+
+
 def main() -> None:
     """Compare member order, methods, attributes and payloads with the standard ZIP reader."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -64,16 +85,24 @@ def main() -> None:
             raise ValueError(msg)
         for left, right in zip(old.infolist(), new.infolist(), strict=True):
             attributes = (
+                "orig_filename",
                 "date_time",
                 "compress_type",
                 "create_system",
+                "create_version",
+                "extract_version",
+                "reserved",
+                "flag_bits",
+                "volume",
                 "external_attr",
                 "internal_attr",
                 "extra",
                 "comment",
             )
-            if any(getattr(left, field) != getattr(right, field) for field in attributes) or old.read(left) != new.read(
-                right
+            if (
+                any(getattr(left, field) != getattr(right, field) for field in attributes)
+                or local_metadata(args.original, left) != local_metadata(args.delivered, right)
+                or old.read(left) != new.read(right)
             ):
                 msg = f"different member {left.filename}"
                 raise ValueError(msg)
