@@ -1030,10 +1030,7 @@ objects = ["ActionRichMediaExecute"]
 clause = "12.7.4.3"
 description = "Variable text: default appearance, quadding, and rich text of fields."
 objects = []
-read = { status = "partial", missing = "Default appearance strings and quadding are read and inherited, without rich text (`/RV` and `/DS`).", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Default appearance strings and quadding shape and align field text, without rendering rich text (`/RV` and `/DS`).", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Field creation writes `/DA` and `/Q`, without rich text (`/RV` and `/DS`).", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Widget and field edits update `/DA`, `/Q`, and embedded font resources, without rich text (`/RV` and `/DS`).", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Standard 14 XHTML spans use field defaults, CSS, font variants, colour and paragraph layout. Embedded font selection from the AcroForm resource dictionary and non-WinAnsi shaping remain in #1032.", milestone = "Phase 4: Specification" }
 
 [features.interactive-form]
 clause = "12.7.3"
@@ -1049,9 +1046,6 @@ objects = ["FieldBtnPush", "FieldBtnCheckbox", "FieldBtnRadio"]
 clause = "12.7.5.3"
 description = "Text fields: single line, multiline, password, file select, and comb."
 objects = ["FieldTx"]
-interpret = { status = "partial", missing = "Single-line, multiline, and comb text fields render, without masking glyphs in password fields.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Single-line, multiline, and comb text fields and password and file-select flags are written, without password glyph masking.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Text field values, flags, and max lengths are edited, without password glyph masking in generated appearances.", milestone = "Phase 4: Specification" }
 
 [features.choice-fields]
 clause = "12.7.5.4"

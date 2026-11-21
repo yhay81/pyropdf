@@ -1934,7 +1934,34 @@ def check_timestamp(doc: pyropdf.Document) -> None:
     assert len(stamp.byte_range) == 4
 
 
+def prepare_xfa_packets(doc: pyropdf.Document) -> None:
+    form = doc.catalog.get("AcroForm")
+    if form is None:
+        form = doc.objects[doc.objects.add({"Fields": []})]
+        doc.catalog["AcroForm"] = form
+    xml = b'<x:xdp xmlns:x="http://ns.adobe.com/xdp/"><config/><template/></x:xdp>'
+    resource = doc.objects[doc.objects.add_stream(xml)]
+    form["XFA"] = resource
+    form["SharedPacket"] = resource
+
+
+def edit_xfa_packets(doc: pyropdf.Document) -> set[int]:
+    form = doc.catalog["AcroForm"]
+    touched = {form.xref if form.xref is not None else number(doc.catalog)}
+    doc.form.replace_xfa_packet(0, b'<config id="edited"/>')
+    doc.form.remove_xfa_packet(1)
+    assert doc.form.xfa_packet(0) == b'<config id="edited"/>'
+    assert doc.form.remove_xfa()
+    return touched
+
+
+def check_xfa_packets(doc: pyropdf.Document) -> None:
+    assert doc.form.xfa_packet_names == ()
+    assert doc.catalog["AcroForm"]["SharedPacket"].read().endswith(b"<config/><template/></x:xdp>")
+
+
 FAMILY_EDITS = {
+    "xfa_packets": Edit(prepare=prepare_xfa_packets, apply=edit_xfa_packets, check=check_xfa_packets),
     "action_triggers": Edit(prepare=prepare_widget_events, apply=edit_widget_events, check=check_widget_events),
     "annotation_relations": Edit(
         prepare=prepare_replies, apply=edit_replies, check=check_replies, affected_pages=first_page

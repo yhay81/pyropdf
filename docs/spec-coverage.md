@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 42 | 43 | 746 |
-| interpret | 1 | 19 | 0 | 38 | 50 | 723 |
-| create | 0 | 0 | 9 | 643 | 79 | 100 |
-| edit | 0 | 0 | 0 | 669 | 66 | 96 |
-| preserve | 0 | 0 | 0 | 27 | 663 | 141 |
+| read | 0 | 0 | 0 | 41 | 42 | 748 |
+| interpret | 1 | 19 | 0 | 37 | 49 | 725 |
+| create | 0 | 0 | 9 | 641 | 79 | 102 |
+| edit | 0 | 0 | 0 | 667 | 65 | 99 |
+| preserve | 0 | 0 | 0 | 27 | 662 | 142 |
 
 ## Clauses
 
@@ -183,9 +183,9 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.6.4.17 | ECMAScript actions | `ecmascript-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.18 | Rich media execute actions | `rich-media-execute-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.3 | Interactive form dictionary | `interactive-form` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.7.4.3 | Variable text | `variable-text` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 12.7.4.3 | Variable text | `variable-text` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 12.7.5.2 | Button fields | `button-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.7.5.3 | Text fields | `text-fields` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
+| 12.7.5.3 | Text fields | `text-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.5.4 | Choice fields | `choice-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.5.5 | Signature fields | `signature-fields` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | 12.7.6 | Form actions | `form-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -228,7 +228,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex E | Extension naming rules | `private-names` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 planned |
 | Annex I | Compatibility across PDF versions | `version-compatibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| Annex K | XFA packets | `xfa` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
+| Annex K | XFA packets | `xfa` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | Annex L | Allowed structure children | `structure-children` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex Q | Page transparency detection | `page-transparency` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,321 unfinished cells in 831 features: 1 engine, 1,419 partial, 901 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,311 unfinished cells in 831 features: 1 engine, 1,413 partial, 897 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -304,11 +304,8 @@ Milestone [#249](https://github.com/yhay81/pyropdf/issues/249).
     - read, interpret — `devicen-color-space`, `colour-operators`.
     - create, edit — `calgray-color-space`, `calrgb-color-space`, `lab-color-space`, `icc-based-color-space`, `indexed-color-space`, `separation-color-space`, `devicen-color-space`, `colour-operators`.
     - preserve — `colour-operators`.
-- [#904](https://github.com/yhay81/pyropdf/issues/904) Support rich variable text, password appearances and legacy XFA form data. Read and edit RV/DS field data, mask displayed password glyphs, and inspect, edit/remove and preserve existing XFA packets under the recorded creation exclusion. Verify field values and appearances independently.
-    - read — `variable-text`, `xfa`.
-    - interpret, edit — `variable-text`, `text-fields`, `xfa`.
-    - create — `variable-text`, `text-fields`.
-    - preserve — `xfa`.
+- [#1032](https://github.com/yhay81/pyropdf/issues/1032) Resolve embedded font fallbacks in rich text field appearances. Select embedded fonts from the form resources for rich text CSS families, including shaped non-WinAnsi spans, and independently verify mixed appearances.
+    - interpret — `variable-text`.
 
 ### 250 Rewriting
 
