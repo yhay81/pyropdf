@@ -76,7 +76,7 @@ class Encryption:
     user_password: str = ""
     owner_password: str | None = None
     permissions: Permissions = Permissions.ALL
-    method: Literal["aes-256", "aes-128", "keep"] = "aes-256"
+    method: Literal["aes-256", "aes-128", "aes-gcm", "keep"] = "aes-256"
 
     def __post_init__(self) -> None:
         """Validate the passwords, permissions, and method."""
@@ -90,8 +90,8 @@ class Encryption:
         if isinstance(self.method, str) and self.method.lower() in _RC4_METHODS:
             msg = f"pyropdf does not write {self.method} encryption, which PDF 2.0 deprecates; use 'aes-256'"
             raise ValueError(msg)
-        if self.method not in ("aes-256", "aes-128", "keep"):
-            msg = f"method must be 'aes-256' or 'aes-128': {self.method!r}"
+        if self.method not in ("aes-256", "aes-128", "aes-gcm", "keep"):
+            msg = f"method must be 'aes-256', 'aes-128' or 'aes-gcm': {self.method!r}"
             raise ValueError(msg)
         defaults = (self.user_password, self.owner_password, self.permissions) == ("", None, Permissions.ALL)
         if self.method == "keep" and not defaults:
@@ -104,7 +104,7 @@ class Encryption:
             return "Encryption.KEEP"
         return f"Encryption(permissions={self.permissions!r}, method={self.method!r})"
 
-    def _core(self) -> str | tuple[bytes, bytes, int, bool, bytes]:
+    def _core(self) -> str | tuple[bytes, bytes, int, str, bytes]:
         """Return what the core takes: ``"keep"``, or the passwords, flags, method, and 64 random bytes."""
         if self.method == "keep":
             return "keep"
@@ -113,7 +113,7 @@ class Encryption:
             self.user_password.encode(),
             owner.encode(),
             int(self.permissions),
-            self.method == "aes-256",
+            self.method,
             os.urandom(64),
         )
 
@@ -121,7 +121,7 @@ class Encryption:
 Encryption.KEEP = Encryption(method="keep")
 
 
-def _encryption_arg(encryption: object) -> str | tuple[bytes, bytes, int, bool, bytes] | None:
+def _encryption_arg(encryption: object) -> str | tuple[bytes, bytes, int, str, bytes] | None:
     """Return the core's form of a save's ``encryption``, refusing other values."""
     if encryption is None:
         return None

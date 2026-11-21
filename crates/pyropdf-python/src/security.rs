@@ -112,8 +112,13 @@ pub(crate) fn prepare(
                     "an incremental save keeps the document's encryption; save in full to encrypt anew",
                 ));
             }
-            let (user, owner, permissions, aes256, random): (Vec<u8>, Vec<u8>, u32, bool, Vec<u8>) =
-                value.extract()?;
+            let (user, owner, permissions, method, random): (
+                Vec<u8>,
+                Vec<u8>,
+                u32,
+                String,
+                Vec<u8>,
+            ) = value.extract()?;
             let random: [u8; 64] = random
                 .try_into()
                 .map_err(|_| PyValueError::new_err("encryption needs 64 random bytes"))?;
@@ -121,7 +126,12 @@ pub(crate) fn prepare(
                 user,
                 owner,
                 permissions,
-                aes256,
+                method: match method.as_str() {
+                    "aes-128" => pyropdf_store::security::Method::Aes128,
+                    "aes-256" => pyropdf_store::security::Method::Aes256,
+                    "aes-gcm" => pyropdf_store::security::Method::AesGcm,
+                    _ => return Err(PyValueError::new_err("unknown encryption method")),
+                },
                 random,
             };
             return Ok((saved(py, document, false)?, Some(encryption)));

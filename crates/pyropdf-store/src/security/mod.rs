@@ -1,4 +1,4 @@
-//! The standard security handler, revisions 2 to 6 (ISO 32000-2 section
+//! The standard security handler, revisions 2 to 7 (ISO 32000-2 section
 //! 7.6): key derivation, the user and owner password checks, permissions,
 //! and the encryption and decryption of strings and streams by object
 //! number and generation (DESIGN.md section 4.5).
@@ -50,6 +50,8 @@ pub enum Method {
     Aes128,
     /// AES-256 in CBC mode with the file key (`/AESV3`).
     Aes256,
+    /// AES-256 with authenticated Galois/counter mode (ISO/TS 32003, `/AESV4`).
+    AesGcm,
 }
 
 /// What a value encrypted is: a string or a stream's data.
@@ -105,7 +107,7 @@ impl Handler {
     /// Refuses with [`Password::Incorrect`] a password that is neither,
     /// with `password_input_size` one longer than [`MAX_PASSWORD`], and
     /// with a malformed input error a dictionary of another handler or a
-    /// revision outside 2 to 6.
+    /// revision outside 2 to 7.
     #[expect(
         clippy::disallowed_methods,
         reason = "keys, hashes, and the /Encrypt entries are at most 127 + 64 bytes, not input-sized"
@@ -145,7 +147,7 @@ impl Handler {
             if o.len() < 48 || u.len() < 48 {
                 return Err(Error::malformed("/O or /U is shorter than 48 bytes"));
             }
-            let r6 = revision == 6;
+            let r6 = revision >= 6;
             if crypto::hash(password, &o[32..40], &u[..48], r6, budget)? == o[..32] {
                 let intermediate = crypto::hash(password, &o[40..48], &u[..48], r6, budget)?;
                 let key =
@@ -225,9 +227,10 @@ impl Handler {
             Method::Identity => "no",
             Method::Rc4 => "RC4",
             Method::Aes128 | Method::Aes256 => "AES",
+            Method::AesGcm => "AES-GCM",
         };
         let bits = match self.streams {
-            Method::Aes256 => 256,
+            Method::Aes256 | Method::AesGcm => 256,
             _ if self.revision == 2 => 40,
             _ => self.key.len() * 8,
         };
@@ -250,6 +253,7 @@ impl Handler {
         match method {
             Method::Identity => copy(data, budget),
             Method::Rc4 => crypto::rc4(&self.object_key(reference, false), data, budget),
+            Method::AesGcm => crypto::gcm_decrypt(&self.key, data, budget),
             Method::Aes128 | Method::Aes256 => {
                 if data.len() < 16 {
                     // An empty string encrypts to at least the IV and one
@@ -278,6 +282,7 @@ impl Handler {
         match method {
             Method::Identity => copy(data, budget),
             Method::Rc4 => crypto::rc4(&self.object_key(reference, false), data, budget),
+            Method::AesGcm => crypto::gcm_encrypt(&self.key, data, budget),
             Method::Aes128 | Method::Aes256 => {
                 let key = self.aes_key(method, reference);
                 let tag = [u8::from(kind == Kind::Stream)];
@@ -342,8 +347,13 @@ impl<'a> Params<'a> {
         }
         let version = integer(encrypt, "V").unwrap_or(0);
         let revision = integer(encrypt, "R")
-            .filter(|r| (2..=6).contains(r))
-            .ok_or_else(|| Error::malformed("the standard handler's /R is not 2 to 6"))?;
+            .filter(|r| (2..=7).contains(r))
+            .ok_or_else(|| Error::malformed("the standard handler's /R is not 2 to 7"))?;
+        if (revision == 7) != (version == 6) {
+            return Err(Error::malformed(
+                "AES-GCM requires standard security handler V6 and R7",
+            ));
+        }
         let length = integer(encrypt, "Length").unwrap_or(40);
         let length = if version == 1 { 40 } else { length };
         if !(40..=128).contains(&length) && revision < 5 {
@@ -366,6 +376,19 @@ impl<'a> Params<'a> {
         } else {
             (Method::Rc4, Method::Rc4)
         };
+        if version != 6 && (strings == Method::AesGcm || streams == Method::AesGcm) {
+            return Err(Error::malformed(
+                "AESV4 requires standard security handler V6 and R7",
+            ));
+        }
+        if version == 6
+            && !matches!(encrypt.get("CF"), Some(Value::Dict(filters)) if filters.iter().any(|(_, value)|
+            matches!(value, Value::Dict(filter) if matches!(filter.get("CFM"), Some(Value::Name(name)) if name.as_bytes() == b"AESV4"))))
+        {
+            return Err(Error::malformed(
+                "a V6 encryption dictionary must declare an AESV4 crypt filter",
+            ));
+        }
         Ok(Self {
             version: u8::try_from(version).unwrap_or(u8::MAX),
             revision: revision as u8,
@@ -400,6 +423,7 @@ fn filter(encrypt: &Dict, key: &str) -> Result<Method> {
         Some(Value::Name(m)) if m.as_bytes() == b"V2" => Ok(Method::Rc4),
         Some(Value::Name(m)) if m.as_bytes() == b"AESV2" => Ok(Method::Aes128),
         Some(Value::Name(m)) if m.as_bytes() == b"AESV3" => Ok(Method::Aes256),
+        Some(Value::Name(m)) if m.as_bytes() == b"AESV4" => Ok(Method::AesGcm),
         None => Ok(Method::Identity),
         Some(Value::Name(m)) if m.as_bytes() == b"None" => Ok(Method::Identity),
         _ => Err(Error::malformed("a crypt filter's /CFM is not supported")),
@@ -506,7 +530,7 @@ pub struct Encryption {
     /// The permission flags of `/P`.
     pub permissions: u32,
     /// AES-256 rather than AES-128.
-    pub aes256: bool,
+    pub method: Method,
     /// Random bytes: the file key and the salts of AES-256, or the
     /// document's `/ID` of AES-128 from the first 16.
     pub random: [u8; 64],
@@ -533,7 +557,19 @@ impl Encryption {
             dict.insert(Name::from(k), v);
         };
         put("Filter", name("Standard"));
-        let handler = if self.aes256 {
+        if !matches!(
+            self.method,
+            Method::Aes128 | Method::Aes256 | Method::AesGcm
+        ) {
+            return Err(Error::malformed(
+                "new password encryption requires an AES method",
+            ));
+        }
+        let handler = if self.method != Method::Aes128 {
+            let (v, r, cfm) = match self.method {
+                Method::AesGcm => (6, 7, "AESV4"),
+                _ => (5, 6, "AESV3"),
+            };
             let key = &self.random[..32];
             let salts = &self.random[32..64];
             let user = &self.user[..self.user.len().min(MAX_PASSWORD)];
@@ -552,10 +588,10 @@ impl Encryption {
             perms[8..12].copy_from_slice(b"Tadb");
             perms[12..].copy_from_slice(&crypto::sha256(&[&self.random])[..4]);
             let perms = crypto::aes256_ecb_block(key, perms, false)?;
-            put("V", 5.into());
-            put("R", 6.into());
+            put("V", i64::from(v).into());
+            put("R", i64::from(r).into());
             put("Length", 256.into());
-            put("CF", crypt_filters("AESV3", 32));
+            put("CF", crypt_filters(cfm, 32));
             put("StmF", name("StdCF"));
             put("StrF", name("StdCF"));
             put("O", string(&o));
@@ -566,10 +602,10 @@ impl Encryption {
             Handler {
                 key: Box::from(key),
                 password: Box::from(self.owner.as_slice()),
-                revision: 6,
-                version: 5,
-                strings: Method::Aes256,
-                streams: Method::Aes256,
+                revision: r,
+                version: v,
+                strings: self.method,
+                streams: self.method,
                 encrypt_metadata: true,
                 permissions: p as u32,
                 access: Access::Owner,

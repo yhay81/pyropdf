@@ -313,7 +313,7 @@ def test_encryption_bounds_password_input(field: str) -> None:
         ({"permissions": True}, TypeError, "permissions must be Permissions flags"),
         ({"method": "rc4-128"}, ValueError, "does not write rc4-128 encryption"),
         ({"method": "RC4-40"}, ValueError, "does not write RC4-40 encryption"),
-        ({"method": "aes"}, ValueError, "method must be 'aes-256' or 'aes-128'"),
+        ({"method": "aes"}, ValueError, "method must be 'aes-256', 'aes-128' or 'aes-gcm'"),
         ({"method": "keep", "user_password": "u"}, ValueError, "Encryption.KEEP takes the passwords"),
     ],
 )
