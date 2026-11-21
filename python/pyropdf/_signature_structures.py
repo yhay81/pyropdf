@@ -44,6 +44,7 @@ from pyropdf._objects import (
     Stream,
     String,
     _catalog,
+    _direct_value,
     _encode,
 )
 
@@ -879,9 +880,9 @@ def _extension_level(value: object) -> int:
         isinstance(value, Dictionary)
         and not isinstance(value, Stream)
         and not value.is_indirect
-        and value.get("BaseVersion") == "1.7"
+        and _direct_value(value, "BaseVersion") == "1.7"
     ):
-        level = value.get("ExtensionLevel")
+        level = _direct_value(value, "ExtensionLevel")
         if type(level) is int and level > 0:
             return level
     return 0

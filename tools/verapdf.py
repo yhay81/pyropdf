@@ -26,6 +26,7 @@ import tempfile
 from pathlib import Path
 
 import pyropdf
+from pyropdf._objects import _direct_value
 
 ROOT = Path(__file__).resolve().parent.parent
 # The preservation harness imports its sibling test modules.
@@ -443,8 +444,12 @@ def declares_pades(extensions: object) -> bool:
         return False
     for prefix, required in (("ESIC", PADES_LEVEL), ("ADBE", 8)):
         entry = extensions.get(prefix)
-        if isinstance(entry, pyropdf.Dictionary) and not entry.is_indirect and entry.get("BaseVersion") == "1.7":
-            level = entry.get("ExtensionLevel")
+        if (
+            isinstance(entry, pyropdf.Dictionary)
+            and not entry.is_indirect
+            and _direct_value(entry, "BaseVersion") == "1.7"
+        ):
+            level = _direct_value(entry, "ExtensionLevel")
             if type(level) is int and level >= required:
                 return True
     return False

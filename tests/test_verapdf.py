@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from test_attachments import build_raw_pdf
 from test_preservation import EDITS
 
 import pyropdf
@@ -211,6 +212,24 @@ def test_arlington_selects_the_declared_pades_extension(
         doc.catalog["Extensions"] = {prefix: {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": level}}
         doc.save(result)
     assert VERAPDF.arlington(result, "3b") == f"arlington1.7+{extensions}"
+
+
+def test_arlington_does_not_select_a_pades_level_stored_as_a_reference(tmp_path: Path) -> None:
+    source = tmp_path / "indirect-level.pdf"
+    source.write_bytes(
+        build_raw_pdf(
+            {
+                1: (
+                    "<< /Type /Catalog /Pages 2 0 R /Extensions << /ESIC "
+                    "<< /BaseVersion /1.7 /ExtensionLevel 4 0 R >> >> >>"
+                ),
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>",
+                4: "2",
+            }
+        )
+    )
+    assert VERAPDF.arlington(source, "") == "arlington1.7"
 
 
 def test_supplemental_pades_validation_keeps_native_and_archival_checks_distinct() -> None:

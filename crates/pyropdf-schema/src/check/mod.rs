@@ -1601,7 +1601,7 @@ fn admits_expr<G: Graph>(
                 "fn:BeforeVersion" => gate.map(|at| scope.version < at),
                 "fn:IsPDFVersion" => gate.map(|at| scope.version == at),
                 "fn:Extension" => match args[0].text() {
-                    Some(ext_name) => scope.extension(ext_name)?,
+                    Some(ext_name) => scope.extension(ext_name, args[1].text())?,
                     None => None,
                 },
                 _ => Some(true),
