@@ -142,14 +142,16 @@ def test_update_protection_and_preserve_unaffected_bytes(filename: str, *, incre
 @requires_pyhanko
 @pytest.mark.spec("integrity-protection", "create", "interpret")
 @pytest.mark.parametrize("stream", [False, True])
-def test_create_document_mac_on_full_save(*, stream: bool) -> None:
-    with pyropdf.Document() as doc:
+@pytest.mark.parametrize("version", ["1.4", "2.0"])
+def test_create_document_mac_on_full_save(version: str, *, stream: bool) -> None:
+    with pyropdf.Document(version=version) as doc:
         doc.pages.new()
         protected = Encryption(user_password="userpw", owner_password="ownerpw", integrity=True)
         data = doc.to_bytes(encryption=protected, cross_reference="stream" if stream else "table")
         assert data.startswith(b"%PDF-2.0")
         assert _independent(data) == "/Standalone"
         assert doc.verify_integrity().status == "absent"
+        assert pyropdf.probe(doc.to_bytes()).version == version
     with pyropdf.open(data, password="userpw") as doc:
         assert doc.verify_integrity().status == "valid"
 
