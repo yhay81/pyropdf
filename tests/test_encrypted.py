@@ -12,6 +12,7 @@ save: every fixture holds the same two pages. Intended differences:
 
 from __future__ import annotations
 
+import sysconfig
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -432,15 +433,21 @@ def test_public_key_edit_keeps_untouched_ciphertext(*, incremental: bool) -> Non
                     assert previous.objects[4]["FixtureValue"] == RECIPIENT_STRING
 
 
+@pytest.fixture(scope="module")
+def _pyhanko_oracle() -> None:
+    if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
+        pytest.skip("pyHanko imports enable the GIL on free-threaded Python")
+    # Register RFC 3161 before asn1crypto caches the reverse CMS content-type map.
+    from asn1crypto import tsp  # noqa: F401, PLC0415
+
+
 @pytest.mark.spec("public-key-security-handler", "create")
 @pytest.mark.parametrize("encrypt_metadata", [True, False])
 @pytest.mark.parametrize("method", ["aes-256", "aes-128"])
+@pytest.mark.usefixtures("_pyhanko_oracle")
 def test_public_key_output_read_by_pyhanko(method: Literal["aes-256", "aes-128"], *, encrypt_metadata: bool) -> None:
     import io  # noqa: PLC0415
-    import sysconfig  # noqa: PLC0415
 
-    if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
-        pytest.skip("pyHanko imports enable the GIL on free-threaded Python")
     from asn1crypto import keys, x509  # noqa: PLC0415
     from pyhanko.pdf_utils.crypt.pubkey import SimpleEnvelopeKeyDecrypter  # noqa: PLC0415
     from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
@@ -664,6 +671,7 @@ def _add_crypt_streams(
 @pytest.mark.parametrize("incremental", [False, True])
 @pytest.mark.spec("crypt-filter", "read", "create", "edit", "preserve")
 @pytest.mark.spec("crypt-filters", "read", "interpret", "create", "edit", "preserve")
+@pytest.mark.usefixtures("_pyhanko_oracle")
 def test_explicit_stream_crypt_and_embedded_defaults(
     handler: str, method: Literal["aes-128", "aes-256"], *, incremental: bool
 ) -> None:
@@ -819,6 +827,7 @@ def _private_recipient_control(*, attachment_only: bool, implicit: bool) -> byte
 @pytest.mark.spec("crypt-filters", "read", "interpret")
 @pytest.mark.parametrize("attachment_only", [False, True])
 @pytest.mark.parametrize("implicit", [False, True])
+@pytest.mark.usefixtures("_pyhanko_oracle")
 def test_distinct_cms_filter_keys_and_credential_upgrade(*, attachment_only: bool, implicit: bool) -> None:
     data = _private_recipient_control(attachment_only=attachment_only, implicit=implicit)
     owner, editor = recipient("owner"), recipient("editor")
@@ -846,6 +855,7 @@ def test_distinct_cms_filter_keys_and_credential_upgrade(*, attachment_only: boo
 
 @pytest.mark.parametrize("use_aes", [True, False], ids=["AESV2", "V2"])
 @pytest.mark.spec("crypt-filter", "read")
+@pytest.mark.usefixtures("_pyhanko_oracle")
 def test_explicit_legacy_filter_uses_the_global_key_from_an_independent_writer(*, use_aes: bool) -> None:
     import io  # noqa: PLC0415
 
@@ -905,6 +915,7 @@ def test_undefined_crypt_name_on_an_existing_stream_refuses_its_data() -> None:
 
 @pytest.mark.parametrize("selected", ["Identity", "StdCF"])
 @pytest.mark.spec("crypt-filter", "read")
+@pytest.mark.usefixtures("_pyhanko_oracle")
 def test_object_stream_members_obey_the_containers_explicit_crypt_filter(
     monkeypatch: pytest.MonkeyPatch, selected: str
 ) -> None:
@@ -959,6 +970,7 @@ def test_aes256_named_page_content_matches_the_clear_render(handler: str, select
 @pytest.mark.parametrize("role", ["EF", "RF"])
 @pytest.mark.parametrize("incremental", [True, False])
 @pytest.mark.spec("crypt-filters", "read", "edit", "preserve")
+@pytest.mark.usefixtures("_pyhanko_oracle")
 def test_untyped_file_streams_follow_their_current_file_specification(role: str, *, incremental: bool) -> None:
     import io  # noqa: PLC0415
 
