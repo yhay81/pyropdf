@@ -652,7 +652,7 @@ READ_ONLY = {
     "Signer": "from_pem from_pkcs12 callback",
     "Dictionary": "geospatial_point",
     "Stream": "read",
-    "StructureTree": "resolve_role walk",
+    "StructureTree": "child_rules reading_order resolve_role walk",
     "Table": "markdown",
     "typed.LinkedTree": "lookup",
     "typed.View": "interpret",

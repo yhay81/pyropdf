@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 33 | 34 | 764 |
-| interpret | 9 | 19 | 0 | 28 | 42 | 733 |
-| create | 0 | 0 | 21 | 28 | 62 | 720 |
-| edit | 0 | 0 | 0 | 42 | 55 | 734 |
-| preserve | 0 | 0 | 0 | 19 | 39 | 773 |
+| read | 0 | 0 | 0 | 34 | 31 | 766 |
+| interpret | 9 | 19 | 0 | 29 | 40 | 734 |
+| create | 0 | 0 | 21 | 29 | 55 | 726 |
+| edit | 0 | 0 | 0 | 41 | 50 | 740 |
+| preserve | 0 | 0 | 0 | 19 | 35 | 777 |
 
 ## Clauses
 
@@ -42,14 +42,14 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 7.2 | Lexical conventions | `lexical-conventions` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.3 | Objects | `basic-objects` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
-| 7.4.2 | ASCIIHexDecode filter | `asciihex-filter` | 1 done | 1 n/a | 1 planned | 1 partial | 1 done |
-| 7.4.3 | ASCII85Decode filter | `ascii85-filter` | 1 done | 1 n/a | 1 planned | 1 planned | 1 planned |
-| 7.4.4 | LZWDecode and FlateDecode filters | `flate-filter`, `lzw-filter` | 1 done, 1 planned | 1 n/a, 1 planned | 1 done, 1 planned | 2 planned | 1 done, 1 planned |
-| 7.4.5 | RunLengthDecode filter | `run-length-filter` | 1 planned | 1 n/a | 1 planned | 1 planned | 1 planned |
-| 7.4.6 | CCITTFaxDecode filter | `ccitt-fax-filter` | 1 done | 1 n/a | 1 planned | 1 partial | 1 done |
-| 7.4.7 | JBIG2Decode filter | `jbig2-filter` | 1 done | 1 n/a | 1 planned | 1 planned | 1 done |
+| 7.4.2 | ASCIIHexDecode filter | `asciihex-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.3 | ASCII85Decode filter | `ascii85-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.4 | LZWDecode and FlateDecode filters | `flate-filter`, `lzw-filter` | 1 done, 1 partial | 1 n/a, 1 partial | 1 done, 1 partial | 2 partial | 2 done |
+| 7.4.5 | RunLengthDecode filter | `run-length-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.6 | CCITTFaxDecode filter | `ccitt-fax-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.7 | JBIG2Decode filter | `jbig2-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.4.8 | DCTDecode filter | `dct-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
-| 7.4.9 | JPXDecode filter | `jpx-filter` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
+| 7.4.9 | JPXDecode filter | `jpx-filter` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.4.10 | Crypt filter | `crypt-filter` | 1 partial | 1 n/a | 1 partial | 1 partial | 1 partial |
 | 7.5.2 | File header | `file-header` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.4 | Cross-reference table | `xref-table` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
@@ -215,7 +215,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 14.7 | Logical structure | `logical-structure` | 1 done | 1 partial | 1 partial | 1 done | 1 done |
 | 14.7.4 | Structure namespaces | `structure-namespaces` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.8 | Tagged PDF | `tagged-pdf` | 1 done | 1 partial | 1 partial | 1 done | 1 done |
-| 14.9 | Accessibility support | `accessibility` | 1 done | 1 partial | 1 done | 1 done | 1 done |
+| 14.9 | Accessibility support | `accessibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.10 | Web capture | `web-capture` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.11.2 | Page boundaries | `page-boundaries` | 1 partial | 1 done | 1 done | 1 partial | 1 done |
 | 14.11.4 | Separation dictionaries | `separation-dictionaries` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -229,7 +229,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex I | Compatibility across PDF versions | `version-compatibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex K | XFA packets | `xfa` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
-| Annex L | Allowed structure children | `structure-children` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| Annex L | Allowed structure children | `structure-children` | 1 done | 1 partial | 1 planned | 1 planned | 1 done |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex Q | Page transparency detection | `page-transparency` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 partial | 3 partial | 3 planned | 3 partial | 3 partial |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-391 unfinished cells in 831 features: 9 engine, 150 partial, 232 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+372 unfinished cells in 831 features: 9 engine, 152 partial, 211 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -357,20 +357,18 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - create, edit — `signature-fields`, `digital-signatures`.
 - [#993](https://github.com/yhay81/pyropdf/issues/993) Render explicit legacy crypt filters and independently keyed recipient streams from the store. Interpret explicit legacy password filters and an independently keyed page stream through the authenticated version, including correct refusal for an unauthorized page.
     - interpret — `crypt-filters`.
-- [#891](https://github.com/yhay81/pyropdf/issues/891) Complete stream filter read, rewrite and preservation cases. Round-trip encoded and decoded streams across the listed filter chains and parameters. Cover ASCIIHex re-encoding, Group 3 fax and JPX output gaps, and retain untouched encoded data. Account for unsupported encoder paths explicitly.
-    - read — `lzw-filter`, `run-length-filter`.
-    - interpret — `lzw-filter`.
-    - create — `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
-    - edit — `flate-filter`, `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
-    - preserve — `ascii85-filter`, `lzw-filter`, `run-length-filter`.
+- [#982](https://github.com/yhay81/pyropdf/issues/982) Round-trip packed and wide predictor rows after adopting the hayro fix. Adopt the released row-local decoder through #603, then verify partially filled TIFF rows, externally filtered partial PNG pixel strides and predictor pixels wider than 255 bits in independent save and render controls.
+    - read, interpret, create — `lzw-filter`.
+    - edit — `flate-filter`, `lzw-filter`.
 
 ### 253 Understanding
 
 Milestone [#253](https://github.com/yhay81/pyropdf/issues/253).
 
-- [#907](https://github.com/yhay81/pyropdf/issues/907) Interpret standard structure roles, children, and abbreviation expansion in document order. Walk standard/custom roles and parent-child multiplicities, order content using structure references and expose abbreviation expansion in extracted output. Compare with hand-verified tagged documents.
-    - read, preserve — `structure-children`.
-    - interpret — `logical-structure`, `tagged-pdf`, `accessibility`, `structure-children`.
+- [#989](https://github.com/yhay81/pyropdf/issues/989) Resolve tagged form text using the originating content stream. Resolve external Form stream MCIDs and text enclosed by page-level Form invocations once hayro supplies stream provenance.
+    - interpret — `logical-structure`, `tagged-pdf`.
+- [#990](https://github.com/yhay81/pyropdf/issues/990) Resolve contextual Annex L rules and namespace-mapped structure children. Resolve cross-namespace roles, use as a grouping element and role-specific content for the remaining conditional Annex L verdicts.
+    - interpret — `structure-children`.
 
 ### 254 Verification
 

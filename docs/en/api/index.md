@@ -282,7 +282,9 @@ method and property of its classes with its full description.
 - [`ObjectReference`](structure.md#objectreference): An indirect PDF object item of a structure element (`/Type /OBJR` dictionary).
 - [`RoleMap`](structure.md#rolemap): The structure tree's `/RoleMap` dictionary as a live mutable mapping.
 - [`StructureChildren`](structure.md#structurechildren): The child `StructureElement` handles of one `StructureElement` in `/K` order.
+- [`StructureChildRule`](structure.md#structurechildrule): An Annex L relationship, its observed count and the applicable occurrence rule.
 - [`StructureElement`](structure.md#structureelement): A handle on an indirect `StructElem` dictionary in `Document.structure`.
+- [`StructureText`](structure.md#structuretext): One piece of logical text and its originating element or content reference.
 - [`StructureTree`](structure.md#structuretree): The document's logical structure tree as its top-level elements, as `doc.structure` returns it.
 
 ## [Attachments](attachments.md)
