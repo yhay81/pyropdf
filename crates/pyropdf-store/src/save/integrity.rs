@@ -68,7 +68,7 @@ pub(super) fn plan(
             if original.is_some() && version.has_changes() {
                 check_declaration(version, budget)?;
             }
-            original.map(|s| (*handler, s))
+            original.map(|s| (handler.as_ref(), s))
         }
         Mode::Plain if original.is_some() => {
             return Err(Error::Refused(super::Refusal::IntegrityProtection));

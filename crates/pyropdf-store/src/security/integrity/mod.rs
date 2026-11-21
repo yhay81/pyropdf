@@ -24,6 +24,28 @@ pub enum Report {
 
 const MAC_BIT: u32 = 1 << 12;
 
+fn file_key(handler: &Handler) -> Result<&[u8]> {
+    if !handler.is_recipient() {
+        return Ok(&handler.key);
+    }
+    let name = b"DefaultCryptFilter";
+    match handler
+        .filters
+        .named
+        .iter()
+        .find(|(key, _, _)| key.as_bytes() == name)
+    {
+        Some((_, _, super::filters::Key::File)) => Ok(&handler.key),
+        Some((_, _, super::filters::Key::Recipient(confirmed))) => confirmed
+            .get()
+            .map(AsRef::as_ref)
+            .ok_or(crate::Password::Recipient.into()),
+        None => Err(Error::malformed(
+            "missing public-key DefaultCryptFilter key",
+        )),
+    }
+}
+
 fn encrypted_permissions(dict: &Dict, handler: &Handler) -> Result<Option<u32>> {
     if handler.is_recipient() || handler.version < 5 {
         return Ok(None);
@@ -45,6 +67,14 @@ fn encrypted_permissions(dict: &Dict, handler: &Handler) -> Result<Option<u32>> 
 pub fn verify(file: &Index, budget: &Budget) -> Result<Report> {
     match inspect(file, budget) {
         Ok((report, _)) => Ok(report),
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::Password(crate::Password::Recipient)
+            ) =>
+        {
+            Ok(Report::Locked)
+        }
         Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => {
             Ok(Report::Invalid(error.to_string()))
         }
@@ -61,9 +91,7 @@ pub struct Writer {
 
 impl Writer {
     pub(crate) fn new(handler: &Handler, salt: [u8; 32]) -> Result<Self> {
-        let file_key = handler
-            .key
-            .as_ref()
+        let file_key = file_key(handler)?
             .try_into()
             .map_err(|_| Error::malformed("PDF MAC requires a 256-bit file key"))?;
         Self::for_file(file_key, salt)
@@ -186,8 +214,12 @@ fn inspect(file: &Index, budget: &Budget) -> Result<(Report, Option<[u8; 32]>)> 
             "missing or invalid authenticated permissions in the 256-bit encryption dictionary",
         ));
     }
+    let has_permissions = handler
+        .recipient
+        .as_ref()
+        .is_none_or(|r| r.authenticated_permissions);
     let required = handler.version >= 5
-        && (handler.permissions() & MAC_BIT == 0
+        && (has_permissions && handler.permissions() & MAC_BIT == 0
             || authenticated.is_some_and(|p| p & MAC_BIT == 0));
     if !required && auth.is_none() && salt.is_none() {
         return Ok((Report::Absent, None));
@@ -198,14 +230,6 @@ fn inspect(file: &Index, budget: &Budget) -> Result<(Report, Option<[u8; 32]>)> 
         return Err(Error::malformed(
             "invalid encrypted permissions for PDF MAC",
         ));
-    }
-    if handler.is_recipient() {
-        let selected_default = ["StmF", "StrF"].into_iter().any(|key| matches!(encrypt.get(key), Some(Value::Name(n)) if n.as_bytes() == b"DefaultCryptFilter"));
-        if !selected_default {
-            return Err(Error::malformed(
-                "PDF MAC requires the public-key DefaultCryptFilter key",
-            ));
-        }
     }
     let salt: [u8; 32] = bytes(&encrypt, "KDFSalt")
         .and_then(|s| s.try_into().ok())
@@ -254,7 +278,7 @@ fn inspect(file: &Index, budget: &Budget) -> Result<(Report, Option<[u8; 32]>)> 
     };
     token::verify(
         cms,
-        &handler.key,
+        file_key(handler)?,
         &salt,
         &ranges,
         signature.as_ref().map(|s| s.as_bytes()),

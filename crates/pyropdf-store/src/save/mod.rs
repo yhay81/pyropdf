@@ -21,6 +21,7 @@ mod renumber;
 #[cfg(test)]
 mod tests;
 
+use std::borrow::Cow;
 use std::fmt;
 use std::io::{self, Write};
 
@@ -599,6 +600,19 @@ fn write_incremental(
             rows.try_push(row)?;
         }
     }
+    for &number in mode.embedded() {
+        let mut affected = row(version, number);
+        write_object(
+            version,
+            &mut affected,
+            None,
+            &mut out,
+            &mode,
+            options.streams,
+        )?;
+        rows.try_push(affected)?;
+    }
+    rows.sort_unstable_by_key(|r| r.number);
     if let Ok(last) = u32::try_from(version.next_number().saturating_sub(1))
         && version.generation(last).is_none()
         && rows.last().is_some_and(|row| row.number < last)
@@ -639,7 +653,8 @@ enum Mode<'a> {
     /// The base's own encryption: untouched objects of the file keep their
     /// encrypted bytes, and the rest are encrypted with its handler.
     Keep {
-        handler: &'a Handler,
+        handler: Cow<'a, Handler>,
+        embedded: Vec<u32>,
         index: &'a Index,
         /// The object of the `/Encrypt` dictionary.
         encrypt: Option<u32>,
@@ -670,9 +685,6 @@ impl<'a> Mode<'a> {
             {
                 return Err(Error::Refused(Refusal::RecipientPermissions));
             }
-            if encryption.is_none() && selected.is_some() && edited_dictionary {
-                return Err(Error::Refused(Refusal::Encryption));
-            }
         }
         if let Some(encryption) = encryption {
             let id = match version.trailer().get("ID") {
@@ -698,8 +710,60 @@ impl<'a> Mode<'a> {
         let file = version.base().file();
         match file.and_then(|index| Some((index, index.security()?))) {
             Some((index, handler)) if version.base().trailer().get("Encrypt") == Some(encrypt) => {
+                let original = handler;
+                let (mut handler, selector_changed) = if let Value::Reference(reference) = encrypt
+                    && let Some(Slot::Written(written)) = version.slot(reference.number())
+                {
+                    let Some(raw) = index.object(*reference, budget)? else {
+                        return Err(Error::Refused(Refusal::Encryption));
+                    };
+                    let Value::Dict(mut old) = Value::parse(&raw, budget)? else {
+                        return Err(Error::Refused(Refusal::Encryption));
+                    };
+                    let new_value = written.value(budget)?;
+                    let Value::Dict(new) = &*new_value else {
+                        return Err(Error::Refused(Refusal::Encryption));
+                    };
+                    let mut other = new.clone();
+                    let old_eff = old.remove("EFF");
+                    let new_eff = other.remove("EFF");
+                    if old != other {
+                        return Err(Error::Refused(Refusal::Encryption));
+                    }
+                    if old_eff == new_eff {
+                        (Cow::Borrowed(handler), false)
+                    } else {
+                        let selected = handler.with_embedded_filter(new)?;
+                        let changed = !selected.same_embedded_filter(handler);
+                        (Cow::Owned(selected), changed)
+                    }
+                } else {
+                    (Cow::Borrowed(handler), false)
+                };
+                let embedded = if selector_changed
+                    || handler.distinguishes_embedded_files() && version.has_changes()
+                {
+                    handler
+                        .to_mut()
+                        .remember_file_roles(security::embedded::discover(
+                            index,
+                            Some(version),
+                            budget,
+                        )?);
+                    inherited_attachments(
+                        version,
+                        index,
+                        original,
+                        &handler,
+                        selector_changed,
+                        budget,
+                    )?
+                } else {
+                    Vec::new()
+                };
                 Ok(Self::Keep {
                     handler,
+                    embedded,
                     index,
                     encrypt: match encrypt {
                         Value::Reference(reference) => Some(reference.number()),
@@ -708,6 +772,13 @@ impl<'a> Mode<'a> {
                 })
             }
             _ => Err(Error::Refused(Refusal::Encryption)),
+        }
+    }
+
+    fn embedded(&self) -> &[u32] {
+        match self {
+            Self::Keep { embedded, .. } => embedded,
+            _ => &[],
         }
     }
 
@@ -734,6 +805,45 @@ impl<'a> Mode<'a> {
             Self::New { handler, .. } => Some(handler),
         }
     }
+}
+
+/// Only untouched embedded streams inheriting /EFF change when that selector changes.
+fn inherited_attachments(
+    version: &Version,
+    index: &Index,
+    old: &Handler,
+    new: &Handler,
+    selector_changed: bool,
+    budget: &Budget,
+) -> Result<Vec<u32>> {
+    let mut numbers = BudgetVec::new(budget);
+    for (number, entry) in index.entries() {
+        budget.poll()?;
+        if version.slot(number).is_some() || !matches!(entry.location(), Location::Offset(_)) {
+            continue;
+        }
+        let reference = Reference::new(number, entry.generation());
+        let Some(bytes) = index.object(reference, budget)? else {
+            continue;
+        };
+        if let Value::Stream(stream) = Value::parse(&bytes, budget)?
+            && (old.embedded_stream(reference, stream.dict())
+                != new.embedded_stream(reference, stream.dict())
+                || selector_changed && new.embedded_stream(reference, stream.dict()))
+            && security::filters::explicit(stream.dict(), budget)?.is_none()
+        {
+            numbers.try_push(number)?;
+        }
+    }
+    numbers.sort_unstable();
+    Ok(numbers.into_vec())
+}
+
+fn plain_body(bytes: Bytes, version: &Version, budget: &Budget) -> Result<Bytes> {
+    if version.base().file().is_some_and(Index::is_encrypted) {
+        return Ok(security::filters::plain(bytes, budget)?);
+    }
+    Ok(bytes)
 }
 
 fn row(version: &Version, number: u32) -> Row {
@@ -779,8 +889,10 @@ fn write_object(
         // The keys of an encrypted object derive from its new reference.
         let bytes = match (mode, mode.handler()) {
             (Mode::Keep { encrypt, .. }, _) if Some(row.number) == *encrypt => plain,
-            (_, Some(handler)) => security::encrypt_bytes(handler, target, &plain, out.budget)?,
-            (_, None) => plain,
+            (_, Some(handler)) => {
+                security::encrypt_bytes_as(handler, reference, target, &plain, out.budget)?
+            }
+            (_, None) => plain_body(plain, version, out.budget)?,
         };
         row.offset = Some(out.offset()?);
         out.display(format_args!(
@@ -796,21 +908,33 @@ fn write_object(
     let context =
         |e: StoreError| e.context(format!("saving object {} {}", row.number, row.generation));
     let bytes = match (version.slot(row.number), mode) {
-        (Some(Slot::Written(object)), Mode::Plain) => object.bytes().clone(),
+        (Some(Slot::Written(object)), Mode::Plain) => {
+            plain_body(object.bytes().clone(), version, budget)?
+        }
+        (Some(Slot::Written(object)), Mode::Keep { encrypt, .. })
+            if Some(row.number) == *encrypt =>
+        {
+            object.bytes().clone()
+        }
         (Some(Slot::Written(object)), _) => {
             let handler = mode.handler().expect("an encrypting mode has a handler");
             security::encrypt_bytes(handler, reference, object.bytes(), budget).map_err(context)?
         }
         (_, Mode::Keep { index, encrypt, .. })
             if Some(row.number) == *encrypt
-                || matches!(
-                    index.get(row.number).map(|entry| entry.location()),
-                    Some(Location::Offset(_))
-                ) =>
+                || (mode.embedded().binary_search(&row.number).is_err()
+                    && matches!(
+                        index.get(row.number).map(|entry| entry.location()),
+                        Some(Location::Offset(_))
+                    )) =>
         {
             raw::file_body(index, reference, budget).map_err(context)?
         }
-        (_, Mode::Plain) => raw::body(&**version.base(), reference, budget).map_err(context)?,
+        (_, Mode::Plain) => plain_body(
+            raw::body(&**version.base(), reference, budget).map_err(context)?,
+            version,
+            budget,
+        )?,
         (_, _) => {
             let handler = mode.handler().expect("an encrypting mode has a handler");
             let plain = raw::body(&**version.base(), reference, budget).map_err(context)?;

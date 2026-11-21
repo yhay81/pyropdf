@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
-from test_encrypted import RECIPIENT_ASSETS, recipient
+from test_encrypted import RECIPIENT_ASSETS, _private_recipient_control, recipient
 
 import pyropdf
 from pyropdf import Encryption, MalformedPdfError, PdfError
@@ -171,6 +171,34 @@ def test_create_recipient_mac() -> None:
     assert _independent(data, rsa=True) == "/Standalone"
     with pyropdf.open(data, credential=owner) as doc:
         assert doc.verify_integrity().status == "valid"
+
+
+@requires_pyhanko
+@pytest.mark.spec("integrity-protection", "read", "interpret")
+def test_attachment_only_recipient_permissions_do_not_imply_a_missing_mac() -> None:
+    source = _private_recipient_control(attachment_only=True, implicit=False)
+    with pyropdf.open(source) as doc:
+        assert doc.verify_integrity().status == "absent"
+        doc.unlock(recipient("owner"))
+        assert doc.verify_integrity().status == "absent"
+
+
+@requires_pyhanko
+@pytest.mark.spec("integrity-protection", "read", "interpret", "preserve")
+@pytest.mark.parametrize("incremental", [False, True])
+def test_recipient_mac_uses_the_named_key_after_credential_upgrade(*, incremental: bool) -> None:
+    source = _private_recipient_control(attachment_only=False, implicit=False, mac=True)
+    with pyropdf.open(source, credential=recipient("editor")) as doc:
+        assert doc.pages[0].obj["Contents"].read() == b"0 g 1 2 3 4 re f\n"
+        assert doc.verify_integrity().status == "locked"
+        doc.unlock(recipient("owner"))
+        assert doc.verify_integrity().status == "valid"
+        doc.pages[0].rotation = 90
+        saved = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+    with pyropdf.open(saved, credential=recipient("owner")) as reopened:
+        assert reopened.verify_integrity().status == "valid"
+        assert reopened.catalog["FixtureNamed"].read() == b"Named private data"
+        assert reopened.pages[0].rotation == 90
 
 
 @pytest.mark.spec("integrity-protection", "edit")

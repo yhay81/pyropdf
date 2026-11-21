@@ -134,8 +134,19 @@ impl FileBase {
             return Ok(None);
         };
         if let Some(handler) = index.security().filter(|h| h.is_recipient()) {
-            if encryption_dict(index, budget)? == encryption_dict(&rev_index, budget)? {
+            let active = encryption_dict(index, budget)?;
+            let previous = encryption_dict(&rev_index, budget)?;
+            if active == previous {
                 rev_index.unlock(handler.clone(), budget)?;
+            } else if let (Some(mut active), Some(previous)) = (active, previous) {
+                let mut same_keys = previous.clone();
+                active.remove("EFF");
+                same_keys.remove("EFF");
+                if active == same_keys {
+                    rev_index.unlock(handler.with_embedded_filter(&previous)?, budget)?;
+                } else {
+                    unlock(&mut rev_index, None, budget)?;
+                }
             } else {
                 unlock(&mut rev_index, None, budget)?;
             }
@@ -277,6 +288,17 @@ fn unlock(index: &mut Index, password: Option<&[u8]>, budget: &Budget) -> Result
     let encrypt = encryption_dict(index, budget)?;
     if password.is_some() && encrypt.as_ref().is_some_and(|dict| matches!(dict.get("Filter"), Some(Value::Name(n)) if n.as_bytes() == b"Adobe.PubSec")) {
         return Err(Password::Recipient.into());
+    }
+    if let Some(dict) = &encrypt
+        && matches!(dict.get("Filter"),Some(Value::Name(n)) if n.as_bytes()==b"Adobe.PubSec")
+        && matches!(dict.get("SubFilter"),Some(Value::Name(n)) if n.as_bytes()==b"adbe.pkcs7.s5")
+        && ["StmF", "StrF"].iter().all(|name| {
+            matches!(dict.get(*name), None | Some(Value::Null))
+                || matches!(dict.get(*name),Some(Value::Name(n)) if n.as_bytes()==b"Identity")
+        })
+    {
+        let handler = Handler::open_recipient(dict, |_| Ok(None), budget)?;
+        return index.unlock(handler, budget);
     }
     let id = match index.trailer().get("ID") {
         Some(Value::Array(id)) => match id.get(0) {
