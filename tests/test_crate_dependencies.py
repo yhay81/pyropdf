@@ -3,9 +3,10 @@
 Section 11 lists the crates from the store to the binding, and a crate depends
 only on the crates listed before it. The store and the schema reach no
 interpreter, writer, or model runtime, and no crate but the binding reaches
-PyO3. The check reads `cargo metadata` with every feature and every platform,
-and follows a crate's normal, build, and development dependencies through
-everything they reach.
+PyO3. The check reads locked `cargo metadata` with every feature and every
+platform, and follows a crate's normal, build, and development dependencies
+through everything they reach. The separate fuzz workspace must also resolve
+with its committed lockfile.
 """
 
 from __future__ import annotations
@@ -148,13 +149,21 @@ def violations(metadata: Metadata) -> list[str]:
     return found
 
 
-def cargo_metadata() -> Metadata:
-    """Return the metadata of the workspace with every feature on."""
+def cargo_metadata(manifest: Path) -> Metadata:
+    """Resolve a workspace with all features and its committed lockfile."""
     cargo = shutil.which("cargo")
     if cargo is None:
         pytest.fail("the dependency check needs cargo on PATH")
-    manifest = ROOT / "Cargo.toml"
-    command = [cargo, "metadata", "--format-version", "1", "--all-features", "--manifest-path", str(manifest)]
+    command = [
+        cargo,
+        "metadata",
+        "--locked",
+        "--format-version",
+        "1",
+        "--all-features",
+        "--manifest-path",
+        str(manifest),
+    ]
     result = subprocess.run(command, capture_output=True, check=False, text=True)  # noqa: S603 - fixed arguments
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
@@ -183,8 +192,12 @@ def paths(found: list[str]) -> list[str]:
 
 
 def test_the_workspace_follows_section_11() -> None:
-    found = violations(cargo_metadata())
+    found = violations(cargo_metadata(ROOT / "Cargo.toml"))
     assert not found, "\n".join(found)
+
+
+def test_fuzz_workspace_resolves_with_its_committed_lockfile() -> None:
+    cargo_metadata(ROOT / "fuzz" / "Cargo.toml")
 
 
 def test_dependencies_in_the_order_of_section_11_pass() -> None:
