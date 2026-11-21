@@ -77,17 +77,6 @@ features = ["line-annotations"]
 dimensions = ["read", "interpret", "create", "edit"]
 behavior = "Resolve and shape RC or multilingual captions, including embedded fonts, along the measured line after authoring and editing."
 
-[families.font-programs]
-tracker = 249
-issue = 902
-title = "Complete font program, encoding and CMap creation and editing"
-features = [
-    "type1-fonts", "truetype-fonts", "type3-fonts", "simple-font-encodings", "cmaps", "embedded-fonts",
-    "character-tables",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement."
-
 [families.devicen-mixing-hints]
 tracker = 249
 parent = 248

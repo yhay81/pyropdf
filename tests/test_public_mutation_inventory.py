@@ -514,6 +514,7 @@ MUTATIONS = (
         "Document",
         "rewrite_images",
     ),
+    ("font_cmap", "Write a font's code-to-CID mapping and stream metadata together.", "Document", "write_cmap"),
     (
         "subset_fonts",
         "Subset shared font programs and rename their descriptors while retaining glyph IDs.",

@@ -1,6 +1,7 @@
 //! Resolve fonts and colour where the content actually uses them, including
 //! invoked Forms and the graphics state inherited at each invocation.
 use super::profiles::{PathReads, entry, font_points_to, named};
+use super::programs::Selector;
 use super::*;
 use crate::content::{Operations, PageContent};
 use pyropdf_store::budget::StreamKind;
@@ -68,6 +69,7 @@ struct GraphicsState {
 pub(super) enum Use<'a> {
     Colour(Device),
     Descriptor(u32),
+    DamagedProgram(&'a programs::Check<'a>),
     MissingProgram(Option<&'a [(AppearanceFont, bool)]>),
     Procedure { owner: u32, name: &'a [u8] },
 }
@@ -116,7 +118,7 @@ impl Use<'_> {
                     }
                 }
             }
-            Self::Colour(_) => {}
+            Self::Colour(_) | Self::DamagedProgram(_) => {}
         }
         Ok(matches)
     }
@@ -130,9 +132,21 @@ impl Use<'_> {
         state: &mut GraphicsState,
         font: Option<&Value>,
         before: usize,
-        name: &Name,
+        selector: Selector<'_>,
         form: Option<&Reference>,
     ) -> Result<()> {
+        let name = selector.name();
+        if let Self::DamagedProgram(check) = self {
+            state.selected_font = None;
+            if let Some(font) = font
+                && let Some(pair) = check.select(path, font, selector)?
+            {
+                state.selected_font = Some(path.embedded_fonts.len());
+                path.embedded_fonts.try_push(pair)?;
+            }
+            path.owners.truncate(before);
+            return Ok(());
+        }
         let program = path.owners.len();
         state.glyphs = self.glyphs(path, font)?;
         if let Self::MissingProgram(existing) = self {
@@ -250,20 +264,20 @@ impl Use<'_> {
                         .and_then(value_dict)
                         .and_then(|d| d.get(name.as_bytes()));
                     if self.form(path, form, Inherited::Resources(resources), state, stack)? {
-                        if !matches!(self, Self::MissingProgram(_)) {
+                        if !matches!(self, Self::MissingProgram(_) | Self::DamagedProgram(_)) {
                             return Ok(true);
                         }
                         found = true;
-                    } else if matches!(self, Self::MissingProgram(_)) {
+                    } else if matches!(self, Self::MissingProgram(_) | Self::DamagedProgram(_)) {
                         path.owners.truncate(before);
                     }
                 }
-                b"Tr" if matches!(self, Self::MissingProgram(_)) => {
+                b"Tr" if matches!(self, Self::MissingProgram(_) | Self::DamagedProgram(_)) => {
                     if let Some(Value::Integer(mode @ 0..=7)) = operands.first() {
                         state.invisible_text = *mode == 3;
                     }
                 }
-                b"gs" if matches!(self, Self::MissingProgram(_)) => {
+                b"gs" if matches!(self, Self::MissingProgram(_) | Self::DamagedProgram(_)) => {
                     if let Some(Value::Name(name)) = operands.first() {
                         let before = path.owners.len();
                         let states = path.resolve(resources.and_then(|d| d.get("ExtGState")))?;
@@ -285,7 +299,7 @@ impl Use<'_> {
                                 &mut state,
                                 font.get(0),
                                 before,
-                                name,
+                                Selector::State(name),
                                 stack.last(),
                             )?;
                         } else {
@@ -313,11 +327,21 @@ impl Use<'_> {
                             .and_then(value_dict)
                             .and_then(|d| d.get(name.as_bytes())),
                         before,
-                        name,
+                        Selector::Font(name),
                         stack.last(),
                     )?;
                 }
                 b"Tj" | b"TJ" | b"'" | b"\"" if !matches!(self, Self::Colour(_)) => {
+                    if let Self::DamagedProgram(check) = self {
+                        // A text-show with an empty string still uses the selected
+                        // font for the embedding rule (veraPDF 6.2.11.4.1-1).
+                        if !state.invisible_text
+                            && let Some(i) = state.selected_font
+                        {
+                            check.shown(path, i)?;
+                        }
+                        continue;
+                    }
                     if matches!(self, Self::MissingProgram(_)) {
                         if state.invisible_text {
                             continue;
@@ -453,46 +477,47 @@ pub(super) fn missing_appearance_font(
     page: &Page,
     existing: Option<&[(AppearanceFont, bool)]>,
 ) -> Result<bool> {
-    let ap = path.resolve(annotation.get("AP"))?;
-    let normal = ap.as_deref().and_then(value_dict).and_then(|d| d.get("N"));
-    let resolved = path.resolve(normal)?;
-    let state = GraphicsState {
-        glyphs: [false; 256],
-        initial_gray: [true; 2],
-        invisible_text: false,
-        font_path: (0, 0),
-        selected_font: None,
-        program_only: false,
-    };
-    let mut stack = BudgetVec::new(path.budget);
-    match resolved.as_deref() {
-        Some(Value::Stream(_)) => Use::MissingProgram(existing).form(
-            path,
-            normal,
-            Inherited::Page(page),
-            state,
-            &mut stack,
-        ),
-        Some(Value::Dict(states)) => {
-            let mut found = false;
-            for (_, item) in states.iter() {
-                path.budget.poll()?;
-                let previous = path.owners.len();
-                if Use::MissingProgram(existing).form(
-                    path,
-                    Some(item),
-                    Inherited::Page(page),
-                    state,
-                    &mut stack,
-                )? {
-                    found = true;
-                } else {
-                    path.owners.truncate(previous);
-                }
+    Use::MissingProgram(existing).appearance(path, annotation, page)
+}
+
+impl Use<'_> {
+    pub(super) fn appearance(
+        self,
+        path: &mut PathReads<'_>,
+        annotation: &Dict,
+        page: &Page,
+    ) -> Result<bool> {
+        let ap = path.resolve(annotation.get("AP"))?;
+        let normal = ap.as_deref().and_then(value_dict).and_then(|d| d.get("N"));
+        let resolved = path.resolve(normal)?;
+        let state = GraphicsState {
+            glyphs: [false; 256],
+            initial_gray: [true; 2],
+            invisible_text: false,
+            font_path: (0, 0),
+            selected_font: None,
+            program_only: false,
+        };
+        let mut stack = BudgetVec::new(path.budget);
+        match resolved.as_deref() {
+            Some(Value::Stream(_)) => {
+                self.form(path, normal, Inherited::Page(page), state, &mut stack)
             }
-            Ok(found)
+            Some(Value::Dict(states)) => {
+                let mut found = false;
+                for (_, item) in states.iter() {
+                    path.budget.poll()?;
+                    let previous = path.owners.len();
+                    if self.form(path, Some(item), Inherited::Page(page), state, &mut stack)? {
+                        found = true;
+                    } else {
+                        path.owners.truncate(previous);
+                    }
+                }
+                Ok(found)
+            }
+            _ => Ok(false),
         }
-        _ => Ok(false),
     }
 }
 

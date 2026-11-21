@@ -9,6 +9,7 @@
 
 mod permissions;
 mod profiles;
+mod programs;
 mod resources;
 
 pub use permissions::SignaturePermission;
@@ -630,6 +631,7 @@ fn claims<'b>(
     } else {
         root
     };
+    let mut damaged_programs = None;
     for (index, (old, new)) in original.claims.into_iter().zip(current.claims).enumerate() {
         for claim in old
             .into_iter()
@@ -721,6 +723,19 @@ fn claims<'b>(
                 }
                 if !written.is_empty() {
                     profiles::dependencies(claim, opened, version, written, &mut found, budget)?;
+                    let damaged = match &damaged_programs {
+                        Some(owners) => owners,
+                        None => damaged_programs
+                            .insert(programs::changes(opened, version, written, budget)?),
+                    };
+                    for &owner in damaged.iter() {
+                        record(
+                            &mut found,
+                            "a painted font lost its readable embedded program",
+                            Some(owner),
+                            budget,
+                        )?;
+                    }
                 }
             }
             for (reason, mut breaking) in found.into_vec() {

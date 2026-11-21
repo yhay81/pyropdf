@@ -626,7 +626,6 @@ objects = []
 clause = "9.6.2"
 description = "Type 1 fonts, the standard 14 fonts, and multiple master fonts."
 objects = ["FontType1", "FontMultipleMaster", "FontDescriptorType1"]
-create = { status = "partial", missing = "Canvas, annotations, and forms create Standard 14 Type 1 font dictionaries, without embedding custom Type 1 or Multiple Master font programs.", milestone = "Phase 4: Specification" }
 
 [features.truetype-fonts]
 clause = "9.6.3"
@@ -642,7 +641,6 @@ objects = ["FontType3", "FontDescriptorType3", "CharProcMap"]
 clause = "9.6.5"
 description = "Encodings of simple fonts: base encodings and differences."
 objects = ["Encoding"]
-create = { status = "partial", missing = "Standard 14 text and form fields write `/WinAnsiEncoding` and built-in symbolic encodings, without constructing custom `/Differences` arrays.", milestone = "Phase 4: Specification" }
 
 [features.cid-fonts]
 clause = "9.7.4"
@@ -653,7 +651,6 @@ objects = ["FontCIDType0", "FontCIDType2", "CIDSystemInfo", "FontDescriptorCIDTy
 clause = "9.7.5"
 description = "CMaps: predefined and embedded maps from codes to CIDs."
 objects = ["CMapStream"]
-create = { status = "partial", missing = "Embedded Type 0 fonts and OCR layers write `/Identity-H`, without generating custom embedded code-to-CID CMap streams.", milestone = "Phase 4: Specification" }
 
 [features.type0-fonts]
 clause = "9.7.6"
@@ -669,8 +666,6 @@ objects = []
 clause = "9.9"
 description = "Embedded font programs: Type 1, TrueType, CFF, and OpenType."
 objects = ["FontFile", "FontFile2", "FontFile3Type1", "FontFile3CIDType0", "FontFile3OpenType", "FontFileType1"]
-create = { status = "partial", missing = "TrueType, CFF, and OpenType font programs are embedded, without embedding Type 1 font programs.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Embedded TrueType, CFF, and OpenType CIDFont programs are subset, without subsetting Type 1 font programs.", milestone = "Phase 4: Specification" }
 
 [features.text-extraction]
 clause = "9.10"
