@@ -1111,8 +1111,16 @@ impl Writer<'_> {
         let value = plan
             .value(info.number)?
             .ok_or_else(|| StoreError::malformed("a written object has no value"))?;
-        plan.version.check_stream_filters(&value, budget)?;
         let mut value = crate::value::copy_for_edit(&value, budget)?;
+        if self.mode.removing_encryption(plan.version) {
+            security::filters::remove_explicit(
+                &mut value,
+                &|r, b| plan.version.filter_object(r, b),
+                budget,
+            )?;
+        } else {
+            plan.version.check_stream_filters(&value, budget)?;
+        }
         if self.streams != Streams::Keep
             && let Some(recoded) = recode::recoded(
                 &value,

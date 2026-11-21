@@ -332,8 +332,23 @@ pub(crate) fn plain(
     lookup: &FilterLookup<'_>,
     budget: &Budget,
 ) -> Result<crate::value::Bytes> {
-    let Value::Stream(mut stream) = Value::parse(&bytes, budget)? else {
+    let mut value = Value::parse(&bytes, budget)?;
+    if !remove_explicit(&mut value, lookup, budget)? {
         return Ok(bytes);
+    }
+    let mut out = BudgetVec::new(budget);
+    crate::write::value(&mut out, &value)?;
+    Ok(crate::value::Bytes::new(out.into_vec()))
+}
+
+/// Keep data filters and any shared parameters when removing document encryption.
+pub(crate) fn remove_explicit(
+    value: &mut Value,
+    lookup: &FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<bool> {
+    let Value::Stream(stream) = value else {
+        return Ok(false);
     };
     if explicit(
         crate::value::filters::resolved(stream.dict(), lookup, budget)?.as_ref(),
@@ -341,7 +356,7 @@ pub(crate) fn plain(
     )?
     .is_none()
     {
-        return Ok(bytes);
+        return Ok(false);
     }
     for key in ["Filter", "DecodeParms"] {
         let value = stream.dict_mut().remove(key);
@@ -361,9 +376,7 @@ pub(crate) fn plain(
             }
         }
     }
-    let mut out = BudgetVec::new(budget);
-    crate::write::value(&mut out, &Value::Stream(stream))?;
-    Ok(crate::value::Bytes::new(out.into_vec()))
+    Ok(true)
 }
 
 impl Handler {

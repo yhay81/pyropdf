@@ -708,6 +708,10 @@ impl<'a> Mode<'a> {
         }
     }
 
+    fn removing_encryption(&self, version: &Version) -> bool {
+        matches!(self, Self::Plain) && version.base().file().is_some_and(Index::is_encrypted)
+    }
+
     fn changed_streams(&self) -> &[u32] {
         match self {
             Self::Keep {
@@ -776,7 +780,13 @@ fn write_object(
     if let Some(renumbering) = renumbering {
         let target = renumbering.number(row.number)?;
         let reference = Reference::new(row.number, row.generation);
-        let plain = renumbering.bytes(version, reference, streams, out.budget)?;
+        let plain = renumbering.bytes(
+            version,
+            reference,
+            streams,
+            mode.removing_encryption(version),
+            out.budget,
+        )?;
         // The keys of an encrypted object derive from its new reference.
         let bytes = match (mode, mode.handler()) {
             (Mode::Keep { encrypt, .. }, _) if Some(row.number) == *encrypt => plain,
@@ -788,13 +798,6 @@ fn write_object(
                 &|r, b| renumbering.lookup(version, r, b),
                 out.budget,
             )?,
-            (_, None) if version.base().file().is_some_and(Index::is_encrypted) => {
-                security::filters::plain(
-                    plain,
-                    &|r, b| renumbering.lookup(version, r, b),
-                    out.budget,
-                )?
-            }
             (_, None) => plain,
         };
         row.offset = Some(out.offset()?);
@@ -893,12 +896,21 @@ fn recode(
         Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let Some(value) = recode::recoded(
-        object.value(),
-        streams,
-        &|r, b| version.filter_object(r, b),
-        budget,
-    )?
+    let mut clear;
+    let value = if mode.removing_encryption(version)
+        && matches!(object.value().as_ref(), Value::Stream(_))
+    {
+        clear = crate::value::copy_for_edit(object.value(), budget)?;
+        security::filters::remove_explicit(
+            &mut clear,
+            &|r, b| version.filter_object(r, b),
+            budget,
+        )?;
+        &clear
+    } else {
+        object.value().as_ref()
+    };
+    let Some(value) = recode::recoded(value, streams, &|r, b| version.filter_object(r, b), budget)?
     else {
         return Ok(None);
     };

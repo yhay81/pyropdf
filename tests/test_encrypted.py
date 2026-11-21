@@ -1230,7 +1230,9 @@ def test_changing_only_shared_crypt_parameters_selects_each_revision_key(*, incr
         assert doc.catalog["FixtureNamed"].read() == b"Named private data"
 
 
-@pytest.mark.parametrize("layout", ["plain", "decompress", "renumber", "packed", "linearized"])
+@pytest.mark.parametrize(
+    "layout", ["plain", "decompress", "renumber", "packed", "linearized", "plain-linearized", "decompress-renumbered"]
+)
 def test_normalized_saves_follow_the_indirect_identity_filter(layout: str) -> None:
     import io  # noqa: PLC0415
 
@@ -1246,15 +1248,20 @@ def test_normalized_saves_follow_the_indirect_identity_filter(layout: str) -> No
         protected = doc.to_bytes(encryption=Encryption(user_password="viewer", owner_password="owner"))
     with pyropdf.open(protected, password="owner") as doc:
         assert doc.pages[0].obj["Contents"].read() == payload
-        keep = layout not in {"plain", "decompress"}
+        keep = layout in {"renumber", "packed", "linearized"}
         saved = doc.to_bytes(
             encryption=Encryption.KEEP if keep else None,
-            renumber=layout == "renumber",
+            renumber=layout in {"renumber", "decompress-renumbered"},
             object_streams=layout == "packed",
-            linearize=layout == "linearized",
-            decompress=layout == "decompress",
+            linearize=layout in {"linearized", "plain-linearized"},
+            decompress=layout.startswith("decompress"),
         )
     with pyropdf.open(saved, password="viewer" if keep else None) as doc:
         assert doc.pages[0].obj["Contents"].read() == payload
     with pikepdf.Pdf.open(io.BytesIO(saved), password="viewer" if keep else "") as reader:
-        assert reader.pages[0].obj.Contents.read_bytes() == payload
+        content = reader.pages[0].obj.Contents
+        assert content.read_bytes() == payload
+        if layout.startswith("decompress"):
+            assert "/Filter" not in content
+        elif not keep:
+            assert "/Crypt" not in [str(name) for name in content.Filter]

@@ -185,9 +185,10 @@ impl<'a> Renumbering<'a> {
         version: &Version,
         reference: Reference,
         streams: Streams,
+        clear: bool,
         budget: &Budget,
     ) -> Result<Bytes> {
-        self.read(version, reference, streams, budget)
+        self.read(version, reference, streams, clear, budget)
             .map_err(|error| {
                 error.context(format!(
                     "saving object {} {}",
@@ -202,6 +203,7 @@ impl<'a> Renumbering<'a> {
         version: &Version,
         reference: Reference,
         streams: Streams,
+        clear: bool,
         budget: &Budget,
     ) -> Result<Bytes> {
         let base = version.base();
@@ -212,7 +214,15 @@ impl<'a> Renumbering<'a> {
         let mut value = Value::parse_with_lengths(&source, budget, &|reference| {
             base.object(reference, budget)
         })?;
-        version.check_stream_filters(&value, budget)?;
+        if clear {
+            crate::security::filters::remove_explicit(
+                &mut value,
+                &|r, b| version.filter_object(r, b),
+                budget,
+            )?;
+        } else {
+            version.check_stream_filters(&value, budget)?;
+        }
         self.rewrite(&mut value, budget)?;
         let mut plain = BudgetVec::new(budget);
         write::value(&mut plain, &value)?;
