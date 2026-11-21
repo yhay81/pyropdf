@@ -39,12 +39,15 @@ from pyropdf._annotations import (
     Highlight,
     Ink,
     LineAnnotation,
+    LineDetails,
     LineEnding,
     MarkupRects,
     Note,
     NoteIcon,
     Polygon,
     PolyLine,
+    PopupInfo,
+    RedactionMark,
     Sound,
     SoundEncoding,
     Square,
@@ -236,7 +239,7 @@ from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
 from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
 from pyropdf._threads import Bead, Beads, BeadSpecification, Thread, ThreadAction, Threads
-from pyropdf._widgets import Widget, Widgets
+from pyropdf._widgets import IconFit, Widget, Widgets
 
 _PUBLIC_MODULE_EXPORTS = (
     GoTo3DView,
@@ -426,6 +429,7 @@ __all__ = [
     "Highlight",
     "History",
     "IRect",
+    "IconFit",
     "Image",
     "ImageMask",
     "ImageRewriteReport",
@@ -448,6 +452,7 @@ __all__ = [
     "Line",
     "LineAnnotation",
     "LineCap",
+    "LineDetails",
     "LineEnding",
     "LineJoin",
     "LineTo",
@@ -512,6 +517,7 @@ __all__ = [
     "PointData",
     "PolyLine",
     "Polygon",
+    "PopupInfo",
     "PrintScaling",
     "Probe",
     "Profiles",
@@ -529,6 +535,7 @@ __all__ = [
     "RecolorTarget",
     "Rect",
     "RectilinearMeasure",
+    "RedactionMark",
     "RelatedFile",
     "RemoteDestination",
     "RenditionAction",

@@ -1120,8 +1120,9 @@ impl PageAnnots<'_> {
         }
         if writing {
             let reference = transaction.allocate()?;
-            transaction.write(reference.number(), &Value::from(drawn.form()), budget)?;
-            let mut appearances = Dict::new();
+            let form = drawn.stored_form(transaction, budget)?;
+            transaction.write(reference.number(), &Value::from(form), budget)?;
+            let mut appearances = self.reader().appearances(&dict)?;
             #[expect(
                 clippy::disallowed_methods,
                 reason = "this call inserts only the fixed /N key"

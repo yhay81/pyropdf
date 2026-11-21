@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 39 | 35 | 757 |
-| interpret | 9 | 19 | 0 | 35 | 42 | 726 |
-| create | 0 | 0 | 21 | 27 | 63 | 720 |
-| edit | 0 | 0 | 0 | 48 | 56 | 727 |
-| preserve | 0 | 0 | 0 | 25 | 40 | 766 |
+| read | 0 | 0 | 0 | 38 | 34 | 759 |
+| interpret | 9 | 19 | 0 | 35 | 41 | 727 |
+| create | 0 | 0 | 21 | 25 | 62 | 723 |
+| edit | 0 | 0 | 0 | 46 | 55 | 730 |
+| preserve | 0 | 0 | 0 | 25 | 39 | 767 |
 
 ## Clauses
 
@@ -141,7 +141,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.4.3 | Articles | `articles` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.4.4 | Presentations | `presentations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.2 | Annotation dictionaries | `annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.5.5 | Appearance streams | `appearance-streams` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
+| 12.5.5 | Appearance streams | `appearance-streams` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.4 | Text annotations | `text-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.5 | Link annotations | `link-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.6 | Free text annotations | `free-text-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -152,16 +152,16 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.5.6.11 | Caret annotations | `caret-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.12 | Rubber stamp annotations | `stamp-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.13 | Ink annotations | `ink-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.5.6.14 | Popup annotations | `popup-annotations` | 1 done | 1 planned | 1 done | 1 done | 1 done |
+| 12.5.6.14 | Popup annotations | `popup-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.15 | File attachment annotations | `file-attachment-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.16 | Sound annotations | `sound-annotations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
 | 12.5.6.17 | Movie annotations | `movie-annotations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
 | 12.5.6.18 | Screen annotations | `screen-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.5.6.19 | Widget annotations | `widget-annotations` | 1 partial | 1 done | 1 partial | 1 partial | 1 done |
+| 12.5.6.19 | Widget annotations | `widget-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.20 | Printer's mark annotations | `printer-mark-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.21 | Trap network annotations | `trap-network-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.22 | Watermark annotations | `watermark-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.5.6.23 | Redaction annotations | `redaction-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.5.6.23 | Redaction annotations | `redaction-annotations` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 12.5.6.24 | Projection annotations | `projection-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.25 | 3D and RichMedia annotations | `rich-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.3 | Trigger events | `trigger-events` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-419 unfinished cells in 831 features: 9 engine, 174 partial, 236 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+409 unfinished cells in 831 features: 9 engine, 169 partial, 231 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -292,12 +292,8 @@ Milestone [#248](https://github.com/yhay81/pyropdf/issues/248).
 
 Milestone [#249](https://github.com/yhay81/pyropdf/issues/249).
 
-- [#903](https://github.com/yhay81/pyropdf/issues/903) Write rollover/down and widget icon appearances and line or popup annotation details. Implement rollover/down streams, widget MK icons and IF fitting, line captions and leaders, and popup parent semantics. Check independent rendering and relationships after edit/reopen.
-    - read — `line-annotations`, `widget-annotations`.
-    - interpret — `line-annotations`, `popup-annotations`.
-    - create, edit — `appearance-streams`, `line-annotations`, `widget-annotations`.
-- [#903](https://github.com/yhay81/pyropdf/issues/903) Write rollover/down and widget icon appearances and line or popup annotation details. Inspect and edit stored redaction marks, overlay text and appearance streams. Preserve the marks through reopening before destructive application.
-    - read, create, edit, preserve — `redaction-annotations`.
+- [#1025](https://github.com/yhay81/pyropdf/issues/1025) Shape rich and Unicode captions in line annotation appearances. Resolve and shape RC or multilingual captions, including embedded fonts, along the measured line after authoring and editing.
+    - read, interpret, create, edit — `line-annotations`.
 - [#902](https://github.com/yhay81/pyropdf/issues/902) Complete font program, encoding and CMap creation and editing. Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement.
     - read, interpret, preserve — `character-tables`.
     - create, edit — `type1-fonts`, `truetype-fonts`, `type3-fonts`, `simple-font-encodings`, `cmaps`, `embedded-fonts`, `character-tables`.

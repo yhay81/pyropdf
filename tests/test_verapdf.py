@@ -114,7 +114,7 @@ def test_profile_structure_and_edit_reports(profile: str) -> None:
         assert list(saved.pages[0].operations) == content
         assert saved.check().defects == ()
 
-    for edit in ("action_triggers", "ocr_layer", "page_records"):
+    for edit in ("action_triggers", "edit_interaction", "ocr_layer", "page_records"):
         with pyropdf.open(path) as edited:
             case = EDITS[edit]
             case.prepare(edited)
@@ -143,6 +143,25 @@ def test_the_profile_map_names_only_the_matching_parameter_case() -> None:
                 for test in row[dimension]["tests"]
                 if "::test_profile_structure_and_edit_reports" in test
             )
+
+
+@pytest.mark.parametrize("level", ["1b", "2b", "3b", "4", "4e", "4f"])
+def test_archival_appearance_reports_only_the_annotation_with_an_alternate(level: str) -> None:
+    path = ROOT / "tests/assets/pdfa" / f"pdfa-{level}.pdf"
+    with pyropdf.open(path) as doc:
+        note = doc.pages[0].annotations.add(pyropdf.Note((4, 8), contents="Review"))
+        normal = note.appearance_stream()
+        assert normal is not None
+        note.set_appearance("normal", normal)
+        assert doc.changes(incremental=True).claims == ()
+        note.set_appearance("down", normal)
+        for incremental in (False, True):
+            (change,) = doc.changes(incremental=incremental).claims
+            assert change.claim == f"PDF/A-{level.upper()}"
+            assert change.objects == (note.xref,)
+            assert change.reason == "PDF/A permits only the normal annotation appearance"
+        del note.obj["AP"]["D"]
+        assert doc.changes(incremental=True).claims == ()
 
 
 @pytest.mark.parametrize("incremental", [False, True])

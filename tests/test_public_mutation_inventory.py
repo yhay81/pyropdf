@@ -109,6 +109,18 @@ MUTATIONS = (
         "add",
     ),
     ("add_screen", "Validate and commit changes to the linked rendition.", "RenditionAction", "edit_rendition"),
+    (
+        "edit_interaction",
+        "Replace only this annotation's selected appearance, dimension layout or mark.",
+        "Annotation",
+        "set_appearance line_details= redaction=",
+    ),
+    (
+        "edit_interaction",
+        "Fit shared icon Forms and update only this widget's selected appearances.",
+        "Widget",
+        "icon_fit= set_icon set_appearance",
+    ),
     ("delete_annotation", "Detach annotation and owned appearance from page Annots.", "Annotations", "__delitem__"),
     (
         "edit_annotation",
@@ -597,7 +609,8 @@ MUTATIONS = (
 # Pure readers, value factories/transformations and external or session-only
 # effects are listed independently of edits to the versioned PDF.
 READ_ONLY = {
-    "Annotation": "pixmap text sound",
+    "Annotation": "pixmap text sound appearance_stream",
+    "Widget": "appearance_stream icon",
     "CancellationToken": "cancelled",
     "AnnotationFile": "read",
     "Attachment": "read",

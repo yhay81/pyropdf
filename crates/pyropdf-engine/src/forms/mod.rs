@@ -21,6 +21,7 @@ pub mod fill;
 mod fill_index;
 pub mod flatten;
 mod form_font;
+mod icons;
 mod import;
 mod radio;
 mod read;
@@ -36,6 +37,7 @@ pub mod widget_edit;
 pub use appearance::{OFF, appearance, face_appearance, restyled};
 pub use fill_index::FillCache;
 pub use form_font::{MAX_PARENTS, text_appearance};
+pub(crate) use form_font::{is_pdf_2_0, write_standard_type1};
 pub use import::{ImportDefaults, plan_imported_defaults, register_imported};
 pub use radio::repair_radio_groups;
 pub use read::{
