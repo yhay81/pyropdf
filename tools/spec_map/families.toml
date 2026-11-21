@@ -347,14 +347,6 @@ features = ["3d-artwork"]
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Resolve scene, camera and activation settings and each dimensional measurement geometry. Verify view, stream and measurement references after editing."
 
-[families.rich-media-settings]
-tracker = 256
-issue = 914
-title = "Author multi-asset RichMedia configurations, activation and presentation settings"
-features = ["rich-annotations", "rich-media"]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Bind multiple assets and instances to configurations and round-trip activation, presentation and animation settings."
-
 [families.legacy-media]
 tracker = 256
 issue = 915
