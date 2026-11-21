@@ -357,6 +357,32 @@ typed.LinkedTree.__len__() -> int
 
 Return the number of entries or elements.
 
+### `typed.LinkedTree.geospatial_measure`
+
+```python
+typed.LinkedTree.geospatial_measure: GeospatialMeasure | None
+```
+
+Read the registration of this viewport, image, form or Geospatial3D annotation.
+
+Settable.
+
+### `typed.LinkedTree.geospatial_point`
+
+```python
+typed.LinkedTree.geospatial_point(
+    index: int,
+    /,
+) -> tuple[tuple[Decimal, ...], tuple[Decimal, ...]]
+```
+
+Return a registered owner-space point and its geographic or projected coordinates.
+
+A viewport or form uses its PDF bounding box, an image uses the unit
+square, and a Geospatial3D annotation uses its view world coordinates.
+Geographic data returns latitude then longitude, projected data easting
+then northing. A three-dimensional registration also returns elevation.
+
 ### `typed.LinkedTree.xmp`
 
 ```python
