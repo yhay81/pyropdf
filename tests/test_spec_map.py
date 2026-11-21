@@ -68,6 +68,16 @@ def test_the_map_is_current() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_both_crypt_filter_clauses_credit_the_indirect_stream_operations() -> None:
+    mapped = features()
+    evidence = "tests/test_encrypted.py::test_indirect_private_stream_parameters_remain_shared_after_replacement"
+    for feature in ("crypt-filter", "crypt-filters"):
+        for dimension in ("read", "create", "edit", "preserve"):
+            cell = mapped[feature][dimension]
+            assert evidence in cell["tests"]
+            assert cell.get("issue") != 1056  # The store implements the indirect selectors covered by this issue.
+
+
 def test_every_arlington_object_has_a_read_status_backed_by_a_named_test() -> None:
     names = sorted(path.stem for path in (ROOT / "tools/arlington/model/tsv").glob("*.tsv"))
     mapped = features()
