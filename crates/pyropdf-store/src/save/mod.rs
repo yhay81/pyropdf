@@ -55,6 +55,8 @@ pub enum Refusal {
     RepairedBase,
     /// Encryption is implemented separately in issue #28.
     Encryption,
+    /// A recipient must hold Table 24 bit 2 to change the handler.
+    RecipientPermissions,
     /// Pruning, decompressing, another cross-reference form, object
     /// streams, and renumbering rewrite the original file, whose objects,
     /// numbers, and cross-reference form an incremental save keeps.
@@ -104,6 +106,7 @@ impl fmt::Display for Error {
                 Refusal::NoOriginalFile => "incremental save requires an original PDF file",
                 Refusal::RepairedBase => "incremental save is unavailable for a repaired base",
                 Refusal::Encryption => "saving encrypted documents requires the security handler",
+                Refusal::RecipientPermissions => "the recipient lacks permission to change encryption; keep the encryption or unlock with an authorized recipient",
                 Refusal::FullSaveOption => {
                     "prune, decompress, a new cross-reference form, object streams, renumbering, and linearization require a full save"
                 }
@@ -570,6 +573,24 @@ enum Mode<'a> {
 
 impl<'a> Mode<'a> {
     fn of(version: &'a Version, encryption: Option<&Encryption>, budget: &Budget) -> Result<Self> {
+        let source_encryption = version.base().trailer().get("Encrypt");
+        let selected = version.trailer().get("Encrypt");
+        if let Some(handler) = version
+            .base()
+            .file()
+            .and_then(Index::security)
+            .filter(|h| h.is_recipient())
+        {
+            let edited_dictionary = matches!(source_encryption, Some(Value::Reference(r)) if matches!(version.slot(r.number()), Some(Slot::Written(_))));
+            if (encryption.is_some() || selected != source_encryption || edited_dictionary)
+                && handler.access() != security::Access::Owner
+            {
+                return Err(Error::Refused(Refusal::RecipientPermissions));
+            }
+            if encryption.is_none() && selected.is_some() && edited_dictionary {
+                return Err(Error::Refused(Refusal::Encryption));
+            }
+        }
         if let Some(encryption) = encryption {
             let id = match version.trailer().get("ID") {
                 Some(Value::Array(id)) => match id.get(0) {
