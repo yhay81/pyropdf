@@ -5,7 +5,6 @@
 
 # Every object of the Arlington PDF Model is a feature of the map.
 [arlington]
-preserve = { status = "planned", milestone = "Phase 4: Specification" }
 
 [[arlington.rule]]
 objects = [
