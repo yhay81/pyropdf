@@ -212,6 +212,8 @@ def test_the_edition_crosswalk_requires_missing_features_even_after_regeneration
     end = text.find("\n[", start)
     path.write_text(text[:start] + (text[end:] if end >= 0 else ""), encoding="utf-8")
 
+    # Simulate losing both the feature and its behavior tests. The edition inventory alone must detect it.
+    (root / "tests" / "test_rich_models.py").unlink()
     result = generate(root)
     assert result.returncode == 1
     assert "ISO/TS 32007:2024 requires missing features: gltf-rich-media" in result.stderr

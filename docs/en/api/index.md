@@ -188,6 +188,7 @@ method and property of its classes with its full description.
 - [`PolyLine`](annotations.md#polyline): An open line through two or more display points, as `page.annotations.add` takes it.
 - [`ProjectionAnnotation`](annotations.md#projectionannotation): A projection annotation that links back to a 3D measurement.
 - [`RichMedia`](annotations.md#richmedia): A RichMedia annotation with a named asset, configuration, instance and optional 3D views.
+- [`RichMediaModel`](annotations.md#richmediamodel): A STEP or glTF model resolved from a PDF 2.0 RichMedia instance.
 - [`Screen`](annotations.md#screen): A Screen annotation with an optional media clip and its rendition action.
 - [`Sound`](annotations.md#sound): The sound of a sound annotation, `/Sound`, as `Annotation.sound` reads it.
 - [`SoundEncoding`](annotations.md#soundencoding): How a sound's samples encode amplitudes, `/E` (ISO 32000-2 Table 208).

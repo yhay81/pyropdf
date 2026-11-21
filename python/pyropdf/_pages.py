@@ -285,11 +285,17 @@ class Pages(Sequence[Page]):
         if source is not self._document:
             from pyropdf._media import finish_media_import  # noqa: PLC0415
 
-            with self._document.transaction("pages"):
-                media = _core.import_pages(doc, source._core(), chosen, at)  # noqa: SLF001
-                if media is not None:
-                    major, minor, first, prc = media
-                    finish_media_import(self._document, major, minor, first, contains_prc=prc)
+            operation = _core.begin_operation(doc, "pages")
+            try:
+                imported = _core.import_pages_with_source(doc, source._core(), chosen, at)  # noqa: SLF001
+                if imported is not None:
+                    media, core = imported
+                    with source._import_source(core) as captured:  # noqa: SLF001
+                        finish_media_import(self._document, captured, range(at, at + len(chosen)), media)
+            except BaseException:
+                _core.abort_canvas(doc, operation)
+                raise
+            _core.end_transaction(doc, True)  # noqa: FBT003 - commit the complete import.
             return
         order = [*objects[:at], *chosen, *objects[at:]]
         copies = [False] * at + [True] * len(chosen) + [False] * (count - at)

@@ -823,6 +823,8 @@ class RequirementType(enum.StrEnum):
     """Slide transition presentation effects (PDF 2.0)."""
     ENCRYPTION = "Encryption"
     """Cryptographic security handler support (PDF 2.0)."""
+    STEP = "STEP"
+    """STEP AP 242 model support per ISO/TS 24064 (PDF 2.0)."""
     GLTF = "glTF"
     """glTF 2.0 3D asset support per ISO/TS 32007 (PDF 2.0)."""
 
@@ -927,6 +929,15 @@ class DocumentRequirement:
             checked_penalty = int(penalty)
 
         checked_version = None if version is None else _validate_pdf_name(version, "version")
+        if checked_type is RequirementType.STEP and not (
+            checked_version is not None
+            and len(checked_version) == len("2020.0")
+            and checked_version.endswith(".0")
+            and checked_version[:4].isascii()
+            and checked_version[:4].isdecimal()
+        ):
+            msg = "STEP requirement version must be an AP 242 edition year followed by .0"
+            raise ValueError(msg)
         if checked_type is RequirementType.GLTF:
             if checked_version is None:
                 checked_version = "2.0"
@@ -1764,6 +1775,10 @@ def _write_document_requirements(document: Document, requirements: Iterable[Docu
                 del cat["Requirements"]
         else:
             _require_measurement_version(document, cat, minimum)
+            if any(req.type is RequirementType.STEP for req in items):
+                from pyropdf._rich_models import declare_step_requirement  # noqa: PLC0415
+
+                declare_step_requirement(document)
             cat["Requirements"] = serialized
         if candidates:
             _core.object_free_unreferenced(document._core(), candidates)  # noqa: SLF001

@@ -382,7 +382,7 @@ issue	locations	features	dimensions	work	summary
 801	32000-2-2020/clause12.html#H12.8.4.2	digital-signatures	read interpret create edit preserve		Time used to validate an existing timestamp
 802	32000-2-2020/clause12.html#H12.8.6	permissions	read interpret create edit preserve		Reference to the certification transform dictionary
 826	32000-2-2020/clause07.html#H7.3.3	basic-objects	read interpret create edit preserve		Delimiters between successive numeric values
-835	32007-2024/clause04.html#H4.8	developer-extensions gltf-rich-media	read interpret create edit preserve	863	Integer extension level in the glTF example
+835	32007-2024/clause04.html#H4.8	developer-extensions gltf-rich-media	read interpret create edit preserve		Integer extension level in the glTF example
 837	32000-2-2020/clause08.html#H8.9.7 32000-2-2020/clause14.html#H14.11.7	inline-images opi	read interpret create edit preserve		Filter order for ASCII-encoded inline images
 839	32000-2-2020/clause08.html#H8.6.5.5	icc-based-color-space	read interpret create edit preserve		ICC version of a profile used in a PDF colour space
 845	32000-2-2020/clause07.html#H7.9.4	dates	read interpret create edit preserve		Calendar used in PDF dates
