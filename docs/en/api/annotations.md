@@ -409,6 +409,74 @@ Existing Sound and Movie annotations use the same Arlington views.
 Legacy movie and sound actions and embedded slide shows can be edited
 through `typed.ActionMovie`, `typed.ActionSound` and `typed.SlideShow`.
 
+### `Annotation.rich_media_assets`
+
+```python
+Annotation.rich_media_assets: Mapping[str, typed.FileSpecification]
+```
+
+A snapshot of the named file specifications in this RichMedia annotation.
+
+### `Annotation.rich_media_configuration`
+
+```python
+Annotation.rich_media_configuration: typed.RichMediaConfiguration
+```
+
+The initial configuration selected by Activation, defaulting to the first configuration.
+
+### `Annotation.rich_media_view`
+
+```python
+Annotation.rich_media_view: typed.ThreeDViewAddEntries | None
+```
+
+The selected initial 3D view, or the first content view when Activation omits it.
+
+### `Annotation.set_rich_media_asset`
+
+```python
+Annotation.set_rich_media_asset(
+    name: str,
+    asset: MediaAsset | typed.FileSpecification | None,
+)
+```
+
+Insert or replace a named asset, or remove its name with `None`.
+
+A MediaAsset embeds a new file. Pass an existing file specification to share it.
+Removing its final name is refused if an activation script still needs the file.
+
+### `Annotation.add_rich_media_configuration`
+
+```python
+Annotation.add_rich_media_configuration(
+    name: str,
+    *,
+    kind: MediaKind,
+    assets: Sequence[typed.FileSpecification],
+) -> typed.RichMediaConfiguration
+```
+
+Append a named configuration with one instance per file, in the supplied order.
+
+Select the returned configuration through `RichMediaSettings.Activation.Configuration`
+inside `edit_rich_media()`. Each instance references the original file specification.
+
+### `Annotation.edit_rich_media`
+
+```python
+Annotation.edit_rich_media() -> AbstractContextManager[typed.AnnotRichMedia]
+```
+
+Edit the stored RichMedia graph in one transaction.
+
+For example, set `media.RichMediaSettings.Activation.View` to a view from
+`media.RichMediaContent.Views` inside `with annotation.edit_rich_media() as media:`.
+If settings are absent, create a dictionary with `doc.objects.add({})`, wrap
+its object in `typed.RichMediaSettings`, and assign it to `media.RichMediaSettings`.
+File streams, scripts and Flash instance parameters remain stored data.
+
 ### `Annotation.file`
 
 ```python
