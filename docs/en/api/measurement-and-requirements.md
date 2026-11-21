@@ -53,7 +53,8 @@ GeospatialMeasure(
     gpts: Iterable[Decimal | Real | float | str],
     *,
     dcs: CoordinateSystem | None = None,
-    lpts: Iterable[Decimal | Real | float | str] | None = None,
+    lpts: Iterable[Decimal | Real | float | str],
+    dimensions: Literal[2, 3] = 2,
     bounds: Iterable[Decimal | Real | float | str] | None = None,
     pdu: Sequence[str] | None = None,
     pcsm: Iterable[Decimal | Real | float | str] | None = None,
@@ -65,6 +66,9 @@ A geospatial measure dictionary with full-precision decimal coordinates (`/Subty
 `gpts` (`/GPTS`), `lpts` (`/LPTS`), `bounds` (`/Bounds`), and
 `pcsm` (`/PCSM`) hold `decimal.Decimal` values that write their
 exact positional digits into the PDF object store without `float` rounding.
+Each local point must have a matching ground point. By default, local pairs
+lie in the unit square. Set `dimensions=3` for a declared Geospatial3D
+annotation's world-coordinate triples, with ground elevation last.
 
 ## `NumberFormat`
 
