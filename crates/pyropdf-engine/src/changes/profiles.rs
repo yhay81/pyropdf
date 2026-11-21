@@ -1,6 +1,8 @@
 //! Profile effects that depend on a catalog relationship, changed page content,
 //! or the previous value of a written object.
 
+mod widgets;
+
 use super::*;
 use crate::content::PageContent;
 use pyropdf_store::memo::Reads;
@@ -145,6 +147,12 @@ fn local_rules(
             .then_some("the structure tree root lost its required Document child");
         }
         _ => {}
+    }
+    if matches!(claim, Claim::Ua(_))
+        && is_untagged_annotation(dict)
+        && !(claim == Claim::Ua(2) && widgets::zero_size(version, dict, budget)?)
+    {
+        reasons[2] = Some("the edits add an annotation that is not in the structure tree");
     }
     Ok(reasons)
 }
@@ -566,6 +574,7 @@ pub(super) fn dependencies<'b>(
     budget: &'b Budget,
 ) -> Result<()> {
     if claim == Claim::Ua(2) {
+        widgets::changes(opened, version, written, found, budget)?;
         let old = undescribed_files(opened, budget)?;
         for &(spec, holder) in undescribed_files(version, budget)?.iter() {
             if old
