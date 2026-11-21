@@ -80,7 +80,7 @@ mod _core {
         OcrError, PasswordError, PdfError, StaleObjectError,
     };
     #[pymodule_export]
-    use super::fax::encode_ccitt_g4;
+    use super::fax::{encode_ccitt_g4, encode_image_samples};
     #[pymodule_export]
     use super::fonts::{
         _Font, _FontFile, mark_font_subset, set_fallback_faces, subset_font_program, type3_codes,
@@ -111,7 +111,8 @@ mod _core {
     use super::objects::{
         decode_text_string, object_add, object_add_stream, object_delete, object_free_unreferenced,
         object_get, object_insert, object_keys, object_len, object_lookup, object_numbers,
-        object_replace, object_set, schema_entry, schema_leaf, stream_read, stream_write,
+        object_replace, object_set, schema_change, schema_created, schema_entry, schema_leaf,
+        stream_read, stream_write,
     };
     #[pymodule_export]
     use super::ocr::{_OcrEngine, insert_ocr_layer};
