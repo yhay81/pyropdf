@@ -1518,11 +1518,8 @@ deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated features is excluded by the specification completion milestone." }
 
 [features.structure-children]
-create = { status = "partial", missing = "Checked transactions enforce determinate Annex L rules at commit. Contextual and cross-namespace relationships still need the role resolution in #990.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Checked transactions enforce determinate Annex L rules at commit. Contextual and cross-namespace relationships still need the role resolution in #990.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The July 2024 Annex L matrix, numerical bounds, caption placement and Ruby sequences are interpreted. Cross-namespace role mapping and semantic conditions such as grouping usage or Warichu still need contextual resolution.", milestone = "Phase 4: Specification" }
 clause = "Annex L"
-description = "Check parent and child standard roles and their allowed multiplicities in the PDF 2.0 namespace."
+description = "Evaluate the July 2024 Annex L multiplicities, transparent containers, grouping usage and Ruby or Warichu content after namespace role mapping. Report an indeterminate result when a condition cannot be established."
 objects = []
 
 [features.fragment-identifiers]

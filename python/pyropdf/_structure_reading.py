@@ -10,6 +10,7 @@ from pyropdf._errors import LimitError, MalformedPdfError
 from pyropdf._objects import Array, Dictionary, Name, String
 from pyropdf._operations import Operation
 from pyropdf._structure import (
+    _CODE_STRUCTURE_TREE,
     _DEFAULT_MAX_ELEMENTS,
     _MAX_STRUCTURE_DEPTH,
     _MAX_TREE_DEPTH,
@@ -308,38 +309,49 @@ _GROUPING = {"Document", "DocumentFragment", "Part", "Sect", "Aside"}
 _OTHER = "other namespace"
 
 
+def _namespace_mapping(namespace: Dictionary, role: str) -> tuple[object, str]:
+    uri = namespace.get("NS")
+    if not isinstance(uri, String) or not uri:
+        return None, "missing namespace identifier"
+    mapping = namespace.get("RoleMapNS")
+    target = mapping.get(role) if isinstance(mapping, Dictionary) else None
+    # The two standard identifiers fit even in UTF-16 with a byte-order mark.
+    uri_text = uri.text if len(uri) <= 4 * len(_PDF2) else None
+    return target, {_PDF2: _STANDARD, _PDF1: _OTHER}.get(uri_text, "unmapped namespace role")
+
+
 def _role(element: StructureElement, budget: _core._OperationBudget) -> tuple[str, str]:
     role = element.role
     ns = element.obj.get("NS")
+    if ns is None:
+        # The global role map ends in PDF 1.7. Keep the authored name for this
+        # out-of-scope relationship, as in the original Annex L reports.
+        return role, _OTHER
     visited = set()
-    for _ in range(_MAX_TREE_DEPTH + 1):
+    for hops in range(_MAX_TREE_DEPTH + 1):
         budget.poll()
-        uri = ns.get("NS") if isinstance(ns, Dictionary) else None
-        if isinstance(uri, String) and len(uri) <= 4 * len(_PDF2) and uri.text == _PDF2:
-            return role, _STANDARD
-        if not isinstance(ns, Dictionary) or (
-            isinstance(uri, String) and len(uri) <= 4 * len(_PDF1) and uri.text == _PDF1
-        ):
-            # Keep the authored name for default-namespace elements outside Annex L.
-            return role, _OTHER
-        key = (ns.xref, role)
+        if not isinstance(ns, Dictionary) or ns.xref is None:
+            return role, "invalid namespace reference"
+        key = ns.xref, role
         if key in visited:
             return role, "cyclic namespace role map"
+        target, space = _namespace_mapping(ns, role)
+        if target is None:
+            return role, space
+        if hops == _MAX_TREE_DEPTH:
+            break
         budget.charge("memory_size", 128)
         visited.add(key)
-        mapping = ns.get("RoleMapNS")
-        target = mapping.get(role) if isinstance(mapping, Dictionary) else None
         if isinstance(target, Name):
             return element.document.structure.resolve_role(str(target)), _OTHER
         if isinstance(target, Array) and len(target) == 2:  # noqa: PLR2004 - role and namespace
             next_role, ns = target
-            if isinstance(next_role, Name) and isinstance(ns, Dictionary):
+            if isinstance(next_role, Name):
                 role = str(next_role)
                 continue
         return role, "unmapped namespace role"
-    msg = "structure interpretation exceeds 32 namespace role-map hops"
-    code = "structure_tree_count"
-    raise LimitError(code, msg)
+    msg = f"structure interpretation exceeds {_MAX_TREE_DEPTH} namespace role-map hops"
+    raise LimitError(_CODE_STRUCTURE_TREE, msg)
 
 
 @dataclass(slots=True)
@@ -361,16 +373,14 @@ class _Children:
         self.mixed |= space != _STANDARD
         self.inline |= role == "content item" or (space == _STANDARD and role in _INLINE)
         self.grouping |= space == _STANDARD and role in _GROUPING
+        if self.first is None:
+            self.first = role
+        self.last = role
         if role == "content item":
             if content is False or (self.text is True and content is None):
                 self.text = content
-        else:
-            if self.first is None:
-                self.first = role
-            self.last = role
-            # One over the longest Ruby/Warichu assembly distinguishes an oversized sequence.
-            if len(self.order) < 5:  # noqa: PLR2004
-                self.order.append(role)
+        elif len(self.order) < 5:  # noqa: PLR2004 - one more than the longest Ruby/Warichu assembly.
+            self.order.append(role)
 
 
 @dataclass(slots=True)

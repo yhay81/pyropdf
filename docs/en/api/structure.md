@@ -558,13 +558,19 @@ tuple. Both structure readers visit at most 65,536 child entries and
 ### `StructureTree.child_rules`
 
 ```python
-StructureTree.child_rules() -> tuple[StructureChildRule, ...]
+StructureTree.child_rules(
+    *,
+    grouping_usage: Mapping[int, bool] | None = None,
+) -> tuple[StructureChildRule, ...]
 ```
 
 Read the observed parent/child multiplicities under the PDF 2.0 Annex L rules.
 
-A conditional or cross-namespace relationship retains its own rule and an
-indeterminate verdict where the namespace or role-specific specification is required.
+Namespace mappings are followed to the standard role, and transparent
+containers contribute to the enclosing role's counts. Supply a mapping
+of element object numbers to intended grouping use when several uses
+fit the stored children. An indeterminate result retains the condition
+that requires more information. The rules apply to the PDF 2.0 namespace.
 
 ### `StructureTree.walk`
 
