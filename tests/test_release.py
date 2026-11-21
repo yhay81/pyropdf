@@ -324,6 +324,8 @@ def test_pr_wheels_match_the_native_release_builds() -> None:
     for setting in re.findall(r"^ *(?:- )?([\w-]+: .*)$", native, flags=re.MULTILINE):
         if setting.startswith(("uses: PyO3/", "rust-toolchain:", "maturin-version:", "manylinux:")):
             assert comparison.count(setting) == 2
+    assert native.index("mkdir -p dist") < native.index("uses: PyO3/maturin-action")
+    assert comparison.index("mkdir -p base/dist head/dist") < comparison.index("uses: PyO3/maturin-action")
     assert "cat tools/native-wheel-args.txt" in native
     assert "args: ${{ steps.native.outputs.args }}" in native
     assert "ref: ${{ github.sha }}" in comparison
