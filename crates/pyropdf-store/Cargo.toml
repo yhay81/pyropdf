@@ -18,6 +18,10 @@ hayro-syntax = { version = "0.9.0", default-features = false, features = ["std"]
 aes = "0.9.4"
 md-5 = "0.11.0"
 sha2 = "0.11.1"
+# ISO 32000-2 algorithm for the V4 AESV2 recipient file key.
+sha1 = "0.11.0"
+# Fresh AES initialization vectors for recipient ciphertext.
+getrandom = "0.4.3"
 
 # The Flate encoder of a save that compresses streams (DESIGN.md section
 # 4.4), the version that the binding and hayro already pull in.
