@@ -24,8 +24,9 @@ use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::value::{Dict, Name, PdfString, Reference, StringForm, Value};
 use crate::{Error, Password, Result};
 
+pub(crate) use value::decrypt_value_with;
 pub(crate) use value::encrypt_bytes_as;
-pub use value::{decrypt_value, encrypt_bytes, encrypt_value};
+pub use value::{decrypt_value, encrypt_bytes, encrypt_value, encrypt_value_with};
 
 /// The 32 bytes that pad a password (ISO 32000-2 section 7.6.4.3.2).
 const PADDING: [u8; 32] = [

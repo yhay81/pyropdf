@@ -35,10 +35,11 @@ defaults to `user_password`. Each password is capped at 127 UTF-8 bytes.
 
 `method` selects `"aes-256"` (revision 6), `"aes-128"` (revision 4),
 or `"aes-gcm"` (ISO/TS 32003:2023, revision 7). AES-GCM authenticates
-each encrypted string and stream when the store reads it. pyropdf
-reads RC4 but never writes it. `Encryption.KEEP` keeps the
-encryption that the document was opened with, copying its untouched
-encrypted bytes. Without `encryption`, a full save writes the document
+each encrypted string and stream when the store reads it.
+`Encryption.KEEP` retains the existing handler, including legacy
+RC4 and AES-256 revision 5. It copies untouched encrypted bytes and
+encrypts new strings and streams with that handler. Without
+`encryption`, a full save writes the document
 decrypted, and an incremental save keeps its encryption.
 
 With `integrity=True`, a 256-bit method creates an ISO/TS 32004:2024

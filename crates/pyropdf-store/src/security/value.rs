@@ -3,7 +3,7 @@
 
 use super::{Handler, Kind, Method};
 use crate::budget::{Budget, BudgetVec};
-use crate::value::{Bytes, PdfString, Reference, StringForm, Value};
+use crate::value::{Bytes, FilterLookup, PdfString, Reference, StringForm, Value};
 use crate::{Error, Result, write};
 
 /// The deepest nesting that the walk follows. Parsed values are shallower:
@@ -20,7 +20,25 @@ pub fn decrypt_value(
     value: &Value,
     budget: &Budget,
 ) -> Result<Value> {
-    transform(handler, (reference, reference), value, budget, false)
+    decrypt_value_with(handler, reference, value, &|_, _| Ok(None), budget)
+}
+
+/// Decrypt an object using the filter entries from its sealed revision.
+pub(crate) fn decrypt_value_with(
+    handler: &Handler,
+    reference: Reference,
+    value: &Value,
+    lookup: &FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<Value> {
+    transform(
+        handler,
+        (reference, reference),
+        value,
+        lookup,
+        budget,
+        false,
+    )
 }
 
 /// Returns `value`, of the object that `reference` names, with its strings
@@ -31,7 +49,24 @@ pub fn encrypt_value(
     value: &Value,
     budget: &Budget,
 ) -> Result<Value> {
-    transform(handler, (reference, reference), value, budget, true)
+    encrypt_value_with(
+        handler,
+        (reference, reference),
+        value,
+        &|_, _| Ok(None),
+        budget,
+    )
+}
+
+/// Encrypt an object for its target number using the current revision's selectors.
+pub fn encrypt_value_with(
+    handler: &Handler,
+    references: (Reference, Reference),
+    value: &Value,
+    lookup: &FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<Value> {
+    transform(handler, references, value, lookup, budget, true)
 }
 
 /// Returns the bytes of a value, `bytes`, of the object that `reference`
@@ -43,7 +78,14 @@ pub fn encrypt_bytes(
     bytes: &Bytes,
     budget: &Budget,
 ) -> Result<Bytes> {
-    encrypt_bytes_as(handler, reference, reference, bytes, budget)
+    encrypt_bytes_as(
+        handler,
+        reference,
+        reference,
+        bytes,
+        &|_, _| Ok(None),
+        budget,
+    )
 }
 
 pub(crate) fn encrypt_bytes_as(
@@ -51,10 +93,11 @@ pub(crate) fn encrypt_bytes_as(
     source: Reference,
     target: Reference,
     bytes: &Bytes,
+    lookup: &FilterLookup<'_>,
     budget: &Budget,
 ) -> Result<Bytes> {
     let value = Value::parse(bytes, budget)?;
-    let value = transform(handler, (source, target), &value, budget, true)?;
+    let value = encrypt_value_with(handler, (source, target), &value, lookup, budget)?;
     let mut out = BudgetVec::new(budget);
     write::value(&mut out, &value)?;
     Ok(Bytes::new(out.into_vec()))
@@ -64,6 +107,7 @@ fn transform(
     handler: &Handler,
     reference: (Reference, Reference),
     value: &Value,
+    lookup: &FilterLookup<'_>,
     budget: &Budget,
     encrypt: bool,
 ) -> Result<Value> {
@@ -73,7 +117,7 @@ fn transform(
         return crate::refs::copy_for_edit(value, budget);
     }
     let mut out = crate::refs::copy_for_edit(value, budget)?;
-    walk(handler, reference, &mut out, budget, encrypt, 0)?;
+    walk(handler, reference, &mut out, lookup, budget, encrypt, 0)?;
     Ok(out)
 }
 
@@ -81,6 +125,7 @@ fn walk(
     handler: &Handler,
     reference: (Reference, Reference),
     value: &mut Value,
+    lookup: &FilterLookup<'_>,
     budget: &Budget,
     encrypt: bool,
     depth: usize,
@@ -112,7 +157,7 @@ fn walk(
         }
         Value::Array(array) => {
             for item in array.iter_mut() {
-                walk(handler, reference, item, budget, encrypt, depth + 1)?;
+                walk(handler, reference, item, lookup, budget, encrypt, depth + 1)?;
             }
         }
         Value::Dict(dict) => {
@@ -125,33 +170,37 @@ fn walk(
                 if signature && key.as_bytes() == b"Contents" {
                     continue;
                 }
-                walk(handler, reference, item, budget, encrypt, depth + 1)?;
+                walk(handler, reference, item, lookup, budget, encrypt, depth + 1)?;
             }
         }
         Value::Stream(stream) => {
             for (_, item) in stream.dict_mut().iter_mut() {
-                walk(handler, reference, item, budget, encrypt, depth + 1)?;
+                walk(handler, reference, item, lookup, budget, encrypt, depth + 1)?;
             }
             let metadata = matches!(
                 stream.dict().get("Type"),
                 Some(Value::Name(n)) if n.as_bytes() == b"Metadata"
             );
-            if encrypt
+            let selectors = crate::value::filters::resolved(stream.dict(), lookup, budget)?;
+            let prepend = encrypt
                 && handler.is_recipient()
                 && metadata
                 && !handler.encrypts_metadata()
-                && super::filters::explicit(stream.dict(), budget)?.is_none()
-            {
-                super::filters::prepend_identity(stream.dict_mut(), budget)?;
-            }
+                && super::filters::explicit(&selectors, budget)?.is_none();
             let data = handler.transform_data(
                 Kind::Stream,
-                Some(stream.dict()),
+                Some(&selectors),
                 reference,
                 stream.data(),
                 budget,
                 encrypt,
             )?;
+            if prepend {
+                if let std::borrow::Cow::Owned(selectors) = selectors {
+                    *stream.dict_mut() = selectors;
+                }
+                super::filters::prepend_identity(stream.dict_mut(), budget)?;
+            }
             stream.set_data(Bytes::new(data));
         }
         _ => {}

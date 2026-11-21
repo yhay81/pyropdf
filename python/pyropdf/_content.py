@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
     from pyropdf._core import PathColumns, _OperationBudget, _PageSnapshot, _PathPaint, _PathRow, _PathStroke
     from pyropdf._document import Document
+    from pyropdf._objects import Array, Dictionary
 
 
 class BlendMode(enum.StrEnum):
@@ -217,6 +218,22 @@ class TilingPattern:
     """The opacity of the pattern cell as a whole."""
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PatternPaint:
+    """Paint with an indirect tiling or shading pattern in the canvas document.
+
+    Pass the pattern's store handle, for example the ``obj`` of a
+    :class:`typed.PatternType1` or :class:`typed.PatternType2`. Its PDF matrix
+    positions it in default user space. For an uncolored tiling pattern,
+    supply an indirect ``[/Pattern base]`` color space and its color components.
+    DeviceN bases support up to 32 components, matching the renderer.
+    """
+
+    pattern: Dictionary
+    space: Array | None = None
+    components: tuple[float, ...] = ()
+
+
 @dataclass(frozen=True, slots=True)
 class ColorStop:
     """A place on a gradient's line, and the color and alpha there."""
@@ -266,7 +283,7 @@ _ReadGradient: TypeAlias = tuple[
     Gradient, tuple[float, float, float, float] | None, tuple[float, float, float, float] | None
 ]
 # A canvas also repaints an axial/radial ShadingPattern retained by extraction.
-Paint: TypeAlias = Color | ShadingPattern | TilingPattern | Gradient
+Paint: TypeAlias = Color | PatternPaint | ShadingPattern | TilingPattern | Gradient
 
 
 class _ShadingSource:
@@ -1289,6 +1306,7 @@ for _public in (
     CurveTo,
     ClosePath,
     Color,
+    PatternPaint,
     ShadingPattern,
     TilingPattern,
     ColorStop,

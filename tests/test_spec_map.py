@@ -68,6 +68,16 @@ def test_the_map_is_current() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_both_crypt_filter_clauses_credit_the_indirect_stream_operations() -> None:
+    mapped = features()
+    evidence = "tests/test_encrypted.py::test_indirect_private_stream_parameters_remain_shared_after_replacement"
+    for feature in ("crypt-filter", "crypt-filters"):
+        for dimension in ("read", "create", "edit", "preserve"):
+            cell = mapped[feature][dimension]
+            assert evidence in cell["tests"]
+            assert cell.get("issue") != 1056  # The store implements the indirect selectors covered by this issue.
+
+
 def test_every_arlington_object_has_a_read_status_backed_by_a_named_test() -> None:
     names = sorted(path.stem for path in (ROOT / "tools/arlington/model/tsv").glob("*.tsv"))
     mapped = features()
@@ -177,10 +187,9 @@ def test_markers_and_statuses_the_generator_does_not_understand_are_refused(tmp_
         (features_path, features_text.replace('reason = "7.4: a filter', 'reason = "A filter'), "cites no clause"),
         (
             features_path,
-            features_text.replace(
-                "[features.lzw-filter]\n",
-                '[features.lzw-filter]\ndeprecated = true\ncreate = { status = "n/a", reason = "7.4.4: old." }\n',
-            ),
+            features_text
+            + '\n[features.fixture-deprecated]\nclause = "7.4.4"\ndescription = "Fixture."\nobjects = []\n'
+            'deprecated = true\ncreate = { status = "n/a", reason = "7.4.4: old." }\n',
             "creating a deprecated feature is a non-goal",
         ),
         (features_path, features_text.replace('"7.2" = ', '"7.2.1" = "Unused"\n"7.2" = '), "without a feature: 7.2.1"),
@@ -279,11 +288,23 @@ def test_upstream_correction_comparison_ignores_navigation_and_reports_new_locat
     assert result.stdout == "New: #2 edition/clause01.html#H2\n"
 
 
-def test_a_feature_takes_the_default_status_only_where_no_test_proves_it() -> None:
-    by_name = features()
-    assert by_name["flate-filter"]["read"]["status"] == "done"
-    assert by_name["lzw-filter"]["read"]["status"] == "planned"
-    assert by_name["lzw-filter"]["read"]["family"] == "stream-filters"
+def test_a_feature_takes_the_default_status_only_where_no_test_proves_it(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    feature = "fixture-default"
+    with (root / FEATURES).open("a", encoding="utf-8") as target:
+        target.write(f'\n[features.{feature}]\nclause = "7.4.4"\ndescription = "Fixture."\nobjects = []\n')
+    with (root / FEATURES.with_name("families.toml")).open("a", encoding="utf-8") as target:
+        target.write(
+            f'\n[families.fixture]\ntracker = 252\nissue = 891\ntitle = "Fixture"\nfeatures = ["{feature}"]\n'
+            'dimensions = ["read", "interpret", "create", "edit", "preserve"]\nbehavior = "Fixture."\n'
+        )
+    (root / "tests/test_fixture.py").write_text(f'@pytest.mark.spec("{feature}", "read")\ndef test_read(): pass\n')
+    result = generate(root)
+    assert result.returncode == 0, result.stderr
+    fixture = next(item for item in json.loads((root / MAP).read_text())["features"] if item["feature"] == feature)
+    assert fixture["read"]["status"] == "done"
+    assert fixture["edit"]["status"] == "planned"
+    assert fixture["edit"]["family"] == "fixture"
 
 
 OPEN_MILESTONES = frozenset(
@@ -477,15 +498,32 @@ def claim(
 
 
 def test_a_claim_holds_only_when_every_applicable_dimension_in_scope_is_done(tmp_path: Path) -> None:
-    held = claim(copy_root(tmp_path / "a"), 'features = ["standard-security-handler"]\n')
+    held = claim(copy_root(tmp_path / "a"), 'features = ["standard-aes-r6"]\n')
     assert held.returncode == 0, held.stdout + held.stderr
     assert "The claim holds." in held.stdout
     assert "Full inventory: " in held.stdout
     assert "5 of 5 applicable dimensions of 1 features done (100.0%)" in held.stdout
     blocked = claim(copy_root(tmp_path / "b"), 'clauses = ["7.6.4", "7.4.4"]\n')
     assert blocked.returncode == 1
-    assert "- flate-filter edit is planned" in blocked.stdout
-    assert "- lzw-filter read is planned" in blocked.stdout
+    assert "- flate-filter edit is partial" in blocked.stdout
+    assert "- lzw-filter read is partial" in blocked.stdout
+
+
+@pytest.mark.parametrize("selector", ['clauses = ["7.6.4"]', 'features = ["standard-security-handler"]'])
+def test_password_handler_claim_reports_rc4_creation_and_legacy_owner_rendering(tmp_path: Path, selector: str) -> None:
+    root = copy_root(tmp_path)
+    result = claim(root, selector)
+    assert result.returncode == 1
+    for method in ("standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4"):
+        assert f"{method} create is non-goal" in result.stdout
+        assert f"{method} interpret is partial" in result.stdout
+    assert "standard-aes-r5 create is non-goal" in result.stdout
+    evidence = record_evidence(root)
+    node = "tests/test_encrypted.py::test_aes_authoring_sets_the_exact_revision_and_permissions[standard-aes-r6]"
+    assert evidence["tests"].pop(node) == "passed"
+    missing = claim(root, 'features = ["standard-aes-r6"]', evidence)
+    assert missing.returncode == 1
+    assert node in missing.stdout
 
 
 def test_clause_claims_resolve_typed_objects_and_report_their_work(tmp_path: Path) -> None:
@@ -496,8 +534,12 @@ def test_clause_claims_resolve_typed_objects_and_report_their_work(tmp_path: Pat
     (root / MAP).write_text(json.dumps(mapped))
     broad = claim(root, 'clauses = ["7.6.4"]\nfeatures = ["EncryptionStandard"]')
     assert broad.returncode == 1, broad.stderr
-    assert "Resolved features: EncryptionStandard, standard-security-handler\n" in broad.stdout
-    assert "of 10 applicable dimensions of 2 features" in broad.stdout
+    security_rows = (
+        "EncryptionStandard, standard-aes-r4, standard-aes-r5, standard-aes-r6, "
+        "standard-rc4-r2, standard-rc4-r3, standard-rc4-r4, standard-security-handler"
+    )
+    assert f"Resolved features: {security_rows}\n" in broad.stdout
+    assert "of 40 applicable dimensions of 8 features" in broad.stdout
     assert "EncryptionStandard edit is planned (#889)" in broad.stdout
     parent = claim(root, 'clauses = ["7.6"]')
     assert "EncryptionStandard edit is planned (#889)" in parent.stdout
@@ -594,19 +636,19 @@ def test_a_non_goal_blocks_a_claim_unless_the_scope_excludes_it(tmp_path: Path) 
     features_path = root / FEATURES
     goal = '{ status = "non-goal", decision = "#1", reason = "Test." }'
     entry = "".join(f"{dimension} = {goal}\n" for dimension in DIMENSIONS)
-    features_path.write_text(
-        features_path.read_text(encoding="utf-8").replace("[features.lzw-filter]\n", f"[features.lzw-filter]\n{entry}"),
-        encoding="utf-8",
-    )
+    with features_path.open("a", encoding="utf-8") as target:
+        target.write(
+            f'\n[features.fixture-non-goal]\nclause = "7.4.4"\ndescription = "Fixture."\nobjects = []\n{entry}'
+        )
     assert generate(root).returncode == 0
-    blocked = claim(root, 'clauses = []\nfeatures = ["lzw-filter"]\n')
+    blocked = claim(root, 'clauses = []\nfeatures = ["fixture-non-goal"]\n')
     assert blocked.returncode == 1
-    assert "- lzw-filter create is non-goal that the scope does not declare as an exclusion" in blocked.stdout
+    assert "- fixture-non-goal create is non-goal that the scope does not declare as an exclusion" in blocked.stdout
     excluded = "".join(f'{dimension} = "Out of this claim."\n' for dimension in DIMENSIONS)
-    held = claim(root, f'clauses = []\nfeatures = ["lzw-filter"]\n\n[exclusions.lzw-filter]\n{excluded}')
+    held = claim(root, f'clauses = []\nfeatures = ["fixture-non-goal"]\n\n[exclusions.fixture-non-goal]\n{excluded}')
     assert held.returncode == 1, held.stdout
     assert "no applicable dimensions" in held.stdout
-    assert "- lzw-filter create (non-goal): Out of this claim." in held.stdout
+    assert "- fixture-non-goal create (non-goal): Out of this claim." in held.stdout
 
 
 def test_a_claim_rejects_empty_scopes_and_invalid_exclusions(tmp_path: Path) -> None:
@@ -624,9 +666,11 @@ def test_a_claim_rejects_empty_scopes_and_invalid_exclusions(tmp_path: Path) -> 
 
 def test_a_claim_requires_the_named_tests_and_validators_at_the_revision(tmp_path: Path) -> None:
     root = copy_root(tmp_path)
-    scope = 'features = ["standard-security-handler"]'
+    scope = 'features = ["standard-aes-r6"]'
     original = record_evidence(root)
-    test = next(test for test in original["tests"] if "test_every_standard_handler_reads_with_both_passwords" in test)
+    test = (
+        "tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-aes-r6]"
+    )
     for outcome in ("failed", "skipped", None):
         data = record_evidence(root)
         del data["tests"][test]
@@ -634,7 +678,7 @@ def test_a_claim_requires_the_named_tests_and_validators_at_the_revision(tmp_pat
             data["tests"][test + "[revision-6]"] = outcome
         result = claim(root, scope, data)
         assert result.returncode != 0
-        assert f"standard-security-handler read lacks passing tests: {test}" in result.stdout
+        assert f"standard-aes-r6 read lacks passing tests: {test}" in result.stdout
     for check in CHECKS:
         data = record_evidence(root)
         del data["checks"][check]
@@ -754,7 +798,7 @@ def test_prospective_merge_checks_both_branches_and_preserves_the_checkout(tmp_p
 def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_path: Path) -> None:
     root = copy_root(tmp_path)
     spec_map = json.loads((root / MAP).read_bytes())
-    feature = next(f for f in spec_map["features"] if f["feature"] == "standard-security-handler")
+    feature = next(f for f in spec_map["features"] if f["feature"] == "standard-aes-r6")
     spec_map["features"] = [feature]
     feature["edit"].update(missing="A remaining edit.", issue=257)
     decisions = root / "evidence/releases/v1.0.0/decisions.toml"
@@ -787,7 +831,7 @@ def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_pat
 
     assert run("partial").returncode != 0
     decisions.write_text(
-        'release = "v1.0.0"\n[exceptions.standard-security-handler.edit]\n'
+        'release = "v1.0.0"\n[exceptions.standard-aes-r6.edit]\n'
         'decision = "https://github.com/yhay81/pyropdf/issues/257#issuecomment-123"\n'
         'limitation = "The recorded limitation."\n'
     )
@@ -795,12 +839,12 @@ def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_pat
         result = run(status)
         assert result.returncode == 0, result.stderr + result.stdout
         assert "The recorded limitation." in result.stdout
-        result = claim(root, 'features = ["standard-security-handler"]')
+        result = claim(root, 'features = ["standard-aes-r6"]')
         assert result.returncode != 0
-        assert f"standard-security-handler edit is {status}" in result.stdout
+        assert f"standard-aes-r6 edit is {status}" in result.stdout
         result = claim(
             root,
-            'features = ["standard-security-handler"]\n[exclusions.standard-security-handler]\nedit="Outside scope"',
+            'features = ["standard-aes-r6"]\n[exclusions.standard-aes-r6]\nedit="Outside scope"',
         )
         assert result.returncode == 0
         assert "4 of 4" in result.stdout
@@ -815,7 +859,7 @@ def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_pat
     for status in ("engine", "planned"):
         result = run(status)
         assert result.returncode != 0
-        assert f"standard-security-handler edit is {status}" in result.stdout
+        assert f"standard-aes-r6 edit is {status}" in result.stdout
 
 
 def qualifying_workflows(root: Path) -> tuple[dict, dict]:
