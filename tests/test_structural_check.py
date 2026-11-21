@@ -36,12 +36,6 @@ CRYPT_FILTERS = frozenset(
 )
 
 KNOWN: dict[str, frozenset[tuple[str, str]]] = {
-    # The structural output-intent screen ignores use and calibrated defaults.
-    # These four positives/otherwise unrelated negatives are tracked in #1034.
-    "profile-sources/1b-pass.pdf": frozenset({("PDF/A-1B/OutputIntents", "profile")}),
-    "profile-sources/2b-fail.pdf": frozenset({("PDF/A-2B/OutputIntents", "profile")}),
-    "profile-sources/2b-pass.pdf": frozenset({("PDF/A-2B/OutputIntents", "profile")}),
-    "profile-sources/4-pass.pdf": frozenset({("PDF/A-4/OutputIntents", "profile")}),
     # This negative really uses uncalibrated device RGB: PDF/A-4 6.2.4.3-2.
     "profile-sources/4-fail.pdf": frozenset({("PDF/A-4/OutputIntents", "profile")}),
     # veraPDF's EmbeddedFiles control uses /Undefined in a separate
@@ -403,7 +397,11 @@ def test_a_pdfa_claim_that_holds_has_no_profile_defect() -> None:
 @pytest.mark.spec("output-intents", "interpret")
 @pytest.mark.spec("pdfa", "read")
 def test_a_pdfa_claim_without_an_output_intent_is_found() -> None:
-    assert profile_defects(claiming(PDFA)) == {(1, "OutputIntents", "PDF/A-2B/OutputIntents")}
+    doc = claiming(PDFA)
+    assert profile_defects(doc) == set()  # The empty page paints no colours.
+    with doc.pages[0].draw() as canvas:
+        canvas.rect((0, 0, 20, 20), fill=pyropdf.Color(0.2, 0.5, 0.8))
+    assert profile_defects(doc) == {(1, "OutputIntents", "PDF/A-2B/OutputIntents")}
 
 
 def test_a_pdfa_claim_with_javascript_is_found() -> None:
