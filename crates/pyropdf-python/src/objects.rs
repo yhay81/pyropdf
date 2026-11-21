@@ -19,7 +19,9 @@
 //! generation)` for a reference, and `("c", root, path)` for a copy of what
 //! a handle names.
 
+mod author;
 mod schema;
+pub use author::{schema_change, schema_created};
 pub use schema::{schema_entry, schema_leaf};
 
 use std::sync::Arc;
