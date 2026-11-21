@@ -474,7 +474,8 @@ StructureTree.reading_order(
 
 Extract logical text in mixed structure-child order, including cross-page references.
 
-Use element replacement text, or its expansion when requested. Each item retains
+Use element or marked-content replacement text, including a named Form stream's
+own MCID substitution, or its expansion when requested. Each item retains
 its structure element. Unattributable text, including a Form stream without
 a replacement, has a missing text value. Untagged documents return an empty
 tuple. Both structure readers visit at most 65,536 child entries and

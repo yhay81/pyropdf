@@ -6,12 +6,14 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from pyropdf import _core
 from pyropdf._errors import LimitError, MalformedPdfError
-from pyropdf._objects import Dictionary, Name, String
-from pyropdf._operations import Operation
+from pyropdf._objects import Dictionary, Name, Stream, String
+from pyropdf._operations import InlineImage, Operation, Operations, _from_core
 from pyropdf._structure import (
     _DEFAULT_MAX_ELEMENTS,
     _MAX_STRUCTURE_DEPTH,
+    MarkedContentReference,
     ObjectReference,
     StructureChildRule,
     StructureElement,
@@ -25,7 +27,6 @@ from pyropdf._structure_rules import occurrence
 from pyropdf._xobjects import _resources
 
 if TYPE_CHECKING:
-    from pyropdf import _core
     from pyropdf._page import Page
     from pyropdf._structure import StructureItem
 
@@ -132,37 +133,80 @@ def _is_form(resources: Dictionary | None, operands: tuple[object, ...]) -> bool
     return isinstance(target, Dictionary) and target.get("Subtype") == Name("Form")
 
 
-def _page_text(page: Page, budget: _core._OperationBudget, *, expand: bool) -> dict[int, str | None]:
-    # Form XObjects and annotations have independent MCID spaces on the same page.
-    resources = _resources(page)
-    properties = resources.get("Properties") if resources is not None else None
+def _marked_operations(
+    operations: Operations,
+    properties: object,
+    pieces: dict[int, list[str]],
+    budget: _core._OperationBudget,
+    *,
+    expand: bool,
+) -> Iterator[tuple[int, Operation | InlineImage, _Mark, bool]]:
     stack = [_Mark()]
-    pieces: dict[int, list[str]] = {}
-    incomplete: set[int] = set()
-    glyphs = None
-    for index, op in enumerate(page.operations):
+    for index, op in enumerate(operations):
         budget.poll()
         mark = stack[-1]
         if isinstance(op, Operation) and op.operator in ("BDC", "BMC"):
+            if len(stack) >= _MAX_STRUCTURE_DEPTH:
+                raise _depth_limit_error()
             budget.charge("memory_size", 128)
-            stack.append(_open_mark(mark, op, properties, pieces, budget, expand=expand))
+            child = _open_mark(mark, op, properties, pieces, budget, expand=expand)
+            stack.append(child)
+            yield index, op, child, child.mcid != mark.mcid
         elif op.operator == "EMC":
             if len(stack) == 1:
-                msg = "unmatched EMC in tagged page content"
+                msg = "unmatched EMC in tagged content"
                 raise MalformedPdfError(msg)
             stack.pop()
             budget.release("memory_size", 128)
-        elif mark.mcid is not None and not mark.artifact and not mark.replaced:
-            if op.operator in ("Tj", "TJ", "'", '"'):
-                if glyphs is None:
-                    glyphs = _glyphs_by_operation(page, budget)
-                pieces[mark.mcid].extend(glyphs.get(index, ()))
-            elif op.operator == "Do" and _is_form(resources, op.operands):
-                incomplete.add(mark.mcid)
+        else:
+            yield index, op, mark, False
     if len(stack) != 1:
-        msg = "unclosed marked-content sequence on tagged page"
+        msg = "unclosed marked-content sequence in tagged content"
         raise MalformedPdfError(msg)
+
+
+def _page_text(page: Page, budget: _core._OperationBudget, *, expand: bool) -> dict[int, str | None]:
+    resources = _resources(page)
+    properties = resources.get("Properties") if resources is not None else None
+    pieces: dict[int, list[str]] = {}
+    incomplete: set[int] = set()
+    glyphs = None
+    for index, op, mark, _ in _marked_operations(page.operations, properties, pieces, budget, expand=expand):
+        if mark.mcid is None or mark.artifact or mark.replaced:
+            continue
+        if op.operator in ("Tj", "TJ", "'", '"'):
+            if glyphs is None:
+                glyphs = _glyphs_by_operation(page, budget)
+            pieces[mark.mcid].extend(glyphs.get(index, ()))
+        elif op.operator == "Do" and _is_form(resources, op.operands):
+            incomplete.add(mark.mcid)
     return {mcid: None if mcid in incomplete else "".join(parts) for mcid, parts in pieces.items()}
+
+
+def _form_replacements(
+    tree: StructureTree, stream_xref: int, budget: _core._OperationBudget, *, expand: bool
+) -> dict[int, str | None]:
+    # A substitution on the entire referenced MCID is independent of where the
+    # Form was painted. Glyphs and inherited named properties need its placement.
+    doc = tree._document  # noqa: SLF001
+    stream = doc.objects[stream_xref]
+    if not isinstance(stream, Stream) or stream.get("Subtype") != Name("Form") or stream.generation is None:
+        return {}
+    raw = _core.stream_operations(doc._core(), stream_xref, stream.generation)  # noqa: SLF001
+    if raw is None:
+        return {}
+    resources = stream.get("Resources")
+    properties = resources.get("Properties") if isinstance(resources, Dictionary) else None
+    pieces: dict[int, list[str]] = {}
+    replacements: dict[int, str | None] = {}
+    for _, _, mark, opens_mcid in _marked_operations(_from_core(raw), properties, pieces, budget, expand=expand):
+        if opens_mcid and mark.mcid is not None:
+            budget.charge("memory_size", 128)
+            if mark.artifact:
+                replacements[mark.mcid] = ""
+            elif mark.replaced:
+                replacements[mark.mcid] = pieces[mark.mcid][0]
+    return replacements
 
 
 def _replacement(child: StructureElement, *, expand: bool) -> str | None:
@@ -188,9 +232,32 @@ def _object_text(element: StructureElement, item: ObjectReference) -> str | None
     return contents.text if isinstance(contents, String) else None
 
 
+def _marked_text(
+    tree: StructureTree,
+    item: MarkedContentReference,
+    cache: dict[tuple[str, int], dict[int, str | None]],
+    budget: _core._OperationBudget,
+    *,
+    expand: bool,
+) -> str | None:
+    if item.stream_xref is not None:
+        key = ("form", item.stream_xref)
+        if key not in cache:
+            budget.charge("memory_size", 192)
+            cache[key] = _form_replacements(tree, item.stream_xref, budget, expand=expand)
+    elif item.page is not None:
+        key = ("page", item.page)
+        if key not in cache:
+            budget.charge("memory_size", 192)
+            cache[key] = _page_text(tree._document.pages[item.page], budget, expand=expand)  # noqa: SLF001
+    else:
+        return None
+    return cache[key].get(item.mcid)
+
+
 def reading_order(tree: StructureTree, budget: _core._OperationBudget, *, expand: bool) -> tuple[StructureText, ...]:
     result: list[StructureText] = []
-    pages: dict[int, dict[int, str | None]] = {}
+    cache: dict[tuple[str, int], dict[int, str | None]] = {}
     suppressed = _MAX_STRUCTURE_DEPTH + 1
     for depth, owner, child in _walk(tree, budget):
         if depth > suppressed:
@@ -207,14 +274,10 @@ def reading_order(tree: StructureTree, budget: _core._OperationBudget, *, expand
             suppressed = depth
         else:
             assert owner is not None  # noqa: S101 - validated at the root.
-            text = None
             if isinstance(child, ObjectReference):
                 text = _object_text(owner, child)
-            elif child.stream_xref is None and child.page is not None:
-                if child.page not in pages:
-                    budget.charge("memory_size", 192)
-                    pages[child.page] = _page_text(owner.document.pages[child.page], budget, expand=expand)
-                text = pages[child.page].get(child.mcid)
+            else:
+                text = _marked_text(tree, child, cache, budget, expand=expand)
             row = StructureText(element=owner, item=child, text=text)
         budget.charge("memory_size", 160 + (4 * len(row.text) if row.text is not None else 0))
         result.append(row)
