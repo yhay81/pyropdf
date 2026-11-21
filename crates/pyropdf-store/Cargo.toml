@@ -27,6 +27,8 @@ getrandom = "0.4.3"
 # The Flate encoder of a save that compresses streams (DESIGN.md section
 # 4.4), the version that the binding and hayro already pull in.
 flate2 = "1.1.11"
+# The MSB-first PDF LZW encoder, also used by the workspace TIFF codec.
+weezl = "0.1.12"
 
 [dev-dependencies]
 # Property tests of the store's invariants (DESIGN.md F9).
