@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pikepdf
 import pytest
+from PIL import ImageFont
 
 import pyropdf
 from pyropdf import FieldFlags, TextField
@@ -159,6 +160,34 @@ def test_password_appearance_contains_only_one_asterisk_per_grapheme(*, incremen
             assert str(field.V) == secret
             assert int(field.Ff) & int(FieldFlags.PASSWORD)
             assert [bytes(args[0]) for args in _operators(field.AP.N, "Tj")] == [b"**"]
+
+
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+@pytest.mark.spec("text-fields", "interpret", "edit")
+def test_embedded_password_appearance_maps_only_the_mask_glyph(*, incremental: bool) -> None:
+    # Pillow ships a small OpenType font with an asterisk and no emoji.
+    bundled = ImageFont.load_default()
+    assert isinstance(bundled, ImageFont.FreeTypeFont)
+    assert isinstance(bundled.path, io.BytesIO)
+    face = pyropdf.Font.from_bytes(bundled.path.getvalue())
+    assert face.has_glyph("*")
+    assert not face.has_glyph("🙂")
+    with pyropdf.open(_seed()) as doc:
+        doc.pages[0].widgets.add(TextField("value", (4, 4, 210, 60), flags=FieldFlags.PASSWORD))
+        doc.form.font = face
+        doc.form["value"].value = "é🙂"
+        saved = doc.to_bytes(incremental=incremental)
+    with pikepdf.open(io.BytesIO(saved)) as pdf:
+        field = pdf.Root.AcroForm.Fields[0]
+        assert str(field.V) == "é🙂"
+        appearance = field.AP.N
+        font = appearance.Resources.Font.PyroForm
+        assert str(font.Subtype) == "/Type0"
+        glyphs = [bytes(item) for item in _operators(appearance, "TJ")[0][0]]
+        assert len(glyphs) == 2
+        assert glyphs[0] == glyphs[1]
+        expected = f"1 beginbfchar\n<{glyphs[0].hex().upper()}> <002A>\nendbfchar".encode()
+        assert expected in font.ToUnicode.read_bytes()
 
 
 @pytest.mark.skipif(not shutil.which("pdftoppm"), reason="requires Poppler")
