@@ -32,8 +32,8 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | --- | --- | --- | --- | --- | --- | --- |
 | read | 0 | 0 | 0 | 38 | 34 | 759 |
 | interpret | 10 | 19 | 0 | 35 | 41 | 726 |
-| create | 0 | 0 | 9 | 639 | 61 | 122 |
-| edit | 0 | 0 | 0 | 660 | 55 | 116 |
+| create | 0 | 0 | 21 | 26 | 61 | 723 |
+| edit | 0 | 0 | 0 | 47 | 55 | 729 |
 | preserve | 0 | 0 | 0 | 25 | 652 | 154 |
 
 ## Clauses
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,250 unfinished cells in 831 features: 10 engine, 1,397 partial, 843 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+1,024 unfinished cells in 831 features: 10 engine, 171 partial, 843 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -322,8 +322,6 @@ Milestone [#250](https://github.com/yhay81/pyropdf/issues/250).
 
 Milestone [#251](https://github.com/yhay81/pyropdf/issues/251).
 
-- [#889](https://github.com/yhay81/pyropdf/issues/889) Settle required links and inbound roles when creating or editing typed objects. Generate a role inventory from the pinned descriptors. For each applicable role, construct the required references and settle or reject replacements and removals atomically. Exercise already-implemented page, form and structure rules before adding missing rules.
-    - create, edit — all 613 standalone Arlington object rows.
 - [#895](https://github.com/yhay81/pyropdf/issues/895) Resolve catalog name trees, structure destinations and viewer action parameters. Follow named resources and structure destinations, resolve base URI/IsMap, Windows launch and remote/named targets as data, and round-trip fragment selection and navigation options. Expose unresolved targets without executing actions.
     - read — `destinations`, `launch-actions`, `uri-actions`, `fragment-identifiers`.
     - interpret — `name-dictionary`, `embedded-files`, `destinations`, `remote-goto-actions`, `launch-actions`, `uri-actions`, `named-actions`, `fragment-identifiers`.
@@ -996,10 +994,22 @@ before a test can be cited for that specific correction. The register gives no a
 
 ## Exclusions
 
+- `ActionMovie` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `ActionNOP` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `ActionSetState` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `ActionSound` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `AnnotMovie` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `AnnotSound` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
 - `ArrayOfBooleansGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
 - `ArrayOfIntegersGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
+- `ArrayOfNamesForProcSet` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
 - `ArrayOfNamesGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
 - `ArrayOfNumbersGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
+- `ArrayOfXFA` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `Movie` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `MovieActivation` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `SlideShow` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `SoundObject` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
 - `_UniversalArray` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
 - `_UniversalDictionary` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
 - `flate-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.
