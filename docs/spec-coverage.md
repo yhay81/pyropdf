@@ -34,7 +34,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | interpret | 10 | 19 | 0 | 35 | 41 | 726 |
 | create | 0 | 0 | 21 | 26 | 61 | 723 |
 | edit | 0 | 0 | 0 | 47 | 55 | 729 |
-| preserve | 0 | 0 | 0 | 25 | 652 | 154 |
+| preserve | 0 | 0 | 0 | 25 | 39 | 767 |
 
 ## Clauses
 
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-1,024 unfinished cells in 831 features: 10 engine, 171 partial, 843 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+411 unfinished cells in 831 features: 10 engine, 171 partial, 230 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -372,8 +372,7 @@ Milestone [#253](https://github.com/yhay81/pyropdf/issues/253).
 
 Milestone [#254](https://github.com/yhay81/pyropdf/issues/254).
 
-- [#890](https://github.com/yhay81/pyropdf/issues/890) Prove full and incremental preservation by Arlington object type. Build or reuse a reachable valid example for each descriptor and compare its keys, reference targets and stream bytes after an unrelated edit in both save modes. Reuse equivalent cases with explicit type-to-fixture coverage.
-    - preserve — all 613 standalone Arlington object rows.
+No unfinished specification-map cells assigned.
 
 ### 255 Conformance
 
