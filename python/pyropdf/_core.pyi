@@ -453,7 +453,14 @@ def type3_draw(
     shadings: _Shadings | None = None,
     painted: list[tuple[str, float, int]] = ...,
 ) -> list[tuple[int, int, str | None]]: ...
-def subset_font_program(data: bytes, format: str, keep: list[int], /) -> tuple[bytes, int, int] | None: ...  # noqa: A002
+def subset_font_program(
+    data: bytes,
+    format: str,  # noqa: A002
+    keep: list[int],
+    lengths: tuple[int, int] | None = None,
+    document: _Document | None = None,
+    /,
+) -> tuple[bytes, int, int] | None: ...
 
 class _FontFile:
     def __init__(self, path: str, max_size: int | None, /) -> None: ...

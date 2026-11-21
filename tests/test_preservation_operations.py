@@ -1843,6 +1843,30 @@ def prepare_font_subset(doc: pyropdf.Document) -> None:
         doc.pages.extend([page])
 
 
+def write_font_cmap(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    font = page.obj["Resources"]["Font"]["PyroF1"]
+    code = next(bytes(op.operands[0]) for op in page.operations if op.operator == "Tj")
+    info = font["DescendantFonts"][0]["CIDSystemInfo"]
+    font["Encoding"] = doc.write_cmap(
+        {code: int.from_bytes(code, "big")},
+        name="XX-PageFont",
+        registry=bytes(info["Registry"]),
+        ordering=bytes(info["Ordering"]),
+        supplement=info["Supplement"],
+    )
+    return indirect_numbers(font)
+
+
+def check_font_cmap(doc: pyropdf.Document) -> None:
+    page = doc.pages[-1]
+    encoding = page.obj["Resources"]["Font"]["PyroF1"]["Encoding"]
+    assert isinstance(encoding, pyropdf.Stream)
+    assert encoding["CMapName"] == "XX-PageFont"
+    assert b"1 begincidchar" in encoding.read()
+    assert page.text().strip() == "A"
+
+
 def subset_font(doc: pyropdf.Document) -> set[int]:
     page = doc.pages[-1]
     font = page.obj["Resources"]["Font"]["PyroF1"]
@@ -2046,6 +2070,7 @@ FAMILY_EDITS = {
         prepare=prepare_structure_membership, apply=change_structure_membership, check=check_structure_membership
     ),
     "structure_role_map": Edit(prepare=prepare_structure, apply=edit_structure, check=check_structure),
+    "font_cmap": Edit(prepare=prepare_font_subset, apply=write_font_cmap, check=check_font_cmap),
     "subset_fonts": Edit(prepare=prepare_font_subset, apply=subset_font, check=check_subset_font),
     "tagged_drawing": Edit(
         prepare=prepare_tagged_drawing, apply=tagged_drawing, check=check_tagged_drawing, affected_pages=first_page
