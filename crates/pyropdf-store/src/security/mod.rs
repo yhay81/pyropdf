@@ -1,16 +1,18 @@
-//! The standard security handler, revisions 2 to 7 (ISO 32000-2 section
+//! Standard security revisions 2 to 7 and AES public-key security (ISO 32000-2 section
 //! 7.6): key derivation, the user and owner password checks, permissions,
 //! and the encryption and decryption of strings and streams by object
 //! number and generation (DESIGN.md section 4.5).
 //!
 //! The store reads RC4 and AES and writes only AES: AES-128 (revision 4)
-//! and AES-256 (revision 6). Public-key handlers and AES-GCM (ISO/TS 32003)
-//! are not supported. Passwords are bounded at 127 UTF-8 bytes
+//! and AES-256 in CBC (revision 6) or GCM mode (ISO/TS 32003, revision 7). Public-key files use adbe.pkcs7.s3/s4 or s5.
+//! New recipient files use AES and the s5 subfilter. Passwords are bounded at 127 UTF-8 bytes
 //! (`password_input_size`), as pylopdf bounds them; revisions 2 to 4 read
 //! the bytes as they are given, where PDFDocEncoding would differ only
 //! beyond ASCII.
 
 mod crypto;
+mod recipient;
+pub use recipient::RecipientEncryption;
 #[cfg(test)]
 mod tests;
 mod value;
@@ -68,6 +70,7 @@ pub enum Kind {
 #[derive(Clone)]
 pub struct Handler {
     key: Box<[u8]>,
+    recipient: Option<recipient::RecipientAccess>,
     password: Box<[u8]>,
     revision: u8,
     version: u8,
@@ -127,6 +130,7 @@ impl Handler {
         } = Params::read(encrypt)?;
         let make = |key: Box<[u8]>, access| Self {
             key,
+            recipient: None,
             password: Box::from(password),
             revision,
             version,
@@ -191,8 +195,16 @@ impl Handler {
 
     /// Returns what the password opened.
     #[must_use]
-    pub const fn access(&self) -> Access {
-        self.access
+    pub fn access(&self) -> Access {
+        if self
+            .recipient
+            .as_ref()
+            .is_some_and(recipient::RecipientAccess::owner)
+        {
+            Access::Owner
+        } else {
+            self.access
+        }
     }
 
     /// Returns the permission flags of `/P` (ISO 32000-2 table 22).
@@ -223,6 +235,19 @@ impl Handler {
     /// pylopdf describes handlers.
     #[must_use]
     pub fn description(&self) -> String {
+        if let Some(recipient) = &self.recipient {
+            let subfilter = recipient.subfilter;
+            let cipher = if [self.streams, self.strings].contains(&Method::Rc4) {
+                "RC4"
+            } else {
+                "AES"
+            };
+            return format!(
+                "Adobe.PubSec {subfilter} V{} {}-bit {cipher}",
+                self.version,
+                self.key.len() * 8
+            );
+        }
         let method = match self.streams {
             Method::Identity => "no",
             Method::Rc4 => "RC4",
@@ -268,9 +293,8 @@ impl Handler {
     }
 
     /// Encrypts `data`, a string or a stream's data of the object that
-    /// `reference` names. The AES initialization vector is derived from the
-    /// object key and the data, so that one input always encrypts alike and
-    /// no two inputs share a vector.
+    /// `reference` names. Recipient saves draw fresh AES initialization
+    /// vectors. The standard handler derives them from the key and plaintext.
     pub fn encrypt(
         &self,
         kind: Kind,
@@ -281,14 +305,27 @@ impl Handler {
         let method = self.method(kind);
         match method {
             Method::Identity => copy(data, budget),
+            Method::Rc4 if self.is_recipient() => Err(Error::malformed(
+                "pyropdf does not write RC4 recipient ciphertext; choose AES for a full save",
+            )),
             Method::Rc4 => crypto::rc4(&self.object_key(reference, false), data, budget),
             Method::AesGcm => crypto::gcm_encrypt(&self.key, data, budget),
             Method::Aes128 | Method::Aes256 => {
                 let key = self.aes_key(method, reference);
-                let tag = [u8::from(kind == Kind::Stream)];
-                let iv: [u8; 16] = crypto::sha256(&[&key, &tag, data])[..16]
-                    .try_into()
-                    .expect("16 bytes");
+                let iv = if self.is_recipient() {
+                    let mut random = [0; 16];
+                    getrandom::fill(&mut random).map_err(|_| {
+                        Error::malformed(
+                            "OS randomness unavailable for the AES initialization vector",
+                        )
+                    })?;
+                    random
+                } else {
+                    let tag = [u8::from(kind == Kind::Stream)];
+                    crypto::sha256(&[&key, &tag, data])[..16]
+                        .try_into()
+                        .expect("16 bytes")
+                };
                 let mut out = BudgetVec::new(budget);
                 out.try_extend_from_slice(&iv)?;
                 out.try_extend_from_slice(&crypto::aes_cbc_encrypt(
@@ -522,7 +559,7 @@ fn computed_u(key: &[u8], revision: u8, id: &[u8], budget: &Budget) -> Result<Ve
 /// (revision 6), with passwords, permissions, and the randomness that the
 /// caller draws.
 #[derive(Clone, Debug)]
-pub struct Encryption {
+pub struct PasswordEncryption {
     /// The user password.
     pub user: Vec<u8>,
     /// The owner password.
@@ -536,7 +573,7 @@ pub struct Encryption {
     pub random: [u8; 64],
 }
 
-impl Encryption {
+impl PasswordEncryption {
     /// Returns the `/Encrypt` dictionary, the `/ID` to write, and the
     /// handler that encrypts the document's strings and streams.
     #[expect(
@@ -601,6 +638,7 @@ impl Encryption {
             put("Perms", string(&perms));
             Handler {
                 key: Box::from(key),
+                recipient: None,
                 password: Box::from(self.owner.as_slice()),
                 revision: r,
                 version: v,
@@ -631,6 +669,7 @@ impl Encryption {
             put("U", string(&u));
             Handler {
                 key,
+                recipient: None,
                 password: Box::from(self.owner.as_slice()),
                 revision: 4,
                 version: 4,
@@ -658,4 +697,23 @@ fn crypt_filters(method: &str, length: i64) -> Value {
     let mut filters = Dict::new();
     filters.insert(Name::from("StdCF"), Value::Dict(filter));
     Value::Dict(filters)
+}
+
+/// Encryption to apply to a full save.
+#[derive(Clone)]
+pub enum Encryption {
+    /// The standard security handler.
+    Password(PasswordEncryption),
+    /// A public-key handler with CMS envelopes for the authorized recipients.
+    Recipient(RecipientEncryption),
+}
+
+impl Encryption {
+    /// Builds the handler and its encryption dictionary together.
+    pub fn build(&self, id: Option<&[u8]>, budget: &Budget) -> Result<(Dict, Vec<u8>, Handler)> {
+        match self {
+            Self::Password(password) => password.build(id, budget),
+            Self::Recipient(recipient) => recipient.build(id, budget),
+        }
+    }
 }

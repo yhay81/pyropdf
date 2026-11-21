@@ -1306,13 +1306,13 @@ fn full_save_refuses_live_object_zero_before_output() {
     let doc = open(b"%PDF-1.7\n0 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n".to_vec());
     let version = doc.current();
     assert_eq!(version.generation(0), Some(0));
-    let encryption = Encryption {
+    let encryption = Encryption::Password(crate::security::PasswordEncryption {
         user: b"user".to_vec(),
         owner: b"owner".to_vec(),
         permissions: u32::MAX,
         method: crate::security::Method::Aes256,
         random: [7; 64],
-    };
+    });
     for options in [
         Options::default(),
         Options {

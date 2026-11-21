@@ -4,13 +4,23 @@ from __future__ import annotations
 
 import enum
 import os
-from dataclasses import dataclass
-from typing import ClassVar, Literal
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import TYPE_CHECKING, ClassVar, Literal
 
-from pyropdf._errors import LimitError
+from pyropdf._errors import LimitError, MalformedPdfError, PasswordError
+
+if TYPE_CHECKING:
+    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+    from cryptography.x509 import Certificate
 
 #: The longest password, 127 UTF-8 bytes (ISO 32000-2 §7.6.4.3.3).
 _MAX_PASSWORD_BYTES = 127
+_MIN_RSA_BITS = 2048
+_MAX_RSA_BITS = 8192
+_RECIPIENT_PAYLOAD_SIZE = 24
+_MAX_RECIPIENTS = 128
 #: RC4 methods, which pyropdf reads but never writes.
 _RC4_METHODS = frozenset({"rc4", "rc4-40", "rc4-128"})
 
@@ -121,17 +131,157 @@ class Encryption:
 Encryption.KEEP = Encryption(method="keep")
 
 
-def _encryption_arg(encryption: object) -> str | tuple[bytes, bytes, int, str, bytes] | None:
-    """Return the core's form of a save's ``encryption``, refusing other values."""
+def _check_certificate(certificate: Certificate) -> None:
+    from cryptography import x509  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
+
+    if not isinstance(certificate, x509.Certificate):
+        msg = "recipient certificate must be a cryptography.x509.Certificate"
+        raise TypeError(msg)
+    key = certificate.public_key()
+    if not isinstance(key, rsa.RSAPublicKey) or not _MIN_RSA_BITS <= key.key_size <= _MAX_RSA_BITS:
+        msg = "recipient certificates require a 2048 to 8192-bit RSA key"
+        raise ValueError(msg)
+    try:
+        usage = certificate.extensions.get_extension_for_class(x509.KeyUsage).value
+    except x509.ExtensionNotFound:
+        return
+    if not usage.key_encipherment:
+        msg = "recipient certificate key usage does not permit key encipherment"
+        raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RecipientCredential:
+    """An X.509 recipient certificate and its matching RSA private key.
+
+    Install the ``recipients`` extra, load the certificate and key with
+    ``cryptography``, and pass this credential to ``open(credential=...)``,
+    ``probe(credential=...)`` or ``Document.unlock``. RSA keys between
+    2048 and 8192 bits can unwrap CMS EnvelopedData with PKCS#1 v1.5
+    key transport and AES-CBC content encryption. The store retains the
+    authenticated file key. The private key stays with the caller.
+    """
+
+    certificate: Certificate
+    private_key: RSAPrivateKey = field(repr=False)
+
+    def __post_init__(self) -> None:
+        """Check the key type and its correspondence with the certificate."""
+        from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
+
+        _check_certificate(self.certificate)
+        if not isinstance(self.private_key, rsa.RSAPrivateKey):
+            msg = "private_key must be an RSA private key"
+            raise TypeError(msg)
+        if self.private_key.public_key() != self.certificate.public_key():
+            msg = "private key does not match the recipient certificate"
+            raise PasswordError(msg)
+
+    def _decrypt(self, envelope: bytes) -> bytes | None:
+        from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
+        from cryptography.hazmat.primitives.serialization import pkcs7  # noqa: PLC0415
+
+        try:
+            payload = pkcs7.pkcs7_decrypt_der(envelope, self.certificate, self.private_key, [])
+        except (ValueError, UnsupportedAlgorithm):
+            # A malformed, unsupported, or inapplicable envelope grants no access.
+            return None
+        if len(payload) != _RECIPIENT_PAYLOAD_SIZE:
+            msg = "the default public-key recipient payload must contain a 20-byte seed and four permission bytes"
+            raise MalformedPdfError(msg)
+        return payload
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RecipientEncryption:
+    """Encrypt a full save for RSA certificate recipients with Adobe.PubSec, adbe.pkcs7.s5 and AES.
+
+    Install ``pyropdf[recipients]`` and supply up to 128 X.509 certificates.
+    Recipients with the same permissions share a CMS envelope. The named filter for strings and
+    streams is ``DefaultCryptFilter``. Set ``encrypt_metadata=False`` to leave
+    the metadata stream readable. AES-256 supports direct rendering. AES-128 supports
+    store operations including saving, while the engine needs a decrypted input for rendering.
+    Both an incremental save and a full save with
+    ``Encryption.KEEP`` preserve untouched ciphertext.
+
+    Map each X.509 certificate to its permission flags. A value of ``None`` gives the recipient
+    permission to change encryption and implies all other permissions (ISO 32000-2 Table 24 bit 2).
+    Other recipients must keep the encryption when saving.
+    """
+
+    recipients: Mapping[Certificate, Permissions | None]
+    encrypt_metadata: bool = True
+    method: Literal["aes-256", "aes-128"] = "aes-256"
+
+    def __post_init__(self) -> None:
+        """Validate the recipients and retain their order for file-key derivation."""
+        if not isinstance(self.recipients, Mapping) or not self.recipients:
+            msg = "recipients must map 1 to 128 certificates to permissions"
+            raise ValueError(msg)
+        if len(self.recipients) > _MAX_RECIPIENTS:
+            code = "recipient_count"
+            msg = "recipient encryption accepts at most 128 certificates"
+            raise LimitError(code, msg)
+        if not isinstance(self.encrypt_metadata, bool):
+            msg = "encrypt_metadata must be a bool"
+            raise TypeError(msg)
+        if self.method not in ("aes-256", "aes-128"):
+            msg = "recipient method must be aes-256 or aes-128"
+            raise ValueError(msg)
+        for certificate, flags in self.recipients.items():
+            _check_certificate(certificate)
+            if flags is not None and not isinstance(flags, Permissions):
+                msg = "recipient permissions must be Permissions flags or None"
+                raise TypeError(msg)
+        object.__setattr__(self, "recipients", MappingProxyType(dict(self.recipients)))
+
+    def _envelopes(self, seed: bytes) -> Iterator[bytes]:
+        from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+        from cryptography.hazmat.primitives.ciphers.algorithms import AES256  # noqa: PLC0415
+        from cryptography.hazmat.primitives.serialization import pkcs7  # noqa: PLC0415
+
+        groups: dict[int, list[Certificate]] = {}
+        for cert, permissions in self.recipients.items():
+            flags = 2 | int(Permissions.ALL) if permissions is None else int(permissions & Permissions.ALL)
+            groups.setdefault(flags, []).append(cert)
+        for flags, certificates in groups.items():
+            payload = seed + (flags | 0xFFFF_F0C1).to_bytes(4, "big")
+            builder = pkcs7.PKCS7EnvelopeBuilder().set_data(payload).set_content_encryption_algorithm(AES256)
+            for cert in certificates:
+                builder = builder.add_recipient(cert)
+            yield builder.encrypt(serialization.Encoding.DER, [pkcs7.PKCS7Options.Binary])
+
+    def _core(self) -> tuple[bytes, bytes, tuple[bool, bool], Iterator[bytes]]:
+        seed = os.urandom(20)
+        return seed, os.urandom(16), (self.encrypt_metadata, self.method == "aes-256"), self._envelopes(seed)
+
+
+def _open_credentials(
+    password: str | None, credential: RecipientCredential | None
+) -> tuple[bytes | None, Callable[[bytes], bytes | None] | None]:
+    if credential is None:
+        return (None if password is None else _password_bytes(password)), None
+    if not isinstance(credential, RecipientCredential):
+        msg = "credential must be a RecipientCredential"
+        raise TypeError(msg)
+    if password is not None:
+        msg = "provide only one of password and credential"
+        raise ValueError(msg)
+    return None, credential._decrypt  # noqa: SLF001
+
+
+def _encryption_arg(encryption: object) -> object:
+    """Return the core's form of a save's encryption."""
     if encryption is None:
         return None
-    if not isinstance(encryption, Encryption):
-        msg = f"encryption must be an Encryption or None: {encryption!r}"
+    if not isinstance(encryption, (Encryption, RecipientEncryption)):
+        msg = f"encryption must be an Encryption or RecipientEncryption or None: {encryption!r}"
         raise TypeError(msg)
     return encryption._core()  # noqa: SLF001
 
 
-for _public in (Permissions, Access, Encryption):
+for _public in (Permissions, Access, Encryption, RecipientEncryption, RecipientCredential):
     _public.__module__ = "pyropdf"
 
-__all__ = ["Access", "Encryption", "Permissions"]
+__all__ = ["Access", "Encryption", "Permissions", "RecipientCredential", "RecipientEncryption"]

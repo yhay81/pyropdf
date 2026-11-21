@@ -13,9 +13,10 @@ save: every fixture holds the same two pages. Intended differences:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import pytest
-from test_pages import numbered
+from test_pages import build_raw_pdf, numbered
 
 import pyropdf
 from pyropdf import Access, Encryption, Permissions
@@ -333,9 +334,9 @@ def test_encryption_keeps_the_defined_permission_flags() -> None:
 def test_saving_refuses_other_encryption_values(value: object, tmp_path: Path) -> None:
     doc = pyropdf.open(numbered(3))
     before = doc.to_bytes()
-    with pytest.raises(TypeError, match="encryption must be an Encryption or None"):
+    with pytest.raises(TypeError, match="encryption must be an Encryption or RecipientEncryption or None"):
         doc.to_bytes(encryption=value)  # ty: ignore[invalid-argument-type]
-    with pytest.raises(TypeError, match="encryption must be an Encryption or None"):
+    with pytest.raises(TypeError, match="encryption must be an Encryption or RecipientEncryption or None"):
         doc.save(tmp_path / "out.pdf", encryption=value)  # ty: ignore[invalid-argument-type]
     assert not (tmp_path / "out.pdf").exists()
     assert doc.to_bytes() == before
@@ -349,3 +350,234 @@ def test_unlocking_an_unlocked_document_keeps_the_history() -> None:
     assert doc.history.steps == ("rotate",)
     doc.unlock("ownerpw")
     assert doc.history.steps == ("rotate",)
+
+
+RECIPIENT_ASSETS = ASSETS / "recipients"
+
+
+def recipient(label: str) -> pyropdf.RecipientCredential:
+    """Load the published fixture credential, whose key is used only by these tests."""
+    from cryptography import x509  # noqa: PLC0415
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
+
+    key = serialization.load_der_private_key((RECIPIENT_ASSETS / f"recipient-{label}.key").read_bytes(), None)
+    assert isinstance(key, rsa.RSAPrivateKey)
+    cert = x509.load_der_x509_certificate((RECIPIENT_ASSETS / f"recipient-{label}.cer").read_bytes())
+    return pyropdf.RecipientCredential(certificate=cert, private_key=key)
+
+
+RECIPIENT_STREAM = b"0 g 2 3 12 8 re f\n"
+RECIPIENT_STRING = b"recipient\x00value\xff"
+
+
+@pytest.mark.spec("public-key-security-handler", "read")
+@pytest.mark.parametrize(
+    ("label", "access", "flags"),
+    [("editor", Access.USER, Permissions.MODIFY), ("owner", Access.OWNER, Permissions.ALL)],
+)
+def test_public_key_independent_envelopes(label: str, access: Access, flags: Permissions) -> None:
+    source = RECIPIENT_ASSETS / "pyhanko-recipients.pdf"
+    credential = recipient(label)
+    doc = pyropdf.open(source)
+    assert doc.needs_password
+    with pytest.raises(pyropdf.EncryptedDocumentError):
+        _ = doc.objects[3]
+    with pytest.raises(pyropdf.PasswordError):
+        doc.unlock("unrelated")
+    assert doc.needs_password
+    assert doc.unlock(credential) is access
+    assert doc.permissions == flags
+    assert doc.objects[3].read() == RECIPIENT_STREAM
+    assert doc.objects[4]["FixtureValue"] == RECIPIENT_STRING
+    assert doc.encryption_method == "Adobe.PubSec adbe.pkcs7.s5 V5 256-bit AES"
+    assert not pyropdf.probe(source, credential=credential).needs_password
+
+
+@pytest.mark.spec("public-key-security-handler", "interpret")
+def test_public_key_render_uses_authenticated_version() -> None:
+    with (
+        pyropdf.open(RECIPIENT_ASSETS / "pyhanko-recipients.pdf", credential=recipient("owner")) as doc,
+        pyropdf.open(doc.to_bytes()) as clear,
+    ):
+        assert doc.pages[0].pixmap().to_bytes() == clear.pages[0].pixmap().to_bytes()
+        doc.objects[3].write(b"1 g 0 0 50 40 re f\n", filter=None)
+        assert doc.pages[0].pixmap().to_bytes() != clear.pages[0].pixmap().to_bytes()
+        assert doc.objects[3].read() == b"1 g 0 0 50 40 re f\n"
+        assert b"/Standard" not in doc.history.save()
+
+
+@pytest.mark.spec("public-key-security-handler", "preserve")
+@pytest.mark.spec("crypt-filters", "preserve")
+@pytest.mark.spec("public-key-security-handler", "edit")
+@pytest.mark.parametrize("incremental", [False, True])
+def test_public_key_edit_keeps_untouched_ciphertext(*, incremental: bool) -> None:
+    source = (RECIPIENT_ASSETS / "pyhanko-recipients.pdf").read_bytes()
+    untouched = source.split(b"3 0 obj\n", 1)[1].split(b"\nendobj", 1)[0]
+    with pyropdf.open(source, credential=recipient("editor")) as doc:
+        doc.objects[4]["FixtureValue"] = b"edited\x00string"
+        saved = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+        assert saved.startswith(source) is incremental
+        assert untouched in saved
+        assert b"/Standard" not in saved
+        assert b"edited\x00string" not in saved
+        with pyropdf.open(saved, credential=recipient("owner")) as reopened:
+            assert reopened.objects[3].read() == RECIPIENT_STREAM
+            assert reopened.objects[4]["FixtureValue"] == b"edited\x00string"
+            if incremental:
+                with reopened.revisions[0].open() as previous:
+                    assert previous.objects[4]["FixtureValue"] == RECIPIENT_STRING
+
+
+@pytest.mark.spec("public-key-security-handler", "create")
+@pytest.mark.parametrize("encrypt_metadata", [True, False])
+@pytest.mark.parametrize("method", ["aes-256", "aes-128"])
+def test_public_key_output_read_by_pyhanko(method: Literal["aes-256", "aes-128"], *, encrypt_metadata: bool) -> None:
+    import io  # noqa: PLC0415
+    import sysconfig  # noqa: PLC0415
+
+    if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
+        pytest.skip("pyHanko imports enable the GIL on free-threaded Python")
+    from asn1crypto import keys, x509  # noqa: PLC0415
+    from pyhanko.pdf_utils.crypt.pubkey import SimpleEnvelopeKeyDecrypter  # noqa: PLC0415
+    from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
+
+    editor, owner = recipient("editor"), recipient("owner")
+    with pyropdf.open(RECIPIENT_ASSETS / "pyhanko-recipients.pdf", credential=owner) as doc:
+        original_xmp = doc.catalog["Metadata"].read()
+        out = doc.to_bytes(
+            encryption=pyropdf.RecipientEncryption(
+                recipients={owner.certificate: None, editor.certificate: Permissions.PRINT},
+                encrypt_metadata=encrypt_metadata,
+                method=method,
+            )
+        )
+    assert (original_xmp in out) == (not encrypt_metadata)
+    for label, flags in (("editor", int(Permissions.PRINT)), ("owner", int(Permissions.ALL) | 2)):
+        reader = PdfFileReader(io.BytesIO(out))
+        key = keys.PrivateKeyInfo.load((RECIPIENT_ASSETS / f"recipient-{label}.key").read_bytes())
+        cert = x509.Certificate.load((RECIPIENT_ASSETS / f"recipient-{label}.cer").read_bytes())
+        auth = reader.decrypt_pubkey(SimpleEnvelopeKeyDecrypter(cert, key))
+        assert auth.permission_flags is not None
+        assert auth.permission_flags.as_uint32() & (int(Permissions.ALL) | 2) == flags
+        page = reader.root["/Pages"]["/Kids"][0].get_object()
+        assert page["/Contents"].data == RECIPIENT_STREAM
+        assert bytes(page["/FixtureValue"]) == RECIPIENT_STRING
+        assert reader.root["/Metadata"].data == original_xmp
+    with pyropdf.open(out, credential=editor) as reopened:
+        assert reopened.permissions == Permissions.PRINT
+        assert reopened.catalog["Metadata"].read() == original_xmp
+    with pytest.raises(pyropdf.PasswordError):
+        pyropdf.open(
+            pyropdf.open(numbered(1)).to_bytes(
+                encryption=pyropdf.RecipientEncryption(recipients={editor.certificate: None})
+            ),
+            credential=owner,
+        )
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        (b"/adbe.pkcs7.s5", b"/adbe.pkcs7.s4", "adbe.pkcs7.s5"),
+        (b"/AESV3", b"/AESV2", "AESV3"),
+        (b"/EncryptMetadata true", b"/EncryptMetadata null", "boolean"),
+        (b"/Recipients [", b"/Skipieeets [", "Recipients"),
+    ],
+)
+def test_public_key_malformed_filter_is_atomic(old: bytes, new: bytes, message: str) -> None:
+    source = (RECIPIENT_ASSETS / "pyhanko-recipients.pdf").read_bytes()
+    assert old in source
+    bad = source.replace(old, new)
+    doc = pyropdf.open(bad)
+    with pytest.raises(pyropdf.MalformedPdfError, match=message):
+        doc.unlock(recipient("editor"))
+    assert doc.needs_password
+    with pytest.raises(pyropdf.EncryptedDocumentError):
+        _ = doc.catalog
+
+
+@pytest.mark.spec("public-key-security-handler", "read")
+@pytest.mark.parametrize(
+    ("fixture", "expected"),
+    [
+        ("identity-strings", "adbe.pkcs7.s5 V5 256-bit AES"),
+        ("recipients-aes128", "adbe.pkcs7.s5 V4 128-bit AES"),
+        ("s3", "adbe.pkcs7.s3 V1 40-bit RC4"),
+        ("s4", "adbe.pkcs7.s4 V2 128-bit RC4"),
+        ("v2", "adbe.pkcs7.s5 V4 128-bit RC4"),
+    ],
+)
+def test_public_key_algorithms_and_filter_selection(fixture: str, expected: str) -> None:
+    with pyropdf.open(RECIPIENT_ASSETS / f"pyhanko-{fixture}.pdf", credential=recipient("editor")) as doc:
+        assert doc.encryption_method == f"Adobe.PubSec {expected}"
+        assert not doc.check().defects
+        assert doc.objects[3].read() == RECIPIENT_STREAM
+        assert doc.objects[4]["FixtureValue"] == RECIPIENT_STRING
+        assert doc.permissions == Permissions.MODIFY
+        if fixture == "identity-strings":
+            assert b"<x:xmpmeta" in doc.catalog["Metadata"].read()
+            assert doc.pages[0].pixmap(dpi=72).width == 50
+        else:
+            with pytest.raises(pyropdf.PdfError, match="legacy public-key file key"):
+                doc.pages[0].pixmap()
+        doc.objects[4]["FixtureValue"] = b"edited"
+        for incremental in (True, False):
+            if "RC4" in expected:
+                with pytest.raises(pyropdf.PdfError, match="does not write RC4"):
+                    doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+            else:
+                saved = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+                with pyropdf.open(saved, credential=recipient("editor")) as reopened:
+                    assert reopened.objects[4]["FixtureValue"] == b"edited"
+
+
+def test_public_key_changing_encryption_requires_authorized_recipient(tmp_path: Path) -> None:
+    with pyropdf.open(RECIPIENT_ASSETS / "pyhanko-recipients.pdf", credential=recipient("editor")) as doc:
+        doc.objects[4]["FixtureValue"] = b"keep my edit"
+        for encryption in (None, Encryption(user_password="new")):
+            with pytest.raises(pyropdf.PdfError, match="permission to change encryption"):
+                doc.to_bytes(encryption=encryption)
+        target = tmp_path / "untouched.pdf"
+        target.write_bytes(b"original")
+        with pytest.raises(pyropdf.PdfError, match="permission to change encryption"):
+            doc.save(target)
+        assert target.read_bytes() == b"original"
+        assert doc.unlock(recipient("owner")) is Access.OWNER
+        with pyropdf.open(doc.to_bytes()) as clear:
+            assert clear.objects[4]["FixtureValue"] == b"keep my edit"
+
+
+@pytest.mark.parametrize(
+    ("count", "envelope_bytes", "code"), [(129, 1, "recipient_count"), (1, 65_537, "recipient_envelope_size")]
+)
+def test_public_key_recipient_bounds_fail_before_disclosure(count: int, envelope_bytes: int, code: str) -> None:
+    envelopes = ("<" + "00" * envelope_bytes + "> ") * count
+    source = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [] /Count 0 >>",
+            3: f"<< /Filter /Adobe.PubSec /SubFilter /adbe.pkcs7.s4 /V 2 /Length 128 /Recipients [{envelopes}] >>",
+        }
+    ).replace(b"/Root 1 0 R >>", b"/Root 1 0 R /Encrypt 3 0 R >>")
+    doc = pyropdf.open(source)
+    with pytest.raises(pyropdf.LimitError) as refusal:
+        doc.unlock(recipient("owner"))
+    assert refusal.value.code == code
+    assert doc.needs_password
+    with pytest.raises(pyropdf.EncryptedDocumentError):
+        _ = doc.catalog
+
+
+def test_public_key_equal_permissions_share_a_cms_envelope() -> None:
+    editor, owner = recipient("editor"), recipient("owner")
+    with pytest.raises(pyropdf.PasswordError, match="does not match"):
+        pyropdf.RecipientCredential(certificate=editor.certificate, private_key=owner.private_key)
+    settings = pyropdf.RecipientEncryption(
+        recipients={editor.certificate: Permissions.COPY, owner.certificate: Permissions.COPY}
+    )
+    saved = pyropdf.open(numbered(1)).to_bytes(encryption=settings)
+    for credential in (owner, editor):
+        with pyropdf.open(saved, credential=credential) as doc:
+            assert doc.permissions == Permissions.COPY
+            assert len(doc.trailer["Encrypt"]["CF"]["DefaultCryptFilter"]["Recipients"]) == 1
