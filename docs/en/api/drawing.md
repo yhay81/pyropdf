@@ -296,10 +296,10 @@ Annotations and form fields of the source page are not drawn.
 ### `Canvas.draw`
 
 ```python
-Canvas.draw(item: Path | Image)
+Canvas.draw(item: Path | Image | TextRun)
 ```
 
-Paint a `Path` or `Image` item that `Page.content` returned.
+Paint a `Path`, `Image`, or `TextRun` from `Page.content`.
 
 The item's clips, its groups' opacity and blend modes, and its own
 blend mode are applied; soft masks are not. An axial or radial
@@ -313,9 +313,17 @@ paints cannot be drawn yet. An image is drawn from its object, with the
 image's own masks: a canvas on a page of the item's document draws
 that object again, and one of another document copies it, with the
 objects it reaches but pages, as it is when this call is made. Inline
-images, stencil image masks, and text runs cannot be drawn; an item
-that cannot be drawn raises `TypeError` or `ValueError` and draws
-nothing.
+images and stencil image masks cannot be drawn.
+
+A text run uses its original PDF codes and positioned text matrices.
+Its font dictionary, encoding, and embedded program are copied from
+the version that was read, including when drawing on the same document.
+Simple embedded and standard 14 fonts, embedded Identity-H/V fonts, and
+Type 3 fonts with their own resources are supported. Runs with a fallback
+or direct font, Type 3 procedures that need enclosing resources,
+other composite encodings, a singular glyph transform, replacement
+text, a soft mask, or a pattern paint raise `ValueError`. A closed source raises
+`DocumentClosedError`. These refusals draw nothing.
 
 ### `Canvas.clip`
 
