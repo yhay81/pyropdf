@@ -40,11 +40,11 @@ behavior = "Apply per-object ICC intent, four-channel transfer, process and name
 [families.recolour-black-generation]
 tracker = 248
 parent = 250
-issue = 1002
-title = "Apply active black generation and undercolor removal when rewriting CMYK colours"
+issue = 1007
+title = "Extend active CMYK rewriting to filtered and nested budgeted PDF functions"
 features = ["device-color-conversion"]
 dimensions = ["edit"]
-behavior = "Evaluate the active BG2/UCR2 functions when converting paint and image samples to DeviceCMYK in Page.recolor and Document.recolor."
+behavior = "Evaluate filtered sampled or calculator streams, nested stitching and calculator procedures with released construction and execution budgets."
 
 [families.optional-content-engine]
 tracker = 248
@@ -98,16 +98,15 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement."
 
-[families.stored-colour-spaces]
+[families.devicen-mixing-hints]
 tracker = 249
-issue = 897
-title = "Write and edit calibrated and special colour spaces and their paint operators"
-features = [
-    "calgray-color-space", "calrgb-color-space", "lab-color-space", "icc-based-color-space",
-    "indexed-color-space", "separation-color-space", "devicen-color-space", "colour-operators",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Retain source operands and independently verify calibration, ICC profiles, palettes and tint transforms including DeviceN mixing hints. Construct and edit colour resources and exercise the corresponding operators."
+parent = 248
+issue = 1016
+kind = "upstream"
+title = "hayro: offer DeviceN mixing hints to colour-proofing devices"
+features = ["devicen-color-space"]
+dimensions = ["interpret"]
+behavior = "Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked."
 
 [families.text-fields-and-xfa]
 tracker = 249
@@ -139,16 +138,6 @@ features = [
 ]
 dimensions = ["interpret"]
 behavior = "Apply and verify redaction annotations over text, paths and images, using item provenance for destructive removal."
-
-[families.arlington-reference-rules]
-tracker = 251
-issue = 889
-title = "Settle required links and inbound roles when creating or editing typed objects"
-features = [
-    "@arlington",
-]
-dimensions = ["create", "edit"]
-behavior = "Generate a role inventory from the pinned descriptors. For each applicable role, construct the required references and settle or reject replacements and removals atomically. Exercise already-implemented page, form and structure rules before adding missing rules."
 
 [families.name-tree-navigation]
 tracker = 251

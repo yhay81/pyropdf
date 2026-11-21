@@ -27,6 +27,23 @@ pub fn interpret<G: Graph>(
     key: &'static Key,
     value: Option<&G::Value>,
 ) -> Result<Interpretation, G::Error> {
+    interpret_reference(graph, holder, described, key, value, None)
+}
+
+/// Interpret a value whose indirect object number is known, so that
+/// relationships such as an article thread's first bead can identify it.
+///
+/// # Errors
+///
+/// Returns graph resolution or budget failures.
+pub fn interpret_reference<G: Graph>(
+    graph: &G,
+    holder: &G::Value,
+    described: &Object,
+    key: &'static Key,
+    value: Option<&G::Value>,
+    reference: Option<u32>,
+) -> Result<Interpretation, G::Error> {
     let mut walk = Walk::new(graph);
     let scope = walk.scope(holder, value);
     let introduced = walk.introduced(holder, described, key)?;
@@ -71,7 +88,7 @@ pub fn interpret<G: Graph>(
         if ty.links.is_empty() || matches!(ty.kind, Kind::NameTree | Kind::NumberTree) {
             return Ok(Interpretation::Value(ty.kind, None));
         }
-        let Some(name) = linked(&mut walk, &scope, ty.links, value)? else {
+        let Some(name) = linked(&mut walk, &scope, ty.links, value, reference)? else {
             return Ok(Interpretation::Refused(
                 "no unique linked object type matches",
             ));
@@ -153,7 +170,7 @@ pub fn tree_target<G: Graph>(
 ) -> Result<Option<&'static str>, G::Error> {
     let mut walk = Walk::new(graph);
     let scope = walk.scope(holder, Some(value));
-    linked(&mut walk, &scope, declared.links, value)
+    linked(&mut walk, &scope, declared.links, value, None)
 }
 
 fn linked<G: Graph>(
@@ -161,7 +178,28 @@ fn linked<G: Graph>(
     scope: &Scope<'_, '_, G>,
     links: &[Link],
     value: &G::Value,
+    reference: Option<u32>,
 ) -> Result<Option<&'static str>, G::Error> {
+    if links.len() == 2
+        && links
+            .iter()
+            .all(|link| matches!(link.target().name, "Bead" | "BeadFirst"))
+        && [b"N".as_slice(), b"V", b"P", b"R"]
+            .iter()
+            .all(|key| walk.graph.get(value, key).is_some())
+    {
+        let Some(thread) = walk.graph.get(value, b"T") else {
+            return Ok(Some("Bead"));
+        };
+        if let Some(id) = reference
+            && let Some(thread) = walk.graph.target(thread)?
+            && let Some(raw) = walk.graph.get(&thread, b"F")
+            && let View::Reference(first) = walk.graph.view(raw)
+            && walk.graph.target(raw)?.is_some()
+        {
+            return Ok(Some(if first == id { "BeadFirst" } else { "Bead" }));
+        }
+    }
     if let Some(at) = walk.button_field(links, value)? {
         return Ok(Some(crate::OBJECTS[usize::from(at)].name));
     }
@@ -182,6 +220,19 @@ fn linked<G: Graph>(
             _ => continue,
         };
         if target.container() != container {
+            continue;
+        }
+        // ISO 32000-2, 7.7.3.2 distinguishes the root of the page tree
+        // from its other /Pages nodes by the absence of a /Parent entry.
+        if matches!(target.name, "PageTreeNode" | "PageTreeNodeRoot")
+            && links
+                .iter()
+                .any(|item| item.target().name == "PageTreeNode")
+            && links
+                .iter()
+                .any(|item| item.target().name == "PageTreeNodeRoot")
+            && (walk.graph.get(value, b"Parent").is_some() != (target.name == "PageTreeNode"))
+        {
             continue;
         }
         let rank = match walk.graph.view(value) {

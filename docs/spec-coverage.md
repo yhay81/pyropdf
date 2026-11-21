@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 41 | 35 | 755 |
-| interpret | 8 | 19 | 0 | 36 | 43 | 725 |
-| create | 0 | 0 | 9 | 641 | 70 | 111 |
-| edit | 0 | 0 | 0 | 667 | 58 | 106 |
-| preserve | 0 | 0 | 0 | 26 | 653 | 152 |
+| read | 0 | 0 | 0 | 40 | 34 | 757 |
+| interpret | 9 | 19 | 0 | 35 | 42 | 726 |
+| create | 0 | 0 | 21 | 28 | 62 | 720 |
+| edit | 0 | 0 | 0 | 49 | 55 | 727 |
+| preserve | 0 | 0 | 0 | 26 | 652 | 153 |
 
 ## Clauses
 
@@ -82,17 +82,17 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 8.4 | Graphics state | `graphics-state` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.5 | Path construction and painting | `paths` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.4 | Device colour spaces | `device-color-spaces` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 8.6.5.2 | CalGray colour spaces | `calgray-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.5.3 | CalRGB colour spaces | `calrgb-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.5.4 | Lab colour spaces | `lab-color-space` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
-| 8.6.5.5 | ICCBased colour spaces | `icc-based-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
+| 8.6.5.2 | CalGray colour spaces | `calgray-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.5.3 | CalRGB colour spaces | `calrgb-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.5.4 | Lab colour spaces | `lab-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.5.5 | ICCBased colour spaces | `icc-based-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.5.8 | Rendering intent selection | `rendering-intents` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 8.6.6.2 | Pattern colour spaces | `pattern-color-space` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
-| 8.6.6.3 | Indexed colour spaces | `indexed-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.6.4 | Separation colour spaces | `separation-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.6.5 | DeviceN colour spaces | `devicen-color-space` | 1 partial | 1 partial | 1 planned | 1 planned | 1 done |
+| 8.6.6.3 | Indexed colour spaces | `indexed-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.6.4 | Separation colour spaces | `separation-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.6.5 | DeviceN colour spaces | `devicen-color-space` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 8.6.7 | Overprint control | `overprint` | 1 done | 1 engine | 1 done | 1 done | 1 done |
-| 8.6.8 | Colour-setting operators | `colour-operators` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.6.8 | Colour-setting operators | `colour-operators` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.7.3 | Tiling patterns | `tiling-patterns` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
 | 8.7.4 | Shading patterns | `shading-patterns` | 1 done | 1 done | 1 done | 1 planned | 1 done |
 | 8.7.4.5.2 | Type 1 function-based shadings | `function-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,278 unfinished cells in 831 features: 8 engine, 1,411 partial, 859 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+1,032 unfinished cells in 831 features: 9 engine, 178 partial, 845 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -279,7 +279,7 @@ Milestone [#248](https://github.com/yhay81/pyropdf/issues/248).
 
 - [#1001](https://github.com/yhay81/pyropdf/issues/1001) hayro: apply output-device parameters when proofing print and screened output. Apply per-object ICC intent, four-channel transfer, process and named spot plate overprint, selected halftones and scan parameters on suitable devices. RGB alternate, calibrated and transfer samples are verified.
     - interpret — `overprint`, `color-conversion`, `transfer-functions`, `halftones`, `scan-conversion`, `rendering-intents`, `separation-rendering`.
-- [#1002](https://github.com/yhay81/pyropdf/issues/1002) Apply active black generation and undercolor removal when rewriting CMYK colours. Evaluate the active BG2/UCR2 functions when converting paint and image samples to DeviceCMYK in Page.recolor and Document.recolor.
+- [#1007](https://github.com/yhay81/pyropdf/issues/1007) Extend active CMYK rewriting to filtered and nested budgeted PDF functions. Evaluate filtered sampled or calculator streams, nested stitching and calculator procedures with released construction and execution budgets.
     - edit — `device-color-conversion`.
 - [#372](https://github.com/yhay81/pyropdf/issues/372) hayro: evaluate optional content visibility expressions and annotation /OC. Adopt engine evaluation of visibility expressions and annotation OC. Track the upstream issue directly. #373 owns local adoption.
     - interpret — `optional-content`.
@@ -301,10 +301,8 @@ Milestone [#249](https://github.com/yhay81/pyropdf/issues/249).
 - [#902](https://github.com/yhay81/pyropdf/issues/902) Complete font program, encoding and CMap creation and editing. Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement.
     - read, interpret, preserve — `character-tables`.
     - create, edit — `type1-fonts`, `truetype-fonts`, `type3-fonts`, `simple-font-encodings`, `cmaps`, `embedded-fonts`, `character-tables`.
-- [#897](https://github.com/yhay81/pyropdf/issues/897) Write and edit calibrated and special colour spaces and their paint operators. Retain source operands and independently verify calibration, ICC profiles, palettes and tint transforms including DeviceN mixing hints. Construct and edit colour resources and exercise the corresponding operators.
-    - read, interpret — `devicen-color-space`, `colour-operators`.
-    - create, edit — `calgray-color-space`, `calrgb-color-space`, `lab-color-space`, `icc-based-color-space`, `indexed-color-space`, `separation-color-space`, `devicen-color-space`, `colour-operators`.
-    - preserve — `colour-operators`.
+- [#1016](https://github.com/yhay81/pyropdf/issues/1016) hayro: offer DeviceN mixing hints to colour-proofing devices. Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked.
+    - interpret — `devicen-color-space`.
 - [#904](https://github.com/yhay81/pyropdf/issues/904) Support rich variable text, password appearances and legacy XFA form data. Read and edit RV/DS field data, mask displayed password glyphs, and inspect, edit/remove and preserve existing XFA packets under the recorded creation exclusion. Verify field values and appearances independently.
     - read — `variable-text`, `xfa`.
     - interpret, edit — `variable-text`, `text-fields`, `xfa`.
@@ -326,8 +324,6 @@ Milestone [#250](https://github.com/yhay81/pyropdf/issues/250).
 
 Milestone [#251](https://github.com/yhay81/pyropdf/issues/251).
 
-- [#889](https://github.com/yhay81/pyropdf/issues/889) Settle required links and inbound roles when creating or editing typed objects. Generate a role inventory from the pinned descriptors. For each applicable role, construct the required references and settle or reject replacements and removals atomically. Exercise already-implemented page, form and structure rules before adding missing rules.
-    - create, edit — all 613 standalone Arlington object rows.
 - [#895](https://github.com/yhay81/pyropdf/issues/895) Resolve catalog name trees, structure destinations and viewer action parameters. Follow named resources and structure destinations, resolve base URI/IsMap, Windows launch and remote/named targets as data, and round-trip fragment selection and navigation options. Expose unresolved targets without executing actions.
     - read — `destinations`, `launch-actions`, `uri-actions`, `fragment-identifiers`.
     - interpret — `name-dictionary`, `embedded-files`, `destinations`, `remote-goto-actions`, `launch-actions`, `uri-actions`, `named-actions`, `fragment-identifiers`.
@@ -1002,10 +998,22 @@ before a test can be cited for that specific correction. The register gives no a
 
 ## Exclusions
 
+- `ActionMovie` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `ActionNOP` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `ActionSetState` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `ActionSound` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `AnnotMovie` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `AnnotSound` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
 - `ArrayOfBooleansGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
 - `ArrayOfIntegersGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
+- `ArrayOfNamesForProcSet` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
 - `ArrayOfNamesGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
 - `ArrayOfNumbersGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
+- `ArrayOfXFA` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `Movie` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `MovieActivation` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `SlideShow` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
+- `SoundObject` create: non-goal, #256: The specification milestone excludes creation of these deprecated objects.
 - `_UniversalArray` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
 - `_UniversalDictionary` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
 - `flate-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.
