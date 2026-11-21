@@ -108,14 +108,6 @@ features = ["devicen-color-space"]
 dimensions = ["interpret"]
 behavior = "Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked."
 
-[families.rich-text-embedded-fonts]
-tracker = 249
-issue = 1032
-title = "Resolve embedded font fallbacks in rich text field appearances"
-features = ["variable-text"]
-dimensions = ["interpret"]
-behavior = "Select embedded fonts from the form resources for rich text CSS families, including shaped non-WinAnsi spans, and independently verify mixed appearances."
-
 [families.image-resources]
 tracker = 250
 issue = 900
