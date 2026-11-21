@@ -184,7 +184,6 @@ pub fn check<G: Graph>(graph: &G) -> Result<Report, G::Error> {
         .and_then(|at| u16::try_from(at).ok())
         .unwrap_or(0);
     let mut walk = Walk::new(graph);
-    let mut met = HashSet::new();
     walk.object(None, graph.trailer(), Target::Object(trailer))?;
     let size = match graph
         .get(graph.trailer(), b"Size")
@@ -194,6 +193,38 @@ pub fn check<G: Graph>(graph: &G) -> Result<Report, G::Error> {
         Some(View::Integer(size)) if size > 0 => Some(size),
         _ => None,
     };
+    finish(walk, size)
+}
+
+/// Check a standalone object and the graph reached through its declared links
+/// before publishing an authored replacement. Broken or ambiguous links are
+/// errors in an authored object, including one unreachable from the trailer.
+///
+/// # Errors
+///
+/// Returns a graph error when resolution or the operation budget refuses work.
+pub fn check_authored<G: Graph>(
+    graph: &G,
+    name: &str,
+    number: u32,
+    value: &G::Value,
+) -> Result<Option<Report>, G::Error> {
+    let Some(at) = OBJECTS
+        .binary_search_by(|item| item.name.cmp(name))
+        .ok()
+        .and_then(|at| u16::try_from(at).ok())
+    else {
+        return Ok(None);
+    };
+    let mut walk = Walk::new(graph);
+    walk.authoring = true;
+    graph.visit(true)?;
+    walk.object(Some(number), value, Target::Object(at))?;
+    finish(walk, None).map(Some)
+}
+
+fn finish<G: Graph>(mut walk: Walk<'_, G>, size: Option<i64>) -> Result<Report, G::Error> {
+    let mut met = HashSet::new();
     while let Some((number, target)) = walk.queue.pop() {
         #[expect(
             clippy::disallowed_methods,
@@ -212,9 +243,9 @@ pub fn check<G: Graph>(graph: &G) -> Result<Report, G::Error> {
                 format!("object {number} is referenced, but the trailer's /Size is {size}"),
             );
         }
-        graph.visit(first)?;
+        walk.graph.visit(first)?;
         walk.report.objects += usize::from(first);
-        if let Some(value) = graph.resolve(number)? {
+        if let Some(value) = walk.graph.resolve(number)? {
             walk.object(Some(number), &value, target)?;
         }
     }
@@ -242,6 +273,7 @@ struct Walk<'g, G: Graph> {
     graph: &'g G,
     version: Version,
     report: Report,
+    authoring: bool,
     queue: Vec<(u32, Target)>,
     visited: HashSet<(u32, usize)>,
     targets: HashMap<u32, usize>,
@@ -259,6 +291,7 @@ impl<'g, G: Graph> Walk<'g, G> {
             graph,
             version: graph.version(),
             report: Report::default(),
+            authoring: false,
             queue: Vec::new(),
             visited: HashSet::new(),
             targets: HashMap::new(),
@@ -596,10 +629,26 @@ impl<'g, G: Graph> Walk<'g, G> {
         let owned;
         let value: &G::Value = match reference {
             Some(number) => {
-                owned = self.graph.resolve(number)?;
+                owned = if self.authoring {
+                    self.graph.target(raw)?
+                } else {
+                    self.graph.resolve(number)?
+                };
                 match &owned {
                     Some(value) => value,
-                    None => return Ok(()),
+                    None => {
+                        if self.authoring {
+                            self.defect(
+                                object,
+                                path,
+                                described,
+                                key,
+                                DefectKind::Indirect,
+                                format!("{path} contains an unresolved reference to {number}"),
+                            );
+                        }
+                        return Ok(());
+                    }
                 }
             }
             None => raw,
@@ -663,6 +712,20 @@ impl<'g, G: Graph> Walk<'g, G> {
             self.defect(object, path, described, key, DefectKind::Version, message);
             return Ok(());
         };
+        if self.authoring
+            && let Interpretation::Refused(reason) =
+                interpret(self.graph, holder, key, Some(value))?
+        {
+            self.defect(
+                object,
+                path,
+                described,
+                key,
+                DefectKind::Value,
+                reason.to_owned(),
+            );
+            return Ok(());
+        }
         self.indirect(
             object,
             holder,

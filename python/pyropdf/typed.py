@@ -55,8 +55,9 @@ keys with their types for type checkers.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from functools import cache
-from typing import Any, ClassVar, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, Self, cast
 
 from pyropdf import _core
 from pyropdf._errors import LimitError, MalformedPdfError, PdfError
@@ -69,7 +70,10 @@ from pyropdf._objects import Name as _Name
 from pyropdf._objects import Real as _Real
 from pyropdf._objects import Stream as _Stream
 from pyropdf._objects import String as _String
-from pyropdf._objects import _decode, _key
+from pyropdf._objects import _decode, _encode, _key
+
+if TYPE_CHECKING:
+    from pyropdf._document import Document
 
 #: The object types of the model, sorted.
 TYPES: tuple[str, ...] = tuple(_core.schema_names())
@@ -207,6 +211,69 @@ class View:
     def obj(self) -> _Dictionary | _Array:
         """Return the viewed handle."""
         return self._obj
+
+    @classmethod
+    def create(
+        cls, document: Document, values: Mapping[str, Any] | list[Any] | tuple[Any, ...] | _Array, /, *, data: bytes | None = None
+    ) -> Self:
+        """Create an indirect object from PDF values and check its required references.
+
+        Supply dictionary keys, or an ordered sequence for an array, using
+        indirect handles for required references. Stream descriptors accept
+        decoded bytes as ``data``. The new object and its validation form one
+        undo step, including inside an existing transaction.
+        """
+        if not cls._type:
+            msg = "choose a concrete Arlington object type"
+            raise TypeError(msg)
+        with document.transaction(f"Create {cls._type}"):
+            if isinstance(values, (_Dictionary, _Array)):
+                if data is not None:
+                    msg = "supply stream data with a dictionary, or copy an existing stream handle"
+                    raise TypeError(msg)
+                number = document.objects.add(values)
+            elif cls._handle is _Stream:
+                if not isinstance(values, Mapping):
+                    msg = f"{cls._type} requires a stream dictionary"
+                    raise TypeError(msg)
+                number = document.objects.add_stream(b"" if data is None else data, values, filter=None)
+            else:
+                if data is not None:
+                    msg = f"{cls._type} does not take stream data"
+                    raise TypeError(msg)
+                number = document.objects.add(values)
+            obj = document.objects[number]
+            if not _handled(cls, obj):
+                msg = f"{cls._type} requires a {cls._handle.__name__}"
+                raise TypeError(msg)
+            view = cls(obj)
+            _core.schema_created(obj._core(), view._indirect(), cls._type)  # noqa: SLF001
+            return view
+
+    def _indirect(self) -> tuple[int, int]:
+        handle = self._obj
+        if not handle.is_indirect or handle._root is None:  # noqa: SLF001
+            msg = "the operation requires an indirect object"
+            raise ValueError(msg)
+        return handle._root  # noqa: SLF001
+
+    def replace(self, value: object, /) -> None:
+        """Replace this indirect object's value, preserving its number and generation.
+
+        The replacement must satisfy this descriptor and every supported live
+        incoming link. Coupled or unknown relationships require their owning
+        operation. Accept PDF values, a container handle or a typed view.
+        """
+        handle = self._obj
+        if value is None:
+            msg = "a typed indirect object requires a container"
+            raise TypeError(msg)
+        written = _encode(handle._document, value.obj if isinstance(value, View) else value, 0, top_level=True)  # noqa: SLF001
+        _core.schema_change(handle._core(), self._indirect(), self._type, written)  # noqa: SLF001
+
+    def remove(self) -> None:
+        """Free this indirect object when it has no live incoming reference."""
+        _core.schema_change(self._obj._core(), self._indirect(), self._type, None)  # noqa: SLF001
 
     def _key(self, key: str | int) -> tuple[str | int, _Key | None]:
         """Return the step of ``key`` in the handle and its descriptor."""
