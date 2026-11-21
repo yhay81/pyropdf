@@ -43,7 +43,7 @@ type Entries = [Option<Arc<Value>>; 5];
 
 /// How a field's value is laid out.
 #[derive(Clone, Copy)]
-enum TextLayout {
+pub(super) enum TextLayout {
     SingleLine,
     Multiline,
     /// A comb of this many cells.
@@ -217,7 +217,7 @@ fn draw(
                 &style,
                 &text,
                 align,
-                matches!(layout, TextLayout::Multiline),
+                layout,
                 reader.budget,
             )
             .map(Some);

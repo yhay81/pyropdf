@@ -1,6 +1,7 @@
 //! Paint scoped XHTML text in the coordinate system of the widget appearance.
 
 use super::WidgetError;
+use super::appearance::TextLayout;
 use super::rich_style::{self, Style};
 use super::rich_text::Run;
 use super::settle::{Drawing, WidgetAppearance};
@@ -181,15 +182,66 @@ fn show(
     Ok(())
 }
 
+/// Place each visible grapheme in its comb cell, using its own rich text style.
+/// All glyphs accepted by the Standard 14 path encode exactly one character.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "cell positions use PDF user-space coordinates"
+)]
+fn comb(
+    out: &mut BudgetVec<'_, u8>,
+    glyphs: &[Glyph],
+    count: usize,
+    rect: [f64; 4],
+    height: f64,
+    align: Align,
+) -> Result<(), WidgetError> {
+    let [left, top, right, bottom] = rect;
+    let cell = (right - left) / count as f64;
+    let unused = count.saturating_sub(glyphs.len());
+    let first = match align {
+        Align::Left => 0,
+        Align::Center => unused / 2,
+        Align::Right => unused,
+    };
+    for (i, original) in glyphs.iter().enumerate() {
+        out.budget().poll()?;
+        let mut glyph = *original;
+        let (ascent, descent) = standard::vertical_metrics(glyph.style.font());
+        if glyph.style.auto_size {
+            let scale = (cell / glyph.width)
+                .min((bottom - top) / ((ascent + descent) * glyph.style.size))
+                .min(1.);
+            glyph.width *= scale;
+            glyph.style.size *= scale;
+            glyph.style.rise *= scale;
+        }
+        let x = left + (first + i) as f64 * cell + (cell - glyph.width).max(0.) / 2.;
+        let y = height - top - ascent * glyph.style.size;
+        show(out, std::slice::from_ref(&glyph), x, y)?;
+    }
+    Ok(())
+}
+
 pub(super) fn draw(
     runs: &[Run],
     css: &str,
     widget: &WidgetStyle,
     text: &TextStyle,
     align: Align,
-    multiline: bool,
+    layout: TextLayout,
     budget: &Budget,
 ) -> Result<Drawing, WidgetError> {
+    let multiline = matches!(layout, TextLayout::Multiline);
+    if let TextLayout::Comb(cells) = layout {
+        let value = rich_style::plain(runs, budget)?;
+        let count = standard::grapheme_count(&standard::single_line(&value, budget)?, budget)?;
+        if count > cells {
+            return Err(WidgetError::Malformed(
+                format!("comb field value has {count} characters, exceeding MaxLen {cells}").into(),
+            ));
+        }
+    }
     let mut content = BudgetVec::new(budget);
     widget.decoration(&mut content)?;
     let [x0, y0, x1, y1] = widget.content_rect();
@@ -242,14 +294,6 @@ pub(super) fn draw(
         return Ok(Drawing::Removed);
     }
     if width > 0. && height > 0. && !glyphs.is_empty() {
-        let lines = fit(
-            &mut glyphs,
-            base,
-            (width, height),
-            multiline,
-            widget.unit,
-            budget,
-        )?;
         let clip = format!(
             "q {} {} {} {} re W n\n/Tx BMC\n",
             fmt(x0),
@@ -258,20 +302,39 @@ pub(super) fn draw(
             fmt(height)
         );
         content.try_extend_from_slice(clip.as_bytes())?;
-        let mut top = widget.height - y0;
-        for l in &*lines {
-            let mut x = x0
-                + match l.align {
-                    Align::Left => 0.,
-                    Align::Center => (width - l.width).max(0.) / 2.,
-                    Align::Right => (width - l.width).max(0.),
-                };
-            let baseline = top - l.ascent;
-            for group in glyphs[l.start..l.end].chunk_by(|a, b| a.style == b.style) {
-                show(&mut content, group, x, baseline)?;
-                x += group.iter().map(|g| g.width).sum::<f64>();
+        if let TextLayout::Comb(cells) = layout {
+            comb(
+                &mut content,
+                &glyphs,
+                cells,
+                [x0, y0, x1, y1],
+                widget.height,
+                base.align,
+            )?;
+        } else {
+            let lines = fit(
+                &mut glyphs,
+                base,
+                (width, height),
+                multiline,
+                widget.unit,
+                budget,
+            )?;
+            let mut top = widget.height - y0;
+            for l in &*lines {
+                let mut x = x0
+                    + match l.align {
+                        Align::Left => 0.,
+                        Align::Center => (width - l.width).max(0.) / 2.,
+                        Align::Right => (width - l.width).max(0.),
+                    };
+                let baseline = top - l.ascent;
+                for group in glyphs[l.start..l.end].chunk_by(|a, b| a.style == b.style) {
+                    show(&mut content, group, x, baseline)?;
+                    x += group.iter().map(|g| g.width).sum::<f64>();
+                }
+                top = baseline - l.descent;
             }
-            top = baseline - l.descent;
         }
         content.try_extend_from_slice(b"EMC\nQ\n")?;
     }

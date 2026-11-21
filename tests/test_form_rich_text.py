@@ -230,3 +230,22 @@ def test_rich_css_point_sizes_respect_page_user_units() -> None:
         with pikepdf.open(io.BytesIO(doc.to_bytes())) as pdf:
             stream = pdf.Root.AcroForm.Fields[0].AP.N
             assert [float(args[1]) for args in _operators(stream, "Tf")] == [6.0]
+
+
+@pytest.mark.spec("text-fields", "interpret", "edit")
+@pytest.mark.spec("variable-text", "interpret")
+def test_rich_comb_keeps_cell_spacing_and_enforces_the_maximum_on_its_xhtml() -> None:
+    with pyropdf.open(_seed()) as doc:
+        value = _BODY + '<p>A<span style="color:#ff0000">B</span></p></body>'
+        doc.pages[0].widgets.add(
+            TextField("comb", (5, 5, 125, 28), flags=FieldFlags.COMB, max_length=3, rich_text=value)
+        )
+        field = doc.form["comb"]
+        with pytest.raises(pyropdf.PdfError, match="exceeding MaxLen"):
+            field.rich_text = _BODY + "<p>four</p></body>"
+        assert field.rich_text == value
+        with pikepdf.open(io.BytesIO(doc.to_bytes())) as pdf:
+            normal = pdf.Root.AcroForm.Fields[0].AP.N
+            assert [bytes(args[0]) for args in _operators(normal, "Tj")] == [b"A", b"B"]
+            positions = _operators(normal, "Tm")
+            assert 35 < float(positions[1][4]) - float(positions[0][4]) < 45
