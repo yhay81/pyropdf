@@ -69,6 +69,8 @@ def _assert_valid(doc: pyropdf.Document) -> None:
 
 
 @pytest.mark.spec("articles", "read", "interpret", "create", "edit", "preserve")
+@pytest.mark.spec("Thread", "create", "edit")
+@pytest.mark.spec("BeadFirst", "create", "edit")
 def test_threads_creation_info_undo_and_versions(tmp_path: Path) -> None:
     path = tmp_path / "articles.pdf"
     path.write_bytes(_pdf_with_version("1.4", page_count=3))
@@ -138,6 +140,7 @@ def test_threads_creation_info_undo_and_versions(tmp_path: Path) -> None:
 
 
 @pytest.mark.spec("articles", "read", "interpret", "create", "edit", "preserve")
+@pytest.mark.spec("Bead", "create", "edit")
 def test_bead_ring_reordering_deletion_info_cleanup_and_save_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "ring.pdf"
     path.write_bytes(_pdf_with_version("1.4", page_count=3))

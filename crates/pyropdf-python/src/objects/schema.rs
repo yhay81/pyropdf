@@ -35,7 +35,7 @@ pub fn schema_entry<'py>(
     key: &str,
 ) -> PyResult<TypedEntry<'py>> {
     crate::errors::boundary(|| {
-        use pyropdf_schema::check::{Interpretation, interpret};
+        use pyropdf_schema::check::{Interpretation, interpret_reference};
 
         let model = pyropdf_schema::object(descriptor)
             .ok_or_else(|| PyKeyError::new_err(descriptor.to_owned()))?;
@@ -105,8 +105,15 @@ pub fn schema_entry<'py>(
                 }
             }
             let inherited = parent.as_ref().map(|(r, _)| (r.number(), r.generation()));
-            let tag = match interpret(&graph, holder, model, key, value)
-                .map_err(|e| store_error(&e))?
+            let tag = match interpret_reference(
+                &graph,
+                holder,
+                model,
+                key,
+                value,
+                reference.map(|r| r.number()),
+            )
+            .map_err(|e| store_error(&e))?
             {
                 Interpretation::Absent => ("", None, None, py.None().into_bound(py), None, None),
                 Interpretation::Default(_, literal) if literal.starts_with('@') => {
