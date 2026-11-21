@@ -14,6 +14,30 @@ use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::value::{Array, Dict, Name, PdfString, StringForm, Value};
 use crate::{Error, Password, Result};
 
+/// The only CMS plaintexts defined by ISO 32000-2 Table 27.
+#[derive(Clone, Copy)]
+pub enum RecipientPayload {
+    /// A stream-specific seed. It carries no document permissions.
+    Stream([u8; 20]),
+    /// A default-filter seed followed by four permission bytes.
+    Document([u8; 24]),
+}
+
+impl RecipientPayload {
+    /// Copies the bounded result of CMS decryption from the credential provider.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if let Ok(seed) = bytes.try_into() {
+            Ok(Self::Stream(seed))
+        } else if let Ok(payload) = bytes.try_into() {
+            Ok(Self::Document(payload))
+        } else {
+            Err(Error::malformed(
+                "a CMS recipient payload must be 20 or 24 bytes",
+            ))
+        }
+    }
+}
+
 fn name<'a>(dict: &'a Dict, field: &str) -> Result<&'a [u8]> {
     match dict.get(field) {
         Some(Value::Name(n)) => Ok(n.as_bytes()),
@@ -271,7 +295,7 @@ impl Handler {
     /// authenticated recipient's 20-byte seed and four permission bytes.
     pub fn open_recipient(
         encrypt: &Dict,
-        mut decrypt: impl FnMut(&[u8]) -> Result<Option<[u8; 24]>>,
+        mut decrypt: impl FnMut(&[u8]) -> Result<Option<RecipientPayload>>,
         budget: &Budget,
     ) -> Result<Self> {
         if name(encrypt, "Filter")? != b"Adobe.PubSec" {
@@ -289,7 +313,11 @@ impl Handler {
                 payload = opened?;
             }
         }
-        let payload = payload.ok_or(Password::Recipient)?;
+        let RecipientPayload::Document(payload) = payload.ok_or(Password::Recipient)? else {
+            return Err(Error::malformed(
+                "a default recipient filter requires four permission bytes after its seed",
+            ));
+        };
         let permissions = u32::from_be_bytes(payload[20..].try_into().expect("four bytes"));
         if profile.version == 5 && permissions & (1 << 12) == 0 {
             return Err(Error::malformed(
