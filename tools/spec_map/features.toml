@@ -318,6 +318,10 @@ edit = { status = "partial", missing = "Image rewriting transcodes JPEG 2000 ima
 clause = "7.4.10"
 description = "The Crypt filter: decrypting one stream with a named crypt filter."
 objects = ["FilterCrypt"]
+read = { status = "partial", missing = "Direct crypt-filter choices are resolved. An indirect Filter array, filter name or DecodeParms dictionary needs revision-aware resolution (#1056).", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Creating encrypted output with an indirect stream filter or parameter requires selecting its resolved value (#1056).", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Saving streams whose security filter or parameters are stored indirectly must preserve their shared references across revisions (#1056).", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Stream dictionary edits and full and incremental saves preserve or change the explicit selector. Replacing the decoded payload through Stream.write still drops the selector (#992).", milestone = "Phase 4: Specification" }
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
 
 [features.file-header]
@@ -367,11 +371,11 @@ preserve = { status = "partial", missing = "Both save modes preserve the tested 
 clause = "7.6.6"
 description = "Named crypt filters and their methods: RC4, AES-128, and AES-256."
 objects = ["CryptFilter", "CryptFilterMap", "CryptFilterPublicKey", "CryptFilterPublicKeyMap"]
-read = { status = "partial", missing = "Standard and recipient default string/stream filters are read. Distinct EFF and per-stream named selection remain unfinished.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Standard filters and AESV3 recipient defaults render. Distinct EFF and named per-stream selection remain unfinished.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Saves write AES defaults for password and recipient handlers. Separate embedded-file and per-stream filters remain unfinished.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Encrypted saves replace or remove standard and recipient defaults. Separate embedded-file and per-stream filters remain unfinished.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "KEEP and incremental saves preserve standard and recipient defaults. Separate embedded-file and per-stream recipient filters remain unsupported.", milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Direct crypt-filter choices are resolved. An indirect Filter array, filter name or DecodeParms dictionary needs revision-aware resolution (#1056).", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Creating encrypted output with an indirect stream filter or parameter requires selecting its resolved value (#1056).", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Saving streams whose security filter or parameters are stored indirectly must preserve their shared references across revisions (#1056).", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The store interprets explicit filters and EFF, including independent recipient keys. Direct rendering of explicit legacy filters and a second recipient page key requires the authenticated store source (#993).", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Both save modes rewrite inherited attachments when EFF changes and preserve untouched ciphertext. Stream.write and Attachment.write must retain an existing private selector while replacing encoded data (#992).", milestone = "Phase 4: Specification" }
 
 [features.document-catalog]
 clause = "7.7.2"

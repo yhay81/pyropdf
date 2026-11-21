@@ -514,16 +514,44 @@ impl Index {
     pub fn unlock(&mut self, handler: Handler, budget: &Budget) -> Result<()> {
         if let Some(repair) = &self.repair {
             let rebuilt = scan::rebuild(&self.bytes, Some(&handler), budget)?;
-            *self = Self::from_rebuilt(
+            let mut candidate = Self::from_rebuilt(
                 self.bytes.clone(),
                 self.origin,
                 rebuilt,
                 repair.damage.clone(),
                 budget,
             )?;
+            candidate.install_handler(handler, budget)?;
+            *self = candidate;
+            return Ok(());
         }
-        self.security = Some(handler);
-        Ok(())
+        self.install_handler(handler, budget)
+    }
+
+    fn install_handler(&mut self, handler: Handler, budget: &Budget) -> Result<()> {
+        if !handler.distinguishes_embedded_files() {
+            self.security = Some(handler);
+            return Ok(());
+        }
+        // Role discovery may need a compressed Filespec. Publish neither its
+        // decoded members nor the new credential if discovery subsequently fails.
+        let fresh = objstm::Streams::new(&self.entries, budget)?;
+        let old_streams = std::mem::replace(&mut self.streams, fresh);
+        let old_handler = self.security.replace(handler);
+        match crate::security::embedded::discover(self, None, budget) {
+            Ok(roles) => {
+                self.security
+                    .as_mut()
+                    .expect("the staged handler")
+                    .remember_file_roles(roles);
+                Ok(())
+            }
+            Err(error) => {
+                self.security = old_handler;
+                self.streams = old_streams;
+                Err(error)
+            }
+        }
     }
 
     /// Returns the security handler that [`Index::unlock`] gave.
@@ -580,16 +608,21 @@ impl Index {
         let Some(container) = self.streams.container(number) else {
             return Ok(None);
         };
-        if let Some(outcome) = container.outcome() {
-            return outcome.as_ref().map(Some).map_err(Clone::clone);
-        }
         if self.is_encrypted() && self.security.is_none() {
             return Err(Error::from(Password::Required).context(format!("object stream {number}")));
+        }
+        if let Some(outcome) = container.outcome() {
+            return outcome.as_ref().map(Some).map_err(Clone::clone);
         }
         let decoded = objstm::decode(&self.source(), number, self.security.as_ref(), budget)
             .and_then(|decoded| ObjectStream::new(decoded, self.streams.named(container), budget));
         let computed = match decoded {
-            Err(error) if error.limit().is_some() => return Err(error),
+            Err(error)
+                if error.limit().is_some()
+                    || matches!(error.kind(), crate::ErrorKind::Password(_)) =>
+            {
+                return Err(error);
+            }
             decoded => decoded.map_err(|error| error.context(format!("object stream {number}"))),
         };
         container
