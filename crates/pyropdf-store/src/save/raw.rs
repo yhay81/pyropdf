@@ -2,7 +2,7 @@
 
 use std::panic::{self, AssertUnwindSafe};
 
-use hayro_syntax::object::{MaybeRef, Object};
+use hayro_syntax::object::{FromBytes, MaybeRef, Object, Stream};
 use hayro_syntax::reader::{Reader, ReaderContext, ReaderExt};
 
 use crate::budget::Budget;
@@ -58,17 +58,45 @@ fn extent(
 ) -> Result<usize> {
     let mut reader = Reader::new(bytes);
     reader.skip_white_spaces_and_comments();
-    let object = reader
-        .read_with_context::<MaybeRef<Object<'_>>>(&ReaderContext::dummy())
-        .ok_or_else(|| {
-            Error::malformed("the object being saved does not begin with a PDF value")
-        })?;
-    if let MaybeRef::NotRef(Object::Stream(stream)) = object
-        && let Some(length) = stream.dict().get_ref("Length")
-    {
-        // The dummy reader cannot resolve an indirect /Length. Follow
-        // exactly one reference in the original base, never recursively,
-        // and retain embedded `endstream` tokens and trailing data bytes.
+    let invalid = || Error::malformed("the object being saved does not begin with a PDF value");
+    if reader.peek_bytes(2) == Some(b"<<") {
+        let start = reader.offset();
+        match Object::from_bytes(&bytes[start..]).ok_or_else(invalid)? {
+            Object::Stream(stream) => return stream_extent(fetch, bytes, &stream, budget),
+            Object::Dict(dict) => {
+                reader.jump(start + dict.data().len());
+                reader.skip_white_spaces_and_comments();
+            }
+            _ => return Err(invalid()),
+        }
+    } else {
+        reader
+            .read_with_context::<MaybeRef<Object<'_>>>(&ReaderContext::dummy())
+            .ok_or_else(invalid)?;
+    }
+    // A dictionary reader looks past its closing delimiter for `stream`
+    // and may consume following whitespace. That whitespace belongs to
+    // the indirect-object wrapper, not the value itself.
+    let end = bytes[..reader.offset()]
+        .iter()
+        .rposition(|byte| !matches!(byte, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' '))
+        .map_or(0, |at| at + 1);
+    Ok(end)
+}
+
+/// hayro supplies the payload's actual start and length. An indirect length
+/// comes from the original base because the standalone reader cannot resolve it.
+fn stream_extent(
+    fetch: &dyn Fn(Reference) -> Result<Option<Bytes>>,
+    bytes: &Bytes,
+    stream: &Stream<'_>,
+    budget: &Budget,
+) -> Result<usize> {
+    let raw = stream.raw_data();
+    let start = bytes
+        .offset_of(&raw)
+        .ok_or_else(|| Error::malformed("stream data is outside its object"))?;
+    let length = if let Some(length) = stream.dict().get_ref("Length") {
         let reference = Reference::new(
             length.obj_number,
             u16::try_from(length.gen_number)
@@ -81,27 +109,20 @@ fn extent(
                 "a stream's indirect length is not an integer",
             ));
         };
-        let raw = stream.raw_data();
-        let start = bytes
-            .offset_of(&raw)
-            .ok_or_else(|| Error::malformed("stream data is outside its object"))?;
-        let end = usize::try_from(length)
-            .ok()
-            .and_then(|len| start.checked_add(len))
-            .filter(|&end| end <= bytes.len())
-            .ok_or_else(|| Error::malformed("invalid indirect stream length"))?;
-        reader.jump(end);
-        reader.skip_white_spaces();
-        reader.forward_tag(b"endstream").ok_or_else(|| {
-            Error::malformed("the indirect stream length does not end at endstream")
-        })?;
-    }
-    // A dictionary reader looks past its closing delimiter for `stream`
-    // and may consume following whitespace. That whitespace belongs to
-    // the indirect-object wrapper, not the value itself.
-    let end = bytes[..reader.offset()]
-        .iter()
-        .rposition(|byte| !matches!(byte, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' '))
-        .map_or(0, |at| at + 1);
-    Ok(end)
+        usize::try_from(length).map_err(|_| Error::malformed("invalid indirect stream length"))?
+    } else {
+        raw.len()
+    };
+    // A direct length and its closing delimiter already passed hayro's reader.
+    let end = start
+        .checked_add(length)
+        .filter(|&end| end <= bytes.len())
+        .ok_or_else(|| Error::malformed("invalid indirect stream length"))?;
+    let mut reader = Reader::new(bytes);
+    reader.jump(end);
+    reader.skip_white_spaces();
+    reader
+        .forward_tag(b"endstream")
+        .ok_or_else(|| Error::malformed("the indirect stream length does not end at endstream"))?;
+    Ok(reader.offset())
 }
