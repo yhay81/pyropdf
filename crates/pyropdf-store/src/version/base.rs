@@ -49,6 +49,13 @@ pub trait Base: fmt::Debug + Send + Sync {
     /// and polling use the output's budget. Incremental save never calls it.
     fn numbers(&self, out: &mut BudgetVec<'_, u32>) -> Result<()>;
 
+    /// Returns bytes starting at the PDF header, from the source file or the
+    /// selected base version of a newly created document.
+    fn header_bytes(&self) -> Option<&[u8]> {
+        let file = self.file()?;
+        file.bytes().get(file.origin()..)
+    }
+
     /// Returns the original file index, when this base came from a file.
     /// Incremental save uses its bytes, revision offsets, and repair state.
     fn file(&self) -> Option<&Index> {
@@ -62,6 +69,7 @@ pub trait Base: fmt::Debug + Send + Sync {
 /// A new document starts from an empty one.
 #[derive(Debug, Default)]
 pub struct MemoryBase {
+    header: Option<[u8; 8]>,
     objects: BTreeMap<u32, (u16, Option<Bytes>)>,
     trailer: Dict,
 }
@@ -71,9 +79,24 @@ impl MemoryBase {
     #[must_use]
     pub const fn new(trailer: Dict) -> Self {
         Self {
+            header: None,
             objects: BTreeMap::new(),
             trailer,
         }
+    }
+
+    /// Selects the header version of a new document. A supported version is
+    /// one of PDF 1.0 through 1.7 or PDF 2.0.
+    #[must_use]
+    pub fn with_version(mut self, version: &str) -> Option<Self> {
+        let bytes = version.as_bytes();
+        if !matches!(bytes, [b'1', b'.', b'0'..=b'7'] | [b'2', b'.', b'0']) {
+            return None;
+        }
+        let mut header = *b"%PDF-1.7";
+        header[5..].copy_from_slice(bytes);
+        self.header = Some(header);
+        Some(self)
     }
 
     /// Adds the object that `reference` names, whose value `bytes` begin
@@ -100,6 +123,10 @@ impl MemoryBase {
 }
 
 impl Base for MemoryBase {
+    fn header_bytes(&self) -> Option<&[u8]> {
+        self.header.as_ref().map(<[u8; 8]>::as_slice)
+    }
+
     fn generation(&self, number: u32) -> Option<u16> {
         self.objects
             .get(&number)
