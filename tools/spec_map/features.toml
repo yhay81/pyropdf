@@ -1189,10 +1189,6 @@ objects = ["DocInfo"]
 clause = "14.3.2"
 description = "XMP metadata streams of the document and its components."
 objects = ["Metadata"]
-read = { status = "partial", missing = "Document catalog XMP streams are read, without a high-level reader for component-level `/Metadata` streams.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Catalog XMP packets are parsed for profile claims and Info synchronization, without interpreting component-level `/Metadata` streams.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "`Document.xmp` writes unfiltered catalog XMP streams, without a high-level API for component-level `/Metadata` streams.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Catalog XMP streams are updated in step with Info and sanitize removes `/Metadata` streams, without editing component-level packets.", milestone = "Phase 4: Specification" }
 
 [features.file-identifiers]
 clause = "14.4"

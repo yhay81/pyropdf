@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, cast
 
 from pyropdf import _core
-from pyropdf._errors import PdfError
+from pyropdf._errors import LimitError, MalformedPdfError, PdfError
 from pyropdf._objects import Array, Dictionary, Name, Stream, String
 
 if TYPE_CHECKING:
@@ -152,8 +152,8 @@ def _entries(document: Document) -> dict[str, str]:
     return entries
 
 
-def _xmp_stream(catalog: Dictionary) -> Stream | None:
-    stream = catalog.get("Metadata")
+def _xmp_stream(owner: Dictionary) -> Stream | None:
+    stream = owner.get("Metadata")
     return stream if isinstance(stream, Stream) else None
 
 
@@ -178,6 +178,112 @@ def write_xmp(document: Document, packet: str) -> None:
         objects = document.objects
         added = objects[objects.add_stream(data, {"Type": Name("Metadata"), "Subtype": Name("XML")}, filter=None)]
         catalog["Metadata"] = added
+
+
+def _check_component_packet(packet: str) -> None:
+    """Recognize an RDF packet by its expanded XML names, without building a tree."""
+    from xml.parsers import expat  # noqa: PLC0415
+
+    parser = expat.ParserCreate(namespace_separator=" ")
+    depth = 0
+    wrapped = False
+    found_rdf = False
+
+    def start(name: str, _attributes: dict[str, str]) -> None:
+        nonlocal depth, wrapped, found_rdf
+        depth += 1
+        if depth == 1:
+            wrapped = name in {"adobe:ns:meta/ xmpmeta", "adobe:ns:meta/ xapmeta"}
+            found_rdf = name == f"{_RDF} RDF"
+        elif depth == 2 and wrapped and name == f"{_RDF} RDF":  # noqa: PLR2004
+            found_rdf = True
+
+    def end(_name: str) -> None:
+        nonlocal depth
+        depth -= 1
+
+    def doctype(*_args: object) -> None:
+        msg = "component XMP must not have a document type declaration"
+        raise MalformedPdfError(msg)
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.StartDoctypeDeclHandler = doctype
+    try:
+        parser.Parse(packet, True)  # noqa: FBT003
+    except expat.ExpatError as error:
+        msg = f"invalid component XMP XML: {error}"
+        raise MalformedPdfError(msg) from error
+    if not found_rdf:
+        msg = "component XMP must contain an RDF packet"
+        raise MalformedPdfError(msg)
+
+
+def read_component_xmp(owner: Dictionary) -> str | None:
+    """Read the bounded UTF-8 RDF packet attached to this resource."""
+    raw = owner.get("Metadata")
+    if raw is None:
+        return None
+    if not isinstance(raw, Stream) or raw.get("Type") != Name("Metadata") or raw.get("Subtype") != Name("XML"):
+        msg = "component Metadata must refer to a /Type /Metadata, /Subtype /XML stream"
+        raise MalformedPdfError(msg)
+    try:
+        packet = raw.read(max_size=_MAX_XMP_SIZE).decode("utf-8")
+    except UnicodeDecodeError as error:
+        msg = "component XMP must use UTF-8"
+        raise MalformedPdfError(msg) from error
+    _check_component_packet(packet)
+    return packet
+
+
+def write_component_xmp(document: Document, owner: Dictionary, packet: str | None) -> None:
+    """Replace only this resource's association, preserving any other owner's packet."""
+    data = None
+    if packet is not None:
+        if len(packet) > _MAX_XMP_SIZE or len(data := packet.encode("utf-8")) > _MAX_XMP_SIZE:
+            msg = "component XMP exceeds the 1 MiB packet limit"
+            code = "stream_data_size"
+            raise LimitError(code, msg)
+        _check_component_packet(packet)
+
+    if packet is None and "Metadata" not in owner:
+        return
+    with document.transaction("component xmp"):
+        previous = _xmp_stream(owner)
+        if data is None:
+            if "Metadata" not in owner:
+                return
+            del owner["Metadata"]
+        else:
+            kind = owner.get("Type")
+            if (
+                (owner._root is None and not owner._path)  # noqa: SLF001 - the trailer is not a component.
+                or kind in (Name("DPart"), Name("XRef"), Name("ObjStm"))
+                or ("ByteRange" in owner and (kind in (Name("Sig"), Name("DocTimeStamp")) or "Contents" in owner))
+                or ("Linearized" in owner and "L" in owner)
+                or (
+                    owner._root == (document.catalog.xref, document.catalog.generation)  # noqa: SLF001
+                    and owner._path[:1] == (b"Extensions",)  # noqa: SLF001
+                )
+            ):
+                msg = "this PDF dictionary does not permit a component metadata stream"
+                raise ValueError(msg)
+            _require_version(document, document.catalog, (1, 4))
+            # An existing packet may belong to another component or the catalog.
+            # Retain its private keys while replacing the stream and its encoding.
+            encoding = {"Length", "Filter", "DecodeParms", "DL", "F", "FFilter", "FDecodeParms"}
+            entries = {}
+            if (
+                previous is not None
+                and previous.get("Type") == Name("Metadata")
+                and previous.get("Subtype") == Name("XML")
+            ):
+                entries = {k: previous[k] for k in previous if k not in encoding}
+            entries.update(Type=Name("Metadata"), Subtype=Name("XML"))
+            objects = document.objects
+            owner["Metadata"] = objects[objects.add_stream(data, entries, filter=None)]
+        if previous is not None and previous.xref is not None:
+            _core.object_free_unreferenced(document._core(), [previous.xref])  # noqa: SLF001
 
 
 def _xmp_text(key: str, value: str) -> str:
