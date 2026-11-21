@@ -345,7 +345,9 @@ def test_work_index_accounts_for_all_unfinished_cells_in_both_directions() -> No
     upstream = features()["optional-content"]["interpret"]
     assert upstream["issue"] == upstream["upstream"] == 372
     assert families[upstream["family"]]["kind"] == "upstream"
-    assert features()["optional-content"]["edit"]["issue"] != upstream["issue"]
+    edited = features()["optional-content"]["edit"]
+    assert edited["status"] == "done"
+    assert "issue" not in edited
 
 
 def test_an_unassigned_cell_prevents_generation(tmp_path: Path) -> None:

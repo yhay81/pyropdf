@@ -30,10 +30,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 39 | 35 | 757 |
+| read | 0 | 0 | 0 | 38 | 35 | 758 |
 | interpret | 9 | 19 | 0 | 35 | 42 | 726 |
-| create | 0 | 0 | 21 | 27 | 63 | 720 |
-| edit | 0 | 0 | 0 | 48 | 56 | 727 |
+| create | 0 | 0 | 21 | 26 | 63 | 721 |
+| edit | 0 | 0 | 0 | 47 | 56 | 728 |
 | preserve | 0 | 0 | 0 | 25 | 40 | 766 |
 
 ## Clauses
@@ -108,7 +108,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 8.9.7 | Inline images | `inline-images` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.10 | Form XObjects | `form-xobjects` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.10.4 | Reference XObjects | `reference-xobjects` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.11 | Optional content | `optional-content` | 1 partial | 1 engine | 1 partial | 1 partial | 1 done |
+| 8.11 | Optional content | `optional-content` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 9.3 | Text state parameters and operators | `text-state` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.4 | Text objects | `text-objects` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.6.2 | Type 1 fonts | `type1-fonts` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-419 unfinished cells in 831 features: 9 engine, 174 partial, 236 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+416 unfinished cells in 831 features: 9 engine, 171 partial, 236 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -254,8 +254,7 @@ Find a feature in the JSON, follow its dimension's `issue`, and check that issue
 
 Milestone [#245](https://github.com/yhay81/pyropdf/issues/245).
 
-- [#901](https://github.com/yhay81/pyropdf/issues/901) Read and edit optional-content usage and usage application dictionaries. Resolve OCG Usage and configuration AS application dictionaries against their groups. Expose and modify the stored values, and verify configuration- and event-specific behavior through save/reopen.
-    - read, create, edit — `optional-content`.
+No unfinished specification-map cells assigned.
 
 ### 246 Canvas
 

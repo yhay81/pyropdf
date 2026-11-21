@@ -610,7 +610,7 @@ READ_ONLY = {
     "Font": "from_file from_bytes standard chars char_widths char_bbox program text_width text_height has_glyph",
     "Form": "to_fdf to_xfdf",
     "History": "save",
-    "Layers": "visible",
+    "Layers": "usage_applications visible",
     "Layout": "to_dict to_html to_xml",
     "Matrix": "planish",
     "Operations": "parse to_bytes",

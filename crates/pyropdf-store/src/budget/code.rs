@@ -239,7 +239,8 @@ pub enum LimitCode {
     PageLabelInputSize,
     /// The document's `/OCGs`, `/Configs`, or an optional-content configuration
     /// array holds, or `Layers.add` or `LayerMembership` would give it, more
-    /// than 4,096 entries.
+    /// than 4,096 entries. A usage lookup counts its application entries and
+    /// the group entries of applications for the requested event together.
     OptionalContentCount,
     /// `Layers.visible` evaluates a `/VE` visibility expression deeper than 32
     /// levels or with more than 4,096 operands.
