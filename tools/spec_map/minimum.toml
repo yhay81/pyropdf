@@ -1,0 +1,147 @@
+# DESIGN.md section 13 defines the approved names; #961 records the decision.
+schema = 1
+
+[save-guarantees]
+full = ["tests/test_preservation.py::test_an_edit_and_a_save_keep_every_untouched_object[pdf20-simple.pdf-add_annotation-full]"]
+incremental = ["tests/test_preservation.py::test_an_edit_and_a_save_keep_every_untouched_object[pdf20-simple.pdf-add_annotation-incremental]",
+  "tests/test_history.py::test_undoing_to_the_original_saves_incrementally_as_read"]
+impacts = ["tests/test_changes.py::test_a_save_that_is_not_incremental_invalidates_every_signature",
+  "tests/test_changes.py::test_an_embedded_file_breaks_a_pdfa_1_claim"]
+atomic = ["tests/test_page_copies.py::test_copy_refuses_a_direct_merged_widget_atomically"]
+
+[workflows.retrieval]
+name = "Extraction for retrieval"
+guide = "docs/en/reading.md#text-and-words"
+fixture = "tests/test_text_provenance.py"
+operation = "Trace text and display-space locations to a document version and its source; distinguish repeated placements, inferred spacing and OCR."
+issues = [104, 853]
+checks = ["pdfjs"]
+tests = [
+  "tests/test_text_provenance.py::test_chars_name_the_stream_and_operation_that_showed_them",
+  "tests/test_extraction_records.py::test_records_read_the_current_version_and_refuse_a_deleted_page",
+  "tests/test_ocr_layer.py::test_ocr_layer_from_words_skips_pages_with_text_by_default",
+]
+cases = { "native/read" = "delivered" }
+
+[workflows.images]
+name = "Page images and thumbnails"
+guide = "docs/en/rendering.md#options"
+fixture = "tests/test_rendering_batch.py"
+operation = "Render a visible landmark at a specified crop, scale and rotation; compare thumbnail dimensions and pixels against a second renderer."
+issues = [96, 851]
+checks = ["pdfjs"]
+tests = [
+  "tests/test_rendering_batch.py::test_render_fit_scales_mixed_page_sizes_rotation_and_user_unit",
+  "tests/test_presentations.py::test_page_thumbnail_write_flatten_and_round_trip",
+]
+cases = { "native/read" = "delivered" }
+
+[workflows.pages]
+name = "Organizing pages"
+guide = "docs/en/editing.md#pages"
+fixture = "tests/test_page_copies.py"
+operation = "Insert, move, copy and delete pages; reopen and verify destinations, dependent structures and untouched pages."
+issues = [155, 845]
+checks = ["qpdf", "pikepdf"]
+tests = [
+  "tests/test_page_ops.py::test_copy_page_append_and_position",
+  "tests/test_page_copies.py::test_copy_keeps_a_single_indirect_structure_child",
+  "tests/test_pages.py::test_page_edits_inherit_past_attributes_that_name_missing_objects[delete_pages]",
+]
+cases = { "native/full" = "delivered", "native/incremental" = "delivered" }
+
+[workflows.stamps]
+name = "Stamps and watermarks"
+guide = "docs/en/editing.md#drawing"
+fixture = "tests/test_canvas_round_trip.py"
+operation = "Draw text in an embedded face and a graphic at known display-space positions. Independently extract the text and render the result."
+issues = [153, 246]
+checks = ["poppler", "pdfjs"]
+tests = [
+  "tests/test_font_subset_poppler.py::test_cff_subset_after_repeated_saves_matches_poppler",
+  "tests/test_canvas_round_trip.py::test_draw_copies_an_image_of_another_document_once",
+]
+cases = { "native/full" = "delivered", "native/incremental" = "delivered" }
+
+[workflows.forms]
+name = "Filling and flattening forms"
+guide = "docs/en/editing.md#forms"
+fixture = "tests/test_flatten_conformance.py"
+operation = "Fill a field, verify its appearance, flatten, and check the page and affected field, widget and tag relationships or pre-save findings."
+issues = [197, 800]
+checks = ["pikepdf", "pdfjs"]
+tests = [
+  "tests/test_flatten.py::test_a_page_flattens_alone_and_its_widgets_leave_their_fields",
+  "tests/test_flatten.py::test_appearance_boxes_and_matrices_map_onto_the_rectangle",
+]
+cases = { "native/full" = "delivered", "native/incremental" = "delivered" }
+
+[workflows.redaction]
+name = "Redaction and sanitization"
+guide = "docs/en/editing.md#sanitizing"
+fixture = "tests/test_sanitize.py"
+operation = "Check the clean full-save deliverable for removal of targeted text, pictures and paths. Separately verify refusal before output on an unsupported input."
+issues = [362, 363]
+checks = ["qpdf", "pikepdf", "pdfjs"]
+tests = [
+  "tests/test_sanitize.py::test_attachments_and_metadata_leave",
+  "tests/test_sanitize.py::test_hidden_text_inside_nested_forms_leaves",
+]
+cases = { "native/full" = "delivered", "native/refuse-before-output" = "refused" }
+
+[workflows.scans]
+name = "Searchable scans"
+guide = "docs/en/reading.md#offline-ocr"
+fixture = "tests/test_ocr_layer.py"
+operation = "Reopen a scan with searchable OCR, compare word positions against raster landmarks and identify the OCR origin."
+issues = [145, 146, 853]
+checks = ["pikepdf", "pdfjs"]
+tests = [
+  "tests/test_ocr_layer.py::test_ocr_layer_survives_save_roundtrip",
+  "tests/test_ocr_layer.py::test_ocr_layer_on_rotated_page_uses_display_coordinates",
+]
+cases = { "native/full" = "delivered", "native/incremental" = "delivered" }
+
+[workflows.archives]
+name = "Accessible archival documents"
+guide = "docs/en/editing.md#structure-and-accessibility"
+fixture = "tests/assets/pdfua/pdfua-2-pdfa-4.pdf"
+operation = "Author and edit a PDF/A-4 plus PDF/UA-2 document and an earlier PDF/UA-1 case; validate each claimed level and review reading order and alternate text."
+issues = [846, 911, 932]
+checks = ["verapdf", "arlington"]
+tests = [
+  "tests/test_pdfua_corpus.py::test_each_fixture_claims_its_part_and_passes_the_structural_check[pdfua-2-pdfa-4.pdf]",
+  "tests/test_pdfua_corpus.py::test_each_fixture_claims_its_part_and_passes_the_structural_check[pdfua-1.pdf]",
+]
+cases = { "native/full/dual" = "delivered", "native/incremental/dual" = "delivered", "native/full/earlier" = "delivered", "native/incremental/earlier" = "delivered" }
+[workflows.archives.profiles.dual]
+levels = ["PDF/A-4", "PDF/UA-2"]
+fixture = "tests/assets/pdfua/pdfua-2-pdfa-4.pdf"
+[workflows.archives.profiles.earlier]
+levels = ["PDF/UA-1"]
+fixture = "tests/assets/pdfua/pdfua-1.pdf"
+
+[workflows.repair]
+name = "Inspecting and repairing objects"
+guide = "docs/en/editing.md#objects"
+fixture = "tests/assets/broken/size.pdf"
+operation = "Inspect an identified fault, repair and reopen the full-save output, compare unaffected values, and refuse incremental save on a repaired base."
+issues = [24, 217, 271]
+checks = ["qpdf", "pikepdf"]
+tests = [
+  "tests/test_revisions.py::test_empty_and_repaired_documents_have_no_revisions",
+  "tests/test_pages.py::test_a_page_whose_parent_is_a_cycle_is_repaired_by_an_edit",
+]
+cases = { "native/full" = "delivered", "native/refuse-incremental" = "refused" }
+
+[workflows.server-worker]
+name = "Server and Worker processing"
+guide = "docs/en/limits.md#reading-a-pdf-in-a-worker"
+fixture = "tools/smoke_worker.py"
+operation = "Exercise the documented request on the deployed server and Cloudflare Worker, verify returned content and the typed budget refusal on both."
+issues = [15, 243, 857]
+checks = ["pikepdf"]
+tests = [
+  "tests/test_revisions.py::test_revision_open_enforces_document_limits",
+]
+cases = { "server/read" = "delivered", "server/refuse-limit" = "refused", "cloudflare-worker/read" = "delivered", "cloudflare-worker/refuse-limit" = "refused" }
