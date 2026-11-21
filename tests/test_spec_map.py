@@ -487,13 +487,19 @@ def test_a_claim_holds_only_when_every_applicable_dimension_in_scope_is_done(tmp
 
 
 @pytest.mark.parametrize("selector", ['clauses = ["7.6.4"]', 'features = ["standard-security-handler"]'])
-def test_password_handler_claim_reports_rc4_creation_and_legacy_owner_rendering(tmp_path: Path, selector: str) -> None:
+def test_password_handler_claim_distinguishes_rc4_creation_from_legacy_interpretation(
+    tmp_path: Path, selector: str
+) -> None:
     root = copy_root(tmp_path)
     result = claim(root, selector)
     assert result.returncode == 1
     for method in ("standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4"):
         assert f"{method} create is non-goal" in result.stdout
-        assert f"{method} interpret is partial" in result.stdout
+        assert f"{method} interpret is engine" in result.stdout
+    scope = json.loads((root / "docs/spec-map.json").read_text())
+    legacy = next(row for row in scope["features"] if row["feature"] == "standard-aes-r4")
+    assert legacy["interpret"]["upstream"] == 1043
+    assert "either role" in legacy["description"]
     assert "standard-aes-r5 create is non-goal" in result.stdout
     evidence = record_evidence(root)
     node = "tests/test_encrypted.py::test_aes_authoring_sets_the_exact_revision_and_permissions[standard-aes-r6]"

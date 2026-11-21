@@ -254,6 +254,7 @@ impl Profile {
                 owner: Arc::new(AtomicBool::new(permissions & 2 != 0)),
             }),
             password: Box::default(),
+            legacy_reader: None,
             version: self.version,
             revision: 0,
             strings: self.strings,

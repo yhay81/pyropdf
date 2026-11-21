@@ -31,7 +31,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
 | read | 0 | 0 | 0 | 40 | 36 | 761 |
-| interpret | 8 | 19 | 0 | 41 | 43 | 726 |
+| interpret | 13 | 19 | 0 | 36 | 43 | 726 |
 | create | 0 | 0 | 13 | 641 | 71 | 112 |
 | edit | 0 | 0 | 0 | 667 | 59 | 111 |
 | preserve | 0 | 0 | 0 | 25 | 655 | 157 |
@@ -57,7 +57,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.5.7 | Object streams | `object-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 partial | 1 partial | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 2 done, 5 partial | 3 done, 4 non-goal | 7 done | 7 done |
+| 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 2 done, 5 engine | 3 done, 4 non-goal | 7 done | 7 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 7.6.6 | Crypt filters | `crypt-filters` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,286 unfinished cells in 837 features: 8 engine, 1,414 partial, 864 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,286 unfinished cells in 837 features: 13 engine, 1,409 partial, 864 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -368,7 +368,7 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 - [#892](https://github.com/yhay81/pyropdf/issues/892) Verify hybrid-reference writing and linearized-file preservation. Write and reopen hybrid XRefStm sections and verify fast-web-view hints and offsets after supported saves. Reuse independent qpdf checks, including the modes where linearization cannot survive.
     - create, edit — `xref-streams`.
     - preserve — `linearization`.
-- [#974](https://github.com/yhay81/pyropdf/issues/974) Render owner-authenticated standard-handler PDF revisions 2 to 4. Render authenticated R2 to R4 versions with the owner credentials before and after edits.
+- [#1043](https://github.com/yhay81/pyropdf/issues/1043) Interpret legacy encrypted PDFs with byte-encoded credentials in hayro-syntax. Interpret an owner-authenticated R2 to R4 document whose effective user credential is not UTF-8.
     - interpret — `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`.
 
 ### 253 Understanding
