@@ -38,7 +38,7 @@ A target color space of `Page.recolor` and `Document.recolor`.
 Unconverted(
     *,
     page: int,
-    kind: Literal['shading', 'pattern', 'colorspace', 'image', 'form'],
+    kind: Literal['shading', 'pattern', 'colorspace', 'image', 'form', 'conversion'],
     detail: str,
 )
 ```
