@@ -679,7 +679,10 @@ pub fn import_pages(
     pages: Vec<(u32, u16)>,
     at: usize,
 ) -> PyResult<Option<ImportedMedia>> {
-    copy_pages(py, document, source, pages, at, None).map(|result| result.map(|(media, _)| media))
+    crate::errors::boundary(|| {
+        copy_pages(py, document, source, pages, at, None)
+            .map(|result| result.map(|(media, _)| media))
+    })?
 }
 
 /// Also return the immutable source of any imported media. The caller can
@@ -712,41 +715,39 @@ fn copy_pages(
     at: usize,
     operation: Option<&Budget>,
 ) -> PyResult<Option<(ImportedMedia, Arc<Version>)>> {
-    crate::errors::boundary(|| {
-        // Pin the source before taking the destination's writer lock.
-        // The import itself, including the source index, uses the edit budget.
-        let (version, parent) = source.reading_parent_with(operation)?;
-        let memo = if parent.is_none() && source.in_transaction() {
-            &source.draft_pages
-        } else {
-            &source.pages
+    // Pin the source before taking the destination's writer lock.
+    // The import itself, including the source index, uses the edit budget.
+    let (version, parent) = source.reading_parent_with(operation)?;
+    let memo = if parent.is_none() && source.in_transaction() {
+        &source.draft_pages
+    } else {
+        &source.pages
+    };
+    let destinations = destinations_memo(source);
+    let media = document.edit(py, |transaction, budget| {
+        let budget = operation.unwrap_or(budget);
+        let index = PageIndex::memoized(memo, parent.as_ref().unwrap_or(&version), budget)
+            .map_err(|error| store_error(&error))?;
+        let source = pages::import::Source {
+            version: &version,
+            index: &index,
+            references: &source.references,
+            destinations,
         };
-        let destinations = destinations_memo(source);
-        let media = document.edit(py, |transaction, budget| {
-            let budget = operation.unwrap_or(budget);
-            let index = PageIndex::memoized(memo, parent.as_ref().unwrap_or(&version), budget)
-                .map_err(|error| store_error(&error))?;
-            let source = pages::import::Source {
-                version: &version,
-                index: &index,
-                references: &source.references,
-                destinations,
-            };
-            pages::import::import_pages(
-                transaction,
-                &document.draft_pages,
-                &source,
-                pages
-                    .into_iter()
-                    .map(|(number, generation)| Reference::new(number, generation)),
-                at,
-                budget,
-            )
-            .map(|media| media.map(|(version, first, prc)| (version.0, version.1, first, prc)))
-            .map_err(page_error)
-        })?;
-        Ok(media.map(|summary| (summary, version)))
-    })?
+        pages::import::import_pages(
+            transaction,
+            &document.draft_pages,
+            &source,
+            pages
+                .into_iter()
+                .map(|(number, generation)| Reference::new(number, generation)),
+            at,
+            budget,
+        )
+        .map(|media| media.map(|(version, first, prc)| (version.0, version.1, first, prc)))
+        .map_err(page_error)
+    })?;
+    Ok(media.map(|summary| (summary, version)))
 }
 
 /// Adds a blank page of `width` by `height` points at `at`, counted from
