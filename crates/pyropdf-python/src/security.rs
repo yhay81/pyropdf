@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyString, PyTuple};
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::save::FileBase;
-use pyropdf_store::security::{Access, Encryption, Handler, RecipientEncryption};
+use pyropdf_store::security::{Access, Encryption, Handler, RecipientEncryption, RecipientPayload};
 use pyropdf_store::settle::Scope;
 use pyropdf_store::value::Bytes;
 use pyropdf_store::version::{Document, Version};
@@ -95,8 +95,15 @@ pub(crate) fn recipient_base(
     let result = FileBase::open_with_recipient(
         bytes,
         |der| {
-            let plain = Python::attach(|py| -> PyResult<Option<[u8; 24]>> {
-                decrypt.call1(py, (PyBytes::new(py, der),))?.extract(py)
+            let plain = Python::attach(|py| -> PyResult<Option<RecipientPayload>> {
+                let value = decrypt.call1(py, (PyBytes::new(py, der),))?;
+                if value.is_none(py) {
+                    return Ok(None);
+                }
+                let bytes = value.cast_bound::<PyBytes>(py)?.as_bytes();
+                RecipientPayload::from_bytes(bytes)
+                    .map(Some)
+                    .map_err(|e| store_error(&e))
             });
             plain.map_err(|e| {
                 failure = Some(e);

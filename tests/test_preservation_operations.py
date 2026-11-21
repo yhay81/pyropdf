@@ -183,6 +183,54 @@ def check_screen(doc: pyropdf.Document) -> None:
     assert file.EF.F.obj.read() == MARKER.encode()
 
 
+def _rich_media_spec() -> pyropdf.RichMedia:
+    return pyropdf.RichMedia(
+        rect=pyropdf.Rect(10, 10, 30, 30),
+        kind=pyropdf.MediaKind.THREE_D,
+        asset=pyropdf.MediaAsset(filename="model.u3d", content_type="model/u3d", data=b"stored data"),
+    )
+
+
+def rich_media_conflicts(doc: pyropdf.Document) -> set[str]:
+    extensions = doc.catalog.get("Extensions")
+    adbe = extensions.get("ADBE") if isinstance(extensions, Dictionary) else None
+    if isinstance(adbe, Dictionary) and adbe.get("BaseVersion") == "1.7" and adbe.get("ExtensionLevel", 0) >= 3:
+        return set()
+    return promotion_conflicts(doc)
+
+
+def prepare_rich_media(doc: pyropdf.Document) -> None:
+    if not rich_media_conflicts(doc):
+        doc.pages[0].annotations.add(_rich_media_spec())
+
+
+def edit_rich_media(doc: pyropdf.Document) -> set[int]:
+    if conflicts := rich_media_conflicts(doc):
+        with refused_promotion(doc, conflicts, match="PDF 2.0 promotion"):
+            doc.pages[0].annotations.add(_rich_media_spec())
+        return set()
+    rich = doc.pages[0].annotations[-1]
+    rich.set_rich_media_asset("alias", rich.rich_media_assets["model.u3d"])
+    rich.add_rich_media_configuration(
+        "alternate", kind=pyropdf.MediaKind.THREE_D, assets=(rich.rich_media_assets["alias"],)
+    )
+    with rich.edit_rich_media() as media:
+        media.RichMediaContent.Configurations[1].Name = MARKER
+    return {rich.xref}
+
+
+def check_rich_media(doc: pyropdf.Document) -> None:
+    if rich_media_conflicts(doc):
+        return
+    rich = doc.pages[0].annotations[-1]
+    media = rich.media
+    assert isinstance(media, pyropdf.typed.AnnotRichMedia)
+    assert len(media.RichMediaContent.Configurations.obj) == 2
+    config = media.RichMediaContent.Configurations[1]
+    assert config.Name == MARKER
+    assert config.Instances[0].Asset == rich.rich_media_assets["alias"] == rich.rich_media_assets["model.u3d"]
+
+
 def page_annotations(page: pyropdf.Page) -> set[int]:
     """Include an annotation list stored in its own indirect array."""
     touched = {number(page.obj)}
@@ -577,6 +625,7 @@ NEW_EDITS = {
     "canvas_text": Edit(apply=canvas_text, check=check_text),
     "canvas_image": Edit(apply=canvas_image, check=check_image),
     "add_screen": Edit(apply=add_screen, check=check_screen),
+    "rich_media_settings": Edit(prepare=prepare_rich_media, apply=edit_rich_media, check=check_rich_media),
     "add_annotation": Edit(apply=add_annotation, check=check_annotation),
     "edit_annotation": Edit(prepare=prepare_annotation, apply=edit_annotation, check=check_edited_annotation),
     "delete_annotation": Edit(prepare=prepare_annotation, apply=delete_annotation, check=check_removed_annotation),

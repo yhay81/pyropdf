@@ -10,7 +10,7 @@ from functools import cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Literal
 
-from pyropdf._errors import LimitError, MalformedPdfError, PasswordError
+from pyropdf._errors import LimitError, PasswordError
 
 if TYPE_CHECKING:
     from asn1crypto import cms, core
@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 _MAX_PASSWORD_BYTES = 127
 _MIN_RSA_BITS = 2048
 _MAX_RSA_BITS = 8192
-_RECIPIENT_PAYLOAD_SIZE = 24
 _MAX_RECIPIENTS = 128
 #: RC4 methods, which pyropdf reads but never writes.
 _RC4_METHODS = frozenset({"rc4", "rc4-40", "rc4-128"})
@@ -531,13 +530,7 @@ class RecipientCredential:
             raise PasswordError(msg)
 
     def _decrypt(self, envelope: bytes) -> bytes | None:
-        payload = _open_envelope(envelope, self)
-        if payload is None:
-            return None
-        if len(payload) != _RECIPIENT_PAYLOAD_SIZE:
-            msg = "the default public-key recipient payload must contain a 20-byte seed and four permission bytes"
-            raise MalformedPdfError(msg)
-        return payload
+        return _open_envelope(envelope, self)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

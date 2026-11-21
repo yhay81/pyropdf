@@ -14,7 +14,7 @@ mod crypto;
 mod legacy_cms;
 pub use legacy_cms::decrypt_legacy_cms;
 mod recipient;
-pub use recipient::RecipientEncryption;
+pub use recipient::{RecipientEncryption, RecipientPayload};
 #[cfg(test)]
 mod tests;
 mod value;
