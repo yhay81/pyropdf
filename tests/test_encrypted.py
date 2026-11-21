@@ -581,3 +581,37 @@ def test_public_key_equal_permissions_share_a_cms_envelope() -> None:
         with pyropdf.open(saved, credential=credential) as doc:
             assert doc.permissions == Permissions.COPY
             assert len(doc.trailer["Encrypt"]["CF"]["DefaultCryptFilter"]["Recipients"]) == 1
+
+
+@pytest.mark.parametrize("length", [19, 20, 24, 25])
+def test_recipient_cms_seed_shape_does_not_grant_default_permissions(length: int) -> None:
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+    from cryptography.hazmat.primitives.serialization import pkcs7  # noqa: PLC0415
+
+    owner = recipient("owner")
+    payload = bytes(20) + b"\xff" * 5
+    envelope = (
+        pkcs7.PKCS7EnvelopeBuilder()
+        .set_data(payload[:length])
+        .add_recipient(owner.certificate)
+        .encrypt(serialization.Encoding.DER, [pkcs7.PKCS7Options.Binary])
+    )
+    cms = f"<{envelope.hex()}>"
+    source = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [] /Count 0 >>",
+            3: f"<< /Filter /Adobe.PubSec /SubFilter /adbe.pkcs7.s4 /V 2 /Length 128 /Recipients [{cms}] >>",
+        }
+    ).replace(b"/Root 1 0 R >>", b"/Root 1 0 R /Encrypt 3 0 R >>")
+    with pyropdf.open(source) as doc:
+        with pytest.raises(pyropdf.PasswordError):
+            doc.unlock(recipient("editor"))
+        if length == 24:
+            assert doc.unlock(owner) is Access.OWNER
+            assert doc.permissions == Permissions.ALL
+        else:
+            message = "four permission bytes" if length == 20 else "20 or 24 bytes"
+            with pytest.raises(pyropdf.MalformedPdfError, match=message):
+                doc.unlock(owner)
+            assert doc.needs_password
