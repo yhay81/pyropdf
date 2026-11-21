@@ -1059,10 +1059,6 @@ objects = ["FieldChoice"]
 clause = "12.7.5.5"
 description = "Signature fields, their locks, and seed values."
 objects = ["FieldSig", "SigFieldLock", "SigFieldSeedValue", "CertSeedValue"]
-read = { status = "partial", missing = "Signature fields and their values are read, without field lock (`/Lock`) or seed value (`/SV`) dictionaries.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Signature fields are verified and checked for byte-range changes, without evaluating `/Lock` or `/SV` constraints.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Signing creates signature fields and widgets, without writing `/Lock` or `/SV` dictionaries.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Signing fills existing unsigned signature fields, without enforcing `/Lock` or `/SV` dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.form-actions]
 clause = "12.7.6"
@@ -1083,8 +1079,6 @@ objects = []
 clause = "12.8"
 description = "Signature dictionaries, byte ranges, and their PKCS#7 and CAdES encodings."
 objects = ["Signature", "SignatureBuildPropDict", "SignatureBuildDataDict", "SignatureBuildDataAppDict", "SignatureBuildDataSigQDict"]
-create = { status = "partial", missing = "Incremental CAdES and PKCS#7 signing with RSA, ECDSA, callbacks, and RFC 3161 timestamps works, without `/Prop_Build` dictionaries.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Signing fills existing signature fields and appends incremental signatures, without `/Prop_Build` dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.signature-transforms]
 clause = "12.8.2"
