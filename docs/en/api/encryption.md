@@ -55,6 +55,7 @@ Keep the encryption that the document was opened with.
 
 ```python
 IntegrityReport(
+    *,
     status: Literal['absent', 'locked', 'valid', 'invalid'],
     location: Literal['standalone', 'attached'] | None,
     reason: str | None,

@@ -64,7 +64,7 @@ def _password_bytes(password: object, label: str = "password") -> bytes:
     return password.encode()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class IntegrityReport:
     """Result of verifying the ISO/TS 32004:2024 MAC of an opened PDF revision.
 

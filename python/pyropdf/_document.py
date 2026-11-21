@@ -950,7 +950,8 @@ class Document:
         access and signature trust. Unsaved edits receive their MAC when saved.
         """
         self._ensure_open()
-        return IntegrityReport(*_core.verify_integrity(self._doc))
+        status, location, reason = _core.verify_integrity(self._doc)
+        return IntegrityReport(status=status, location=location, reason=reason)
 
     @property
     def permissions(self) -> Permissions:

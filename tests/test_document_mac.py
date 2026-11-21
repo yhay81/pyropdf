@@ -33,7 +33,7 @@ def test_independent_password_mac(filename: str, location: Literal["standalone",
     with pyropdf.open(ASSETS / filename) as doc:
         assert doc.verify_integrity().status == "locked"
         doc.unlock("userpw")
-        assert doc.verify_integrity() == pyropdf.IntegrityReport("valid", location, None)
+        assert doc.verify_integrity() == pyropdf.IntegrityReport(status="valid", location=location, reason=None)
         assert doc.encryption_method == "Standard V5 R6 256-bit AES"
         assert len(doc.signatures) == (1 if location == "attached" else 0)
 
@@ -210,7 +210,7 @@ def test_sign_protected_revision_with_attached_mac(kind: str) -> None:
             stamper = _timestamper(pki) if kind == "timestamped-signature" else None
             data = doc.sign("Signer", _pem_signer(pki), timestamper=stamper)
         assert data.startswith(source)
-        assert doc.verify_integrity() == pyropdf.IntegrityReport("valid", "attached", None)
+        assert doc.verify_integrity() == pyropdf.IntegrityReport(status="valid", location="attached", reason=None)
         assert not doc.needs_password
         assert _independent(data) == "/AttachedToSig"
         reader = PdfFileReader(io.BytesIO(data))

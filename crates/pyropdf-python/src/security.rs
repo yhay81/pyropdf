@@ -69,8 +69,8 @@ pub fn verify_integrity(
     py: Python<'_>,
     document: &_Document,
 ) -> PyResult<(&'static str, Option<&'static str>, Option<String>)> {
-    use pyropdf_store::security::integrity::{self, Report};
     crate::errors::boundary(|| {
+        use pyropdf_store::security::integrity::{self, Report};
         let version = document.current()?;
         let budget = document.budget();
         let report = py
