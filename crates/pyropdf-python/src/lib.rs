@@ -69,7 +69,7 @@ mod _core {
     #[pymodule_export]
     use super::check::structural_check;
     #[pymodule_export]
-    use super::content::{page_operations, parse_operations};
+    use super::content::{page_operations, parse_operations, stream_operations};
     #[pymodule_export]
     use super::document::{
         _Document, document_header_version, page_result_counts, probe, web_limits,

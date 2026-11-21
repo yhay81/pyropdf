@@ -1207,7 +1207,7 @@ objects = []
 clause = "14.7"
 description = "The structure tree, its elements, parent tree, attributes, and class map."
 objects = ["StructTreeRoot", "StructElem", "MarkedContentReference", "ObjectReference", "ClassMap", "RoleMap", "StructureAttributesDict", "UserProperty"]
-interpret = { status = "partial", missing = "Logical reading follows mixed child and cross-page references. Form-stream glyph origins still require #104.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Logical reading follows mixed child and cross-page references, including whole-MCID text replacements in an identified Form. Painted Form glyphs and page sequences enclosing Form invocations still require #104.", milestone = "Phase 4: Specification" }
 create = { status = "partial", missing = "Structure trees, elements, parent trees, role maps, and list and table attributes are created, without creating `ClassMap`, `ObjectReference`, or `UserProperty`.", milestone = "Phase 4: Specification" }
 
 [features.structure-namespaces]
@@ -1219,7 +1219,7 @@ objects = ["Namespace", "RoleMapNS"]
 clause = "14.8"
 description = "Tagged PDF: the mark information and the standard structure types and attributes."
 objects = ["MarkInfo"]
-interpret = { status = "partial", missing = "Structure-driven extraction reads page content, element replacements and object references. Glyphs inside a referenced Form await stream provenance (#104).", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Structure-driven extraction reads page content, object references and explicit element or Form marked-content replacements, including expansions. Distinguishing glyphs drawn by nested or reused Forms still needs #104.", milestone = "Phase 4: Specification" }
 create = { status = "partial", missing = "Canvas tags create `MarkInfo` and standard block, list, table, inline, figure, and artifact structures, without full standard attribute coverage.", milestone = "Phase 4: Specification" }
 
 [features.accessibility]
