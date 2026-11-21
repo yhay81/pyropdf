@@ -1276,17 +1276,13 @@ objects = ["LinearizationParameterDict"]
 
 [features.sha3-hashes]
 clause = "ISO/TS 32001"
-description = "SHA-3 and SHA-512 hash algorithms in PDF."
+description = "SHA3-256, SHA3-384, SHA3-512 and fixed 512-bit SHAKE256 document digests."
 objects = []
 
 [features.ecc-signatures]
 clause = "ISO/TS 32002"
 description = "ECDSA and EdDSA signature algorithms in PDF."
 objects = []
-read = { status = "partial", missing = "ECDSA P-256 and P-384 signatures are parsed, without Ed25519 or Ed448.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "ECDSA P-256 and P-384 signatures are verified, without Ed25519 or Ed448.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Signing produces ECDSA P-256 and P-384 signatures, without Ed25519 or Ed448.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Signing fills existing signature fields with ECDSA P-256 and P-384 signatures, without Ed25519 or Ed448.", milestone = "Phase 4: Specification" }
 
 [features.aes-gcm]
 clause = "ISO/TS 32003"

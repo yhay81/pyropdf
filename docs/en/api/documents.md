@@ -977,13 +977,15 @@ Document.timestamp(
     *,
     field: str = 'DocTimeStamp',
     reserve: int = 16384,
+    digest_algorithm: str = 'sha256',
 ) -> bytes
 ```
 
 Append an RFC 3161 `/DocTimeStamp` revision to the document and return its bytes (ISO 32000-2 §12.8.5).
 
-`timestamper` receives the SHA-256 digest of the signed byte ranges
-and `"sha256"`, and returns the DER of an RFC 3161 `TimeStampToken`
+`timestamper` receives the digest of the signed byte ranges and its name.
+Choose SHA-2 (`sha256` by default), `sha3_256`, `sha3_384`,
+`sha3_512` or `shake256`. The callback returns the DER of an RFC 3161 `TimeStampToken`
 stamping that digest; pyropdf makes no network access. Afterwards the
 document reads the timestamped revision and earlier signatures remain
 intact.
