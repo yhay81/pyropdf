@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 40 | 43 | 754 |
-| interpret | 1 | 19 | 0 | 41 | 50 | 726 |
-| create | 0 | 0 | 13 | 641 | 79 | 104 |
-| edit | 0 | 0 | 0 | 667 | 66 | 104 |
-| preserve | 0 | 0 | 0 | 25 | 663 | 149 |
+| read | 0 | 0 | 0 | 39 | 35 | 763 |
+| interpret | 9 | 19 | 0 | 40 | 42 | 727 |
+| create | 0 | 0 | 13 | 640 | 63 | 121 |
+| edit | 0 | 0 | 0 | 661 | 56 | 120 |
+| preserve | 0 | 0 | 0 | 25 | 653 | 159 |
 
 ## Clauses
 
@@ -55,7 +55,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.5.4 | Cross-reference table | `xref-table` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.6 | Incremental updates | `incremental-update` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.7 | Object streams | `object-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
-| 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 partial | 1 partial | 1 done |
+| 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 2 done, 5 partial | 3 done, 4 non-goal | 7 done | 7 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
@@ -82,17 +82,17 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 8.4 | Graphics state | `graphics-state` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.5 | Path construction and painting | `paths` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.4 | Device colour spaces | `device-color-spaces` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 8.6.5.2 | CalGray colour spaces | `calgray-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.5.3 | CalRGB colour spaces | `calrgb-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.5.4 | Lab colour spaces | `lab-color-space` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
-| 8.6.5.5 | ICCBased colour spaces | `icc-based-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.5.8 | Rendering intent selection | `rendering-intents` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.6.5.2 | CalGray colour spaces | `calgray-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.5.3 | CalRGB colour spaces | `calrgb-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.5.4 | Lab colour spaces | `lab-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.5.5 | ICCBased colour spaces | `icc-based-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.5.8 | Rendering intent selection | `rendering-intents` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 8.6.6.2 | Pattern colour spaces | `pattern-color-space` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
-| 8.6.6.3 | Indexed colour spaces | `indexed-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.6.4 | Separation colour spaces | `separation-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.6.5 | DeviceN colour spaces | `devicen-color-space` | 1 partial | 1 partial | 1 planned | 1 planned | 1 done |
-| 8.6.7 | Overprint control | `overprint` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.6.8 | Colour-setting operators | `colour-operators` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.6.6.3 | Indexed colour spaces | `indexed-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.6.4 | Separation colour spaces | `separation-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.6.5 | DeviceN colour spaces | `devicen-color-space` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 8.6.7 | Overprint control | `overprint` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 8.6.8 | Colour-setting operators | `colour-operators` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.7.3 | Tiling patterns | `tiling-patterns` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
 | 8.7.4 | Shading patterns | `shading-patterns` | 1 done | 1 done | 1 done | 1 planned | 1 done |
 | 8.7.4.5.2 | Type 1 function-based shadings | `function-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -121,12 +121,12 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 9.8 | Font descriptors | `font-descriptors` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.9 | Embedded font programs | `embedded-fonts` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
 | 9.10 | Extraction of text content | `text-extraction` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 10.3 | CIE-based colour to device colour | `color-conversion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 10.4 | Conversions among device colour spaces | `device-color-conversion` | 1 done | 1 done | 1 planned | 1 partial | 1 planned |
-| 10.5 | Transfer functions | `transfer-functions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 10.6 | Halftones | `halftones` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 10.7 | Scan conversion details | `scan-conversion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 10.8 | Rendering of colour separations | `separation-rendering` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 10.3 | CIE-based colour to device colour | `color-conversion` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 10.4 | Conversions among device colour spaces | `device-color-conversion` | 1 done | 1 done | 1 done | 1 partial | 1 done |
+| 10.5 | Transfer functions | `transfer-functions` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 10.6 | Halftones | `halftones` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 10.7 | Scan conversion details | `scan-conversion` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 10.8 | Rendering of colour separations | `separation-rendering` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 11.3 | Alpha compositing | `alpha-compositing` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 11.3.5 | Blend mode | `blend-modes` | 1 done | 1 done | 1 done | 1 planned | 1 done |
 | 11.5 | Soft masks | `soft-masks` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
@@ -226,7 +226,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 14.13 | Associated files | `associated-files` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
 | Annex D | PDF character tables | `character-tables` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex E | Extension naming rules | `private-names` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 planned |
+| Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex I | Compatibility across PDF versions | `version-compatibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex K | XFA packets | `xfa` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
 | Annex L | Allowed structure children | `structure-children` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,316 unfinished cells in 837 features: 1 engine, 1,414 partial, 901 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,263 unfinished cells in 837 features: 9 engine, 1,405 partial, 849 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -277,9 +277,10 @@ No unfinished specification-map cells assigned.
 
 Milestone [#248](https://github.com/yhay81/pyropdf/issues/248).
 
-- [#898](https://github.com/yhay81/pyropdf/issues/898) Verify device-dependent colour and halftone rendering against independent samples. Read, write and retain the corresponding output-device parameters. Independently compare separation, overprint, rendering intents, transfer, BG2/UCR2, halftone and scan-conversion output and route confirmed interpreter gaps through the upstream workflow.
-    - read, interpret — `overprint`, `color-conversion`, `transfer-functions`, `halftones`, `scan-conversion`, `rendering-intents`, `separation-rendering`.
-    - create, edit, preserve — `overprint`, `color-conversion`, `device-color-conversion`, `transfer-functions`, `halftones`, `scan-conversion`, `rendering-intents`, `separation-rendering`.
+- [#1001](https://github.com/yhay81/pyropdf/issues/1001) hayro: apply output-device parameters when proofing print and screened output. Apply per-object ICC intent, four-channel transfer, process and named spot plate overprint, selected halftones and scan parameters on suitable devices. RGB alternate, calibrated and transfer samples are verified.
+    - interpret — `overprint`, `color-conversion`, `transfer-functions`, `halftones`, `scan-conversion`, `rendering-intents`, `separation-rendering`.
+- [#1007](https://github.com/yhay81/pyropdf/issues/1007) Extend active CMYK rewriting to filtered and nested budgeted PDF functions. Evaluate filtered sampled or calculator streams, nested stitching and calculator procedures with released construction and execution budgets.
+    - edit — `device-color-conversion`.
 - [#372](https://github.com/yhay81/pyropdf/issues/372) hayro: evaluate optional content visibility expressions and annotation /OC. Adopt engine evaluation of visibility expressions and annotation OC. Track the upstream issue directly. #373 owns local adoption.
     - interpret — `optional-content`.
 - [#899](https://github.com/yhay81/pyropdf/issues/899) Complete transparency group, soft-mask and compositing coverage. Exercise non-isolated and knockout groups, group masks, blending colour spaces, alpha composition and Annex Q resource traversal. Verify isolated and nested results with independent rendered references.
@@ -300,10 +301,8 @@ Milestone [#249](https://github.com/yhay81/pyropdf/issues/249).
 - [#902](https://github.com/yhay81/pyropdf/issues/902) Complete font program, encoding and CMap creation and editing. Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement.
     - read, interpret, preserve — `character-tables`.
     - create, edit — `type1-fonts`, `truetype-fonts`, `type3-fonts`, `simple-font-encodings`, `cmaps`, `embedded-fonts`, `character-tables`.
-- [#897](https://github.com/yhay81/pyropdf/issues/897) Write and edit calibrated and special colour spaces and their paint operators. Retain source operands and independently verify calibration, ICC profiles, palettes and tint transforms including DeviceN mixing hints. Construct and edit colour resources and exercise the corresponding operators.
-    - read, interpret — `devicen-color-space`, `colour-operators`.
-    - create, edit — `calgray-color-space`, `calrgb-color-space`, `lab-color-space`, `icc-based-color-space`, `indexed-color-space`, `separation-color-space`, `devicen-color-space`, `colour-operators`.
-    - preserve — `colour-operators`.
+- [#1016](https://github.com/yhay81/pyropdf/issues/1016) hayro: offer DeviceN mixing hints to colour-proofing devices. Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked.
+    - interpret — `devicen-color-space`.
 - [#904](https://github.com/yhay81/pyropdf/issues/904) Support rich variable text, password appearances and legacy XFA form data. Read and edit RV/DS field data, mask displayed password glyphs, and inspect, edit/remove and preserve existing XFA packets under the recorded creation exclusion. Verify field values and appearances independently.
     - read — `variable-text`, `xfa`.
     - interpret, edit — `variable-text`, `text-fields`, `xfa`.
@@ -364,9 +363,6 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - create — `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
     - edit — `flate-filter`, `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
     - preserve — `ascii85-filter`, `lzw-filter`, `run-length-filter`.
-- [#892](https://github.com/yhay81/pyropdf/issues/892) Verify hybrid-reference writing and linearized-file preservation. Write and reopen hybrid XRefStm sections and verify fast-web-view hints and offsets after supported saves. Reuse independent qpdf checks, including the modes where linearization cannot survive.
-    - create, edit — `xref-streams`.
-    - preserve — `linearization`.
 - [#974](https://github.com/yhay81/pyropdf/issues/974) Render owner-authenticated standard-handler PDF revisions 2 to 4. Render authenticated R2 to R4 versions with the owner credentials before and after edits.
     - interpret — `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`.
 

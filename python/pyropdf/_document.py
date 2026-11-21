@@ -179,9 +179,13 @@ class Document:
 
     __slots__ = ("_access", "_closed", "_doc", "_drawn", "_fallback", "_form_font", "_limits")
 
-    def __init__(self, *, limits: DocumentLimits | None = None) -> None:
-        """Create an empty document without pages; :func:`open` opens an existing one."""
-        self._setup(_Document.empty, _resolve_limits(limits))
+    def __init__(self, *, limits: DocumentLimits | None = None, version: str = "1.7") -> None:
+        """Create an empty document using header version 1.0 through 1.7, or 2.0.
+
+        The default is PDF 1.7. A writer option requiring a later version,
+        such as an object stream, can raise the version written on a full save.
+        """
+        self._setup(lambda resolved: _Document.empty(resolved, version), _resolve_limits(limits))
 
     def _setup(self, load: Callable[[DocumentLimits], _Document], limits: DocumentLimits) -> None:
         """Set the state of a document that ``load`` makes."""
@@ -197,6 +201,12 @@ class Document:
         # embed, by language, or None for the installed font extras; not saved.
         self._fallback: dict[str, FallbackFont | _FontPackage] | None = None
         _set_fallback(self, None)
+
+    def _import_source(self, core: _Document) -> Document:
+        """Wrap the version captured by a foreign page import for its catalog reads."""
+        view = Document.__new__(Document)
+        view._setup(lambda _: core, self._limits)  # noqa: SLF001
+        return view
 
     @property
     def limits(self) -> DocumentLimits:
