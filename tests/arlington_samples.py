@@ -26,7 +26,9 @@ def object_pdf(objects: list[str], version: str = "2.0") -> bytes:
                 b"<< /Type /Catalog /Pages 2 0 R /Sentinel (unchanged) /Extensions <<"
                 b" /AAPL << >> /OpenOffice << >> /GTSm [<< /BaseVersion /2.0 /ExtensionLevel 1 >>]"
                 b" /ADBE << /BaseVersion /1.7 /ExtensionLevel 8 >>"
-                b" /ISO_ << /BaseVersion /2.0 /ExtensionLevel 32002 >> >> >>"
+                b" /ISO_19593 << /BaseVersion /1.7 /ExtensionLevel 1 >> /ISO_ ["
+                b"<< /BaseVersion /2.0 /ExtensionLevel 24064 >> << /BaseVersion /2.0 /ExtensionLevel 32002 >>"
+                b" << /BaseVersion /2.0 /ExtensionLevel 32004 >>] >> >>"
             ),
             f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>".encode(),
             *(obj.encode() for obj in objects),
