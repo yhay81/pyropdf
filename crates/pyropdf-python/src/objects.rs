@@ -33,7 +33,6 @@ use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs;
-use pyropdf_store::save::deflate;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, PdfString, Real, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
 
@@ -637,36 +636,38 @@ fn add(transaction: &mut Transaction, value: &Value, budget: &Budget) -> PyResul
     Ok((written.number(), written.generation()))
 }
 
-/// Encode the new payload while preserving any leading crypt filter and its audience.
+fn filter_options(value: &Bound<'_, PyAny>, version: &Version, budget: &Budget) -> PyResult<Dict> {
+    let Value::Dict(options) = untagged(value, version, 0, budget)? else {
+        return Err(PyTypeError::new_err("expected stream filter options"));
+    };
+    Ok(options)
+}
+
 pub(crate) fn set_data(
     stream: &mut Stream,
     data: &[u8],
-    compress: bool,
+    options: Dict,
     budget: &Budget,
 ) -> PyResult<()> {
-    set_data_in(stream, data, compress, &|_, _| Ok(None), budget)
+    pyropdf_store::value::encode::write(stream, data, options, budget)
+        .map_err(|error| store_error(&error))
 }
 
 fn set_data_in(
     stream: &mut Stream,
     data: &[u8],
-    compress: bool,
-    lookup: &pyropdf_store::value::FilterLookup<'_>,
+    options: Dict,
+    version: &Version,
     budget: &Budget,
 ) -> PyResult<()> {
-    let encoded = if compress {
-        deflate(data, 6, usize::MAX, budget)
-            .map_err(|e| store_error(&e))?
-            .ok_or_else(|| PyValueError::new_err("the data could not be compressed"))?
-    } else {
-        let mut copy = BudgetVec::new(budget);
-        copy.try_extend_from_slice(data)
-            .map_err(|e| limit_error(&e))?;
-        copy.into_vec()
-    };
-    stream
-        .replace_encoded_data_with(Bytes::from(encoded), compress, lookup, budget)
-        .map_err(|e| store_error(&e))
+    pyropdf_store::value::encode::write_with_lookup(
+        stream,
+        data,
+        options,
+        &|r, b| version.filter_object(r, b),
+        budget,
+    )
+    .map_err(|e| store_error(&e))
 }
 
 /// Adds a stream of the tagged dictionary `dict` and the decoded `data`,
@@ -677,7 +678,7 @@ pub fn object_add_stream(
     document: &_Document,
     dict: &Bound<'_, PyAny>,
     data: &[u8],
-    compress: bool,
+    options: &Bound<'_, PyAny>,
 ) -> PyResult<(u32, u16)> {
     crate::errors::boundary(|| {
         document.edit(py, |transaction, budget| {
@@ -687,13 +688,9 @@ pub fn object_add_stream(
                 ));
             };
             let mut stream = Stream::new(dict, Bytes::default());
-            set_data_in(
-                &mut stream,
-                data,
-                compress,
-                &|r, b| transaction.version().filter_object(r, b),
-                budget,
-            )?;
+            let version = transaction.version();
+            let options = filter_options(options, version, budget)?;
+            set_data_in(&mut stream, data, options, version, budget)?;
             add(transaction, &Value::Stream(Box::new(stream)), budget)
         })
     })?
@@ -742,7 +739,7 @@ pub fn stream_write(
     document: &_Document,
     root: (u32, u16),
     data: &[u8],
-    compress: bool,
+    options: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
     crate::errors::boundary(|| {
         change(py, document, Some(root), &[], |value, version, budget| {
@@ -752,8 +749,8 @@ pub fn stream_write(
             set_data_in(
                 stream,
                 data,
-                compress,
-                &|r, b| version.filter_object(r, b),
+                filter_options(options, version, budget)?,
+                version,
                 budget,
             )
         })

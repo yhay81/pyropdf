@@ -23,6 +23,7 @@
 
 mod bytes;
 mod copy;
+pub mod encode;
 pub(crate) mod filters;
 mod read;
 

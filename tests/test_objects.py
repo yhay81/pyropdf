@@ -17,12 +17,16 @@ from pylopdf:
 
 from __future__ import annotations
 
+import base64
+import io
 import pickle
+import random
 import zlib
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
+import pikepdf
 import pytest
 
 import pyropdf
@@ -204,7 +208,7 @@ def test_stream_write_without_a_filter_stores_the_data() -> None:
     assert contents.read(decode=False) == contents.read()
     assert _content(pyropdf.open(doc.to_bytes()).pages[0]) == b"BT /F1 12 Tf 72 720 Td (plain) Tj ET"
     with pytest.raises(ValueError, match="filter"):
-        contents.write(b"x", filter="LZWDecode")
+        contents.write(b"x", filter="UnknownDecode")
 
 
 def test_stream_read_is_bounded() -> None:
@@ -738,3 +742,118 @@ def test_unresolvable_stream_selectors_refuse_before_replacement(
         with pytest.raises(pyropdf.MalformedPdfError):
             doc.save(destination, incremental=incremental)
         assert destination.read_bytes() == b"previous output"
+
+
+@pytest.mark.parametrize("name", ["FlateDecode", "ASCIIHexDecode", "ASCII85Decode", "RunLengthDecode", "LZWDecode"])
+@pytest.mark.parametrize("data", [b"", b"\0" * 132 + bytes(range(256)) + b"abc"])
+def test_lossless_stream_encoders_write_decodable_data(name: str, data: bytes) -> None:
+    doc = pyropdf.Document()
+    ref = doc.objects.add_stream(data, filter=name)
+    doc.catalog["Example"] = doc.objects[ref]
+    stream = doc.objects[ref]
+    assert isinstance(stream, Stream)
+    assert stream.read() == data
+    encoded = stream.read(decode=False)
+    if name == "ASCII85Decode":
+        assert encoded == base64.a85encode(data) + b"~>"
+    if name == "ASCIIHexDecode":
+        assert encoded == data.hex().upper().encode() + b">"
+    with pikepdf.Pdf.open(io.BytesIO(doc.to_bytes())) as other:
+        assert other.Root.Example.read_bytes(pikepdf.StreamDecodeLevel.specialized) == data
+    stream.write(data[::-1], filter=name)
+    assert pyropdf.open(doc.to_bytes()).catalog["Example"].read() == data[::-1]
+
+
+@pytest.mark.parametrize("early", [0, 1])
+def test_lzw_chain_width_changes_predictors_and_parameter_order(early: int) -> None:
+    # The pseudorandom data fills the 12-bit dictionary several times.
+    data = random.Random(418).randbytes(3 * 31 * 257)  # noqa: S311 - deterministic test bytes
+    doc = pyropdf.Document()
+    ref = doc.objects.add_stream(b"old", filter=None)
+    doc.catalog["Example"] = stream = doc.objects[ref]
+    filters = ["ASCII85Decode", "LZWDecode"]
+    params = [None, {"Predictor": 14, "Colors": 3, "Columns": 31, "BitsPerComponent": 8, "EarlyChange": early}]
+    stream.write(data, filter=filters, decode_parms=params)
+    assert stream.read() == data
+    assert list(stream["Filter"]) == filters
+    with pikepdf.Pdf.open(io.BytesIO(doc.to_bytes())) as other:
+        assert other.Root.Example.read_bytes() == data
+
+
+@pytest.mark.parametrize("name", ["LZWDecode", "FlateDecode"])
+@pytest.mark.parametrize("predictor", [2, 10, 11, 12, 13, 14, 15])
+def test_lossless_predictor_rows(name: str, predictor: int) -> None:
+    data = bytes(range(36)) + bytes(range(36, 0, -1))
+    doc = pyropdf.Document()
+    doc.catalog["Example"] = doc.objects[
+        doc.objects.add_stream(data, filter=name, decode_parms={"Predictor": predictor, "Colors": 3, "Columns": 4})
+    ]
+    assert doc.catalog["Example"].read() == data
+    with pikepdf.Pdf.open(io.BytesIO(doc.to_bytes())) as other:
+        assert other.Root.Example.read_bytes() == data
+
+
+def test_bad_filter_parameters_or_chain_leave_data_unchanged() -> None:
+    doc = pyropdf.Document()
+    stream = doc.objects[doc.objects.add_stream(b"keep", filter="ASCIIHexDecode")]
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.PdfError, match="EarlyChange"):
+        stream.write(b"bad", filter="LZWDecode", decode_parms={"EarlyChange": 2})
+    with pytest.raises(pyropdf.PdfError, match="complete predictor rows"):
+        stream.write(b"x", filter="FlateDecode", decode_parms={"Predictor": 2, "Columns": 3})
+    with pytest.raises(ValueError, match="decode_parms"):
+        stream.write(b"x", filter=["ASCIIHexDecode", "FlateDecode"], decode_parms=[{}])
+    with pytest.raises(pyropdf.LimitError) as refused:
+        stream.write(b"x", filter=["ASCII85Decode"] * 17)
+    assert refused.value.code == "stream_filter_count"
+    assert doc.to_bytes() == before
+
+
+@pytest.mark.parametrize("bits", [1, 2, 4, 8, 16])
+@pytest.mark.parametrize("name", ["FlateDecode", "LZWDecode"])
+def test_tiff_predictor_roundtrips_byte_aligned_multichannel_samples(name: str, bits: int) -> None:
+    data = bytes(range(3 * bits * 3))
+    doc = pyropdf.Document()
+    doc.catalog["Example"] = doc.objects[
+        doc.objects.add_stream(
+            data, filter=name, decode_parms={"Predictor": 2, "Colors": 3, "Columns": 8, "BitsPerComponent": bits}
+        )
+    ]
+    assert doc.catalog["Example"].read() == data
+    with pikepdf.Pdf.open(io.BytesIO(doc.to_bytes())) as other:
+        assert other.Root.Example.read_bytes() == data
+
+
+@pytest.mark.parametrize("predictor", [10, 11, 12, 13, 14, 15])
+def test_packed_png_predictors_keep_the_final_partial_pixel(predictor: int) -> None:
+    data = bytes.fromhex("25609bd6104c87c2fd3073aee92450")
+    doc = pyropdf.Document()
+    doc.catalog["Example"] = doc.objects[
+        doc.objects.add_stream(
+            data,
+            filter="FlateDecode",
+            decode_parms={"Predictor": predictor, "Colors": 3, "Columns": 3, "BitsPerComponent": 4},
+        )
+    ]
+    assert doc.catalog["Example"].read() == data
+    with pikepdf.Pdf.open(io.BytesIO(doc.to_bytes())) as other:
+        assert other.Root.Example.read_bytes() == data
+
+
+def test_unsupported_predictor_layout_leaves_existing_stream_untouched() -> None:
+    doc = pyropdf.Document()
+    stream = doc.objects[doc.objects.add_stream(b"keep")]
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.PdfError, match="row layout"):
+        stream.write(
+            bytes.fromhex("25009b801100"),
+            filter="LZWDecode",
+            decode_parms={"Predictor": 2, "Colors": 3, "Columns": 3, "BitsPerComponent": 1},
+        )
+    with pytest.raises(pyropdf.PdfError, match="row layout"):
+        stream.write(
+            bytes(64),
+            filter="FlateDecode",
+            decode_parms={"Predictor": 12, "Colors": 16, "Columns": 1, "BitsPerComponent": 16},
+        )
+    assert doc.to_bytes() == before

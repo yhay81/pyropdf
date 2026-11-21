@@ -1270,3 +1270,109 @@ def test_normalized_saves_follow_the_indirect_identity_filter(layout: str) -> No
             assert "/Filter" not in content
         elif not keep:
             assert "/Crypt" not in [str(name) for name in content.Filter]
+
+
+@pytest.mark.spec("crypt-filter", "edit", "preserve")
+@pytest.mark.parametrize(
+    ("names", "parameters"),
+    [
+        (["ASCII85Decode", "FlateDecode"], [None, {"Predictor": 12, "Columns": 4}]),
+        (["ASCIIHexDecode", "LZWDecode"], [None, {"EarlyChange": 0}]),
+        (["RunLengthDecode"], [None]),
+    ],
+)
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.usefixtures("_pyhanko_oracle")
+def test_private_filter_precedes_the_new_data_chain(
+    names: list[str], parameters: list[dict[str, int] | None], *, incremental: bool
+) -> None:
+    import io  # noqa: PLC0415
+
+    import pikepdf  # noqa: PLC0415
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.crypt.pubkey import SimpleEnvelopeKeyDecrypter  # noqa: PLC0415
+    from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
+
+    source = _private_recipient_control(attachment_only=False, implicit=False)
+    payload = bytes(range(256)) * 8
+    with pyropdf.open(source, credential=recipient("owner")) as doc:
+        target = doc.catalog["FixtureNamed"]
+        target.write(payload, filter=names, decode_parms=parameters)
+        saved = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
+    with pyropdf.open(saved, credential=recipient("editor")) as doc, pytest.raises(pyropdf.PasswordError):
+        doc.catalog["FixtureNamed"].read()
+    with pyropdf.open(saved, credential=recipient("owner")) as doc:
+        assert doc.catalog["FixtureNamed"].read() == payload
+
+    # pyHanko decrypts the explicit recipient filter. qpdf applies the ordinary
+    # data filters, including LZW and RunLength, directly to that plaintext.
+    reader = PdfFileReader(io.BytesIO(saved))
+    private_name = generic.pdf_name("/PrivateContent")
+    handler = reader.security_handler
+    assert handler is not None
+    credential = SimpleEnvelopeKeyDecrypter.load(
+        str(RECIPIENT_ASSETS / "recipient-owner.key"), str(RECIPIENT_ASSETS / "recipient-owner.cer")
+    )
+    assert handler.get_stream_filter().authenticate(credential).status.value > 0
+    private_filter = handler.get_stream_filter(private_name)
+    assert private_filter.authenticate(credential).status.value > 0
+    target = reader.root["/FixtureNamed"]
+    assert list(target["/Filter"]) == ["/Crypt", *["/" + name for name in names]]
+    actual = target["/DecodeParms"]
+    assert actual[0]["/Name"] == private_name
+    assert len(actual) == 1 + len(names)
+    observed = [
+        None if isinstance(item, generic.NullObject) else {key[1:]: int(val) for key, val in item.items()}
+        for item in (actual[index] for index in range(1, len(actual)))
+    ]
+    assert observed == parameters
+    encoded = private_filter.decrypt(private_filter.shared_key, target.encoded_data, actual[0])
+    with pikepdf.Pdf.new() as clear:
+        stream = pikepdf.Stream(clear, encoded)
+        stream.Filter = pikepdf.Array([pikepdf.Name("/" + name) for name in names])
+        stream.DecodeParms = pikepdf.Array(
+            [
+                None if params is None else pikepdf.Dictionary({"/" + key: value for key, value in params.items()})
+                for params in observed
+            ]
+        )
+        assert stream.read_bytes(pikepdf.StreamDecodeLevel.all) == payload
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.usefixtures("_pyhanko_oracle")
+def test_compound_stream_encoding_preserves_shared_security_declarations(*, incremental: bool) -> None:
+    source = _private_recipient_control(attachment_only=False, implicit=False)
+    encoders = ["ASCII85Decode", "FlateDecode"]
+    original = bytes(range(80))
+    replacement = original[::-1]
+    with pyropdf.open(source, credential=recipient("owner")) as doc:
+        stream = doc.catalog["FixtureNamed"]
+        stream.write(original, filter=encoders, decode_parms=[None, {"Predictor": 12, "Columns": 4}])
+        selector = doc.objects[doc.objects.add({"Name": pyropdf.Name("PrivateContent")})]
+        predictor = doc.objects[doc.objects.add({"Predictor": 12, "Columns": 4})]
+        shared_names = doc.objects[doc.objects.add([pyropdf.Name("Crypt"), *map(pyropdf.Name, encoders)])]
+        shared_options = doc.objects[doc.objects.add([selector, None, predictor])]
+        numbers = shared_names.xref, shared_options.xref, selector.xref, predictor.xref
+        stream["Filter"], stream["DecodeParms"] = shared_names, shared_options
+        first = doc.to_bytes(encryption=Encryption.KEEP)
+    with pyropdf.open(first, credential=recipient("owner")) as doc:
+        stream = doc.catalog["FixtureNamed"]
+        assert stream.read() == original
+        stream.write(replacement, filter=encoders, decode_parms=[None, {"Columns": 4, "Predictor": 12}])
+        second = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
+    with pyropdf.open(second, credential=recipient("owner")) as doc:
+        stream = doc.catalog["FixtureNamed"]
+        assert stream.read() == replacement
+        assert (stream["Filter"].xref, stream["DecodeParms"].xref) == numbers[:2]
+        assert (stream["DecodeParms"][0].xref, stream["DecodeParms"][2].xref) == numbers[2:]
+        stream.write(original, filter="RunLengthDecode")
+        changed = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
+    with pyropdf.open(changed, credential=recipient("owner")) as doc:
+        stream = doc.catalog["FixtureNamed"]
+        assert stream.read() == original
+        assert list(stream["Filter"]) == [pyropdf.Name("Crypt"), pyropdf.Name("RunLengthDecode")]
+        assert stream["DecodeParms"][0].xref == numbers[2]
+    for saved in (first, second, changed):
+        with pyropdf.open(saved, credential=recipient("editor")) as doc, pytest.raises(pyropdf.PasswordError):
+            doc.catalog["FixtureNamed"].read()
