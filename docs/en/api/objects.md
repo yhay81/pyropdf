@@ -309,17 +309,17 @@ Objects.add_stream(
     /,
     dictionary: Mapping[str, Any] | None = None,
     *,
-    filter: Literal['FlateDecode'] | None = 'FlateDecode',
+    filter: str | Sequence[str] | None = 'FlateDecode',
+    decode_parms: Mapping[str, int] | Sequence[Mapping[str, int] | None] | None = None,
 ) -> int
 ```
 
 Add a stream of decoded `data`, in one transaction, and return its object number.
 
-`dictionary` supplies further stream entries; `/Length`,
-`/Filter`, and `/DecodeParms` are set from the data and
-`filter`, which compresses with `"FlateDecode"` or stores the
-data as given with `None`. A leading `/Crypt` in `dictionary` retains
-its security selector and parameters with either encoding.
+`dictionary` supplies further stream entries. The stream length and
+filter entries are derived from the data, `filter` and `decode_parms`
+as in `Stream.write`.
+An explicit leading `/Crypt` in `dictionary` retains its security parameters.
 
 ## `Real`
 
@@ -496,15 +496,26 @@ input.
 ### `Stream.write`
 
 ```python
-Stream.write(data: bytes, /, *, filter: Literal['FlateDecode'] | None = 'FlateDecode')
+Stream.write(
+    data: bytes,
+    /,
+    *,
+    filter: str | Sequence[str] | None = 'FlateDecode',
+    decode_parms: Mapping[str, int] | Sequence[Mapping[str, int] | None] | None = None,
+)
 ```
 
-Replace the stream data with `data`, given decoded, in one transaction.
+Replace decoded stream data and its filter metadata in one transaction.
 
-`filter="FlateDecode"` compresses it; `None` stores it
-uncompressed. Both options replace the previous data filters and update
-`/Length`. An explicit leading `/Crypt` filter and its parameters
-keep the payload protected for the same recipients.
+Choose `FlateDecode` (the default), `ASCIIHexDecode`, `ASCII85Decode`,
+`LZWDecode`, `RunLengthDecode`, or `None` for raw storage. A list or
+tuple names a chain in decoding order. Supply one decode parameter mapping
+for a name or one mapping or `None` per filter in a chain. LZW accepts
+`EarlyChange`; Flate and LZW accept TIFF and PNG predictor parameters.
+Predictors currently support up to 255 bits per pixel. TIFF predictor
+rows must fill whole bytes so every row can be read back.
+A leading `/Crypt` and its decode parameters retain the stream’s
+original recipient selection when data filters change.
 
 ## `String`
 

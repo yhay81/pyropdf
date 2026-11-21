@@ -292,11 +292,18 @@ fn object_key(shared: &[u8], reference: Reference, aes: bool) -> Box<[u8]> {
     Box::from(&hash[..(shared.len() + 5).min(16)])
 }
 
+#[expect(clippy::disallowed_methods, reason = "one fixed /Name parameter")]
+pub(super) fn prepend_identity(dict: &mut Dict, budget: &Budget) -> Result<()> {
+    let mut identity = Dict::new();
+    identity.insert(Name::from("Name"), Value::Name(Name::from("Identity")));
+    prepend_crypt(dict, Some(Value::Dict(identity)), budget)
+}
+
 #[expect(
     clippy::disallowed_methods,
-    reason = "two fixed dictionary entries and budgeted filter arrays"
+    reason = "two fixed dictionary entries with budgeted arrays"
 )]
-pub(super) fn prepend_identity(dict: &mut Dict, budget: &Budget) -> Result<()> {
+fn prepend_crypt(dict: &mut Dict, first: Option<Value>, budget: &Budget) -> Result<()> {
     let filters = items(dict.get("Filter"));
     let params = items(dict.get("DecodeParms"));
     budget.check(LimitCode::StreamFilterCount, filters.len() as u64 + 1)?;
@@ -306,22 +313,27 @@ pub(super) fn prepend_identity(dict: &mut Dict, budget: &Budget) -> Result<()> {
         ));
     }
     let mut methods = BudgetVec::new(budget);
-    let mut options = BudgetVec::new(budget);
-    let mut identity = Dict::new();
-    identity.insert(Name::from("Name"), Value::Name(Name::from("Identity")));
     methods.try_push(Value::Name(Name::from("Crypt")))?;
-    options.try_push(Value::Dict(identity))?;
-    for (index, method) in filters.iter().enumerate() {
-        methods.try_push(method.clone())?;
-        options.try_push(params.get(index).cloned().unwrap_or(Value::Null))?;
+    for method in filters {
+        methods.try_push(crate::value::copy_for_edit(method, budget)?)?;
+    }
+    if first.is_some() || !params.is_empty() {
+        let mut options = BudgetVec::new(budget);
+        options.try_push(first.unwrap_or(Value::Null))?;
+        for index in 0..filters.len() {
+            options.try_push(crate::value::copy_for_edit(
+                params.get(index).unwrap_or(&Value::Null),
+                budget,
+            )?)?;
+        }
+        dict.insert(
+            Name::from("DecodeParms"),
+            Value::Array(options.into_vec().into()),
+        );
     }
     dict.insert(
         Name::from("Filter"),
         Value::Array(methods.into_vec().into()),
-    );
-    dict.insert(
-        Name::from("DecodeParms"),
-        Value::Array(options.into_vec().into()),
     );
     Ok(())
 }
@@ -378,45 +390,52 @@ impl Handler {
 }
 
 impl crate::value::Stream {
-    /// Replace a payload encoded with Flate or without a data filter. The
-    /// leading crypt filter selects an audience regardless of the encoding.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "at most two filter names, two parameters, and two fixed dictionary entries"
-    )]
+    /// Replace a stream with unfiltered or Flate-encoded data, retaining its audience.
+    #[expect(clippy::disallowed_methods, reason = "one fixed filter entry")]
     pub fn replace_encoded_data(
         &mut self,
         data: crate::value::Bytes,
         flate: bool,
         budget: &Budget,
     ) -> Result<()> {
-        let flate_name = || Value::Name(Name::from("FlateDecode"));
-        let (filters, parameters) = if explicit(self.dict(), budget)?.is_some() {
-            let crypt = Value::Name(Name::from("Crypt"));
-            let params = items(self.dict().get("DecodeParms"))
+        let mut options = Dict::new();
+        if flate {
+            options.insert(Name::from("Filter"), Value::Name(Name::from("FlateDecode")));
+        }
+        self.replace_encoded_options(data, options, budget)
+    }
+
+    /// Attach the old security selector to the newly encoded data-filter chain.
+    #[expect(clippy::disallowed_methods, reason = "two fixed filter entries")]
+    pub(crate) fn replace_encoded_options(
+        &mut self,
+        data: crate::value::Bytes,
+        mut options: Dict,
+        budget: &Budget,
+    ) -> Result<()> {
+        if explicit(self.dict(), budget)?.is_some() {
+            let first = items(self.dict().get("DecodeParms"))
                 .first()
                 .filter(|v| !matches!(v, Value::Null))
-                .cloned();
-            if flate {
-                budget.check(LimitCode::StreamFilterCount, 2)?;
-                (
-                    Some(Value::Array(vec![crypt, flate_name()].into())),
-                    params.map(|p| Value::Array(vec![p, Value::Null].into())),
-                )
+                .map(|v| crate::value::copy_for_edit(v, budget))
+                .transpose()?;
+            if options.get("Filter").is_some() {
+                prepend_crypt(&mut options, first, budget)?;
             } else {
-                (Some(crypt), params)
+                budget.check(LimitCode::StreamFilterCount, 1)?;
+                options.insert(Name::from("Filter"), Value::Name(Name::from("Crypt")));
+                if let Some(params) = first {
+                    options.insert(Name::from("DecodeParms"), params);
+                }
             }
-        } else {
-            (flate.then(flate_name), None)
-        };
-        let dict = self.dict_mut();
-        dict.remove("Filter");
-        dict.remove("DecodeParms");
-        if let Some(filters) = filters {
-            dict.insert(Name::from("Filter"), filters);
         }
-        if let Some(params) = parameters {
-            dict.insert(Name::from("DecodeParms"), params);
+        let dict = self.dict_mut();
+        for name in ["Filter", "DecodeParms"] {
+            if let Some(value) = options.remove(name) {
+                dict.insert(Name::from(name), value);
+            } else {
+                dict.remove(name);
+            }
         }
         self.set_data(data);
         Ok(())
