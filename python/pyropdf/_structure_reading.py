@@ -10,7 +10,6 @@ from pyropdf._errors import LimitError, MalformedPdfError
 from pyropdf._objects import Array, Dictionary, Name, String
 from pyropdf._operations import Operation
 from pyropdf._structure import (
-    _CODE_STRUCTURE_TREE,
     _DEFAULT_MAX_ELEMENTS,
     _MAX_STRUCTURE_DEPTH,
     _MAX_TREE_DEPTH,
@@ -34,6 +33,7 @@ if TYPE_CHECKING:
 
 _PDF2 = "http://iso.org/pdf2/ssn"
 _CODE_OBJECT_COUNT = "object_count"
+_CODE_STRUCTURE_TREE = "structure_tree_count"
 
 
 def _root_items(tree: StructureTree, budget: _core._OperationBudget) -> Iterator[StructureItem]:
