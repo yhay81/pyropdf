@@ -907,11 +907,6 @@ objects = ["AnnotProjection", "ExDataProjection"]
 clause = "12.5.6.25"
 description = "3D and RichMedia annotations."
 objects = ["Annot3D", "AnnotRichMedia"]
-read = { status = "partial", missing = "Multi-asset RichMedia annotations and their active presentation and configuration settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Multi-asset RichMedia annotations and their active presentation and configuration settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Multi-asset RichMedia annotations and their active presentation and configuration settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Multi-asset RichMedia annotations and their active presentation and configuration settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Multi-asset RichMedia annotations and their active presentation and configuration settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
 
 [features.trigger-events]
 clause = "12.6.3"
@@ -1171,11 +1166,6 @@ preserve = { status = "partial", missing = "Camera, scene and activation setting
 clause = "13.7"
 description = "Rich media content, configurations, instances, and settings."
 objects = ["RichMediaSettings", "RichMediaInstance", "RichMediaPresentation", "RichMediaParams"]
-read = { status = "partial", missing = "Multi-level asset trees, multiple configurations, activation, presentation and animation settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Multi-level asset trees, multiple configurations, activation, presentation and animation settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Multi-level asset trees, multiple configurations, activation, presentation and animation settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Multi-level asset trees, multiple configurations, activation, presentation and animation settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Multi-level asset trees, multiple configurations, activation, presentation and animation settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
 
 [features.document-info]
 clause = "14.3.3"
