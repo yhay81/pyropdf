@@ -400,6 +400,12 @@ MUTATIONS = (
         "metadata= xmp= del:xmp",
     ),
     (
+        "document_metadata",
+        "Replace or remove the metadata stream association for one component, isolating a shared packet.",
+        "Dictionary",
+        "xmp= del:xmp",
+    ),
+    (
         "named_pages",
         "Rebuild the named-page tree; keep page identity, sibling name trees and Limits.",
         "NamedPages",
