@@ -70,22 +70,30 @@ PKCS8 = serialization.PrivateFormat.PKCS8
         ("2.0", "", True),
     ],
 )
-def test_check_recognizes_the_registered_cades_subfilter(version: str, extensions: str, *, allowed: bool) -> None:
+@pytest.mark.parametrize("combined", [False, True], ids=["field", "field-widget"])
+def test_check_recognizes_the_registered_cades_subfilter(
+    version: str, extensions: str, *, allowed: bool, combined: bool
+) -> None:
     # The fixture exercises the structural subfilter rule independently of any signer.
+    annotations = "/Annots [5 0 R]" if combined else ""
+    widget = "/Type /Annot /Subtype /Widget /Rect [0 0 10 10] /F (mistyped)" if combined else ""
     data = build_raw_pdf(
         {
             1: f"<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R /Extensions << {extensions} >> >>",
             2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>",
+            3: f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> {annotations} >>",
             4: "<< /Fields [5 0 R] >>",
-            5: "<< /FT /Sig /T (Approval) /V 6 0 R >>",
+            5: f"<< /FT /Sig /T (Approval) /V 6 0 R {widget} >>",
             6: "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /ETSI.CAdES.detached /Contents <00> >>",
             7: "<< /BaseVersion /1.7 /ExtensionLevel 2 >>",
             8: "2",
         }
     ).replace(b"%PDF-1.7", f"%PDF-{version}".encode(), 1)
     with pyropdf.open(data) as doc:
-        defects = [item for item in doc.check().defects if item.clause == "Signature/SubFilter"]
+        checked = doc.check().defects
+        defects = [item for item in checked if item.clause == "Signature/SubFilter"]
+        if combined:
+            assert any(item.xref == 5 and item.path == "F" for item in checked)
     assert bool(defects) is not allowed
     assert all(item.xref == 6 and item.path == "SubFilter" for item in defects)
 

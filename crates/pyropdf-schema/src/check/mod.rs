@@ -897,6 +897,18 @@ impl<'g, G: Graph> Walk<'g, G> {
         if !matches!(self.graph.view(value), View::Dictionary | View::Stream) {
             return Ok(None);
         }
+        // A merged field and widget is checked as an annotation through the page,
+        // and as a signature field through AcroForm so that its V is visited.
+        if let Some(sig) = links.iter().find(|link| link.target().name == "FieldSig")
+            && [b"FT".as_slice(), b"V", b"DV"]
+                .iter()
+                .any(|key| self.graph.get(value, key).is_some())
+            && self.inheritable(value, b"FT", |view| {
+                Some(matches!(view, View::Name(b"Sig")))
+            })? == Some(true)
+        {
+            return Ok(Some(sig.object));
+        }
         if let Some(button) = self.button_field(links, value)? {
             return Ok(Some(button));
         }
