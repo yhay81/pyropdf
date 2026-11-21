@@ -1,7 +1,7 @@
 //! Decrypting and encrypting the strings and stream data of one object's
 //! value (ISO 32000-2 section 7.6.2).
 
-use super::{Handler, Kind};
+use super::{Handler, Kind, Method};
 use crate::budget::{Budget, BudgetVec};
 use crate::value::{Bytes, PdfString, Reference, StringForm, Value};
 use crate::{Error, Result, write};
@@ -90,7 +90,10 @@ fn walk(
             let data = apply(Kind::String, string.as_bytes())?;
             // A linearized save measures objects before emitting them. A fresh
             // random IV changes ciphertext between passes; hex has a fixed width.
-            let form = if encrypt && (handler.uses_gcm() || handler.is_recipient()) {
+            let method = handler.method(Kind::String);
+            let random_ciphertext =
+                method == Method::AesGcm || (handler.is_recipient() && method != Method::Identity);
+            let form = if encrypt && random_ciphertext {
                 StringForm::Hexadecimal
             } else {
                 string.form()

@@ -741,3 +741,23 @@ def test_gcm_keeps_other_iso_extensions_and_repairs_matching_declaration() -> No
         assert declarations[1]["URL"] == b"https://www.iso.org/standard/45876.html"
         assert declarations[1]["XXKey"] == result.catalog["XXBackup"]["XXKey"] == 15
         assert "ExtensionRevision" not in result.catalog["XXBackup"]
+
+
+def test_gcm_repeated_incremental_updates_have_fresh_nonces_for_the_same_key() -> None:
+    import re  # noqa: PLC0415
+
+    source = GCM_SOURCE.read_bytes()
+    with pyropdf.open(source, password="ownerpw") as doc:
+        doc.pages[0].obj["XXLabel"] = b"same plaintext"
+        outputs = [doc.to_bytes(incremental=True) for _ in range(2)]
+    nonces = set()
+    for data in outputs:
+        assert data.startswith(source)
+        match = re.search(rb"/XXLabel\s*<([A-Fa-f0-9]+)>", data[len(source) :])
+        assert match
+        encrypted = bytes.fromhex(match[1].decode())
+        assert len(encrypted) == 12 + len(b"same plaintext") + 16
+        nonces.add(encrypted[:12])
+        with pyropdf.open(data, password="userpw") as doc:
+            assert doc.pages[0].obj["XXLabel"] == b"same plaintext"
+    assert len(nonces) == 2

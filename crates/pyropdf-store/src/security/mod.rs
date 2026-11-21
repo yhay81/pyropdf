@@ -127,7 +127,7 @@ impl Handler {
             encrypt_metadata,
             strings,
             streams,
-        } = Params::read(encrypt)?;
+        } = Params::read(encrypt, budget)?;
         let make = |key: Box<[u8]>, access| Self {
             key,
             recipient: None,
@@ -402,7 +402,7 @@ struct Params<'a> {
 }
 
 impl<'a> Params<'a> {
-    fn read(encrypt: &'a Dict) -> Result<Self> {
+    fn read(encrypt: &'a Dict, budget: &Budget) -> Result<Self> {
         if !matches!(encrypt.get("Filter"), Some(Value::Name(n)) if n.as_bytes() == b"Standard") {
             return Err(Error::malformed(
                 "the document uses a security handler other than the standard one",
@@ -458,6 +458,7 @@ impl<'a> Params<'a> {
             };
             let mut declared = false;
             for (_, filter) in filters.iter() {
+                budget.poll()?;
                 if let Value::Dict(filter) = filter
                     && matches!(filter.get("CFM"), Some(Value::Name(n)) if n.as_bytes() == b"AESV4")
                 {
