@@ -719,19 +719,17 @@ objects = ["ArrayOfBlendModes"]
 clause = "11.5"
 description = "Soft masks from luminosity, alpha, and images."
 objects = ["SoftMaskAlpha", "SoftMaskLuminosity", "XObjectImageSoftMask"]
-create = { status = "partial", missing = "PNG alpha images and translucent gradients create image and luminosity soft masks, without general group soft-mask scopes on Canvas.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Image replacement and rewriting update, resample, and synthesize image `/SMask` streams, without editing soft-mask dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.transparency-groups]
 clause = "11.6.6"
 description = "Transparency groups: isolated and knockout groups."
 objects = ["GroupAttributes"]
-create = { status = "partial", missing = "Canvas opacity scopes create isolated transparency groups, without knockout group options.", milestone = "Phase 4: Specification" }
 
 [features.transparency-color]
 clause = "11.7"
 description = "Color spaces of groups and overprint with transparency."
 objects = []
+interpret = { status = "engine", upstream = 1024 }
 
 [features.viewer-preferences]
 clause = "12.2"
@@ -1485,6 +1483,7 @@ interpret = { status = "engine", upstream = 1001 }
 clause = "11.3"
 description = "Combine source, backdrop, opacity and shape when painting overlapping content."
 objects = []
+interpret = { status = "engine", upstream = 1024 }
 
 [features.geospatial]
 clause = "12.10"
