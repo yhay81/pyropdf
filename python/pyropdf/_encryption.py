@@ -480,12 +480,20 @@ class RecipientCredential:
     independent MGF1 digest and label. P-256, P-384 and P-521 certificates
     use ephemeral-static ECDH with X9.63 derivation and AES key wrap.
 
-    ISO 32000-2:2020 §7.6.5 defines the CMS content ciphers. AES-CBC accepts
-    128, 192 and 256 bits. For older files the provider reads DES-CBC,
-    three-key Triple DES-CBC, 128-effective-bit RC2-CBC, and RC4 with 40, 56,
-    64, 80, 128, 160, 192 or 256 bits. PDF 2.0 deprecates all four legacy
-    ciphers. The private key stays with the caller. The store retains the
-    authenticated file key.
+    ISO 32000-2:2020 §7.6.5 defines the CMS content ciphers. RSAES-OAEP
+    and ephemeral-static ECDH follow the CMS formats in RFC 3560 and RFC 5753.
+
+    | Envelope algorithm | Read | New PDF |
+    | --- | --- | --- |
+    | AES-CBC (RFC 3565) | 128, 192 and 256 bits | All three |
+    | DES-CBC and three-key Triple DES-CBC | Both | Deprecated in PDF 2.0, read-only |
+    | RC2-CBC | 128 effective bits | Deprecated in PDF 2.0, read-only |
+    | RC4 | 40, 56, 64, 80, 128, 160, 192 and 256 bits | Deprecated in PDF 2.0, read-only |
+    | RSA PKCS#1 v1.5 | 2048 to 8192-bit RSA | Default RSA transport |
+    | RSAES-OAEP | Declared digest, MGF1 digest and label | SHA-256 and MGF1-SHA-256, empty label |
+    | ECDH with AES key wrap | P-256, P-384 and P-521 | All three with AES-256 key wrap |
+
+    The private key stays with the caller. The store retains the authenticated file key.
     """
 
     certificate: Certificate
