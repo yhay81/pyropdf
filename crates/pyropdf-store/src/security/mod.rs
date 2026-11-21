@@ -11,6 +11,8 @@
 //! beyond ASCII.
 
 mod crypto;
+pub(crate) mod embedded;
+pub(crate) mod filters;
 mod recipient;
 pub use recipient::{RecipientEncryption, RecipientPayload};
 #[cfg(test)]
@@ -21,6 +23,7 @@ use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::value::{Dict, Name, PdfString, Reference, StringForm, Value};
 use crate::{Error, Password, Result};
 
+pub(crate) use value::encrypt_bytes_as;
 pub use value::{decrypt_value, encrypt_bytes, encrypt_value};
 
 /// The 32 bytes that pad a password (ISO 32000-2 section 7.6.4.3.2).
@@ -69,6 +72,7 @@ pub enum Kind {
 /// password that opened it, and how strings and streams are encrypted.
 #[derive(Clone)]
 pub struct Handler {
+    filters: filters::Filters,
     key: Box<[u8]>,
     recipient: Option<recipient::RecipientAccess>,
     password: Box<[u8]>,
@@ -127,8 +131,10 @@ impl Handler {
             encrypt_metadata,
             strings,
             streams,
+            filters,
         } = Params::read(encrypt, budget)?;
         let make = |key: Box<[u8]>, access| Self {
+            filters,
             key,
             recipient: None,
             password: Box::from(password),
@@ -261,6 +267,12 @@ impl Handler {
     pub fn description(&self) -> String {
         if let Some(recipient) = &self.recipient {
             let subfilter = recipient.subfilter;
+            if self.strings == Method::Identity && self.streams == Method::Identity {
+                return format!(
+                    "Adobe.PubSec {subfilter} V{} (Identity defaults)",
+                    self.version
+                );
+            }
             let cipher = if self.uses_gcm() {
                 "AES-GCM"
             } else if [self.streams, self.strings].contains(&Method::Rc4) {
@@ -300,22 +312,7 @@ impl Handler {
         data: &[u8],
         budget: &Budget,
     ) -> Result<Vec<u8>> {
-        let method = self.method(kind);
-        match method {
-            Method::Identity => copy(data, budget),
-            Method::Rc4 => crypto::rc4(&self.object_key(reference, false), data, budget),
-            Method::AesGcm => crypto::gcm_decrypt(&self.key, data, budget),
-            Method::Aes128 | Method::Aes256 => {
-                if data.len() < 16 {
-                    // An empty string encrypts to at least the IV and one
-                    // block; anything shorter decrypts to nothing.
-                    return Ok(Vec::new());
-                }
-                let key = self.aes_key(method, reference);
-                let iv: [u8; 16] = data[..16].try_into().expect("16 bytes");
-                crypto::aes_cbc_decrypt(&key, &iv, &data[16..], true, budget)
-            }
-        }
+        self.transform_data(kind, None, (reference, reference), data, budget, false)
     }
 
     /// Encrypts `data`, a string or a stream's data of the object that
@@ -328,38 +325,7 @@ impl Handler {
         data: &[u8],
         budget: &Budget,
     ) -> Result<Vec<u8>> {
-        let method = self.method(kind);
-        match method {
-            Method::Identity => copy(data, budget),
-            Method::Rc4 if self.is_recipient() => Err(Error::malformed(
-                "pyropdf does not write RC4 recipient ciphertext; choose AES for a full save",
-            )),
-            Method::Rc4 => crypto::rc4(&self.object_key(reference, false), data, budget),
-            Method::AesGcm => crypto::gcm_encrypt(&self.key, data, budget),
-            Method::Aes128 | Method::Aes256 => {
-                let key = self.aes_key(method, reference);
-                let iv = if self.is_recipient() {
-                    let mut random = [0; 16];
-                    getrandom::fill(&mut random).map_err(|_| {
-                        Error::malformed(
-                            "OS randomness unavailable for the AES initialization vector",
-                        )
-                    })?;
-                    random
-                } else {
-                    let tag = [u8::from(kind == Kind::Stream)];
-                    crypto::sha256(&[&key, &tag, data])[..16]
-                        .try_into()
-                        .expect("16 bytes")
-                };
-                let mut out = BudgetVec::new(budget);
-                out.try_extend_from_slice(&iv)?;
-                out.try_extend_from_slice(&crypto::aes_cbc_encrypt(
-                    &key, &iv, data, true, budget,
-                )?)?;
-                Ok(out.into_vec())
-            }
-        }
+        self.transform_data(kind, None, (reference, reference), data, budget, true)
     }
 
     const fn method(&self, kind: Kind) -> Method {
@@ -368,28 +334,11 @@ impl Handler {
             Kind::Stream => self.streams,
         }
     }
-
-    fn aes_key(&self, method: Method, reference: Reference) -> Box<[u8]> {
-        if method == Method::Aes256 {
-            self.key.clone()
-        } else {
-            self.object_key(reference, true)
-        }
-    }
-
-    /// The key of one object (algorithm 1).
-    fn object_key(&self, reference: Reference, aes: bool) -> Box<[u8]> {
-        let number = reference.number().to_le_bytes();
-        let generation = reference.generation().to_le_bytes();
-        let salt: &[u8] = if aes { b"sAlT" } else { b"" };
-        let hash = crypto::md5(&[&self.key, &number[..3], &generation, salt]);
-        let n = (self.key.len() + 5).min(16);
-        Box::from(&hash[..n])
-    }
 }
 
 /// The parameters of an `/Encrypt` dictionary of the standard handler.
 struct Params<'a> {
+    filters: filters::Filters,
     version: u8,
     revision: u8,
     length: usize,
@@ -442,10 +391,17 @@ impl<'a> Params<'a> {
         };
         let encrypt_metadata =
             !matches!(encrypt.get("EncryptMetadata"), Some(Value::Boolean(false)));
-        let (strings, streams) = if version >= 4 {
-            (filter(encrypt, "StrF")?, filter(encrypt, "StmF")?)
+        let filters = if version >= 4 {
+            filters::Filters::password(encrypt, budget)?
         } else {
-            (Method::Rc4, Method::Rc4)
+            filters::Filters::default()
+        };
+        let (strings, streams) = match (&filters.strings, &filters.streams) {
+            (Some(strings), Some(streams)) => (
+                filters.method(strings.as_bytes())?,
+                filters.method(streams.as_bytes())?,
+            ),
+            _ => (Method::Rc4, Method::Rc4),
         };
         if version != 6 && (strings == Method::AesGcm || streams == Method::AesGcm) {
             return Err(Error::malformed(
@@ -477,6 +433,7 @@ impl<'a> Params<'a> {
             }
         }
         Ok(Self {
+            filters,
             version: u8::try_from(version).unwrap_or(u8::MAX),
             revision: revision as u8,
             length: length as usize,
@@ -487,33 +444,6 @@ impl<'a> Params<'a> {
             strings,
             streams,
         })
-    }
-}
-
-/// Reads the method of the crypt filter that `key` names (ISO 32000-2
-/// section 7.6.6).
-fn filter(encrypt: &Dict, key: &str) -> Result<Method> {
-    let name = match encrypt.get(key) {
-        Some(Value::Name(name)) => name.as_bytes(),
-        _ => b"Identity",
-    };
-    if name == b"Identity" {
-        return Ok(Method::Identity);
-    }
-    let Some(Value::Dict(filters)) = encrypt.get("CF") else {
-        return Err(Error::malformed("the /Encrypt dictionary has no /CF"));
-    };
-    let Some(Value::Dict(filter)) = filters.get(name) else {
-        return Err(Error::malformed("a crypt filter that /CF does not define"));
-    };
-    match filter.get("CFM") {
-        Some(Value::Name(m)) if m.as_bytes() == b"V2" => Ok(Method::Rc4),
-        Some(Value::Name(m)) if m.as_bytes() == b"AESV2" => Ok(Method::Aes128),
-        Some(Value::Name(m)) if m.as_bytes() == b"AESV3" => Ok(Method::Aes256),
-        Some(Value::Name(m)) if m.as_bytes() == b"AESV4" => Ok(Method::AesGcm),
-        None => Ok(Method::Identity),
-        Some(Value::Name(m)) if m.as_bytes() == b"None" => Ok(Method::Identity),
-        _ => Err(Error::malformed("a crypt filter's /CFM is not supported")),
     }
 }
 
@@ -651,7 +581,7 @@ impl PasswordEncryption {
                 "new password encryption requires an AES method",
             ));
         }
-        let handler = if self.method != Method::Aes128 {
+        let mut handler = if self.method != Method::Aes128 {
             let (v, r, cfm) = match self.method {
                 Method::AesGcm => (6, 7, "AESV4"),
                 _ => (5, 6, "AESV3"),
@@ -686,6 +616,7 @@ impl PasswordEncryption {
             put("UE", string(&ue));
             put("Perms", string(&perms));
             Handler {
+                filters: filters::Filters::default(),
                 key: Box::from(key),
                 recipient: None,
                 password: Box::from(self.owner.as_slice()),
@@ -717,6 +648,7 @@ impl PasswordEncryption {
             put("O", string(&o));
             put("U", string(&u));
             Handler {
+                filters: filters::Filters::default(),
                 key,
                 recipient: None,
                 password: Box::from(self.owner.as_slice()),
@@ -730,6 +662,7 @@ impl PasswordEncryption {
             }
         };
         put("P", Value::Integer(i64::from(p)));
+        handler.filters = filters::Filters::password(&dict, budget)?;
         Ok((dict, id, handler))
     }
 }

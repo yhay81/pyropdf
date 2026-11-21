@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 39 | 34 | 758 |
+| read | 0 | 0 | 0 | 40 | 33 | 758 |
 | interpret | 9 | 19 | 0 | 36 | 41 | 726 |
-| create | 0 | 0 | 21 | 27 | 62 | 721 |
-| edit | 0 | 0 | 0 | 48 | 55 | 728 |
-| preserve | 0 | 0 | 0 | 25 | 39 | 767 |
+| create | 0 | 0 | 21 | 28 | 61 | 721 |
+| edit | 0 | 0 | 0 | 49 | 54 | 728 |
+| preserve | 0 | 0 | 0 | 26 | 38 | 767 |
 
 ## Clauses
 
@@ -50,7 +50,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.4.7 | JBIG2Decode filter | `jbig2-filter` | 1 done | 1 n/a | 1 planned | 1 planned | 1 done |
 | 7.4.8 | DCTDecode filter | `dct-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.4.9 | JPXDecode filter | `jpx-filter` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 7.4.10 | Crypt filter | `crypt-filter` | 1 planned | 1 n/a | 1 planned | 1 planned | 1 planned |
+| 7.4.10 | Crypt filter | `crypt-filter` | 1 partial | 1 n/a | 1 partial | 1 partial | 1 partial |
 | 7.5.2 | File header | `file-header` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.4 | Cross-reference table | `xref-table` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.6 | Incremental updates | `incremental-update` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-415 unfinished cells in 831 features: 9 engine, 175 partial, 231 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+415 unfinished cells in 831 features: 9 engine, 179 partial, 227 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -348,13 +348,15 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - read, create, edit, preserve — `public-key-security-handler`.
 - [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
     - interpret — `public-key-security-handler`.
-- [#893](https://github.com/yhay81/pyropdf/issues/893) Resolve stream Crypt overrides and embedded-file filter selection. Resolve and update EFF and per-stream filter choices. Check selection for both standard and public-key recipients once the recipient handler in #864 is available.
-    - read, interpret, create, edit, preserve — `crypt-filters`.
+- [#1056](https://github.com/yhay81/pyropdf/issues/1056) Resolve indirect stream filter selectors and parameters in their document revision. Resolve filter names and parameter references in the correct revision before reading or creating encrypted streams, and retain their reference identities through saves.
+    - read, create, preserve — `crypt-filter`, `crypt-filters`.
+- [#992](https://github.com/yhay81/pyropdf/issues/992) Keep stream crypt-filter selection when replacing attachment or stream data. Retain the leading security filter and its parameters when replacing the decoded payload or compression, including an attachment restricted to a distinct recipient audience.
+    - edit — `crypt-filter`, `crypt-filters`.
 - [#905](https://github.com/yhay81/pyropdf/issues/905) Resolve signature seed constraints and build properties through signing and editing. Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification.
     - read, interpret — `signature-fields`.
     - create, edit — `signature-fields`, `digital-signatures`.
-- [#893](https://github.com/yhay81/pyropdf/issues/893) Resolve stream Crypt overrides and embedded-file filter selection. Select a named Crypt filter per stream, honor Identity and EFF defaults, and exercise standard-handler strings, streams and attachments through full and incremental saves. Cover per-stream overrides separately from public-key recipients.
-    - read, create, edit, preserve — `crypt-filter`.
+- [#993](https://github.com/yhay81/pyropdf/issues/993) Render explicit legacy crypt filters and independently keyed recipient streams from the store. Interpret explicit legacy password filters and an independently keyed page stream through the authenticated version, including correct refusal for an unauthorized page.
+    - interpret — `crypt-filters`.
 - [#891](https://github.com/yhay81/pyropdf/issues/891) Complete stream filter read, rewrite and preservation cases. Round-trip encoded and decoded streams across the listed filter chains and parameters. Cover ASCIIHex re-encoding, Group 3 fax and JPX output gaps, and retain untouched encoded data. Account for unsupported encoder paths explicitly.
     - read — `lzw-filter`, `run-length-filter`.
     - interpret — `lzw-filter`.
