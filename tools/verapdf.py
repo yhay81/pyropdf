@@ -582,6 +582,11 @@ def cli(jar: Path, flavour: str) -> list[str]:
     return [*command, "--extensions", extensions] if extensions else command
 
 
+def verdict_path(header: str) -> Path:
+    """Extract the path before the flavour and optional Arlington extension list."""
+    return Path(re.sub(r" \S+(?: extensions: [\w.-]+(?:,\s*[\w.-]+)*)?$", "", header))
+
+
 def validate(jar: Path, flavour: str, paths: list[Path]) -> dict[str, bool]:
     """Return whether veraPDF accepts each of ``paths`` under ``flavour``, by file name."""
     command = cli(jar, flavour)
@@ -591,7 +596,7 @@ def validate(jar: Path, flavour: str, paths: list[Path]) -> dict[str, bool]:
         verdict, _, rest = line.partition(" ")
         # The Arlington profiles report a deviation from the model as DEVIATION.
         if verdict in {"PASS", "FAIL", "DEVIATION"}:
-            verdicts[Path(rest.rpartition(" ")[0]).name] = verdict == "PASS"
+            verdicts[verdict_path(rest).name] = verdict == "PASS"
     missing = [path.name for path in paths if path.name not in verdicts]
     if missing:
         sys.stderr.write(f"{result.stdout}\n{result.stderr}\n")
@@ -620,8 +625,7 @@ def detailed_reports(jar: Path, flavour: str, paths: list[Path]) -> dict[Path, s
     current: list[str] | None = None
     for line in result.stdout.splitlines():
         if line.startswith(("PASS ", "FAIL ", "DEVIATION ")):
-            # The text header ends with its flavour; paths may contain spaces.
-            source = Path(line.partition(" ")[2].rpartition(" ")[0])
+            source = verdict_path(line.partition(" ")[2])
             current = reports.setdefault(source, [])
         if current is not None:
             current.append(line)

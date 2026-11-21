@@ -52,6 +52,8 @@ flate2 = "1.1.11"
 png = "0.18.1"
 # JPEG output of Pixmap, doc.render, and image rewriting, as pylopdf encodes it.
 jpeg-encoder = "0.7.1"
+# Lossless JPEG 2000 Part 1 encoding for JPXDecode image XObjects.
+j2k-native = { version = "0.14.0", default-features = false, features = ["std"] }
 # JPEG input of Pixmap.from_bytes and image samples, the version that hayro
 # already pulls in.
 zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }

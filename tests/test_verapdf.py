@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import struct
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -346,6 +347,31 @@ def test_pre_save_comparison_rejects_both_missed_and_spurious_claims(edit: str, 
             EDITS["add_attachment"].apply(doc)
         with pytest.raises(ValueError, match="expected"):
             VERAPDF.check_matrix_claims(doc, source, "ua2", edit, incremental=True)
+
+
+@pytest.mark.parametrize("suffix", ["", " extensions: ISO_19005_3", " extensions: ISO_19005_3, ETSI_PAdES"])
+def test_arlington_summary_and_verbose_reports_retain_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+    accepted = tmp_path / "contains extensions: sample.pdf"
+    rejected = tmp_path / "short identifier.pdf"
+    jar = tmp_path / "validator.jar"
+    flavour = "arlington1.7+ISO_19005_3"
+    rule = "TrailerIDArray-1-StringByte-9"
+    output = f"PASS {accepted} arlington1.7{suffix}\nDEVIATION {rejected} arlington1.7{suffix}\n  DEVIATION {rule}\n"
+    captured = subprocess.CompletedProcess([], 0, stdout=output, stderr="")
+    monkeypatch.setattr(VERAPDF.subprocess, "run", lambda *_args, **_kwargs: captured)
+    assert VERAPDF.validate(jar, flavour, [accepted, rejected]) == {accepted.name: True, rejected.name: False}
+    reports = VERAPDF.detailed_reports(jar, flavour, [accepted, rejected])
+    assert {path: VERAPDF.failed_rules(report) for path, report in reports.items()} == {
+        accepted: set(),
+        rejected: {rule},
+    }
+    absent = tmp_path / "missing control.pdf"
+    with pytest.raises(SystemExit, match="missing control"):
+        VERAPDF.validate(jar, flavour, [accepted, rejected, absent])
+    with pytest.raises(ValueError, match="incomplete verbose"):
+        VERAPDF.detailed_reports(jar, flavour, [accepted, rejected, absent])
 
 
 @pytest.mark.spec("{profile}", "interpret", "edit", "preserve")

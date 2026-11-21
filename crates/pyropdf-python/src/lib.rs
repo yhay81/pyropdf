@@ -80,7 +80,7 @@ mod _core {
         OcrError, PasswordError, PdfError, StaleObjectError,
     };
     #[pymodule_export]
-    use super::fax::encode_ccitt_g4;
+    use super::fax::{encode_ccitt_g4, encode_image_samples};
     #[pymodule_export]
     use super::fonts::{
         _Font, _FontFile, mark_font_subset, set_fallback_faces, subset_font_program, type3_codes,
@@ -123,12 +123,14 @@ mod _core {
     #[pymodule_export]
     use super::pages::{
         CanvasSourceSnapshot, PageForms, PageSnapshot, canvas_copy_image, canvas_page_form,
-        canvas_source_page, copy_page_resources, import_pages, new_page, page_boxes, page_count,
-        page_geometry, page_index, page_object, page_objects, page_space, set_page_box,
-        set_page_rotation, set_pages, snapshot_pages,
+        canvas_source_page, copy_page_resources, import_pages, import_pages_with_source, new_page,
+        page_boxes, page_count, page_geometry, page_index, page_object, page_objects, page_space,
+        set_page_box, set_page_rotation, set_pages, snapshot_pages,
     };
     #[pymodule_export]
-    use super::pixmap::{Pixmap, pixmap_png, recolor_samples, render_page, render_pages};
+    use super::pixmap::{
+        DeviceCurve, Pixmap, device_curve, pixmap_png, recolor_samples, render_page, render_pages,
+    };
     #[pymodule_export]
     use super::render::render_page_svg;
     #[pymodule_export]
