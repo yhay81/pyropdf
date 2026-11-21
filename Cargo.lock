@@ -1226,6 +1226,7 @@ dependencies = [
  "png",
  "proptest",
  "pyropdf-store",
+ "read-fonts 0.46.0",
  "rten",
  "rten-tensor",
  "sha2",
