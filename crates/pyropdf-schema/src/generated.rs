@@ -3526,8 +3526,8 @@ pub static OBJECTS: [Object; 613] = [
         key("MCID", &[typed(Integer, None, Never, None, &[], None, &[])], since(1, 3), None, Always, false, ""),
     ] },
     Object { name: "MeasureGEO", keys: &[
-        key("Type", &[typed(Name, None, Never, None, &["Measure"], None, &[])], since(2, 0), None, Never, false, "Table 266 and Table 269"),
-        key("Subtype", &[typed(Name, None, Never, None, &["GEO"], None, &[])], since(2, 0), None, Never, false, ""),
+        key("Type", &[typed(Name, None, Never, None, &["Measure"], None, &[])], Since::When("fn:Eval(fn:Extension(ADBE_Extn3,1.7) || 2.0)"), None, Never, false, "Table 266 and Table 269"),
+        key("Subtype", &[typed(Name, None, Never, None, &["GEO"], None, &[])], Since::When("fn:Eval(fn:Extension(ADBE_Extn3,1.7) || 2.0)"), None, Never, false, ""),
         key("Bounds", &[typed(Array, None, Never, None, &[], None, &[link(165, None)])], Since::When("fn:Eval(fn:Extension(ADBE_Extn3,1.7) || 2.0)"), None, Never, false, ""),
         key("GCS", &[typed(Dictionary, None, Never, None, &[], None, &[link(390, None), link(480, None)])], Since::When("fn:Eval(fn:Extension(ADBE_Extn3,1.7) || 2.0)"), None, Always, false, ""),
         key("DCS", &[typed(Dictionary, None, Never, None, &[], None, &[link(390, None), link(480, None)])], Since::When("fn:Eval(fn:Extension(ADBE_Extn3,1.7) || 2.0)"), None, Never, false, ""),
@@ -4968,7 +4968,7 @@ pub static OBJECTS: [Object; 613] = [
         key("Type", &[typed(Name, None, Never, None, &["Viewport"], None, &[])], since(1, 6), None, Never, false, "Table 265"),
         key("BBox", &[typed(Rectangle, None, Never, None, &[], None, &[])], since(1, 6), None, Always, false, ""),
         key("Name", &[typed(StringText, None, Never, None, &[], None, &[])], since(1, 6), None, Never, false, ""),
-        key("Measure", &[typed(Dictionary, None, Never, None, &[], None, &[link(415, None), link(414, Some("fn:SinceVersion(2.0,MeasureGEO)"))])], since(1, 6), None, Never, false, ""),
+        key("Measure", &[typed(Dictionary, None, Never, None, &[], None, &[link(415, None), link(414, Some("fn:IsPDFVersion(1.7,fn:Extension(ADBE_Extn3,MeasureGEO))")), link(414, Some("fn:SinceVersion(2.0,MeasureGEO)"))])], since(1, 6), None, Never, false, ""),
         key("PtData", &[typed(Dictionary, None, Never, None, &[], None, &[link(479, None)])], since(2, 0), None, Never, false, ""),
     ] },
     Object { name: "VisibilityExpressionArray", keys: &[
