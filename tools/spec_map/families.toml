@@ -12,19 +12,6 @@ features = [
 dimensions = ["read", "create", "edit"]
 behavior = "Resolve OCG Usage and configuration AS application dictionaries against their groups. Expose and modify the stored values, and verify configuration- and event-specific behavior through save/reopen."
 
-[families.functions-and-shadings]
-tracker = 246
-issue = 896
-title = "Complete PDF function, pattern and mesh shading authoring and evaluation"
-features = [
-    "sampled-functions", "exponential-functions", "stitching-functions", "calculator-functions",
-    "tiling-patterns", "function-shading", "axial-shading", "radial-shading", "free-form-triangle-shading",
-    "lattice-triangle-shading", "coons-patch-shading", "tensor-patch-shading", "shading-patterns",
-    "pattern-color-space",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Exercise sampled/calculator functions, function edits, tiling and uncolored patterns and shading types 1–7. Create and edit resources through the store, verify mesh and function evaluation independently and round-trip untouched data."
-
 [families.print-device-engine]
 tracker = 248
 issue = 1001
@@ -206,22 +193,6 @@ features = ["public-key-security-handler"]
 dimensions = ["interpret"]
 behavior = "Render authenticated pre-V5 recipient files through the engine object-source interface."
 
-[families.indirect-stream-filter-selection]
-tracker = 252
-issue = 1056
-title = "Resolve indirect stream filter selectors and parameters in their document revision"
-features = ["crypt-filter", "crypt-filters"]
-dimensions = ["read", "create", "preserve"]
-behavior = "Resolve filter names and parameter references in the correct revision before reading or creating encrypted streams, and retain their reference identities through saves."
-
-[families.crypt-filter-payload-edits]
-tracker = 252
-issue = 992
-title = "Keep stream crypt-filter selection when replacing attachment or stream data"
-features = ["crypt-filter", "crypt-filters"]
-dimensions = ["edit"]
-behavior = "Retain the leading security filter and its parameters when replacing the decoded payload or compression, including an attachment restricted to a distinct recipient audience."
-
 [families.signature-dictionaries]
 tracker = 252
 issue = 905
@@ -283,37 +254,6 @@ features = [
 ]
 dimensions = ["create"]
 behavior = "Create an accessible archival document with a valid claim and have an independent validator verify the result."
-
-[families.early-profile-authoring]
-tracker = 255
-issue = 911
-title = "Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour"
-features = [
-    "pdfa-2b", "pdfua-1",
-]
-dimensions = ["create"]
-behavior = "Create and independently validate the earlier PDF/A and PDF/UA profile examples."
-
-[families.pdf-profile-corpus]
-tracker = 255
-issue = 911
-title = "Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour"
-features = [
-    "pdfa", "pdfua", "pdfa-1a", "pdfa-1b", "pdfa-2a", "pdfa-2u", "pdfa-3a", "pdfa-3b", "pdfa-3u", "pdfa-4e",
-    "pdfa-4f",
-]
-dimensions = ["read", "create"]
-behavior = "Exercise independently sourced conforming and negative fixtures beyond the original vector example. Validate public authoring per listed part and level using independent validation and retain allowable source variations."
-
-[families.pdf-profile-reading]
-tracker = 255
-issue = 911
-title = "Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour"
-features = [
-    "pdfa-2b", "pdfa-4", "pdfua-1", "pdfua-2",
-]
-dimensions = ["read"]
-behavior = "Exercise additional conforming and negative sources beyond the original per-flavour vector example."
 
 [families.print-profiles]
 tracker = 255
@@ -406,3 +346,12 @@ features = [
 ]
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Read, edit and round-trip captured content sets and their indexes."
+
+
+[families.standard-owner-interpretation]
+tracker = 252
+issue = 974
+title = "Render owner-authenticated standard-handler PDF revisions 2 to 4"
+features = ["standard-security-handler", "standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4", "standard-aes-r4"]
+dimensions = ["interpret"]
+behavior = "Render authenticated R2 to R4 versions with the owner credentials before and after edits."

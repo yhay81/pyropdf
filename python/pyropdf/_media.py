@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, TypeAlias
 
 from pyropdf import _core, typed
 from pyropdf._errors import LimitError, PdfError
-from pyropdf._objects import Array, Dictionary, Name
+from pyropdf._objects import Array, Dictionary, Name, Stream, String
 
 if TYPE_CHECKING:
     from pyropdf._check import StructuralDefect
@@ -419,3 +419,227 @@ def add_media(page: Page, spec: MediaSpecification) -> tuple[int, int]:
         assert annot.xref is not None  # noqa: S101 - allocated above.
         assert annot.generation is not None  # noqa: S101 - allocated above.
         return annot.xref, annot.generation
+
+
+@dataclass(slots=True)
+class _PresentationTree:
+    nodes: list[tuple[Dictionary, int | None]]
+    entries: dict[bytes, Dictionary]
+
+
+def _validate_resource(key: bytes, value: Dictionary) -> None:
+    try:
+        key.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        msg = "slideshow resource names must be UTF-8"
+        raise PdfError(msg) from exc
+    if isinstance(value, Stream):
+        valid = value.get("Subtype") == Name("Image")
+    else:
+        valid = value.get("Type") in (None, Name("Filespec")) and any(
+            isinstance(value.get(field), String) for field in ("F", "DOS", "Mac", "Unix")
+        )
+    if not valid:
+        msg = "a slideshow resource must be an image XObject or a file specification"
+        raise PdfError(msg)
+
+
+def _resource_entries(
+    names: Array, entries: dict[bytes, Dictionary], budget: _core._OperationBudget, *, resources: bool
+) -> None:
+    if len(entries) + len(names) // 2 > _MAX_ITEMS:
+        msg = "too many slideshow name-tree entries"
+        code = "object_count"
+        raise LimitError(code, msg)
+    for offset in range(0, len(names), 2):
+        budget.poll()
+        key, value = names[offset], names[offset + 1]
+        if not isinstance(key, String) or not isinstance(value, Dictionary):
+            msg = "invalid slideshow name-tree entry"
+            raise PdfError(msg)
+        if len(key) > _MAX_TEXT:
+            msg = "slideshow resource name exceeds 1 MiB"
+            code = "text_input_size"
+            raise LimitError(code, msg)
+        if entries and key <= next(reversed(entries)):
+            msg = "slideshow name-tree keys must be unique and ordered"
+            raise PdfError(msg)
+        budget.charge("memory_size", 256 + 5 * len(key))
+        if resources:
+            _validate_resource(key, value)
+        entries[bytes(key)] = value
+
+
+def _presentation_tree(root: object, *, resources: bool = False) -> _PresentationTree:
+    if not isinstance(root, Dictionary) or isinstance(root, Stream):
+        msg = "expected a slideshow name-tree dictionary"
+        raise PdfError(msg)
+    return _core.read_operation(root._core(), lambda budget: _read_tree(root, budget, resources=resources))  # noqa: SLF001
+
+
+def _read_tree(root: Dictionary, budget: _core._OperationBudget, *, resources: bool) -> _PresentationTree:
+    nodes: list[tuple[Dictionary, int | None]] = []
+    entries: dict[bytes, Dictionary] = {}
+    seen: set[int] = set()
+    stack = [(root, None, 1)]
+    while stack:
+        node, parent, depth = stack.pop()
+        budget.poll()
+        if depth > 32 or len(nodes) >= _MAX_ITEMS:  # noqa: PLR2004 - name-tree depth.
+            msg = "slideshow name tree exceeds its node or depth limit"
+            code = "object_count"
+            raise LimitError(code, msg)
+        if node.xref in seen:
+            msg = "repeated node in slideshow name tree"
+            raise PdfError(msg)
+        if node.xref is not None:
+            seen.add(node.xref)
+        budget.charge("memory_size", 160)
+        index = len(nodes)
+        nodes.append((node, parent))
+        names, kids = node.get("Names"), node.get("Kids")
+        if isinstance(kids, Array) and names is None and len(kids):
+            if len(kids) + len(stack) + len(nodes) > _MAX_ITEMS:
+                msg = "too many slideshow name-tree nodes"
+                code = "object_count"
+                raise LimitError(code, msg)
+            for child in reversed(kids):
+                if not isinstance(child, Dictionary) or isinstance(child, Stream) or not child.is_indirect:
+                    msg = "slideshow name-tree children must be indirect dictionaries"
+                    raise PdfError(msg)
+                stack.append((child, index, depth + 1))
+        elif isinstance(names, Array) and kids is None and len(names) % 2 == 0:
+            _resource_entries(names, entries, budget, resources=resources)
+        else:
+            msg = "slideshow name-tree node requires one Names or Kids array"
+            raise PdfError(msg)
+    return _PresentationTree(nodes, entries)
+
+
+def _resource_key(name: str) -> bytes:
+    if name != "":
+        _text(name)
+    return name.encode("utf-8")
+
+
+class SlideShow:
+    """An existing embedded slideshow and the UTF-8 resource names in its virtual file system."""
+
+    __slots__ = ("_show",)
+
+    def __init__(self, show: typed.SlideShow) -> None:
+        """Wrap an existing SlideShow dictionary."""
+        if (
+            not isinstance(show, typed.SlideShow)
+            or show.obj.get("Type") != Name("SlideShow")
+            or show.obj.get("Subtype") != Name("Embedded")
+        ):
+            msg = "expected an existing embedded SlideShow dictionary"
+            raise TypeError(msg)
+        self._show = show
+
+    def _resource_tree(self) -> _PresentationTree:
+        return _presentation_tree(self._show.obj.get("Resources"), resources=True)
+
+    @property
+    def resources(self) -> dict[str, Dictionary]:
+        """Map UTF-8 resource names to their live image streams or file specifications."""
+        entries = self._resource_tree().entries
+        return {key.decode("utf-8"): obj for key, obj in entries.items()}
+
+    @property
+    def start_resource(self) -> str:
+        """The name selected by StartResource. Assign the name of an existing resource to select it."""
+        name = self._show.obj.get("StartResource")
+        if not isinstance(name, String) or name not in self._resource_tree().entries:
+            msg = "the slideshow start resource is missing from its name tree"
+            raise PdfError(msg)
+        return name.decode("utf-8")
+
+    @start_resource.setter
+    def start_resource(self, name: str) -> None:
+        key = _resource_key(name)
+        with self._show.obj._document.transaction("retarget slideshow"):  # noqa: SLF001
+            if key not in self._resource_tree().entries:
+                raise KeyError(name)
+            self._show.obj["StartResource"] = key
+
+    def rename_resource(self, old: str, new: str, *, keep_alias: bool = False) -> None:
+        """Move a resource to a new UTF-8 name and update StartResource in one transaction.
+
+        Shared resource trees keep their other slideshows' original names.
+        Set keep_alias=True to retain the old name for references inside opaque media files.
+        The media bytes are retained in both cases.
+        """
+        if not isinstance(keep_alias, bool):
+            msg = "keep_alias must be a bool"
+            raise TypeError(msg)
+        original, replacement = _resource_key(old), _resource_key(new)
+        doc = self._show.obj._document  # noqa: SLF001
+        with doc.transaction("rename slideshow resource"):
+            tree = self._resource_tree()
+            if original not in tree.entries:
+                raise KeyError(old)
+            start = self._show.obj.get("StartResource")
+            if not isinstance(start, String) or start not in tree.entries:
+                msg = "the slideshow start resource is missing from its name tree"
+                raise PdfError(msg)
+            if original == replacement:
+                return
+            if replacement in tree.entries:
+                msg = "the destination slideshow resource name already exists"
+                raise ValueError(msg)
+            if keep_alias and len(tree.entries) >= _MAX_ITEMS:
+                msg = "too many slideshow name-tree entries"
+                code = "object_count"
+                raise LimitError(code, msg)
+            tree.entries[replacement] = tree.entries[original] if keep_alias else tree.entries.pop(original)
+            self._show.obj["Resources"] = _renamed_tree(doc, tree)
+            if start == original:
+                self._show.obj["StartResource"] = replacement
+            retired = [node.xref for node, _ in tree.nodes if node.xref is not None]
+            _core.object_free_unreferenced(doc._core(), retired)  # noqa: SLF001
+
+
+def _renamed_tree(doc: Document, tree: _PresentationTree) -> Dictionary:
+    # Reuse the tree shape and private dictionary keys. Stage replacements
+    # before touching the show so even a shared leaf stays valid elsewhere.
+    pairs = iter(sorted(tree.entries.items()))
+    children: dict[int, list[int]] = {}
+    leaf_values: dict[int, list[tuple[bytes, Dictionary]]] = {}
+    for index, (node, parent) in enumerate(tree.nodes):
+        if parent is not None:
+            children.setdefault(parent, []).append(index)
+        names = node.get("Names")
+        if isinstance(names, Array):
+            leaf_values[index] = [next(pairs) for _ in range(len(names) // 2)]
+
+    leaf_values[next(reversed(leaf_values))].extend(pairs)
+    built: dict[int, Dictionary] = {}
+    bounds: dict[int, tuple[bytes, bytes]] = {}
+    for index in reversed(range(len(tree.nodes))):
+        node, parent = tree.nodes[index]
+        copy = doc.objects[doc.objects.add(node)]
+        if index in leaf_values:
+            values = leaf_values[index]
+            if not values:
+                msg = "empty slideshow name-tree leaf"
+                raise PdfError(msg)
+            copy["Names"] = [item for pair in values for item in pair]
+            bounds[index] = values[0][0], values[-1][0]
+        else:
+            kids = children[index]
+            copy["Kids"] = [built[kid] for kid in kids]
+            bounds[index] = bounds[kids[0]][0], bounds[kids[-1]][1]
+        if parent is not None:
+            copy["Limits"] = bounds[index]
+        built[index] = copy
+    return built[0]
+
+
+def alternate_presentations(doc: Document) -> dict[bytes, SlideShow]:
+    names = doc.catalog.get("Names")
+    root = names.get("AlternatePresentations") if isinstance(names, Dictionary) else None
+    if root is None:
+        return {}
+    return {key: SlideShow(typed.SlideShow(value)) for key, value in _presentation_tree(root).entries.items()}

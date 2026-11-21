@@ -130,6 +130,7 @@ method and property of its classes with its full description.
 - [`Paint`](text-and-content.md#paint)
 - [`Path`](text-and-content.md#path): A path that is filled, stroked, or both.
 - [`Paths`](text-and-content.md#paths): The paths of a page as columns, from `Page.paths`.
+- [`PatternPaint`](text-and-content.md#patternpaint): Paint with an indirect tiling or shading pattern in the canvas document.
 - [`RadialGradient`](text-and-content.md#radialgradient): A paint for a `Canvas` that changes color between two circles.
 - [`Segment`](text-and-content.md#segment)
 - [`ShadingPattern`](text-and-content.md#shadingpattern): A paint that a shading fills, from a shading pattern or `sh`.
@@ -189,6 +190,7 @@ method and property of its classes with its full description.
 - [`ProjectionAnnotation`](annotations.md#projectionannotation): A projection annotation that links back to a 3D measurement.
 - [`RichMedia`](annotations.md#richmedia): A RichMedia annotation with a named asset, configuration, instance and optional 3D views.
 - [`Screen`](annotations.md#screen): A Screen annotation with an optional media clip and its rendition action.
+- [`SlideShow`](annotations.md#slideshow): An existing embedded slideshow and the UTF-8 resource names in its virtual file system.
 - [`Sound`](annotations.md#sound): The sound of a sound annotation, `/Sound`, as `Annotation.sound` reads it.
 - [`SoundEncoding`](annotations.md#soundencoding): How a sound's samples encode amplitudes, `/E` (ISO 32000-2 Table 208).
 - [`Square`](annotations.md#square): A rectangle, as `page.annotations.add` takes it.
@@ -225,6 +227,7 @@ method and property of its classes with its full description.
 - [`JavaScriptAction`](actions-and-triggers.md#javascriptaction): An action that runs an ECMAScript script (`/S /JavaScript`, ISO 32000-2 Table 221).
 - [`LayerStateChange`](actions-and-triggers.md#layerstatechange): One transition group inside a `SetLayerStateAction` `/State` array (ISO 32000-2 Table 217).
 - [`LayerStateTransition`](actions-and-triggers.md#layerstatetransition): How a `LayerStateChange` updates optional content groups (ISO 32000-2 Table 217).
+- [`MovieAction`](actions-and-triggers.md#movieaction): An existing Movie action interpreted on its destination page (ISO 32000-1 §12.6.4.9).
 - [`PageTrigger`](actions-and-triggers.md#pagetrigger): Page additional-action events (`Page["AA"]`, ISO 32000-2 Table 198).
 - [`PageTriggers`](actions-and-triggers.md#pagetriggers): Page additional actions by `PageTrigger` (`Page["AA"]`, ISO 32000-2 Table 198).
 - [`RenditionAction`](actions-and-triggers.md#renditionaction): A Screen target, optional rendition, operation and inert script.

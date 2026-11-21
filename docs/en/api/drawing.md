@@ -72,8 +72,8 @@ Write the drawing after a normal exit; discard it after an exception.
 Canvas.path(
     path: PathInput,
     *,
-    fill: Color | Gradient | ShadingPattern | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | ShadingPattern | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     fill_rule: FillRule = FillRule.NONZERO,
 )
 ```
@@ -87,7 +87,7 @@ Canvas.line(
     start: Sequence[float],
     end: Sequence[float],
     *,
-    stroke: Stroke | Color | Gradient | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
@@ -100,8 +100,8 @@ Canvas.rect(
     rect: Sequence[float],
     *,
     radius: float = 0,
-    fill: Color | Gradient | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
@@ -114,8 +114,8 @@ Canvas.circle(
     center: Sequence[float],
     radius: float,
     *,
-    fill: Color | Gradient | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
@@ -127,8 +127,8 @@ Draw a circle.
 Canvas.ellipse(
     rect: Sequence[float],
     *,
-    fill: Color | Gradient | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
@@ -141,8 +141,8 @@ Canvas.polygon(
     points: Iterable[Sequence[float]],
     *,
     close: bool = True,
-    fill: Color | Gradient | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     fill_rule: FillRule = FillRule.NONZERO,
 )
 ```
@@ -158,7 +158,7 @@ Canvas.bezier(
     control2: Sequence[float],
     end: Sequence[float],
     *,
-    stroke: Stroke | Color | Gradient | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
@@ -173,8 +173,8 @@ Canvas.text(
     *,
     font: Font | None = None,
     size: float = 11,
-    fill: Color | Gradient | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     line_height: float | None = None,
     rotate: int = 0,
     max_text_size: int | None = 1048576,
@@ -213,8 +213,8 @@ Canvas.textbox(
     size: float = 11,
     align: Literal['left', 'center', 'right', 'justify'] = 'left',
     line_height: float | None = None,
-    fill: Color | Gradient | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     rotate: int = 0,
     max_text_size: int | None = 1048576,
 ) -> TextFit
