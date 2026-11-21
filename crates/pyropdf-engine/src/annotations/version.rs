@@ -35,11 +35,7 @@ pub fn parse_version(bytes: &[u8]) -> Option<PdfVersion> {
 /// Returns the version declared in `version`'s `%PDF-x.y` file header, if any.
 #[must_use]
 pub fn header_version(version: &Version) -> Option<PdfVersion> {
-    let index = version.base().file()?;
-    let rest = index
-        .bytes()
-        .get(index.origin()..)?
-        .strip_prefix(b"%PDF-")?;
+    let rest = version.base().header_bytes()?.strip_prefix(b"%PDF-")?;
     let end = rest
         .iter()
         .position(|&byte| !(byte.is_ascii_digit() || byte == b'.'))
