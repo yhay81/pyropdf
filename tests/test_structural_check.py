@@ -36,6 +36,19 @@ CRYPT_FILTERS = frozenset(
 )
 
 KNOWN: dict[str, frozenset[tuple[str, str]]] = {
+    # The structural output-intent screen ignores use and calibrated defaults.
+    # These four positives/otherwise unrelated negatives are tracked in #1034.
+    "profile-sources/1b-pass.pdf": frozenset({("PDF/A-1B/OutputIntents", "profile")}),
+    "profile-sources/2b-fail.pdf": frozenset({("PDF/A-2B/OutputIntents", "profile")}),
+    "profile-sources/2b-pass.pdf": frozenset({("PDF/A-2B/OutputIntents", "profile")}),
+    "profile-sources/4-pass.pdf": frozenset({("PDF/A-4/OutputIntents", "profile")}),
+    # This negative really uses uncalibrated device RGB: PDF/A-4 6.2.4.3-2.
+    "profile-sources/4-fail.pdf": frozenset({("PDF/A-4/OutputIntents", "profile")}),
+    # veraPDF's EmbeddedFiles control uses /Undefined in a separate
+    # AFRelationship. The base schema enumerates /Unspecified.
+    "profile-sources/4f-pass.pdf": frozenset(
+        {("AFFileSpecification/AFRelationship", "value"), ("FileSpecification/AFRelationship", "value")}
+    ),
     # A 1.3 header with AES encryption.
     "encrypted/owneronly-aes-256.pdf": CRYPT_FILTERS,
     "encrypted/user-aes-128.pdf": CRYPT_FILTERS,
