@@ -8,10 +8,11 @@
 //! the operation's budget (F6). Predicates that the check does not decide
 //! are counted in [`Report::unchecked`] instead of being reported.
 
+mod author;
 mod expr;
 mod interpret;
 
-pub use interpret::{Interpretation, interpret, tree_target};
+pub use interpret::{Interpretation, interpret, interpret_reference, tree_target};
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -184,7 +185,6 @@ pub fn check<G: Graph>(graph: &G) -> Result<Report, G::Error> {
         .and_then(|at| u16::try_from(at).ok())
         .unwrap_or(0);
     let mut walk = Walk::new(graph);
-    let mut met = HashSet::new();
     walk.object(None, graph.trailer(), Target::Object(trailer))?;
     let size = match graph
         .get(graph.trailer(), b"Size")
@@ -194,6 +194,57 @@ pub fn check<G: Graph>(graph: &G) -> Result<Report, G::Error> {
         Some(View::Integer(size)) if size > 0 => Some(size),
         _ => None,
     };
+    finish(walk, size)
+}
+
+/// Whether the document's effective version and extensions admit creation
+/// of an object with this descriptor. Existing deprecated objects can still
+/// be checked and edited.
+///
+/// # Errors
+///
+/// Returns graph resolution and budget errors.
+pub fn authorable<G: Graph>(graph: &G, model: &Object, value: &G::Value) -> Result<bool, G::Error> {
+    let mut walk = Walk::new(graph);
+    for key in model.keys {
+        if !key.deprecated.is_some_and(|v| graph.version() >= v)
+            && walk.introduced(value, model, key)? == Some(true)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Check a standalone object and the graph reached through its declared links
+/// before publishing an authored replacement. Broken or ambiguous links are
+/// errors in an authored object, including one unreachable from the trailer.
+///
+/// # Errors
+///
+/// Returns a graph error when resolution or the operation budget refuses work.
+pub fn check_authored<G: Graph>(
+    graph: &G,
+    name: &str,
+    number: u32,
+    value: &G::Value,
+) -> Result<Option<Report>, G::Error> {
+    let Some(at) = OBJECTS
+        .binary_search_by(|item| item.name.cmp(name))
+        .ok()
+        .and_then(|at| u16::try_from(at).ok())
+    else {
+        return Ok(None);
+    };
+    let mut walk = Walk::new(graph);
+    walk.authoring = true;
+    graph.visit(true)?;
+    walk.object(Some(number), value, Target::Object(at))?;
+    finish(walk, None).map(Some)
+}
+
+fn finish<G: Graph>(mut walk: Walk<'_, G>, size: Option<i64>) -> Result<Report, G::Error> {
+    let mut met = HashSet::new();
     while let Some((number, target)) = walk.queue.pop() {
         #[expect(
             clippy::disallowed_methods,
@@ -212,9 +263,9 @@ pub fn check<G: Graph>(graph: &G) -> Result<Report, G::Error> {
                 format!("object {number} is referenced, but the trailer's /Size is {size}"),
             );
         }
-        graph.visit(first)?;
+        walk.graph.visit(first)?;
         walk.report.objects += usize::from(first);
-        if let Some(value) = graph.resolve(number)? {
+        if let Some(value) = walk.graph.resolve(number)? {
             walk.object(Some(number), &value, target)?;
         }
     }
@@ -242,6 +293,7 @@ struct Walk<'g, G: Graph> {
     graph: &'g G,
     version: Version,
     report: Report,
+    authoring: bool,
     queue: Vec<(u32, Target)>,
     visited: HashSet<(u32, usize)>,
     targets: HashMap<u32, usize>,
@@ -259,6 +311,7 @@ impl<'g, G: Graph> Walk<'g, G> {
             graph,
             version: graph.version(),
             report: Report::default(),
+            authoring: false,
             queue: Vec::new(),
             visited: HashSet::new(),
             targets: HashMap::new(),
@@ -381,6 +434,12 @@ impl<'g, G: Graph> Walk<'g, G> {
         path: &str,
         stack: &mut Vec<Frame<'v, G::Value>>,
     ) -> Result<(), G::Error> {
+        if self.authoring
+            && path.is_empty()
+            && let Some(number) = object
+        {
+            self.backlinks(number, dict, described.name)?;
+        }
         for key in described.keys {
             if key.name.ends_with('*') {
                 continue;
@@ -461,6 +520,9 @@ impl<'g, G: Graph> Walk<'g, G> {
                 self.defect(object, path, described, key, DefectKind::Required, message);
             }
         }
+        let repeat_start = repeating
+            .first()
+            .and_then(|key| key.name.trim_end_matches('*').parse::<usize>().ok());
         let revision_pairs = matches!(
             described.name,
             "ArrayOfAttributeRevisions" | "ArrayOfClassNamesRevisions"
@@ -483,7 +545,10 @@ impl<'g, G: Graph> Walk<'g, G> {
                     payload
                 }
             } else {
-                (!repeating.is_empty()).then(|| repeating[at % repeating.len()])
+                repeat_start.and_then(|start| {
+                    let offset = at.checked_sub(start)?;
+                    repeating.get(offset % repeating.len()).copied()
+                })
             };
             let key = named.or(repeated).or_else(|| described.key("*"));
             if let Some(key) = key {
@@ -612,10 +677,26 @@ impl<'g, G: Graph> Walk<'g, G> {
         let owned;
         let value: &G::Value = match reference {
             Some(number) => {
-                owned = self.graph.resolve(number)?;
+                owned = if self.authoring {
+                    self.graph.target(raw)?
+                } else {
+                    self.graph.resolve(number)?
+                };
                 match &owned {
                     Some(value) => value,
-                    None => return Ok(()),
+                    None => {
+                        if self.authoring {
+                            self.defect(
+                                object,
+                                path,
+                                described,
+                                key,
+                                DefectKind::Indirect,
+                                format!("{path} contains an unresolved reference to {number}"),
+                            );
+                        }
+                        return Ok(());
+                    }
                 }
             }
             None => raw,
@@ -679,6 +760,29 @@ impl<'g, G: Graph> Walk<'g, G> {
             self.defect(object, path, described, key, DefectKind::Version, message);
             return Ok(());
         };
+        let authored = if self.authoring {
+            match interpret_reference(self.graph, holder, described, key, Some(value), reference)? {
+                Interpretation::Refused(reason) => {
+                    self.defect(
+                        object,
+                        path,
+                        described,
+                        key,
+                        DefectKind::Value,
+                        reason.to_owned(),
+                    );
+                    return Ok(());
+                }
+                Interpretation::Value(_, Some(name)) => typed
+                    .links
+                    .iter()
+                    .find(|link| link.target().name == name)
+                    .map(|link| link.object),
+                _ => None,
+            }
+        } else {
+            None
+        };
         self.indirect(
             object,
             holder,
@@ -692,6 +796,7 @@ impl<'g, G: Graph> Walk<'g, G> {
         let target = match typed.kind {
             Kind::NameTree | Kind::NumberTree => Some(Target::Tree(typed)),
             _ if typed.links.is_empty() => None,
+            _ if self.authoring => authored.map(Target::Object),
             _ => match self.choose(typed.links, value)? {
                 Some(at) => Some(Target::Object(at)),
                 None => {

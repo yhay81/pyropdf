@@ -105,6 +105,28 @@ def profile_cases(node: ast.FunctionDef, where: str) -> dict[str, str]:
     raise MapError(msg)
 
 
+def arlington_cases(root: Path, names: list[str], feature: str, where: str) -> dict[str, str]:
+    """Expand schema-wide evidence to the exact descriptor cases that were exercised."""
+    cases = {name: f"{where}[{name}]" for name in names} if feature == ARLINGTON else {feature: where}
+    if feature in {"arlington-values", "arlington-authoring", "arlington-legacy-edits"}:
+        fixture_name = "arlington-values.tsv" if feature == "arlington-values" else "arlington-authoring.tsv"
+        fixture = root / "tests/fixtures" / fixture_name
+        mode = {"arlington-authoring": "create", "arlington-legacy-edits": "existing"}.get(feature)
+        with fixture.open(encoding="utf-8", newline="") as samples:
+            cases = {
+                row["Object"]: f"{where}[{row['Object']}]"
+                for row in csv.DictReader(samples, delimiter="\t")
+                if mode is None or row["Mode"] == mode
+            }
+    if feature == "arlington-roles":
+        cases = {}
+        for name in names:
+            with (root / MODEL / "tsv" / f"{name}.tsv").open(encoding="utf-8", newline="") as source:
+                if any(row["Link"].strip("[];") for row in csv.DictReader(source, delimiter="\t")):
+                    cases[name] = f"{where}[{name}]"
+    return cases
+
+
 def marked(root: Path, names: list[str]) -> dict[tuple[str, str], list[str]]:
     """Return the tests that prove each feature in each dimension, by pytest node ID."""
     proved: dict[tuple[str, str], list[str]] = {}
@@ -120,14 +142,7 @@ def marked(root: Path, names: list[str]) -> dict[tuple[str, str], list[str]]:
                 if marker is None:
                     continue
                 feature, *dimensions = marker
-                cases = {name: f"{where}[{name}]" for name in names} if feature == ARLINGTON else {feature: where}
-                if feature == "arlington-values":
-                    fixture = root / "tests/fixtures/arlington-values.tsv"
-                    with fixture.open(encoding="utf-8", newline="") as samples:
-                        cases = {
-                            row["Object"]: f"{where}[{row['Object']}]"
-                            for row in csv.DictReader(samples, delimiter="\t")
-                        }
+                cases = arlington_cases(root, names, feature, where)
                 if feature == "{profile}":
                     cases = profile_cases(node, where)
                 for name, test in cases.items():
