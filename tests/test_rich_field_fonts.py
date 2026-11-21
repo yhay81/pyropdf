@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import shutil
+import subprocess
 from pathlib import Path
 
 import pikepdf
@@ -127,6 +129,42 @@ def _producer() -> bytes:
         return output.getvalue()
 
 
+def _codes(stream: pikepdf.Object) -> dict[tuple[int, int], list[int]]:
+    """Read the codes as actually painted and identify the selected indirect PDF font."""
+    result: dict[tuple[int, int], list[int]] = {}
+    active: list[int] | None = None
+    for operands, operator in pikepdf.parse_content_stream(stream):
+        if str(operator) == "Tf":
+            ref = stream.Resources.Font[str(operands[0])].objgen
+            active = result.setdefault(ref, [])
+        elif str(operator) in {"Tj", "TJ"}:
+            assert active is not None
+            parts = [operands[0]] if str(operator) == "Tj" else operands[0]
+            for part in parts:
+                if isinstance(part, pikepdf.String):
+                    raw = bytes(part)
+                    assert len(raw) % 2 == 0
+                    active.extend(int.from_bytes(raw[i : i + 2], "big") for i in range(0, len(raw), 2))
+    return result
+
+
+@pytest.mark.skipif(not shutil.which("pdftotext"), reason="requires Poppler")
+def test_independent_producer_displays_its_two_embedded_fonts(tmp_path: Path) -> None:
+    raw = _producer()
+    path = tmp_path / "font-selection.pdf"
+    path.write_bytes(raw)
+    with pikepdf.open(io.BytesIO(raw)) as pdf:
+        form = pdf.Root.AcroForm
+        codes = _codes(form.Fields[0].AP.N)
+        assert codes[form.DR.Font.Alpha.objgen] == [77, 78]
+        assert codes[form.DR.Font.Beta.objgen] == [104, 103, 102, 101]
+    text = subprocess.run(  # noqa: S603 - the test PDF is the only input to the installed Poppler reader.
+        [shutil.which("pdftotext") or "pdftotext", "-raw", str(path), "-"], check=True, capture_output=True
+    ).stdout.decode()
+    assert "AV" in text
+    assert "שלום" in text
+
+
 @pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
 def test_rich_edit_uses_the_existing_fonts_and_their_pdf_codes(*, incremental: bool) -> None:
     raw = _producer()
@@ -142,5 +180,6 @@ def test_rich_edit_uses_the_existing_fonts_and_their_pdf_codes(*, incremental: b
         assert str(field.V) == "VAשלום"
         assert str(field.DS) == "font:16pt Helvetica"
         appearance = field.AP.N
-        fonts = {font.objgen for font in appearance.Resources.Font.values()}
-        assert {form.DR.Font.Alpha.objgen, form.DR.Font.Beta.objgen} <= fonts
+        codes = _codes(appearance)
+        assert codes[form.DR.Font.Alpha.objgen] == [78, 77]
+        assert codes[form.DR.Font.Beta.objgen] == [104, 103, 102, 101]
