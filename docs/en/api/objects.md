@@ -152,6 +152,22 @@ square, and a Geospatial3D annotation uses its view world coordinates.
 Geographic data returns latitude then longitude, projected data easting
 then northing. A three-dimensional registration also returns elevation.
 
+### `Dictionary.xmp`
+
+```python
+Dictionary.xmp: str | None
+```
+
+The UTF-8 XMP packet of this PDF resource, or `None` when absent.
+
+For example, `page.obj.xmp` reads page metadata. The packet must
+contain an XML RDF element and fit in 1 MiB. Invalid packets raise
+`MalformedPdfError` and oversized packets raise `LimitError`
+with code `stream_data_size`. Assign a packet or delete the property
+to change this resource's association. Other owners keep their packet.
+
+Settable.
+
 ### `Dictionary.__getitem__`
 
 ```python
@@ -404,6 +420,22 @@ A viewport or form uses its PDF bounding box, an image uses the unit
 square, and a Geospatial3D annotation uses its view world coordinates.
 Geographic data returns latitude then longitude, projected data easting
 then northing. A three-dimensional registration also returns elevation.
+
+### `Stream.xmp`
+
+```python
+Stream.xmp: str | None
+```
+
+The UTF-8 XMP packet of this PDF resource, or `None` when absent.
+
+For example, `page.obj.xmp` reads page metadata. The packet must
+contain an XML RDF element and fit in 1 MiB. Invalid packets raise
+`MalformedPdfError` and oversized packets raise `LimitError`
+with code `stream_data_size`. Assign a packet or delete the property
+to change this resource's association. Other owners keep their packet.
+
+Settable.
 
 ### `Stream.__getitem__`
 
