@@ -99,10 +99,12 @@ jobs:
           ref: ${{ steps.base.outputs.revision }}
           path: base
           persist-credentials: false
-      - name: Read native release arguments from each revision
+      - name: Prepare both native release builds
         id: native
         shell: bash
         run: |
+          # Keep the output directories writable by the host after manylinux runs.
+          mkdir -p base/dist head/dist
           for checkout in base head; do
             # Releases before #858 passed these flags directly in release.yml.
             if [[ $checkout == base && ! -f base/tools/native-wheel-args.txt ]]; then
