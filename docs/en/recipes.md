@@ -204,3 +204,37 @@ with open("input.pdf", "rb") as file:
 
 Limits bound the work of each operation; [Status and safety](status.md)
 says what they do not promise.
+
+## Create an accessible archival chart
+
+The chart program starts with an empty PDF 1.7 document and writes a one-page
+bar chart that meets PDF/A-2a and PDF/UA-1. It embeds the font and RGB output
+profile, sets the document language and title, tags the heading and paragraph,
+and gives the figure an alternative description. Its XMP includes the PDF/UA
+identification extension schema required by PDF/A-2a. [Chart program](https://github.com/yhay81/pyropdf/blob/main/docs/includes/accessible-archive.py)
+
+From the repository checkout, generate the sample RGB profile and run the
+program with an embeddable font that covers the chart text.
+
+```sh
+uv run python -c "import runpy; from pathlib import Path; Path('chart.icc').write_bytes(runpy.run_path('tests/assets/pdfa/generate.py')['icc']())"
+FONT=crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf
+uv run python docs/includes/accessible-archive.py "$FONT" chart.icc chart.pdf
+```
+
+Select both profiles explicitly in veraPDF. Use Poppler to inspect reading
+order and to render the chart for human review.
+
+```sh
+verapdf --flavour 2a chart.pdf
+verapdf --flavour ua1 chart.pdf
+pdfinfo -struct-text chart.pdf
+pdftoppm -png -singlefile -scale-to 520 chart.pdf chart
+```
+
+Read the heading “Air flow”, the paragraph “Air flow fell to 1”, then the
+figure. The upper bar is labeled 2. The lower bar is labeled 1 and is half
+as long. Check that the figure description communicates the same change.
+The tests edit the description, save in full and incrementally, and check
+both profiles after each save. Deleting the description makes PDF/UA-1 rule
+`7.3-1` fail while PDF/A-2a still passes.

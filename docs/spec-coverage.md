@@ -32,7 +32,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | --- | --- | --- | --- | --- | --- | --- |
 | read | 0 | 0 | 0 | 39 | 35 | 757 |
 | interpret | 9 | 19 | 0 | 35 | 42 | 726 |
-| create | 0 | 0 | 21 | 27 | 63 | 720 |
+| create | 0 | 0 | 21 | 29 | 61 | 720 |
 | edit | 0 | 0 | 0 | 48 | 56 | 727 |
 | preserve | 0 | 0 | 0 | 25 | 653 | 153 |
 
@@ -232,10 +232,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex L | Allowed structure children | `structure-children` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex Q | Page transparency detection | `page-transparency` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 partial | 3 partial | 3 planned | 3 partial | 3 partial |
+| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 partial | 3 partial | 1 partial, 2 planned | 3 partial | 3 partial |
 | ISO 15930 | PDF/X | `pdfx` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 partial | 12 partial | 12 planned | 12 partial | 12 partial |
+| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 partial | 12 partial | 1 partial, 11 planned | 12 partial | 12 partial |
 | ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-1,032 unfinished cells in 831 features: 9 engine, 174 partial, 849 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+1,032 unfinished cells in 831 features: 9 engine, 176 partial, 847 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -423,7 +423,7 @@ The machine and human checks are documented in the [corpus review](https://githu
 | --- | --- | --- | --- | --- | --- |
 | `pdfa-1a` | partial | partial | planned | partial | partial |
 | `pdfa-1b` | partial | partial | planned | partial | partial |
-| `pdfa-2a` | partial | partial | planned | partial | partial |
+| `pdfa-2a` | partial | partial | partial | partial | partial |
 | `pdfa-2b` | partial | partial | planned | partial | partial |
 | `pdfa-2u` | partial | partial | planned | partial | partial |
 | `pdfa-3a` | partial | partial | planned | partial | partial |
@@ -432,7 +432,7 @@ The machine and human checks are documented in the [corpus review](https://githu
 | `pdfa-4` | partial | partial | planned | partial | partial |
 | `pdfa-4e` | partial | partial | planned | partial | partial |
 | `pdfa-4f` | partial | partial | planned | partial | partial |
-| `pdfua-1` | partial | partial | planned | partial | partial |
+| `pdfua-1` | partial | partial | partial | partial | partial |
 | `pdfua-2` | partial | partial | planned | partial | partial |
 
 ## Specification baseline

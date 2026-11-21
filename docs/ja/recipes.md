@@ -200,3 +200,36 @@ with open("input.pdf", "rb") as file:
 ```
 
 制限は各操作の仕事量を抑えます。制限が約束しないことは[状態と安全性](status.md)にあります。
+
+## アクセシブルな長期保存用のグラフを作る
+
+空のPDF 1.7文書から、PDF/A-2aとPDF/UA-1の両方に適合する1ページの棒グラフを作成します。
+フォントとRGB出力プロファイルを埋め込み、文書の言語とタイトルを設定します。
+見出しと本文にはタグを付け、図には代替説明を付けます。
+XMPには、PDF/A-2aでPDF/UAの識別情報を宣言するための拡張スキーマを含めます。
+[グラフ作成プログラム](https://github.com/yhay81/pyropdf/blob/main/docs/includes/accessible-archive.py)
+
+以下をリポジトリのルートで実行します。見本のRGBプロファイルを生成し、
+グラフに使う文字を収録した埋め込み可能なフォントを指定します。
+
+```sh
+uv run python -c "import runpy; from pathlib import Path; Path('chart.icc').write_bytes(runpy.run_path('tests/assets/pdfa/generate.py')['icc']())"
+FONT=crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf
+uv run python docs/includes/accessible-archive.py "$FONT" chart.icc chart.pdf
+```
+
+veraPDFで両方の規格を個別に検証します。Popplerで読み順を出力し、
+グラフを画像にして見た目と照合します。
+
+```sh
+verapdf --flavour 2a chart.pdf
+verapdf --flavour ua1 chart.pdf
+pdfinfo -struct-text chart.pdf
+pdftoppm -png -singlefile -scale-to 520 chart.pdf chart
+```
+
+読み順は、見出し「Air flow」、本文「Air flow fell to 1」、図の順です。
+上の棒には2、下の棒には1と表示され、下の棒の長さは上の半分です。
+図の代替説明からも、1回目から2回目にかけて値が半分になったことを読み取れるか確認します。
+テストでは代替説明を編集し、全体保存と増分保存の両方で再検証します。説明を削除すると
+PDF/UA-1の規則 `7.3-1` に違反します。同じファイルのPDF/A-2a検証は通ります。

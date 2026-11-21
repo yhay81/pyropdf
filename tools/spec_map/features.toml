@@ -1346,6 +1346,7 @@ description = "PDF/A-2a profile evidence for a generated single-page fixture."
 objects = []
 read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "The authored chart and its edits pass together with PDF/UA-1. Independent positive and negative source coverage remains in the broader profile matrix.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
@@ -1427,6 +1428,7 @@ description = "PDF/UA-1 profile evidence for a generated single-page fixture."
 objects = []
 read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "The authored chart and its edits pass together with PDF/A-2a. Independent positive and negative source coverage remains in the broader profile matrix.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
