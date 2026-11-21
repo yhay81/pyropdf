@@ -98,6 +98,14 @@ fn with_settlers(document: Document) -> Document {
 
 impl _Document {
     pub(crate) fn new(document: Document, limits: DocumentLimits) -> Self {
+        Self::with_history(document, limits, crate::history::State::default())
+    }
+
+    fn with_history(
+        document: Document,
+        limits: DocumentLimits,
+        history: crate::history::State,
+    ) -> Self {
         let document = with_settlers(document);
         Self {
             document: RwLock::new(Some(Arc::new(document))),
@@ -118,8 +126,18 @@ impl _Document {
             bridge: pyropdf_engine::bridge::Cache::new(),
             fallback: RwLock::new(Fallback::default()),
             references: pyropdf_store::refs::Cache::new(),
-            history: Arc::new(crate::history::State::default()),
+            history: Arc::new(history),
         }
+    }
+
+    /// A private view for catalog reads after a page import, sharing exactly
+    /// the version that supplied the graph without retaining source history.
+    pub(crate) fn import_source(&self, version: Arc<Version>, operation: SharedBudget) -> Self {
+        Self::with_history(
+            Document::from_version(version, Some(0)),
+            self.limits.clone(),
+            crate::history::State::import_view(operation),
+        )
     }
 
     /// Returns the faces that render the CJK fonts that the document does
@@ -234,7 +252,8 @@ impl _Document {
         clippy::disallowed_methods,
         reason = "the initial trailer contains the two fixed keys Root and Size"
     )]
-    fn empty(limits: &Bound<'_, PyAny>) -> PyResult<Self> {
+    #[pyo3(signature = (limits, version = "1.7"))]
+    fn empty(limits: &Bound<'_, PyAny>, version: &str) -> PyResult<Self> {
         crate::errors::boundary(|| {
             let mut base = MemoryBase::new(
                 [
@@ -243,7 +262,11 @@ impl _Document {
                 ]
                 .into_iter()
                 .collect::<Dict>(),
-            );
+            )
+            .with_version(version)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("version must be 1.0 through 1.7, or 2.0")
+            })?;
             base.insert(
                 Reference::new(1, 0),
                 Bytes::new(&b"<</Type/Catalog/Pages 2 0 R>>"[..]),
@@ -811,17 +834,13 @@ fn read_probe(
 }
 
 /// Returns the version of the document's `%PDF-x.y` header, such as
-/// `"1.4"`, or `None` for a document that was not read from a file or whose
-/// header names no version.
+/// `"1.4"`, or `None` when a source header names no version.
 #[pyfunction]
 #[pyo3(name = "header_version")]
 pub fn document_header_version(document: &_Document) -> PyResult<Option<String>> {
     crate::errors::boundary(|| {
         let version = document.reading()?;
-        Ok(version
-            .base()
-            .file()
-            .and_then(|index| header_version(&index.bytes()[index.origin()..])))
+        Ok(version.base().header_bytes().and_then(header_version))
     })?
 }
 

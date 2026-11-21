@@ -25,16 +25,26 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Exercise sampled/calculator functions, function edits, tiling and uncolored patterns and shading types 1–7. Create and edit resources through the store, verify mesh and function evaluation independently and round-trip untouched data."
 
-[families.device-rendering]
+[families.print-device-engine]
 tracker = 248
-issue = 898
-title = "Verify device-dependent colour and halftone rendering against independent samples"
+issue = 1001
+kind = "upstream"
+title = "hayro: apply output-device parameters when proofing print and screened output"
 features = [
-    "overprint", "color-conversion", "device-color-conversion", "transfer-functions", "halftones",
-    "scan-conversion", "rendering-intents", "separation-rendering",
+    "overprint", "color-conversion", "transfer-functions", "halftones", "scan-conversion",
+    "rendering-intents", "separation-rendering",
 ]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read, write and retain the corresponding output-device parameters. Independently compare separation, overprint, rendering intents, transfer, BG2/UCR2, halftone and scan-conversion output and route confirmed interpreter gaps through the upstream workflow."
+dimensions = ["interpret"]
+behavior = "Apply per-object ICC intent, four-channel transfer, process and named spot plate overprint, selected halftones and scan parameters on suitable devices. RGB alternate, calibrated and transfer samples are verified."
+
+[families.recolour-black-generation]
+tracker = 248
+parent = 250
+issue = 1007
+title = "Extend active CMYK rewriting to filtered and nested budgeted PDF functions"
+features = ["device-color-conversion"]
+dimensions = ["edit"]
+behavior = "Evaluate filtered sampled or calculator streams, nested stitching and calculator procedures with released construction and execution budgets."
 
 [families.optional-content-engine]
 tracker = 248
@@ -88,16 +98,15 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement."
 
-[families.stored-colour-spaces]
+[families.devicen-mixing-hints]
 tracker = 249
-issue = 897
-title = "Write and edit calibrated and special colour spaces and their paint operators"
-features = [
-    "calgray-color-space", "calrgb-color-space", "lab-color-space", "icc-based-color-space",
-    "indexed-color-space", "separation-color-space", "devicen-color-space", "colour-operators",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Retain source operands and independently verify calibration, ICC profiles, palettes and tint transforms including DeviceN mixing hints. Construct and edit colour resources and exercise the corresponding operators."
+parent = 248
+issue = 1016
+kind = "upstream"
+title = "hayro: offer DeviceN mixing hints to colour-proofing devices"
+features = ["devicen-color-space"]
+dimensions = ["interpret"]
+behavior = "Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked."
 
 [families.rich-text-embedded-fonts]
 tracker = 249
@@ -127,16 +136,6 @@ features = [
 ]
 dimensions = ["interpret"]
 behavior = "Apply and verify redaction annotations over text, paths and images, using item provenance for destructive removal."
-
-[families.arlington-reference-rules]
-tracker = 251
-issue = 889
-title = "Settle required links and inbound roles when creating or editing typed objects"
-features = [
-    "@arlington",
-]
-dimensions = ["create", "edit"]
-behavior = "Generate a role inventory from the pinned descriptors. For each applicable role, construct the required references and settle or reject replacements and removals atomically. Exercise already-implemented page, form and structure rules before adding missing rules."
 
 [families.name-tree-navigation]
 tracker = 251
@@ -243,16 +242,6 @@ features = [
 ]
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Round-trip encoded and decoded streams across the listed filter chains and parameters. Cover ASCIIHex re-encoding, Group 3 fax and JPX output gaps, and retain untouched encoded data. Account for unsupported encoder paths explicitly."
-
-[families.xref-and-linearization]
-tracker = 252
-issue = 892
-title = "Verify hybrid-reference writing and linearized-file preservation"
-features = [
-    "xref-streams", "linearization",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Write and reopen hybrid XRefStm sections and verify fast-web-view hints and offsets after supported saves. Reuse independent qpdf checks, including the modes where linearization cannot survive."
 
 [families.tagged-reading]
 tracker = 253
