@@ -256,14 +256,6 @@ features = [
 dimensions = ["read", "interpret", "preserve"]
 behavior = "Walk standard/custom roles and parent-child multiplicities, order content using structure references and expose abbreviation expansion in extracted output. Compare with hand-verified tagged documents."
 
-[families.geospatial-registrations]
-tracker = 256
-issue = 930
-title = "Verify geographic and projected registration control points on their PDF owners"
-features = ["geospatial"]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Verify required 2D and 3D controls, projected matrix precedence, geographic fallback, and the image, form and Geospatial3D owners beyond ordinary page viewports."
-
 [families.display-space]
 tracker = 254
 issue = 851
