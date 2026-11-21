@@ -172,6 +172,24 @@ MUTATIONS = (
         "import_fdf import_xfdf",
     ),
     (
+        "structure_attributes",
+        "Write ClassMap owners or group related structure edits under a checked transaction.",
+        "StructureTree",
+        "set_class_attributes edit",
+    ),
+    (
+        "structure_attributes",
+        "Write the element's A and C entries, class definitions and UserProperties mark information.",
+        "StructureElement",
+        "set_attributes add_class set_user_property",
+    ),
+    (
+        "tagged_drawing",
+        "Append through the same parent-tree writer and connect the owner's K entry to its content item.",
+        "StructureElement",
+        "set_object_reference",
+    ),
+    (
         "structure_role_map",
         "Map a custom role to a standard one; update or retire the RoleMap dictionary.",
         "RoleMap",
