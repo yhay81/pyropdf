@@ -36,6 +36,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import behaviors
 from release_evidence import SUITES, VALIDATORS, digest, suite_outcomes, test_outcomes
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -275,6 +276,17 @@ def check(spec_map: dict[str, Any], scope: dict[str, Any], evidence: dict[str, A
                 undeclared = " that the scope does not declare as an exclusion" if given["status"] == "non-goal" else ""
                 owner = f" (#{given['issue']})" if given.get("issue") else ""
                 blockers.append(f"- {name} {dimension} is {given['status']}{undeclared}{owner}")
+    active = {
+        feature["feature"]: {
+            dim
+            for dim in dimensions
+            if feature[dim]["status"] != "n/a" and dim not in exclusions.get(feature["feature"], {})
+        }
+        for feature in features
+    }
+    inclusions = {f["feature"]: set(f.get("includes", [])) for f in features if f.get("includes")}
+    behavior_blockers, reviewed = behaviors.report(spec_map["inventory"], active, evidence, inclusions)
+    blockers.extend(behavior_blockers)
     if not applicable:
         blockers.append("- the claim has no applicable dimensions")
     totals = Counter(feature[dimension]["status"] for feature in spec_map["features"] for dimension in dimensions)
@@ -304,6 +316,8 @@ def check(spec_map: dict[str, Any], scope: dict[str, Any], evidence: dict[str, A
             f"Coverage of the declared scope: {done} of {applicable} applicable dimensions of {len(features)} "
             f"features done ({share}), beside {len(excluded)} excluded"
         ),
+        "Behavior-specific evidence and applicability:",
+        *(reviewed or ["- none"]),
         "Exclusions:",
         *(excluded or ["- none"]),
         "Blockers:",

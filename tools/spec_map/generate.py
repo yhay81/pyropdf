@@ -38,6 +38,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import behaviors
 from ownership import OwnerError, assignments, live_report, work_page
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -266,6 +267,7 @@ def inventory(root: Path, features: dict[str, dict[str, Any]]) -> dict[str, Any]
             corrections.append(
                 {
                     "issue": int(row["issue"]),
+                    **({"section_sha256": row["section_sha256"]} if row.get("section_sha256") else {}),
                     "locations": row["locations"].split(),
                     "work": [int(number) for number in row["work"].split()],
                     "features": names,
@@ -273,7 +275,16 @@ def inventory(root: Path, features: dict[str, dict[str, Any]]) -> dict[str, Any]
                     "summary": row["summary"],
                 }
             )
-    return {**baseline, "provisions": provisions, "corrections": corrections}
+    try:
+        behaviors.validate(baseline.get("behaviors", []), set(features), DIMENSIONS, corrections)
+    except ValueError as error:
+        raise MapError(str(error)) from error
+    return {
+        **baseline,
+        "provisions": provisions,
+        "corrections": corrections,
+        "behaviors": baseline.get("behaviors", []),
+    }
 
 
 def require_features(names: list[str], features: dict[str, dict[str, Any]], provision: str) -> None:
@@ -345,9 +356,11 @@ def coverage(spec_map: dict[str, Any]) -> dict[str, dict[str, int]]:
 def render(spec_map: dict[str, Any]) -> str:
     """Return the map as JSON with one feature per line."""
     baseline = spec_map["inventory"]
-    inventory_head = {key: value for key, value in baseline.items() if key not in {"provisions", "corrections"}}
+    inventory_head = {
+        key: value for key, value in baseline.items() if key not in {"provisions", "corrections", "behaviors"}
+    }
     inventory_text = json.dumps(inventory_head, indent=2, ensure_ascii=False)[:-2]
-    for key in ("provisions", "corrections"):
+    for key in ("provisions", "corrections", "behaviors"):
         rows = ",\n    ".join(json.dumps(row, ensure_ascii=False) for row in baseline[key])
         inventory_text += f',\n  "{key}": [\n    {rows}\n  ]'
     inventory_json = (inventory_text + "\n}").replace("\n", "\n  ")
@@ -403,6 +416,7 @@ def inventory_page(baseline: dict[str, Any]) -> list[str]:
         "Feature tests and release decisions remain on the feature rows. An erratum needs a targeted regression",
         "before a test can be cited for that specific correction. The register gives no automatic coverage credit.",
     ]
+    lines += behaviors.overview(baseline)
     source = baseline["sources"]["errata"]
     lines += [
         "",
