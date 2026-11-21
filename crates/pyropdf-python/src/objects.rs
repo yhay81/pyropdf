@@ -30,7 +30,6 @@ use pyo3::types::{PyBool, PyBytes, PyList, PyTuple};
 use pyo3::{IntoPyObjectExt, intern};
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
-use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs;
 use pyropdf_store::save::deflate;
@@ -766,25 +765,49 @@ pub fn object_free_unreferenced(
     document: &_Document,
     candidates: Vec<u32>,
 ) -> PyResult<Vec<u32>> {
+    retire_objects(py, document, &candidates, false)
+}
+
+/// Frees only nominated objects with no outside reference, leaving all
+/// non-nominated objects intact even when an unrelated owner is unreachable.
+#[pyfunction]
+pub fn object_free_nominated(
+    py: Python<'_>,
+    document: &_Document,
+    candidates: Vec<u32>,
+) -> PyResult<Vec<u32>> {
+    retire_objects(py, document, &candidates, true)
+}
+
+fn retire_objects(
+    py: Python<'_>,
+    document: &_Document,
+    candidates: &[u32],
+    nominated_only: bool,
+) -> PyResult<Vec<u32>> {
     crate::errors::boundary(|| {
         let store = |e: pyropdf_store::Error| store_error(&e);
         document.edit(py, |transaction, budget| {
-            let parent = Arc::clone(transaction.parent());
-            let before = transaction.snapshot();
-            let references = document.references.get(&parent, budget).map_err(store)?;
-            let references = match parent.changes(&before, budget).map_err(store)? {
-                Some(changes) if !changes.is_empty() => Arc::new(
-                    references
-                        .update(&mut Reads::new(&before, budget), &changes)
-                        .map_err(store)?,
-                ),
-                _ => references,
-            };
-            let freed = refs::unreferenced(&references, &[], &candidates, budget).map_err(store)?;
-            for &number in freed.iter() {
-                transaction.free(number, budget).map_err(store)?;
+            let references = document
+                .references
+                .in_transaction(transaction, budget)
+                .map_err(store)?;
+            let mut plan = if nominated_only {
+                refs::nominated_unreferenced(&references, candidates, budget)
+            } else {
+                refs::unreferenced(&references, &[], candidates, budget)
             }
-            Ok(freed.into_vec())
+            .map_err(store)?;
+            let mut count = 0;
+            for index in 0..plan.len() {
+                let number = plan[index];
+                if transaction.free(number, budget).map_err(store)? || !nominated_only {
+                    plan.as_mut_slice()[count] = number;
+                    count += 1;
+                }
+            }
+            plan.truncate(count);
+            Ok(plan.into_vec())
         })
     })?
 }
