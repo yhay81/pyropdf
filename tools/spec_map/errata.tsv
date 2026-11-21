@@ -42,7 +42,7 @@ issue	locations	features	dimensions	work	summary
 54	32000-2-2020/clause12.html#H12.7.9	non-interactive-forms	read interpret create edit preserve		Non-interactive form wording
 55	32000-2-2020/clause12.html#H12.8.1	digital-signatures	read interpret create edit preserve	849	Ordering certification and timestamp signatures
 56	32000-2-2020/clause12.html#H12.5.2	annotations	read interpret create edit preserve		Widget characteristics with a stored appearance
-58	32000-2-2020/clause13.html#H13.7.2.3.4	rich-media	read interpret create edit preserve		Required RichMedia asset tree
+58	32000-2-2020/clause13.html#H13.7.2.3.4	rich-media	read interpret create edit preserve		Optional name-tree membership of a RichMedia instance asset
 59	32000-2-2020/clause13.html#H13.7.2.2.2	rich-media	read interpret create edit preserve		Activation scripts for rich media
 62	32000-2-2020/clauseAnnexH.html#HH.8.2	tagged-pdf			Legacy structure roles in a contents-list example
 63	32000-2-2020/clause08.html#H8.6.5.8	rendering-intents	read interpret create edit preserve		Supported rendering intents
