@@ -765,7 +765,7 @@ pub fn object_free_unreferenced(
     document: &_Document,
     candidates: Vec<u32>,
 ) -> PyResult<Vec<u32>> {
-    retire_objects(py, document, &candidates, false)
+    crate::errors::boundary(|| retire_objects(py, document, &candidates, false))?
 }
 
 /// Frees only nominated objects with no outside reference, leaving all
@@ -776,7 +776,7 @@ pub fn object_free_nominated(
     document: &_Document,
     candidates: Vec<u32>,
 ) -> PyResult<Vec<u32>> {
-    retire_objects(py, document, &candidates, true)
+    crate::errors::boundary(|| retire_objects(py, document, &candidates, true))?
 }
 
 fn retire_objects(
@@ -785,29 +785,27 @@ fn retire_objects(
     candidates: &[u32],
     nominated_only: bool,
 ) -> PyResult<Vec<u32>> {
-    crate::errors::boundary(|| {
-        let store = |e: pyropdf_store::Error| store_error(&e);
-        document.edit(py, |transaction, budget| {
-            let references = document
-                .references
-                .in_transaction(transaction, budget)
-                .map_err(store)?;
-            let mut plan = if nominated_only {
-                refs::nominated_unreferenced(&references, candidates, budget)
-            } else {
-                refs::unreferenced(&references, &[], candidates, budget)
-            }
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    document.edit(py, |transaction, budget| {
+        let references = document
+            .references
+            .in_transaction(transaction, budget)
             .map_err(store)?;
-            let mut count = 0;
-            for index in 0..plan.len() {
-                let number = plan[index];
-                if transaction.free(number, budget).map_err(store)? || !nominated_only {
-                    plan.as_mut_slice()[count] = number;
-                    count += 1;
-                }
+        let mut plan = if nominated_only {
+            refs::nominated_unreferenced(&references, candidates, budget)
+        } else {
+            refs::unreferenced(&references, &[], candidates, budget)
+        }
+        .map_err(store)?;
+        let mut count = 0;
+        for index in 0..plan.len() {
+            let number = plan[index];
+            if transaction.free(number, budget).map_err(store)? || !nominated_only {
+                plan.as_mut_slice()[count] = number;
+                count += 1;
             }
-            plan.truncate(count);
-            Ok(plan.into_vec())
-        })
-    })?
+        }
+        plan.truncate(count);
+        Ok(plan.into_vec())
+    })
 }
