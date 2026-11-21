@@ -19,6 +19,20 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
 
+def test_ci_gives_the_floor_interpreter_time_to_collect_release_evidence() -> None:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    (python_job,) = re.findall(r"\n  python:\n(.*?)(?=\n  \S|\Z)", workflow, flags=re.DOTALL)
+    assert 'python: ["3.11", "3.15", "3.15t"]' in python_job
+    assert "timeout-minutes: ${{ matrix.python == '3.11' && 30 || 20 }}" in python_job
+    assert "uv run --no-sync pytest" in python_job
+    floor_guard = "        if: matrix.python == '3.11'"
+    floor_steps = [step for step in python_job.split("\n      - ") if floor_guard in step.splitlines()]
+    assert any("tools/verapdf.py" in step and "--arlington" in step for step in floor_steps)
+    assert any("tools/oracles.py --readers pdfjs" in step for step in floor_steps)
+    assert any("tools/spec_map/release_evidence.py" in step for step in floor_steps)
+    assert any("actions/upload-artifact@" in step and "target/release-evidence.json" in step for step in floor_steps)
+
+
 def test_the_release_builds_with_the_pinned_toolchain() -> None:
     toolchain = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
     pins = set(re.findall(r'(?:RUSTUP_TOOLCHAIN:|rust-toolchain:) "?([\d.]+)"?', WORKFLOW))
@@ -194,3 +208,46 @@ def test_pr_wheels_match_the_native_release_builds() -> None:
     assert "args: ${{ steps.native.outputs.base }}" in comparison
     assert "args: ${{ steps.native.outputs.head }}" in comparison
     assert native.index("tools/wheel_size.py") < native.index("actions/upload-artifact")
+
+
+@pytest.mark.parametrize("action", ["opened", "reopened", "synchronize"])
+def test_wheel_comparison_runs_for_source_events(action: str) -> None:
+    changed = runpy.run_path(str(ROOT / "tools/wheel_size.py"))["comparison_inputs_changed"]
+    assert changed({"action": action})
+
+
+@pytest.mark.parametrize(
+    ("changes", "current", "expected"),
+    [
+        ({"title": {"from": "Old"}}, "Wheel growth justification: New font", False),
+        ({"base": {"ref": {"from": "feature"}}}, "", True),
+        ({"body": {"from": None}}, "New status", False),
+        ({"body": {"from": "Mention Wheel growth justification: in prose"}}, None, False),
+        ({"body": {"from": "Before"}}, "After\nWheel growth justification: New font\r\n", True),
+        ({"body": {"from": "Wheel growth justification: New font"}}, None, True),
+        ({"body": {"from": "Wheel growth justification: One"}}, "Wheel growth justification: Two", True),
+        (
+            {"body": {"from": "Before\nWheel growth justification: One "}},
+            "After\nWheel growth justification: One",
+            False,
+        ),
+    ],
+)
+def test_wheel_comparison_rechecks_only_changed_inputs(changes: dict, current: str | None, *, expected: bool) -> None:
+    changed = runpy.run_path(str(ROOT / "tools/wheel_size.py"))["comparison_inputs_changed"]
+    assert changed({"action": "edited", "changes": changes, "pull_request": {"body": current}}) is expected
+
+
+def test_wheel_metadata_edits_are_isolated_before_any_runner_is_scheduled() -> None:
+    workflow = (ROOT / ".github/workflows/wheel-size.yml").read_text(encoding="utf-8")
+    setup, jobs = workflow.split("\njobs:\n", 1)
+    assert "wheel-size-${{ github.event.action == 'edited' && format('edit-{0}', github.run_id)" in setup
+    assert "|| github.event.pull_request.number }}" in setup
+    assert "cancel-in-progress: true" in setup
+    inputs, compare = jobs.split("\n  compare:\n", 1)
+    assert "github.event.changes.base != null" in inputs
+    assert "github.event.changes.body.from" in inputs
+    assert "github.event.pull_request.body" in inputs
+    assert "needs: edited-inputs" in compare
+    assert "github.event.action != 'edited' || needs.edited-inputs.outputs.compare == 'true'" in compare
+    assert "concurrency:" not in compare
