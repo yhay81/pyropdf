@@ -206,13 +206,21 @@ features = ["public-key-security-handler"]
 dimensions = ["interpret"]
 behavior = "Render authenticated pre-V5 recipient files through the engine object-source interface."
 
-[families.embedded-file-filter-selection]
+[families.indirect-stream-filter-selection]
 tracker = 252
-issue = 893
-title = "Resolve stream Crypt overrides and embedded-file filter selection"
-features = ["crypt-filters"]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Resolve and update EFF and per-stream filter choices. Check selection for both standard and public-key recipients once the recipient handler in #864 is available."
+issue = 1056
+title = "Resolve indirect stream filter selectors and parameters in their document revision"
+features = ["crypt-filter", "crypt-filters"]
+dimensions = ["read", "create", "preserve"]
+behavior = "Resolve filter names and parameter references in the correct revision before reading or creating encrypted streams, and retain their reference identities through saves."
+
+[families.crypt-filter-payload-edits]
+tracker = 252
+issue = 992
+title = "Keep stream crypt-filter selection when replacing attachment or stream data"
+features = ["crypt-filter", "crypt-filters"]
+dimensions = ["edit"]
+behavior = "Retain the leading security filter and its parameters when replacing the decoded payload or compression, including an attachment restricted to a distinct recipient audience."
 
 [families.signature-dictionaries]
 tracker = 252
@@ -224,15 +232,13 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification."
 
-[families.stream-crypt-selection]
+[families.crypt-filter-rendering]
 tracker = 252
-issue = 893
-title = "Resolve stream Crypt overrides and embedded-file filter selection"
-features = [
-    "crypt-filter",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Select a named Crypt filter per stream, honor Identity and EFF defaults, and exercise standard-handler strings, streams and attachments through full and incremental saves. Cover per-stream overrides separately from public-key recipients."
+issue = 993
+title = "Render explicit legacy crypt filters and independently keyed recipient streams from the store"
+features = ["crypt-filters"]
+dimensions = ["interpret"]
+behavior = "Interpret explicit legacy password filters and an independently keyed page stream through the authenticated version, including correct refusal for an unauthorized page."
 
 [families.stream-filters]
 tracker = 252
