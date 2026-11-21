@@ -730,6 +730,16 @@ def controls(jar: Path, directory: Path) -> list[tuple[str, Path]]:
     return failures
 
 
+def accessible_archive_workflow(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Validate both profiles for the authored chart, its edits and the missing-Alt controls."""
+    archive_saves = runpy.run_path(str(ROOT / "tests/test_accessible_archive.py"))["archive_saves"]
+    paths = archive_saves(directory)
+    return run(jar, dict.fromkeys(paths, "2a")) + run(jar, dict.fromkeys(paths, "ua1"))
+
+
+expect("authored-chart", "ua1", {"without-alt": {"7.3-1"}}, "#846")
+
+
 def main() -> int:
     """Validate the corpus and its saves, and return the exit status."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -741,7 +751,8 @@ def main() -> int:
         files.update(language_saves(Path(directory)))
         files.update(remove_signature_saves(Path(directory) / "pdfa-2b-sign_revision-incremental.pdf", Path(directory)))
         targeted = profile_saves(Path(directory))
-        failures = run(args.jar.resolve(), targeted)
+        failures = accessible_archive_workflow(args.jar.resolve(), Path(directory))
+        failures += run(args.jar.resolve(), targeted)
         failures += run(args.jar.resolve(), dual_archival(targeted))
         failures += run(args.jar.resolve(), files)
         failures += run(args.jar.resolve(), dual_archival(files))
