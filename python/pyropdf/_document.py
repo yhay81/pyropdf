@@ -180,9 +180,13 @@ class Document:
 
     __slots__ = ("_access", "_closed", "_doc", "_drawn", "_fallback", "_form_font", "_limits")
 
-    def __init__(self, *, limits: DocumentLimits | None = None) -> None:
-        """Create an empty document without pages; :func:`open` opens an existing one."""
-        self._setup(_Document.empty, _resolve_limits(limits))
+    def __init__(self, *, limits: DocumentLimits | None = None, version: str = "1.7") -> None:
+        """Create an empty document using header version 1.0 through 1.7, or 2.0.
+
+        The default is PDF 1.7. A writer option requiring a later version,
+        such as an object stream, can raise the version written on a full save.
+        """
+        self._setup(lambda resolved: _Document.empty(resolved, version), _resolve_limits(limits))
 
     def _setup(self, load: Callable[[DocumentLimits], _Document], limits: DocumentLimits) -> None:
         """Set the state of a document that ``load`` makes."""
