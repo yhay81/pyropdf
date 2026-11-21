@@ -526,6 +526,7 @@ interpret = { status = "partial", missing = "DeviceN alternate spaces and tint t
 clause = "8.6.7"
 description = "Overprint and its mode."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.tiling-patterns]
 clause = "8.7.3"
@@ -628,7 +629,6 @@ objects = []
 clause = "9.6.2"
 description = "Type 1 fonts, the standard 14 fonts, and multiple master fonts."
 objects = ["FontType1", "FontMultipleMaster", "FontDescriptorType1"]
-create = { status = "partial", missing = "Canvas, annotations, and forms create Standard 14 Type 1 font dictionaries, without embedding custom Type 1 or Multiple Master font programs.", milestone = "Phase 4: Specification" }
 
 [features.truetype-fonts]
 clause = "9.6.3"
@@ -644,7 +644,6 @@ objects = ["FontType3", "FontDescriptorType3", "CharProcMap"]
 clause = "9.6.5"
 description = "Encodings of simple fonts: base encodings and differences."
 objects = ["Encoding"]
-create = { status = "partial", missing = "Standard 14 text and form fields write `/WinAnsiEncoding` and built-in symbolic encodings, without constructing custom `/Differences` arrays.", milestone = "Phase 4: Specification" }
 
 [features.cid-fonts]
 clause = "9.7.4"
@@ -655,7 +654,6 @@ objects = ["FontCIDType0", "FontCIDType2", "CIDSystemInfo", "FontDescriptorCIDTy
 clause = "9.7.5"
 description = "CMaps: predefined and embedded maps from codes to CIDs."
 objects = ["CMapStream"]
-create = { status = "partial", missing = "Embedded Type 0 fonts and OCR layers write `/Identity-H`, without generating custom embedded code-to-CID CMap streams.", milestone = "Phase 4: Specification" }
 
 [features.type0-fonts]
 clause = "9.7.6"
@@ -671,8 +669,6 @@ objects = []
 clause = "9.9"
 description = "Embedded font programs: Type 1, TrueType, CFF, and OpenType."
 objects = ["FontFile", "FontFile2", "FontFile3Type1", "FontFile3CIDType0", "FontFile3OpenType", "FontFileType1"]
-create = { status = "partial", missing = "TrueType, CFF, and OpenType font programs are embedded, without embedding Type 1 font programs.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Embedded TrueType, CFF, and OpenType CIDFont programs are subset, without subsetting Type 1 font programs.", milestone = "Phase 4: Specification" }
 
 [features.text-extraction]
 clause = "9.10"
@@ -683,27 +679,31 @@ objects = ["ToUnicodeCMapStream"]
 clause = "10.3"
 description = "Converting colors to device colors, with rendering intents."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.device-color-conversion]
 clause = "10.4"
 description = "Conversions among device color spaces, black generation, and undercolor removal."
 objects = []
-edit = { status = "partial", missing = "Recoloring converts among DeviceGray, DeviceRGB, and DeviceCMYK with full black generation, without custom `/BG2` or `/UCR2` functions.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The output-device resources retain custom BG2 and UCR2 functions. Page and document recolouring still use full black generation and undercolor removal when rewriting RGB to CMYK.", milestone = "Phase 4: Specification" }
 
 [features.transfer-functions]
 clause = "10.5"
 description = "Transfer functions."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.halftones]
 clause = "10.6"
 description = "Halftone screens and spot functions."
 objects = ["HalftoneType1", "HalftoneType5", "HalftoneType6", "HalftoneType10", "HalftoneType16"]
+interpret = { status = "engine", upstream = 1001 }
 
 [features.scan-conversion]
 clause = "10.7"
 description = "Flatness, smoothness, and stroke adjustment."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.blend-modes]
 clause = "11.3.5"
@@ -1413,6 +1413,7 @@ objects = []
 clause = "8.6.5.8"
 description = "Select how out-of-gamut colours are translated for the output device."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.colour-operators]
 clause = "8.6.8"
@@ -1423,6 +1424,7 @@ objects = []
 clause = "10.8"
 description = "Render process and spot plates with the specified interactions between colourants."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.alpha-compositing]
 clause = "11.3"

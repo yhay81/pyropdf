@@ -179,8 +179,8 @@ pub enum LimitCode {
     /// Shaping one string in an embedded face takes more characters, or gives
     /// more glyphs, than the limit.
     ShapedGlyphCount,
-    /// The font data that `Font.from_file` or `Font.from_bytes` loads is larger
-    /// than 64 MiB.
+    /// The font that `Font.from_file` or `Font.from_bytes` loads, or the Type 1
+    /// program that `Document.subset_fonts` reads, is larger than 64 MiB.
     FontInputSize,
     /// `Page.fonts` follows more than 64 `/Parent` links when looking up
     /// inherited page resources.

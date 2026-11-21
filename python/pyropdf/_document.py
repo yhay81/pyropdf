@@ -52,6 +52,7 @@ from pyropdf._encryption import (
 )
 from pyropdf._errors import DocumentClosedError, PdfError
 from pyropdf._fallback_fonts import FallbackFonts, _replace_fallback_fonts, _set_fallback
+from pyropdf._font_cmaps import write_cmap
 from pyropdf._fonts import (
     FontInfo,
     FontProgram,
@@ -98,7 +99,7 @@ from pyropdf._metadata import (
     write_viewer_preferences,
     write_xmp,
 )
-from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
+from pyropdf._objects import Dictionary, Objects, Stream, _catalog, _trailer
 from pyropdf._outline import Outline, OutlineEntry, _write_outline
 from pyropdf._page import _clip_box, _ExportPage, _render_scale
 from pyropdf._page_labels import PageLabelRange, _read_page_labels, _write_page_labels
@@ -1592,7 +1593,7 @@ class Document:
         )
 
     def subset_fonts(self) -> tuple[SubsetFont, ...]:
-        """Subset each embedded TrueType, OpenType, and CFF program to the glyphs that the pages draw, as one step.
+        """Subset embedded Type 1, TrueType, OpenType and CFF programs to the glyphs that the pages draw, as one step.
 
         The glyphs are those that rendering draws with every optional
         content group on, with the glyphs that they draw as composite
@@ -1600,11 +1601,46 @@ class Document:
         empties the outlines of the others, so text, encodings, widths, and
         ToUnicode are unchanged; the font names gain a subset tag. Programs
         that annotation appearances or the form's default resources reach,
-        and Type 1 and Type 3 fonts, stay whole. Returns the programs that
-        shrank; :attr:`history` can undo the step.
+        and Type 3 fonts, stay whole. Type 1 subsets retain the clear dictionary,
+        hints, subroutines, and glyph order and update the encrypted segment
+        length. Unrecognized CMap or font layouts stay whole. The result
+        lists programs that shrank. :attr:`history` can undo the step.
         """
         self._ensure_open()
         return subset_fonts(self)
+
+    def write_cmap(  # noqa: PLR0913 - the identifiers and writing mode are PDF CMap fields.
+        self,
+        mapping: Mapping[bytes, int],
+        /,
+        *,
+        name: str,
+        registry: bytes = b"Adobe",
+        ordering: bytes = b"Identity",
+        supplement: int = 0,
+        vertical: bool = False,
+        stream: Stream | None = None,
+    ) -> Stream:
+        """Create or replace an embedded code-to-CID encoding CMap for a Type 0 font.
+
+        Map one-to-four-byte character codes to integer CIDs from 0 through
+        65535. Codes must be prefix-free, so a reader can tell their lengths.
+        Choose registry, ordering and supplement for the descendant CIDFont's
+        character collection. The stream and its dictionary share the same
+        name and writing mode. Assign the result to the font's ``/Encoding``.
+        Passing an existing CMap stream updates it in one undo step, retaining
+        its object number and clearing its previous base CMap.
+        """
+        return write_cmap(
+            self,
+            mapping,
+            name=name,
+            registry=registry,
+            ordering=ordering,
+            supplement=supplement,
+            vertical=vertical,
+            stream=stream,
+        )
 
     def font_program(self, font: int | FontInfo) -> FontProgram | None:
         """Return the embedded program of a font, by its object number or a :class:`FontInfo` from ``page.fonts()``.
