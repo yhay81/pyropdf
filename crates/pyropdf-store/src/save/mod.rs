@@ -6,6 +6,7 @@
 //! never changes the version, its base, or its object allocation state.
 
 mod base;
+mod extensions;
 mod linear;
 mod merge;
 mod pack;
@@ -280,6 +281,18 @@ pub fn full_with(
         )
         .into());
     }
+    let declared = if encryption.is_some_and(|config| config.method() == security::Method::AesGcm) {
+        Some(extensions::declare(
+            version,
+            32003,
+            ":2023",
+            "https://www.iso.org/standard/45876.html",
+            budget,
+        )?)
+    } else {
+        None
+    };
+    let version = declared.as_deref().unwrap_or(version);
     let mut mode = Mode::of(version, encryption, budget)?;
     if options.linearize {
         if options.object_streams
@@ -356,22 +369,7 @@ pub fn full_with(
     let renumbering = renumbering.as_ref();
     let stream = options.object_streams || options.cross_reference.stream(version);
     let mut out = Output::new(target, budget, 0, options.renew_id);
-    let header = version
-        .base()
-        .file()
-        .and_then(|file| file.bytes().get(file.origin()..file.origin() + 8))
-        .filter(|bytes| bytes.starts_with(b"%PDF-"))
-        .unwrap_or(b"%PDF-1.7");
-    // Cross-reference streams and object streams are of PDF 1.5.
-    if stream
-        && header
-            .get(5..)
-            .is_some_and(|number| number < b"1.5".as_slice())
-    {
-        out.bytes(b"%PDF-1.5")?;
-    } else {
-        out.bytes(header)?;
-    }
+    out.bytes(mode.header(version, stream))?;
     out.bytes(b"\n%\xE2\xE3\xCF\xD3\n")?;
     // A copied linearization dictionary must not remain the first object:
     // its old offsets describe the base, not this full save. Write the
@@ -625,6 +623,22 @@ impl<'a> Mode<'a> {
                 })
             }
             _ => Err(Error::Refused(Refusal::Encryption)),
+        }
+    }
+
+    fn header<'v>(&self, version: &'v Version, xref_stream: bool) -> &'v [u8] {
+        let original = version
+            .base()
+            .file()
+            .and_then(|file| file.bytes().get(file.origin()..file.origin() + 8))
+            .filter(|bytes| bytes.starts_with(b"%PDF-"))
+            .unwrap_or(b"%PDF-1.7");
+        if self.handler().is_some_and(Handler::uses_gcm) && original < b"%PDF-2.0" {
+            b"%PDF-2.0"
+        } else if xref_stream && original < b"%PDF-1.5" {
+            b"%PDF-1.5"
+        } else {
+            original
         }
     }
 

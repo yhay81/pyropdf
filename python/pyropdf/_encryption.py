@@ -72,8 +72,9 @@ class Encryption:
     and the owner password opens it with every right. ``owner_password``
     defaults to ``user_password``. Each password is capped at 127 UTF-8 bytes.
 
-    ``method`` is ``"aes-256"``, the AES-256 encryption of PDF 2.0 (revision
-    6), or ``"aes-128"``, AES-128 with crypt filters (revision 4). pyropdf
+    ``method`` selects ``"aes-256"`` (revision 6), ``"aes-128"`` (revision 4),
+    or ``"aes-gcm"`` (ISO/TS 32003:2023, revision 7). AES-GCM authenticates
+    each encrypted string and stream when the store reads it. pyropdf
     reads RC4 but never writes it. :attr:`Encryption.KEEP` keeps the
     encryption that the document was opened with, copying its untouched
     encrypted bytes. Without ``encryption``, a full save writes the document
@@ -200,8 +201,9 @@ class RecipientEncryption:
     Install ``pyropdf[recipients]`` and supply up to 128 X.509 certificates.
     Recipients with the same permissions share a CMS envelope. The named filter for strings and
     streams is ``DefaultCryptFilter``. Set ``encrypt_metadata=False`` to leave
-    the metadata stream readable. AES-256 supports direct rendering. AES-128 supports
-    store operations including saving, while the engine needs a decrypted input for rendering.
+    the metadata stream readable. AES-256 supports direct rendering. AES-128 and
+    AES-GCM support store operations, including saving. Direct page rendering of
+    these methods requires the authenticated store source in the rendering engine.
     Both an incremental save and a full save with
     ``Encryption.KEEP`` preserve untouched ciphertext.
 
@@ -212,7 +214,7 @@ class RecipientEncryption:
 
     recipients: Mapping[Certificate, Permissions | None]
     encrypt_metadata: bool = True
-    method: Literal["aes-256", "aes-128"] = "aes-256"
+    method: Literal["aes-256", "aes-128", "aes-gcm"] = "aes-256"
 
     def __post_init__(self) -> None:
         """Validate the recipients and retain their order for file-key derivation."""
@@ -226,8 +228,8 @@ class RecipientEncryption:
         if not isinstance(self.encrypt_metadata, bool):
             msg = "encrypt_metadata must be a bool"
             raise TypeError(msg)
-        if self.method not in ("aes-256", "aes-128"):
-            msg = "recipient method must be aes-256 or aes-128"
+        if self.method not in ("aes-256", "aes-128", "aes-gcm"):
+            msg = "recipient method must be aes-256, aes-128 or aes-gcm"
             raise ValueError(msg)
         for certificate, flags in self.recipients.items():
             _check_certificate(certificate)
@@ -252,9 +254,9 @@ class RecipientEncryption:
                 builder = builder.add_recipient(cert)
             yield builder.encrypt(serialization.Encoding.DER, [pkcs7.PKCS7Options.Binary])
 
-    def _core(self) -> tuple[bytes, bytes, tuple[bool, bool], Iterator[bytes]]:
+    def _core(self) -> tuple[bytes, bytes, tuple[bool, str], Iterator[bytes]]:
         seed = os.urandom(20)
-        return seed, os.urandom(16), (self.encrypt_metadata, self.method == "aes-256"), self._envelopes(seed)
+        return seed, os.urandom(16), (self.encrypt_metadata, self.method), self._envelopes(seed)
 
 
 def _open_credentials(

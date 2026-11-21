@@ -46,20 +46,21 @@ struct Profile {
 }
 
 impl Profile {
-    fn aes(aes256: bool, metadata: bool) -> Self {
-        let (version, length, method) = if aes256 {
-            (5, 32, Method::Aes256)
-        } else {
-            (4, 16, Method::Aes128)
+    fn aes(method: Method, metadata: bool) -> Result<Self> {
+        let (version, length) = match method {
+            Method::Aes128 => (4, 16),
+            Method::Aes256 => (5, 32),
+            Method::AesGcm => (6, 32),
+            _ => return Err(Error::malformed("new recipient encryption requires AES")),
         };
-        Self {
+        Ok(Self {
             subfilter: "adbe.pkcs7.s5",
             version,
             length,
             strings: method,
             streams: method,
             metadata,
-        }
+        })
     }
 
     fn read<'a>(encrypt: &'a Dict, budget: &Budget) -> Result<(Self, &'a Array)> {
@@ -104,10 +105,10 @@ impl Profile {
                     encrypt,
                 )
             }
-            (b"adbe.pkcs7.s5", Some(v @ (4 | 5))) => Self::crypt_filter(encrypt, v as u8)?,
+            (b"adbe.pkcs7.s5", Some(v @ (4..=6))) => Self::crypt_filter(encrypt, v as u8)?,
             _ => {
                 return Err(Error::malformed(
-                    "invalid public-key SubFilter and V combination; adbe.pkcs7.s5 needs V4 or V5",
+                    "invalid public-key SubFilter and V combination; adbe.pkcs7.s5 needs V4, V5 or V6",
                 ));
             }
         };
@@ -157,6 +158,7 @@ impl Profile {
             return Err(Error::malformed("undefined public-key crypt filter"));
         };
         let (cipher, bits) = match (version, name(cf, "CFM")?) {
+            (6, b"AESV4") => (Method::AesGcm, 256),
             (5, b"AESV3") => (Method::Aes256, 256),
             (4, b"AESV2") => (Method::Aes128, 128),
             (4, b"V2") => {
@@ -170,7 +172,7 @@ impl Profile {
             }
             _ => {
                 return Err(Error::malformed(
-                    "public-key crypt filters require V4 V2/AESV2 or V5 AESV3",
+                    "public-key crypt filters require V4 V2/AESV2, V5 AESV3 or V6 AESV4",
                 ));
             }
         };
@@ -218,7 +220,7 @@ impl Profile {
         budget: &Budget,
     ) -> Result<Handler> {
         let clear_metadata = !self.metadata && self.streams != Method::Identity;
-        let key = if self.version == 5 {
+        let key = if self.version >= 5 {
             derive_key::<Sha256>(seed, envelopes, clear_metadata, self.length, budget)?
         } else {
             derive_key::<Sha1>(seed, envelopes, clear_metadata, self.length, budget)?
@@ -484,8 +486,8 @@ pub struct RecipientEncryption {
     pub envelopes: Vec<Vec<u8>>,
     /// Whether the default stream filter encrypts metadata.
     pub encrypt_metadata: bool,
-    /// Select V5 AESV3; otherwise use V4 AESV2.
-    pub aes256: bool,
+    /// The AES content encryption method for the recipient group.
+    pub method: Method,
 }
 
 impl RecipientEncryption {
@@ -513,9 +515,13 @@ impl RecipientEncryption {
             )))?;
         }
         let envelopes = Array::from(items.into_vec());
-        let profile = Profile::aes(self.aes256, self.encrypt_metadata);
+        let profile = Profile::aes(self.method, self.encrypt_metadata)?;
         let bits = (profile.length * 8) as i64;
-        let cfm = if self.aes256 { "AESV3" } else { "AESV2" };
+        let cfm = match profile.version {
+            4 => "AESV2",
+            5 => "AESV3",
+            _ => "AESV4",
+        };
         let handler = profile.handler(&self.seed, &envelopes, u32::MAX, budget)?;
         let mut cf = Dict::new();
         put_name(&mut cf, "CFM", cfm);

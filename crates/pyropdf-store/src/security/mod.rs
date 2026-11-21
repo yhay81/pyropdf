@@ -151,18 +151,36 @@ impl Handler {
             if o.len() < 48 || u.len() < 48 {
                 return Err(Error::malformed("/O or /U is shorter than 48 bytes"));
             }
+            let authenticated = |key: Vec<u8>, access| {
+                if revision == 7 {
+                    let encrypted = bytes(encrypt, "Perms")
+                        .and_then(|block| block.try_into().ok())
+                        .ok_or_else(|| Error::malformed("R7 requires a 16-byte /Perms block"))?;
+                    let perms = crypto::aes256_ecb_block(&key, encrypted, true)?;
+                    if perms[..4] != p.to_le_bytes()
+                        || perms[4..8] != [0xff; 4]
+                        || perms[8] != if encrypt_metadata { b'T' } else { b'F' }
+                        || &perms[9..12] != b"adb"
+                    {
+                        return Err(Error::malformed(
+                            "R7 encrypted permissions do not match the encryption dictionary",
+                        ));
+                    }
+                }
+                Ok(make(key.into_boxed_slice(), access))
+            };
             let r6 = revision >= 6;
             if crypto::hash(password, &o[32..40], &u[..48], r6, budget)? == o[..32] {
                 let intermediate = crypto::hash(password, &o[40..48], &u[..48], r6, budget)?;
                 let key =
                     crypto::aes_cbc_decrypt(&intermediate, &[0; 16], &oe[..32], false, budget)?;
-                return Ok(make(key.into_boxed_slice(), Access::Owner));
+                return authenticated(key, Access::Owner);
             }
             if crypto::hash(password, &u[32..40], &[], r6, budget)? == u[..32] {
                 let intermediate = crypto::hash(password, &u[40..48], &[], r6, budget)?;
                 let key =
                     crypto::aes_cbc_decrypt(&intermediate, &[0; 16], &ue[..32], false, budget)?;
-                return Ok(make(key.into_boxed_slice(), Access::User));
+                return authenticated(key, Access::User);
             }
             return Err(Error::from(Password::Incorrect));
         }
@@ -225,6 +243,12 @@ impl Handler {
         (self.strings, self.streams)
     }
 
+    /// Whether this handler may have authenticated AESV4 objects.
+    #[must_use]
+    pub const fn uses_gcm(&self) -> bool {
+        self.version == 6
+    }
+
     /// Returns whether the document's metadata streams are encrypted.
     #[must_use]
     pub const fn encrypts_metadata(&self) -> bool {
@@ -237,7 +261,9 @@ impl Handler {
     pub fn description(&self) -> String {
         if let Some(recipient) = &self.recipient {
             let subfilter = recipient.subfilter;
-            let cipher = if [self.streams, self.strings].contains(&Method::Rc4) {
+            let cipher = if self.uses_gcm() {
+                "AES-GCM"
+            } else if [self.streams, self.strings].contains(&Method::Rc4) {
                 "RC4"
             } else {
                 "AES"
@@ -391,6 +417,14 @@ impl<'a> Params<'a> {
                 "AES-GCM requires standard security handler V6 and R7",
             ));
         }
+        if revision == 7
+            && encrypt.get("Length").is_some()
+            && integer(encrypt, "Length") != Some(256)
+        {
+            return Err(Error::malformed(
+                "R7 requires a 256-bit file encryption key",
+            ));
+        }
         let length = integer(encrypt, "Length").unwrap_or(40);
         let length = if version == 1 { 40 } else { length };
         if !(40..=128).contains(&length) && revision < 5 {
@@ -418,13 +452,28 @@ impl<'a> Params<'a> {
                 "AESV4 requires standard security handler V6 and R7",
             ));
         }
-        if version == 6
-            && !matches!(encrypt.get("CF"), Some(Value::Dict(filters)) if filters.iter().any(|(_, value)|
-            matches!(value, Value::Dict(filter) if matches!(filter.get("CFM"), Some(Value::Name(name)) if name.as_bytes() == b"AESV4"))))
-        {
-            return Err(Error::malformed(
-                "a V6 encryption dictionary must declare an AESV4 crypt filter",
-            ));
+        if version == 6 {
+            let Some(Value::Dict(filters)) = encrypt.get("CF") else {
+                return Err(Error::malformed("V6 requires a crypt filter dictionary"));
+            };
+            let mut declared = false;
+            for (_, filter) in filters.iter() {
+                if let Value::Dict(filter) = filter
+                    && matches!(filter.get("CFM"), Some(Value::Name(n)) if n.as_bytes() == b"AESV4")
+                {
+                    if filter.get("Length").is_some() && integer(filter, "Length") != Some(32) {
+                        return Err(Error::malformed(
+                            "standard AESV4 requires a 32-byte crypt filter key",
+                        ));
+                    }
+                    declared = true;
+                }
+            }
+            if !declared {
+                return Err(Error::malformed(
+                    "a V6 encryption dictionary must declare an AESV4 crypt filter",
+                ));
+            }
         }
         Ok(Self {
             version: u8::try_from(version).unwrap_or(u8::MAX),
@@ -555,8 +604,7 @@ fn computed_u(key: &[u8], revision: u8, id: &[u8], budget: &Budget) -> Result<Ve
     Ok(data)
 }
 
-/// The encryption of a new save: AES-128 (revision 4) or AES-256
-/// (revision 6), with passwords, permissions, and the randomness that the
+/// Password encryption for a new save, with permissions and randomness that the
 /// caller draws.
 #[derive(Clone, Debug)]
 pub struct PasswordEncryption {
@@ -566,7 +614,7 @@ pub struct PasswordEncryption {
     pub owner: Vec<u8>,
     /// The permission flags of `/P`.
     pub permissions: u32,
-    /// AES-256 rather than AES-128.
+    /// The AES-128, AES-256 or AES-GCM method for the new document.
     pub method: Method,
     /// Random bytes: the file key and the salts of AES-256, or the
     /// document's `/ID` of AES-128 from the first 16.
@@ -709,6 +757,13 @@ pub enum Encryption {
 }
 
 impl Encryption {
+    pub(crate) fn method(&self) -> Method {
+        match self {
+            Self::Password(password) => password.method,
+            Self::Recipient(recipient) => recipient.method,
+        }
+    }
+
     /// Builds the handler and its encryption dictionary together.
     pub fn build(&self, id: Option<&[u8]>, budget: &Budget) -> Result<(Dict, Vec<u8>, Handler)> {
         match self {
