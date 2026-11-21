@@ -426,3 +426,51 @@ def test_a_pdfua_claim_breaking_each_rule_is_found() -> None:
 
 def test_no_claim_means_no_profile_defect() -> None:
     assert profile_defects(claiming('dc:title="x"')) == set()
+
+
+@pytest.mark.parametrize("key", ["A", "C"])
+@pytest.mark.parametrize("with_revisions", [False, True])
+def test_structure_array_revision_numbers_are_optional_for_every_payload(key: str, *, with_revisions: bool) -> None:
+    doc = pyropdf.Document()
+    doc.pages.new((100, 100))
+    elem = doc.structure.add("Document")
+    payloads = (
+        [
+            doc.objects[doc.objects.add({"O": pyropdf.Name("Layout")})],
+            {"O": pyropdf.Name("Table")},
+            {"O": pyropdf.Name("List")},
+        ]
+        if key == "A"
+        else [pyropdf.Name(name) for name in ("First", "Second", "Third")]
+    )
+    if key == "C":
+        root = doc.structure.obj
+        assert root is not None
+        root["ClassMap"] = {str(name): {"O": pyropdf.Name("Layout")} for name in payloads}
+    elem.obj[key] = [payloads[0], 1, payloads[1], payloads[2], 0] if with_revisions else payloads
+    for current in (doc, pyropdf.open(doc.to_bytes())):
+        assert not [
+            d
+            for d in current.check().defects
+            if d.clause.startswith(("ArrayOfAttributeRevisions/", "ArrayOfClassNamesRevisions/"))
+        ]
+
+
+@pytest.mark.parametrize(
+    ("key", "descriptor"), [("A", "ArrayOfAttributeRevisions"), ("C", "ArrayOfClassNamesRevisions")]
+)
+@pytest.mark.parametrize(
+    ("case", "index", "slot"), [("leading", 0, "0*"), ("double", 2, "0*"), ("negative", 1, "1*"), ("bad", 1, "0*")]
+)
+def test_invalid_structure_array_members_retain_their_own_path(
+    key: str, descriptor: str, case: str, index: int, slot: str
+) -> None:
+    doc = pyropdf.Document()
+    doc.pages.new((100, 100))
+    elem = doc.structure.add("Document")
+    first = {"O": pyropdf.Name("Layout")} if key == "A" else pyropdf.Name("First")
+    elem.obj[key] = {"leading": [1, first], "double": [first, 0, 2], "negative": [first, -1], "bad": [first, False]}[
+        case
+    ]
+    for current in (doc, pyropdf.open(doc.to_bytes())):
+        assert (f"{key}/{index}", f"{descriptor}/{slot}") in {(d.path, d.clause) for d in current.check().defects}
