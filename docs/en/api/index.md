@@ -130,6 +130,7 @@ method and property of its classes with its full description.
 - [`Paint`](text-and-content.md#paint)
 - [`Path`](text-and-content.md#path): A path that is filled, stroked, or both.
 - [`Paths`](text-and-content.md#paths): The paths of a page as columns, from `Page.paths`.
+- [`PatternPaint`](text-and-content.md#patternpaint): Paint with an indirect tiling or shading pattern in the canvas document.
 - [`RadialGradient`](text-and-content.md#radialgradient): A paint for a `Canvas` that changes color between two circles.
 - [`Segment`](text-and-content.md#segment)
 - [`ShadingPattern`](text-and-content.md#shadingpattern): A paint that a shading fills, from a shading pattern or `sh`.

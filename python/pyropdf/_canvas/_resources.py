@@ -11,7 +11,7 @@ from pyropdf._objects import Name, Stream
 if TYPE_CHECKING:
     from pyropdf._document import Document
     from pyropdf._fonts import Font
-    from pyropdf._objects import Dictionary, Objects
+    from pyropdf._objects import Array, Dictionary, Objects
     from pyropdf._page import Page
 
 #: Operators that change the graphics state that later content inherits.
@@ -56,8 +56,9 @@ def _resources_dict(  # noqa: PLR0913, PLR0917 - the store's objects, and each k
     gstates: dict[tuple[float | None, float | None, str | None], str],
     fonts: dict[str, str | int],
     properties: dict[str, int],
-    patterns: dict[str, int] | None = None,
+    patterns: dict[str, int | Dictionary] | None = None,
     masks: dict[int, str] | None = None,
+    pattern_spaces: dict[str, Array] | None = None,
 ) -> dict[str, dict[str, object]]:
     """Build the resource subdictionaries for a canvas's Form or page merge."""
     resources: dict[str, dict[str, object]] = {}
@@ -69,7 +70,11 @@ def _resources_dict(  # noqa: PLR0913, PLR0917 - the store's objects, and each k
             **{name: objects[xref] for xref, name in (masks or {}).items()},
         }
     if patterns:
-        resources["Pattern"] = {name: objects[xref] for name, xref in patterns.items()}
+        resources["Pattern"] = {
+            name: objects[value] if isinstance(value, int) else value for name, value in patterns.items()
+        }
+    if pattern_spaces:
+        resources["ColorSpace"] = dict(pattern_spaces)
     if fonts:
         resources["Font"] = {name: _font_value(objects, font) for name, font in fonts.items()}
     if properties:
@@ -137,15 +142,18 @@ def _merge_resources(  # noqa: PLR0913, PLR0917 - the page, and each kind of res
     gstates: dict[tuple[float | None, float | None, str | None], str],
     fonts: dict[str, str | int],
     properties: dict[str, int],
-    patterns: dict[str, int] | None = None,
+    patterns: dict[str, int | Dictionary] | None = None,
     masks: dict[int, str] | None = None,
+    pattern_spaces: dict[str, Array] | None = None,
 ) -> dict[str, str]:
     """Add the canvas's resources to the page's own, renaming any that collide.
 
     The page gets its own direct ``/Resources`` when it inherits or shares
     them, so no other page changes. Returns the renamed names.
     """
-    added = _resources_dict(page.document.objects, xobjects, gstates, fonts, properties, patterns, masks)
+    added = _resources_dict(
+        page.document.objects, xobjects, gstates, fonts, properties, patterns, masks, pattern_spaces
+    )
     if not added:
         return {}
     own = page.obj.get("Resources")
