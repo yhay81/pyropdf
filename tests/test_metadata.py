@@ -8,9 +8,12 @@ backed directly by the versioned store.
 
 from __future__ import annotations
 
+import io
+import xml.etree.ElementTree as ET
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
+import pikepdf
 import pytest
 from test_pages import build_raw_pdf
 from test_preservation import snapshot as _snapshot
@@ -602,3 +605,153 @@ def test_catalog_properties_respect_closed_locked_and_page_handles() -> None:
     ):
         with pytest.raises(pyropdf.DocumentClosedError):
             closed_op()
+
+
+def _component_metadata_pdf() -> bytes:
+    """Share one metadata stream across three resources and the catalog using an independent writer."""
+    with pikepdf.new() as pdf:
+        first = pdf.add_blank_page()
+        other = pdf.add_blank_page()
+        form = pdf.make_stream(b"q Q", Type=pikepdf.Name.XObject, Subtype=pikepdf.Name.Form, BBox=[0, 0, 10, 10])
+        first.Resources = pikepdf.Dictionary(XObject=pikepdf.Dictionary(Fm=form))
+        packet = pdf.make_stream(XMP.encode(), Type=pikepdf.Name.Metadata, Subtype=pikepdf.Name.XML)
+        packet["/TEST_Private"] = pikepdf.String("keep me")
+        pdf.Root.Metadata = first.Metadata = other.Metadata = form.Metadata = packet
+        out = io.BytesIO()
+        pdf.save(out, min_version="1.4", fix_metadata_version=False)
+        return out.getvalue()
+
+
+@pytest.mark.spec("xmp-metadata", "read", "interpret")
+def test_component_packet_resolves_its_owner_and_rdf_namespaces() -> None:
+    with pyropdf.open(_component_metadata_pdf()) as doc:
+        owner = doc.pages[0].obj
+        for component in (owner, owner["Resources"]["XObject"]["Fm"], doc.pages[1].obj):
+            packet = component.xmp
+            assert packet == XMP
+            title = ET.fromstring(packet).find(".//{http://purl.org/dc/elements/1.1/}title//{*}li")  # noqa: S314 - local fixture.
+            assert title is not None
+            assert title.text == "Old"
+        # Recognize RDF by namespace URI independently of its local prefix.
+        alternate = XMP.replace("rdf:", "model:").replace("xmlns:rdf=", "xmlns:model=")
+        owner.xmp = alternate
+        assert owner.xmp == alternate
+        assert doc.xmp == XMP
+
+
+@pytest.mark.spec("xmp-metadata", "create", "edit", "preserve")
+@pytest.mark.parametrize("incremental", [False, True])
+def test_component_updates_and_removal_isolate_shared_packets(*, incremental: bool) -> None:
+    with pyropdf.open(_component_metadata_pdf()) as doc:
+        page = doc.pages[0].obj
+        form = page["Resources"]["XObject"]["Fm"]
+        updated = XMP.replace(">Old<", ">Updated page<")
+        del form.xmp
+        assert form.xmp is None
+        page.xmp = updated
+        assert doc.catalog["Metadata"].xref != page["Metadata"].xref
+        form.xmp = XMP.replace(">Old<", ">Form<")
+        doc.pages[1].rotation = 90
+        saved = doc.to_bytes(incremental=incremental)
+    with pikepdf.open(io.BytesIO(saved)) as pdf:
+        first, other = pdf.pages
+        assert pdf.Root.Metadata.objgen == other.Metadata.objgen
+        assert other.Metadata.read_bytes() == XMP.encode()
+        assert first.Metadata.read_bytes() == updated.encode()
+        assert str(first.Metadata["/TEST_Private"]) == "keep me"
+        assert first.Metadata.Type == pikepdf.Name.Metadata
+        assert first.Metadata.Subtype == pikepdf.Name.XML
+        assert first.Resources.XObject.Fm.Metadata.read_bytes() == XMP.replace(">Old<", ">Form<").encode()
+        assert other.Rotate == 90
+    with pyropdf.open(saved) as reopened:
+        del reopened.pages[0].obj.xmp
+        result = reopened.to_bytes(incremental=incremental)
+    with pikepdf.open(io.BytesIO(result)) as pdf:
+        assert "/Metadata" not in pdf.pages[0].obj
+        assert pdf.Root.Metadata.objgen == pdf.pages[1].Metadata.objgen
+        assert pdf.pages[0].Resources.XObject.Fm.Metadata.Type == pikepdf.Name.Metadata
+
+
+@pytest.mark.spec("xmp-metadata", "read", "interpret", "edit")
+def test_invalid_component_packets_report_errors_without_changing_the_owner() -> None:
+    with pyropdf.open(_component_metadata_pdf()) as doc:
+        page = doc.pages[0].obj
+        baseline = doc.to_bytes(incremental=True)
+        for invalid in ("<broken", "<rdf/>"):
+            with pytest.raises(pyropdf.MalformedPdfError):
+                page.xmp = invalid
+        with pytest.raises(LimitError) as refused:
+            page.xmp = "a" * (1024 * 1024 + 1)
+        assert refused.value.code == "stream_data_size"
+        assert doc.history.steps == ()
+        assert doc.to_bytes(incremental=True) == baseline
+        page["Metadata"] = doc.objects[doc.objects.add_stream(b"wrong type")]
+        with pytest.raises(pyropdf.MalformedPdfError, match="/Subtype /XML"):
+            _ = page.xmp
+        page["Metadata"] = doc.objects[
+            doc.objects.add_stream(
+                b"<rdf/>",
+                {"Type": pyropdf.Name("Metadata"), "Subtype": pyropdf.Name("XML")},
+            )
+        ]
+        with pytest.raises(pyropdf.MalformedPdfError, match="RDF"):
+            _ = page.xmp
+        assert doc.xmp == XMP
+
+
+@pytest.mark.spec("xmp-metadata", "create")
+def test_component_packet_promotes_pdf_13_and_preserves_absent_removal_history() -> None:
+    with pyropdf.Document() as seed:
+        seed.pages.new((80, 80))
+        original = seed.to_bytes()
+    data = original.replace(original[:8], b"%PDF-1.3", 1)
+    with pyropdf.open(data) as doc:
+        page = doc.pages[0].obj
+        assert page.xmp is None
+        page.xmp = XMP
+        assert doc.catalog["Version"] == pyropdf.Name("1.4")
+        assert doc.xmp is None
+        assert doc.history.steps == ("component xmp",)
+        doc.history.undo()
+        del page.xmp
+        assert doc.history.can_redo
+        assert doc.to_bytes(incremental=True) == data
+
+
+@pytest.mark.spec("xmp-metadata", "create", "edit")
+def test_component_writer_refuses_metadata_on_non_resource_owners_atomically() -> None:
+    with pyropdf.Document() as doc:
+        doc.pages.new((10, 10))
+        doc.catalog["Extensions"] = {"TEST": {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": 1}}
+        parts = doc.objects[doc.objects.add({"Type": pyropdf.Name("DPart")})]
+        signature = doc.objects[doc.objects.add({"Type": pyropdf.Name("Sig"), "ByteRange": [0, 2, 4, 2]})]
+        owners = (doc.trailer, doc.catalog["Extensions"], doc.catalog["Extensions"]["TEST"], parts, signature)
+        before = doc.to_bytes(), doc.history.steps
+        for owner in owners:
+            with pytest.raises(ValueError, match="does not permit"):
+                owner.xmp = XMP
+            assert "Metadata" not in owner
+        assert (doc.to_bytes(), doc.history.steps) == before
+
+
+@pytest.mark.spec("xmp-metadata", "read", "create")
+def test_component_packet_cap_counts_utf8_bytes_on_read_and_write() -> None:
+    cap = 1024 * 1024
+    suffix = '<?xpacket end="w"?>'
+    prefix = XMP.removesuffix(suffix)
+    exact = prefix + " " * (cap - len(XMP.encode())) + suffix
+    with pyropdf.open(_component_metadata_pdf()) as doc:
+        owner = doc.pages[0].obj
+        owner.xmp = exact
+        assert owner.xmp == exact
+        too_large = exact.replace(" ", "é", 1)
+        with pytest.raises(LimitError) as error:
+            owner.xmp = too_large
+        assert error.value.code == "stream_data_size"
+        assert owner.xmp == exact
+        owner["Metadata"].write(too_large.encode())
+        with pytest.raises(LimitError) as error:
+            _ = owner.xmp
+        assert error.value.code == "stream_data_size"
+        owner.xmp = XMP
+        assert owner.xmp == XMP
