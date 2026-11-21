@@ -377,14 +377,6 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations."
 
-[families.rendition-criteria]
-tracker = 256
-issue = 912
-title = "Author selector renditions, clip sections and player criteria"
-features = ["renditions"]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Author selector alternatives, clip offsets, player requirements and criteria. Round-trip the linked media and unsupported keys."
-
 [families.3d-scene-settings]
 tracker = 256
 issue = 913
