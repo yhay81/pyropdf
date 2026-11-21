@@ -17,6 +17,7 @@ from pyropdf import Name, typed
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Literal
 
 _RED = b"\xff\x00\x00"
 _GREEN = b"\x00\xff\x00"
@@ -239,8 +240,11 @@ def test_poppler_renders_the_unavailable_reference_as_its_blue_proxy(tmp_path: P
 
 
 @pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.parametrize("lossless_format", ["flate", "jpx"])
 @pytest.mark.spec("images", "edit")
-def test_bulk_resampling_preserves_the_alternate_stream_and_print_selector(*, incremental: bool) -> None:
+def test_bulk_resampling_preserves_the_alternate_stream_and_print_selector(
+    lossless_format: Literal["flate", "jpx"], *, incremental: bool
+) -> None:
     source, _ = flate_document()
     with source:
         base = image_stream(source)
@@ -262,8 +266,9 @@ def test_bulk_resampling_preserves_the_alternate_stream_and_print_selector(*, in
         entry = base["Alternates"][0]
         stored = entry["Image"].read(decode=False)
         alternate_number = entry["Image"].xref
-        report = doc.rewrite_images(dpi_threshold=96, dpi_target=64)
+        report = doc.rewrite_images(dpi_threshold=96, dpi_target=64, lossless_format=lossless_format)
         assert report.rewritten == 1
+        assert base["Filter"] == {"flate": "FlateDecode", "jpx": "JPXDecode"}[lossless_format]
         assert base["Width"] == 64
         assert base.xref is not None
         selected = doc.image_for_output(base.xref, printing=True)
