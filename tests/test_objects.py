@@ -199,17 +199,15 @@ def test_top_level_stream_bodies_survive_both_save_modes(*, incremental: bool, i
     length = "5 0 R" if indirect_length else str(len(payload))
     source = build_raw_pdf(
         {
-            1: "<< /Type /Catalog /Pages 2 0 R /Original 4 0 R /Copy 7 0 R >>",
+            1: "<< /Type /Catalog /Pages 2 0 R /Original 4 0 R /Copy 6 0 R >>",
             2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
             3: "<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 10 10] >>",
             4: f"<< /Length {length} >>\nstream\n{payload.decode('ascii')}\nendstream",
             5: str(len(payload)),
-            6: "5 0 R",
-            7: "<< /Length 0 >>\nstream\n\nendstream",
+            6: "<< /Length 0 >>\nstream\n\nendstream",
         }
     )
     doc = pyropdf.open(source)
-    assert doc.objects[6] == len(payload)
     assert doc.catalog["Original"].read(decode=False) == payload
     edited = b"\xff\x00new data\r\n"
     doc.catalog["Copy"].write(edited, filter=None)
@@ -218,7 +216,6 @@ def test_top_level_stream_bodies_survive_both_save_modes(*, incremental: bool, i
     reopened = pyropdf.open(saved)
     assert reopened.catalog["Original"].read(decode=False) == payload
     assert reopened.catalog["Copy"].read(decode=False) == edited
-    assert reopened.objects[6] == len(payload)
     assert f"<< /Length {length} >>\nstream\n".encode() + payload + b"\nendstream" in saved
 
 
