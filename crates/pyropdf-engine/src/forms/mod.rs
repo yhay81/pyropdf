@@ -26,6 +26,7 @@ mod import;
 mod radio;
 mod read;
 pub mod remove;
+pub(crate) mod rich_style;
 pub mod rich_text;
 mod settle;
 mod style;

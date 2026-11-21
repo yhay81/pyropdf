@@ -69,14 +69,6 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Exercise non-isolated and knockout groups, group masks, blending colour spaces, alpha composition and Annex Q resource traversal. Verify isolated and nested results with independent rendered references."
 
-[families.rich-line-captions]
-tracker = 249
-issue = 1025
-title = "Shape rich and Unicode captions in line annotation appearances"
-features = ["line-annotations"]
-dimensions = ["read", "interpret", "create", "edit"]
-behavior = "Resolve and shape RC or multilingual captions, including embedded fonts, along the measured line after authoring and editing."
-
 [families.font-programs]
 tracker = 249
 issue = 902
