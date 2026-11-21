@@ -48,7 +48,7 @@ pub use copy::{copy_array_for_edit, copy_dict_for_edit, copy_for_edit};
 pub use form_impact::affected_form_objects;
 pub use labels::{Labels, relabel};
 pub use roles::{Link, Role};
-pub use rules::{Edits, Rule, free_unreferenced, unreferenced};
+pub use rules::{Edits, Rule, free_unreferenced, nominated_unreferenced, unreferenced};
 
 /// Plans in `edits` the rules for `removed`, the pages that leave the
 /// version that `reads` reads, whose index is `index`. `retained` lists
