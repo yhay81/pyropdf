@@ -150,6 +150,40 @@ for source in ("pdfua-2", DUAL):
     )
 
 
+def rich_media_saves(directory: Path) -> dict[Path, str]:
+    """Check the split asset tree and shared configurations with and without a named activation script."""
+    fixture = runpy.run_path(str(ROOT / "tests/test_rich_media_settings.py"))
+
+    files = {}
+    for scripts in (False, True):
+        with pyropdf.open(fixture["rich_settings_pdf"](scripts=scripts)) as doc:
+            fixture["edit_rich_fixture"](doc)
+            for incremental in (False, True):
+                mode = "incremental" if incremental else "full"
+                variant = "script" if scripts else "plain"
+                path = directory / f"rich-media-{variant}-{mode}.pdf"
+                doc.save(path, incremental=incremental)
+                files[path] = "arlington2.0"
+    with pyropdf.open(fixture["legacy_pdf"]()) as doc:
+        with doc.pages[0].annotations[0].edit_rich_media() as media:
+            params = media.RichMediaContent.Configurations[0].Instances[0].Params
+            if params is None:
+                msg = "the Adobe extension fixture needs its Flash instance parameters"
+                raise ValueError(msg)
+            params.FlashVars = "mode=stored"
+        for incremental in (False, True):
+            mode = "incremental" if incremental else "full"
+            path = directory / f"rich-media-legacy-{mode}.pdf"
+            doc.save(path, incremental=incremental)
+            files[path] = "arlington1.7+ADBE_Extn3"
+    return files
+
+
+# 1.28.2 rejects a script that is present in the asset tree. 1.30.4 accepts
+# these same named files and rejects a script whose final name is removed.
+expect("rich-media", "arlington2.0", {"script": {"ArrayOfIndirectFileSpecificationsEntry-Dictionary-9"}}, "#914")
+
+
 def language_saves(directory: Path) -> dict[Path, str]:
     """Write the UA-1 catalog language loss and a control with explicit structure and metadata languages."""
     source = ROOT / "tests/assets/pdfua/pdfua-1.pdf"
@@ -527,6 +561,94 @@ def dual_archival(files: dict[Path, str]) -> dict[Path, str]:
     return {path: "4" for path in files if path.stem == DUAL or path.stem.startswith(DUAL + "-")}
 
 
+ARCHIVAL_MEDIA_RULES = {
+    "flags": {"6.3.2-1"},
+    "flags-null": {"6.3.2-1"},
+    "flags-no-print": {"6.3.2-2"},
+    "flags-toggle-no-view": {"6.3.2-2"},
+    "filename": {"6.9-2"},
+    "unicode-filename": {"6.9-2"},
+    "unicode-filename-name": {"6.9-2"},
+    "relationship": {"6.9-4"},
+    "relationship-string": {"6.9-4"},
+}
+expect("media", "4e", ARCHIVAL_MEDIA_RULES, "#967")
+# A complete untagged RichMedia annotation and its embedded U3D already
+# violate these rules on the plain A-4 / UA-2 source. The edits below add
+# a rule only to the archival verdict.
+for case in ("complete", "flags-numeric", *ARCHIVAL_MEDIA_RULES):
+    expect(f"{DUAL}-media", "ua2", {case: {"8.9.3.3-1", "8.9.2.4.19-2"}}, "#967")
+    expect(f"{DUAL}-media", "4", {case: {"6.3.1-1", "6.9-3"} | ARCHIVAL_MEDIA_RULES.get(case, set())}, "#967")
+
+
+def archival_media_source(source: Path) -> bytes:
+    """Establish the baseline with complete engineering annotation flags and file keys."""
+    spec = pyropdf.RichMedia(
+        rect=pyropdf.Rect(10, 10, 30, 30),
+        kind=pyropdf.MediaKind.THREE_D,
+        asset=pyropdf.MediaAsset(filename="model.u3d", content_type="model/u3d", data=b"stored asset"),
+    )
+    with pyropdf.open(source) as doc:
+        annotation = doc.pages[0].annotations.add(spec)
+        file = annotation.obj["RichMediaContent"]["Assets"]["Names"][1]
+        annotation.flags = pyropdf.AnnotationFlags.PRINT
+        file["UF"] = "model.u3d"
+        file["AFRelationship"] = pyropdf.Name("Data")
+        return doc.to_bytes()
+
+
+def archival_media_controls(directory: Path) -> dict[Path, str]:
+    """Compare the changed owner and both saved verdicts against each source's own baseline."""
+    remove = object()
+    edits = {
+        "complete": ("", None),
+        # The structure checker requires an integer. veraPDF tests the
+        # integer portion of numeric values for the archival flag bits.
+        "flags-numeric": ("F", 4.5),
+        "flags": ("F", remove),
+        "flags-null": ("F", None),
+        "flags-no-print": ("F", 0),
+        "flags-toggle-no-view": ("F", int(pyropdf.AnnotationFlags.PRINT | pyropdf.AnnotationFlags.TOGGLE_NO_VIEW)),
+        "filename": ("F", remove),
+        "unicode-filename": ("UF", remove),
+        "unicode-filename-name": ("UF", pyropdf.Name("model.u3d")),
+        "relationship": ("AFRelationship", remove),
+        "relationship-string": ("AFRelationship", "Data"),
+    }
+    files = {}
+    inputs = [
+        (ROOT / "tests/assets/pdfa/pdfa-4e.pdf", "media", "4e", "PDF/A-4E"),
+        (ROOT / f"tests/assets/pdfua/{DUAL}.pdf", f"{DUAL}-media", "ua2", "PDF/A-4"),
+    ]
+    for source, prefix, profile, archival_claim in inputs:
+        original = archival_media_source(source)
+        for case, (field, value) in edits.items():
+            with pyropdf.open(original) as doc:
+                annotation = doc.pages[0].annotations[-1]
+                file = annotation.obj["RichMediaContent"]["Assets"]["Names"][1]
+                owner = annotation.obj if case.startswith("flags") else file
+                if value is remove:
+                    del owner[field]
+                elif field:
+                    owner[field] = value
+                for incremental in (False, True):
+                    claims = doc.changes(incremental=incremental).claims
+                    expected = [(archival_claim, (owner.xref,))] if case in ARCHIVAL_MEDIA_RULES else []
+                    if [(item.claim, item.objects) for item in claims] != expected:
+                        msg = f"unexpected {prefix} report for {case}: {claims}"
+                        raise ValueError(msg)
+                    mode = "incremental" if incremental else "full"
+                    path = directory / f"{prefix}-{case}-{mode}.pdf"
+                    doc.save(path, incremental=incremental)
+                    with pyropdf.open(path) as reopened:
+                        reopened.pages[0].rotation = 90
+                        if reopened.changes(incremental=incremental).claims:
+                            msg = f"an unrelated edit reported the existing {case} defect"
+                            raise ValueError(msg)
+                    files[path] = profile
+    return files
+
+
 # The shared Screen case embeds a clip and a rendition action without tagging
 # the annotation. Each profile restricts a different part of that graph.
 SCREEN_RULES = {
@@ -542,6 +664,23 @@ for source_path, variant in [*FIXTURES.items(), *dual_archival(FIXTURES).items()
     if variant == "4":
         rules = rules | {"6.9-3"}  # The base profile also restricts the embedded file's type.
     expect(source_path.stem, variant, {"add_screen": rules}, "#848")
+
+
+# The stored RichMedia case adds its instance file and an untagged annotation.
+# PDF/A-4e permits the annotation subtype. Base PDF/A-4 also restricts the file type.
+RICH_MEDIA_RULES = {
+    "1": {"6.1.11-1", "6.5.2-1", "6.5.3-2"},
+    "2": {"6.3.1-1", "6.3.2-1", "6.8-2", "6.8-5"},
+    "3": {"6.3.1-1", "6.3.2-1", "6.8-2", "6.8-3", "6.8-4"},
+    "4": {"6.3.1-1", "6.3.2-1", "6.9-2", "6.9-3", "6.9-4"},
+    "4e": {"6.3.2-1", "6.9-2", "6.9-4"},
+    "4f": {"6.3.1-1", "6.3.2-1", "6.9-2", "6.9-4"},
+    "ua1": {"7.11-1", "7.18.1-1", "7.18.1-2", "7.18.3-1"},
+    "ua2": {"8.9.2.4.19-2", "8.9.3.3-1"},
+}
+for source_path, variant in [*FIXTURES.items(), *dual_archival(FIXTURES).items()]:
+    key = variant if variant in RICH_MEDIA_RULES else variant[0]
+    expect(source_path.stem, variant, {"rich_media_settings": RICH_MEDIA_RULES[key]}, "#914")
 
 
 def pades_comparisons(models: dict[Path, str]) -> dict[Path, str]:
@@ -602,9 +741,13 @@ def main() -> int:
         failures += run(args.jar.resolve(), dual_archival(targeted))
         failures += run(args.jar.resolve(), files)
         failures += run(args.jar.resolve(), dual_archival(files))
+        media = archival_media_controls(Path(directory))
+        failures += run(args.jar.resolve(), media)
+        failures += run(args.jar.resolve(), dual_archival(media))
         failures += controls(args.jar.resolve(), Path(directory))
         if args.arlington:
             models = {path: arlington(path, flavour) for path, flavour in files.items()}
+            models.update(rich_media_saves(Path(directory)))
             failures += run(args.arlington.resolve(), models)
             failures += run(args.arlington.resolve(), pades_comparisons(models))
     return 1 if failures else 0

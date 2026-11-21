@@ -6,7 +6,7 @@ script reads every file, one object type each, and writes the Rust tables
 of crates/pyropdf-schema/src/generated.rs: per key, its types, the PDF
 versions that introduced or deprecated it, whether it is required, indirect,
 or inheritable, its default and possible values, its special cases, and the
-objects it links to. Predicates (`fn:...`) are kept as the model writes them.
+objects it links to. The GEO correction below names its published source.
 It also writes python/pyropdf/typed.pyi, the stub that declares the typed
 view of each object type with its keys' Python types, and
 crates/pyropdf-store/src/refs/derived.rs, the links of the object types that
@@ -202,6 +202,17 @@ def read_object(path: Path) -> list[Key]:
             msg = f"{where}: {len(row)} columns"
             raise ModelError(msg)
         entry = dict(zip(COLUMNS, row, strict=True))
+        # Adobe Supplement to ISO 32000, BaseVersion 1.7, ExtensionLevel 3,
+        # section 8.8.1, Tables 8.110 and 8.111a (#954). A viewport may
+        # carry the GEO subtype and its inherited measure dictionary keys.
+        # Keep the vendored TSVs byte-identical to their upstream commit.
+        if path.stem == "MeasureGEO" and entry["Key"] in {"Type", "Subtype"} and entry["SinceVersion"] == "2.0":
+            entry["SinceVersion"] = "fn:Eval(fn:Extension(ADBE_Extn3,1.7) || 2.0)"
+        if path.stem == "Viewport" and entry["Key"] == "Measure":
+            entry["Link"] = entry["Link"].replace(
+                "[MeasureRL,fn:SinceVersion(2.0,MeasureGEO)]",
+                "[MeasureRL,fn:IsPDFVersion(1.7,fn:Extension(ADBE_Extn3,MeasureGEO)),fn:SinceVersion(2.0,MeasureGEO)]",
+            )
         kinds = split(entry["Type"], ";")
         count = len(kinds)
         indirect = per_type(entry["IndirectReference"], count, where, scalar=True)
@@ -541,11 +552,16 @@ def stub(commit: str, objects: dict[str, list[Key]]) -> str:
         "",
         "TYPES: tuple[str, ...]",
         "",
+        "class LinkedTree(_Dictionary):",
+        "    def __init__(self, tree: _Dictionary, descriptor: str, key: str) -> None: ...",
+        "    def lookup(self, key: bytes | int, /) -> Any: ...",
+        "",
         "class View:",
         "    _type: ClassVar[str]",
         "    def __init__(self, obj: _Dictionary | _Array, /) -> None: ...",
         "    @property",
         "    def obj(self) -> _Dictionary | _Array: ...",
+        "    def interpret(self, key: str | int, /) -> Any: ...",
         "    def __getitem__(self, key: str | int, /) -> Any: ...",
         "    def __setitem__(self, key: str | int, value: object, /) -> None: ...",
         "    def __delitem__(self, key: str | int, /) -> None: ...",

@@ -183,6 +183,54 @@ def check_screen(doc: pyropdf.Document) -> None:
     assert file.EF.F.obj.read() == MARKER.encode()
 
 
+def _rich_media_spec() -> pyropdf.RichMedia:
+    return pyropdf.RichMedia(
+        rect=pyropdf.Rect(10, 10, 30, 30),
+        kind=pyropdf.MediaKind.THREE_D,
+        asset=pyropdf.MediaAsset(filename="model.u3d", content_type="model/u3d", data=b"stored data"),
+    )
+
+
+def rich_media_conflicts(doc: pyropdf.Document) -> set[str]:
+    extensions = doc.catalog.get("Extensions")
+    adbe = extensions.get("ADBE") if isinstance(extensions, Dictionary) else None
+    if isinstance(adbe, Dictionary) and adbe.get("BaseVersion") == "1.7" and adbe.get("ExtensionLevel", 0) >= 3:
+        return set()
+    return promotion_conflicts(doc)
+
+
+def prepare_rich_media(doc: pyropdf.Document) -> None:
+    if not rich_media_conflicts(doc):
+        doc.pages[0].annotations.add(_rich_media_spec())
+
+
+def edit_rich_media(doc: pyropdf.Document) -> set[int]:
+    if conflicts := rich_media_conflicts(doc):
+        with refused_promotion(doc, conflicts, match="PDF 2.0 promotion"):
+            doc.pages[0].annotations.add(_rich_media_spec())
+        return set()
+    rich = doc.pages[0].annotations[-1]
+    rich.set_rich_media_asset("alias", rich.rich_media_assets["model.u3d"])
+    rich.add_rich_media_configuration(
+        "alternate", kind=pyropdf.MediaKind.THREE_D, assets=(rich.rich_media_assets["alias"],)
+    )
+    with rich.edit_rich_media() as media:
+        media.RichMediaContent.Configurations[1].Name = MARKER
+    return {rich.xref}
+
+
+def check_rich_media(doc: pyropdf.Document) -> None:
+    if rich_media_conflicts(doc):
+        return
+    rich = doc.pages[0].annotations[-1]
+    media = rich.media
+    assert isinstance(media, pyropdf.typed.AnnotRichMedia)
+    assert len(media.RichMediaContent.Configurations.obj) == 2
+    config = media.RichMediaContent.Configurations[1]
+    assert config.Name == MARKER
+    assert config.Instances[0].Asset == rich.rich_media_assets["alias"] == rich.rich_media_assets["model.u3d"]
+
+
 def page_annotations(page: pyropdf.Page) -> set[int]:
     """Include an annotation list stored in its own indirect array."""
     touched = {number(page.obj)}
@@ -577,6 +625,7 @@ NEW_EDITS = {
     "canvas_text": Edit(apply=canvas_text, check=check_text),
     "canvas_image": Edit(apply=canvas_image, check=check_image),
     "add_screen": Edit(apply=add_screen, check=check_screen),
+    "rich_media_settings": Edit(prepare=prepare_rich_media, apply=edit_rich_media, check=check_rich_media),
     "add_annotation": Edit(apply=add_annotation, check=check_annotation),
     "edit_annotation": Edit(prepare=prepare_annotation, apply=edit_annotation, check=check_edited_annotation),
     "delete_annotation": Edit(prepare=prepare_annotation, apply=delete_annotation, check=check_removed_annotation),
@@ -1201,10 +1250,12 @@ def promotion_conflicts(doc: pyropdf.Document) -> set[str]:
 
 
 @contextmanager
-def refused_promotion(doc: pyropdf.Document, clauses: set[str]) -> Generator[None, None, None]:
+def refused_promotion(
+    doc: pyropdf.Document, clauses: set[str], *, match: str = "cannot promote"
+) -> Generator[None, None, None]:
     before = doc.to_bytes(incremental=True)
     history = doc.history.save()
-    with pytest.raises(pyropdf.PdfError, match="cannot promote") as caught:
+    with pytest.raises(pyropdf.PdfError, match=match) as caught:
         yield
     assert any(clause in str(caught.value) for clause in clauses)
     assert doc.history.save() == history
@@ -1266,6 +1317,42 @@ def check_ocg(doc: pyropdf.Document) -> None:
     assert doc.objects[group.xref] not in config.get("ON", ())
     if config.get("BaseState") != "OFF":
         assert doc.objects[group.xref] in config["OFF"]
+
+
+def prepare_geospatial_registration(doc: pyropdf.Document) -> None:
+    page = doc.pages.new((160, 120))
+    page.viewports = (pyropdf.Viewport((10, 12, 70, 82)),)
+
+
+def edit_geospatial_registration(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    touched = {page.xref}
+    if pdf_version(doc) < (2, 0):
+        touched.add(number(doc.catalog))
+    # PCSM selects PDF 2.0, even for an input with Adobe's earlier
+    # geospatial extension. A separate fixture checks that extension's pairs.
+    registration = pyropdf.GeospatialMeasure(
+        pyropdf.CoordinateSystem("projected", epsg=3857),
+        (1010, 2038, 1070, 2108),
+        lpts=(0, 0, 1, 1),
+        pcsm=(1, 0, 0, 0, 1, 0, 0, 0, 1, 1000, 2000, 0),
+    )
+    conflicts = promotion_conflicts(doc)
+    if conflicts:
+        with refused_promotion(doc, conflicts, match="PDF 2.0 promotion"):
+            page.obj["VP"][0].geospatial_measure = registration
+        return set()
+    page.obj["VP"][0].geospatial_measure = registration
+    return touched
+
+
+def check_geospatial_registration(doc: pyropdf.Document) -> None:
+    [viewport] = doc.pages[-1].viewports
+    if viewport.measure is None:
+        assert promotion_conflicts(doc)
+        return
+    assert isinstance(viewport.measure, pyropdf.GeospatialMeasure)
+    assert doc.pages[-1].obj["VP"][0].geospatial_point(1) == ((70, 108), (1070, 2108))
 
 
 def prepare_page_records(doc: pyropdf.Document) -> None:
@@ -1936,6 +2023,9 @@ FAMILY_EDITS = {
     ),
     "page_copies": Edit(prepare=prepare_copy, apply=copy_page, check=check_page_copy),
     "page_labels": Edit(prepare=prepare_page_labels, apply=edit_page_labels, check=check_page_labels),
+    "geospatial_registration": Edit(
+        prepare=prepare_geospatial_registration, apply=edit_geospatial_registration, check=check_geospatial_registration
+    ),
     "page_records": Edit(prepare=prepare_page_records, apply=edit_page_records, check=check_page_records),
     "radio_groups": Edit(prepare=prepare_radio_group, apply=edit_radio_group, check=check_radio_group),
     "recolor": Edit(prepare=prepare_recolor, apply=edit_recolor, check=check_recolor, affected_pages=last_page),

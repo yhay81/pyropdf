@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 42 | 42 | 747 |
-| interpret | 1 | 13 | 0 | 39 | 663 | 115 |
-| create | 0 | 0 | 9 | 643 | 78 | 101 |
-| edit | 0 | 0 | 0 | 671 | 65 | 95 |
-| preserve | 0 | 0 | 0 | 27 | 662 | 142 |
+| read | 0 | 0 | 0 | 39 | 42 | 750 |
+| interpret | 1 | 19 | 0 | 36 | 50 | 725 |
+| create | 0 | 0 | 9 | 640 | 78 | 104 |
+| edit | 0 | 0 | 0 | 668 | 65 | 98 |
+| preserve | 0 | 0 | 0 | 24 | 662 | 145 |
 
 ## Clauses
 
@@ -163,7 +163,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.5.6.22 | Watermark annotations | `watermark-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.23 | Redaction annotations | `redaction-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.24 | Projection annotations | `projection-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.5.6.25 | 3D and RichMedia annotations | `rich-annotations` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 12.5.6.25 | 3D and RichMedia annotations | `rich-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.3 | Trigger events | `trigger-events` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.2 | Go-To actions | `goto-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.3 | Remote Go-To actions | `remote-goto-actions` | 1 done | 1 planned | 1 done | 1 done | 1 done |
@@ -198,14 +198,14 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.8.6 | Permissions | `permissions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.7 | Legal content attestations | `legal-attestations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.9 | Measurement properties | `measurement` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.10 | Geospatial coordinates | `geospatial` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 12.10 | Geospatial coordinates | `geospatial` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.11 | Document requirements | `document-requirements` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 13.2 | Multimedia | `renditions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 13.3 | Sounds | `sounds` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
 | 13.4 | Movies | `movies` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
 | 13.5 | Alternate presentations | `alternate-presentations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
 | 13.6 | 3D artwork | `3d-artwork` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
-| 13.7 | Rich media | `rich-media` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 13.7 | Rich media | `rich-media` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.2 | Legacy resource procedure sets | `procedure-sets` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 14.3.2 | Metadata streams | `xmp-metadata` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.3.3 | Document information dictionary | `document-info` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,933 unfinished cells in 831 features: 1 engine, 1,422 partial, 1,510 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,305 unfinished cells in 831 features: 1 engine, 1,407 partial, 897 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -271,8 +271,7 @@ Milestone [#246](https://github.com/yhay81/pyropdf/issues/246).
 
 Milestone [#247](https://github.com/yhay81/pyropdf/issues/247).
 
-- [#888](https://github.com/yhay81/pyropdf/issues/888) Interpret the linked objects and values of standalone Arlington types. Resolve linked object types, arrays and conditional values through the versioned store. Exercise ambiguous links and invalid references with bounded, per-type fixtures. Record clause-backed exceptions for types with no distinct interpretation.
-    - interpret — all 613 standalone Arlington object rows.
+No unfinished specification-map cells assigned.
 
 ### 248 Rendering
 
@@ -406,15 +405,11 @@ Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 
 Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
 
-- [#930](https://github.com/yhay81/pyropdf/issues/930) Verify geographic and projected registration control points on their PDF owners. Verify required 2D and 3D controls, projected matrix precedence, geographic fallback, and the image, form and Geospatial3D owners beyond ordinary page viewports.
-    - read, interpret, create, edit, preserve — `geospatial`.
 - [#839](https://github.com/yhay81/pyropdf/issues/839) Expose developer extensions, associated files, page-piece dictionaries, document parts, and structure namespaces. Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations.
     - read, interpret, create, edit — `developer-extensions`, `page-piece`, `associated-files`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
     - preserve — `developer-extensions`, `page-piece`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
 - [#913](https://github.com/yhay81/pyropdf/issues/913) Author 3D scene settings and dimensional measurements as PDF data. Resolve scene, camera and activation settings and each dimensional measurement geometry. Verify view, stream and measurement references after editing.
     - read, interpret, create, edit, preserve — `3d-artwork`.
-- [#914](https://github.com/yhay81/pyropdf/issues/914) Author multi-asset RichMedia configurations, activation and presentation settings. Bind multiple assets and instances to configurations and round-trip activation, presentation and animation settings.
-    - read, interpret, create, edit, preserve — `rich-annotations`, `rich-media`.
 - [#915](https://github.com/yhay81/pyropdf/issues/915) Complete existing legacy movie, sound and alternate-presentation relationship editing. Resolve external sound parameters, movie posters, timing, title-based action targets and alternate-presentation name trees. Verify reference-safe edits in existing files.
     - read, interpret, edit, preserve — `sound-annotations`, `movie-annotations`, `sound-actions`, `movie-actions`, `sounds`, `movies`, `alternate-presentations`.
 - [#861](https://github.com/yhay81/pyropdf/issues/861) Complete prepress dictionaries and print annotation relationships. Resolve box colour, separations, trapping, OPI and print annotation relationships and preserve or edit them under the edition policy.
@@ -656,7 +651,7 @@ before a test can be cited for that specific correction. The register gives no a
 | [54](https://github.com/pdf-association/pdf-issues/issues/54) | [Non-interactive form wording](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.9) | `non-interactive-forms` | read, interpret, create, edit, preserve | — |
 | [55](https://github.com/pdf-association/pdf-issues/issues/55) | [Ordering certification and timestamp signatures](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.1) | `digital-signatures` | read, interpret, create, edit, preserve | [#849](https://github.com/yhay81/pyropdf/issues/849) |
 | [56](https://github.com/pdf-association/pdf-issues/issues/56) | [Widget characteristics with a stored appearance](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.5.2) | `annotations` | read, interpret, create, edit, preserve | — |
-| [58](https://github.com/pdf-association/pdf-issues/issues/58) | [Required RichMedia asset tree](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.7.2.3.4) | `rich-media` | read, interpret, create, edit, preserve | — |
+| [58](https://github.com/pdf-association/pdf-issues/issues/58) | [Optional name-tree membership of a RichMedia instance asset](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.7.2.3.4) | `rich-media` | read, interpret, create, edit, preserve | — |
 | [59](https://github.com/pdf-association/pdf-issues/issues/59) | [Activation scripts for rich media](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.7.2.2.2) | `rich-media` | read, interpret, create, edit, preserve | — |
 | [62](https://github.com/pdf-association/pdf-issues/issues/62) | [Legacy structure roles in a contents-list example](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexH.html#HH.8.2) | `tagged-pdf` | Editorial | — |
 | [63](https://github.com/pdf-association/pdf-issues/issues/63) | [Supported rendering intents](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.6.5.8) | `rendering-intents` | read, interpret, create, edit, preserve | — |
@@ -1007,6 +1002,12 @@ before a test can be cited for that specific correction. The register gives no a
 
 ## Exclusions
 
+- `ArrayOfBooleansGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
+- `ArrayOfIntegersGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
+- `ArrayOfNamesGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
+- `ArrayOfNumbersGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
+- `_UniversalArray` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
+- `_UniversalDictionary` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
 - `flate-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.
 - `lexical-conventions` interpret: n/a, 7.2: lexical conventions define file tokens only, whose parsing Read covers.
 - `basic-objects` interpret: n/a, 7.3: basic objects are syntax values, whose clause-specific meaning later clauses cover.

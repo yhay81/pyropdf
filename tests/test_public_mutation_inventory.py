@@ -41,6 +41,12 @@ MUTATIONS = (
         "timestamp",
     ),
     ("catalog_entry", "Name and scalar dictionary entries rewrite their owner.", "Dictionary", "__setitem__"),
+    (
+        "geospatial_registration",
+        "Replace only the owner's registration, retaining independent controls and shared dictionaries.",
+        "Dictionary",
+        "geospatial_measure=",
+    ),
     ("delete_entry", "Removing a dictionary key preserves its siblings.", "Dictionary", "__delitem__"),
     (
         "array_insert_delete",
@@ -83,6 +89,12 @@ MUTATIONS = (
     ("add_attachment", "Insert a file specification in the embedded-files name tree.", "Attachments", "add"),
     ("delete_attachment", "Prune the name tree and release unreferenced streams.", "Attachments", "__delitem__"),
     ("write_attachment", "Replace the embedded stream; update size and checksum.", "Attachment", "write"),
+    (
+        "rich_media_settings",
+        "A named alias and a configuration edit preserve the shared file and the annotation's settings.",
+        "Annotation",
+        "set_rich_media_asset add_rich_media_configuration edit_rich_media",
+    ),
     ("add_annotation", "Create the annotation, page Annots entry and appearance.", "Annotations", "add"),
     (
         "add_screen",
@@ -617,9 +629,12 @@ READ_ONLY = {
     "Revision": "open",
     "Signature": "verify",
     "Signer": "from_pem from_pkcs12 callback",
+    "Dictionary": "geospatial_point",
     "Stream": "read",
     "StructureTree": "resolve_role walk",
     "Table": "markdown",
+    "typed.LinkedTree": "lookup",
+    "typed.View": "interpret",
 }
 
 EXTERNAL = {
