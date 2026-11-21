@@ -172,6 +172,23 @@ StructureChildren.move(index: int, to: int)
 
 Move child element `index` to child-element position `to` in one transaction.
 
+## `StructureChildRule`
+
+```python
+StructureChildRule(
+    parent_xref: int | None,
+    parent_role: str,
+    child_role: str,
+    count: int,
+    rule: str,
+    allowed: bool | None,
+)
+```
+
+An Annex L relationship, its observed count and the applicable occurrence rule.
+
+`allowed` is unknown for namespace or semantic conditions that the table alone cannot decide.
+
 ## `StructureElement`
 
 ```python
@@ -327,6 +344,20 @@ Updates both `/K` containers and this element's `/P` in one transaction,
 refusing moves into another document, into itself or a descendant, or past
 the 256-level depth limit.
 
+## `StructureText`
+
+```python
+StructureText(
+    element: StructureElement,
+    item: MarkedContentReference | ObjectReference | None,
+    text: str | None,
+)
+```
+
+One piece of logical text and its originating element or content reference.
+
+A missing text value identifies a reference whose text cannot be resolved.
+
 ## `StructureTree`
 
 ```python
@@ -429,6 +460,34 @@ Create and insert a top-level `StructureElement` in one transaction.
 
 Creates `/StructTreeRoot` and sets `MarkInfo/Marked` to `True` when
 the document has no structure tree yet.
+
+### `StructureTree.reading_order`
+
+```python
+StructureTree.reading_order(
+    *,
+    expand_abbreviations: bool = False,
+) -> tuple[StructureText, ...]
+```
+
+Extract logical text in mixed structure-child order, including cross-page references.
+
+Use element replacement text, or its expansion when requested. Each item retains
+its structure element. Unattributable text, including a Form stream without
+a replacement, has a missing text value. Untagged documents return an empty
+tuple. Both structure readers visit at most 65,536 child entries and
+256 levels, and reject cycles and malformed children.
+
+### `StructureTree.child_rules`
+
+```python
+StructureTree.child_rules() -> tuple[StructureChildRule, ...]
+```
+
+Read the observed parent/child multiplicities under the PDF 2.0 Annex L rules.
+
+A conditional or cross-namespace relationship retains its own rule and an
+indeterminate verdict where the namespace or role-specific specification is required.
 
 ### `StructureTree.walk`
 

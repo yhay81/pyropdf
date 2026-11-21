@@ -617,7 +617,7 @@ READ_ONLY = {
     "Signature": "verify",
     "Signer": "from_pem from_pkcs12 callback",
     "Stream": "read",
-    "StructureTree": "resolve_role walk",
+    "StructureTree": "child_rules reading_order resolve_role walk",
     "Table": "markdown",
 }
 
