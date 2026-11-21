@@ -209,15 +209,12 @@ def add_mark(page: Page, mark: RedactionMark) -> Annotation:
                 "F": 4,
             }
         )
-        obj = doc.objects[xref]
         annots = page.obj.get("Annots")
-        if annots is None:
-            page.obj["Annots"] = [obj]
-        elif isinstance(annots, Array):
-            annots.append(obj)
-        else:
+        if annots is not None and not isinstance(annots, Array):
             msg = "page /Annots must be an array"
             raise MalformedPdfError(msg)
+        if not _core.annotation_attach(doc._core(), page.xref, page._generation, (xref, 0)):  # noqa: SLF001
+            raise page._stale()  # noqa: SLF001
         annotation = Annotation(page, (xref, 0), 0)
         write_mark(annotation, mark)
         return annotation
