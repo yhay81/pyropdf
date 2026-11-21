@@ -1148,10 +1148,10 @@ def check_metadata(doc: pyropdf.Document) -> None:
 def prepare_catalog_navigation(doc: pyropdf.Document) -> None:
     doc.base_uri = "https://example.org/old/"
     doc.named_resources("Templates")[MARKER.encode()] = doc.pages[0].obj
-    section = doc.structure.add("Sect", page=doc.pages[0])
+    element = doc.structure[0] if doc.structure else doc.structure.add("Document", page=doc.pages[0])
     if not promotion_conflicts(doc):
         doc.destinations.set_structure(
-            MARKER, pyropdf.StructureDestination(element=section.xref, fallback=pyropdf.Destination(0))
+            MARKER, pyropdf.StructureDestination(element=element.xref, fallback=pyropdf.Destination(0))
         )
 
 
@@ -1177,7 +1177,7 @@ def edit_catalog_navigation(doc: pyropdf.Document) -> set[int]:
         assert clauses
         with refused_promotion(doc, clauses):
             doc.destinations.set_structure(
-                MARKER, pyropdf.StructureDestination(element=doc.structure[-1].xref, fallback=pyropdf.Destination(0))
+                MARKER, pyropdf.StructureDestination(element=doc.structure[0].xref, fallback=pyropdf.Destination(0))
             )
         return touched
     doc.destinations.set_structure(
