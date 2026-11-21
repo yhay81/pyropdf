@@ -13,11 +13,13 @@ and how far it has come; this document does not.
 pyropdf keeps the concept of [pylopdf](https://github.com/yhay81/pylopdf)
 and rebuilds its foundation (sections 2 and 14).
 
-- **Complete control.** Every feature of PDF as ISO 32000-2:2020 defines it,
-  with its errata and extensions and the PDF/A and PDF/UA profiles, is read
-  without loss, interpreted, created, edited, and preserved. A specification
-  map records each feature in each of these five dimensions with the tests
-  that prove it. pymupdf's capabilities are the floor, not the goal.
+- **Complete control.** The long-term objective is to read without loss,
+  interpret, create, edit, and preserve every applicable feature of
+  ISO 32000-2:2020, its corrections and published extensions, and the
+  PDF/A and PDF/UA profiles. The specification map records the five
+  dimensions and their evidence. PyMuPDF's capabilities are the minimum
+  comparison set. Section 13 defines the 1.0 minimum and how a release
+  declares the capabilities it has proved.
 - **Consistent edits.** An edit keeps every structure that depends on what it
   changes valid, or refuses. What it cannot keep valid, such as a signature
   or a conformance claim, it reports before the document is saved.
@@ -40,6 +42,22 @@ and rebuilds its foundation (sections 2 and 14).
 Underneath is one store: every engine reads and writes the document
 through it (F1), and nothing reconciles separate object models after the
 fact.
+
+The [dated inventory](tools/spec_map/baseline.toml) pins edition 2 of the
+base standard and the industry correction register. Its [crosswalk](tools/spec_map/provisions.tsv)
+identifies formal corrigenda, dated extensions and clarifications, and the
+individual profile levels. PDF/A-1 uses PDF 1.4, PDF/A-2, PDF/A-3 and
+PDF/UA-1 use PDF 1.7, and PDF/A-4, PDF/A-4e, PDF/A-4f and PDF/UA-2 use
+PDF 2.0. Review the inventory as those sources change. PDF/X and PDF/VT
+have separate print-profile work and claims under #910.
+
+An interpretation claim names the processor's role. For example, pyropdf
+can expose the action and assets stored in a RichMedia annotation. Playback
+belongs to a viewer. Unknown extension data falls under the preservation
+contract. A claim to interpret an extension names its specification and the
+behavior tested. Deprecated operations also have individual dispositions,
+including legacy RC4 reading and the exclusion of new RC4 encryption
+(section 4.5).
 
 ## 2. Evidence from pylopdf
 
@@ -862,15 +880,58 @@ but do not gate it: an issue waits only on the issues that block it.
   editing operation;
 - every engine workaround removed, or kept as pyropdf's own code with its
   reason recorded (section 6);
-- a guide and an end-to-end test for each canonical workflow that #257
-  lists;
+- a guide and passing release evidence for each minimum workflow below;
 - every artifact of section 11 verified on its target;
 - a published stability policy.
 
-Shipping 1.0 does not claim complete control. A claim of complete control
-within a declared scope needs a published scope with its exclusions, every
-applicable dimension inside it `done` with tests that pass on that
-release, and the harnesses and validators of section 12 passing on it.
+### Minimum workflows for 1.0
+
+All ten workflows and the save and edit guarantees are mandatory. A
+release decision about a `partial` or `non-goal` cell can cover work
+outside this minimum. Each case names its input, action, expected outcome,
+guide, independent check and applicable save modes or runtime.
+
+| Workflow | Minimum observable result |
+| --- | --- |
+| Extraction for retrieval | Trace text and its display-space position to the document version and source placement. Distinguish repeated placements, inferred text and OCR in the applicable cases. |
+| Page images and thumbnails | Compare the visible landmark, crop, rotation and dimensions at the requested scale with an independent renderer. |
+| Organizing pages | Insert, move, copy and delete pages. Reopen the result and check destinations, dependent structures and untouched pages. |
+| Stamps and watermarks | Place text with an embedded face and a graphic in display space. Independently extract the written text and render the stamp. |
+| Filling and flattening forms | Change a value, verify the appearance, then flatten. Check the page content, field and widget relationships, and affected tags or their pre-save report. |
+| Redaction and sanitization | Independently inspect the full-save deliverable for absence of the removed content. Refuse before producing output when removal cannot be guaranteed. |
+| Searchable scans | Reopen the scan, find the OCR text, and check its word positions against the image and its reported origin. |
+| Accessible archival documents | Author and edit a tagged file claiming both PDF/A-4 and PDF/UA-2, plus an example for a named earlier profile. Validate each claim and record human review of reading order and alternative text. |
+| Inspecting and repairing objects | Identify a structural fault, verify the repair and untouched values after a full save, and refuse an incremental save on a repaired base. |
+| Server and Worker processing | Run the documented workload and a typed resource-limit refusal on each promised runtime. Processing untrusted uploads requires the upstream input bounds in #15 and #243. |
+
+For every applicable edit, an ordinary full save preserves untouched
+values and stream data. An incremental save keeps the original bytes as a
+prefix and reproduces the input exactly when there are no edits. A
+requested transformation identifies what it changes (sections 4.2–4.4).
+An edit settles affected structures or refuses atomically. Before saving,
+the caller can inspect which signatures or conformance claims the operation
+would invalidate. Section 12's harnesses and independent readers check the
+saved result. The public API and coordinate system follow section 10. Each
+artifact names its interpreter, target and required extras from section 11.
+
+### Declaring a release capability
+
+A capability claim belongs to a particular tag and full commit. Publish
+the resolved `scope.toml`, its specification map (or immutable reference),
+the matching `release-evidence.json` and the checked report together with
+that release. Link this declaration and its limitations from the release
+notes and the English and Japanese specification and status pages. Identify
+the baseline, the selected operations, any exclusions, runtime and engine
+dependencies, and which checks required human judgment. Each applicable
+cell in the claim must be `done` and its tests, harnesses and applicable
+validators must pass on that revision. Label any input profile as context.
+A profile-level claim requires evidence for that particular level.
+
+For 1.0, publish the results for the ten workflows and record any approved
+whole-map limitations in `evidence/releases/<tag>/decisions.toml`. The
+[release checklist](https://github.com/yhay81/pyropdf/issues/257) tracks
+these gates and the [owner decision](https://github.com/yhay81/pyropdf/issues/961#issuecomment-7054270070)
+records the adopted minimum.
 
 ## 14. Moving from pylopdf
 
