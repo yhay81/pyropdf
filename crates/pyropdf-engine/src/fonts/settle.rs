@@ -55,14 +55,9 @@ impl Target {
     fn of(version: &Version, budget: &Budget) -> Result<Self> {
         let mut pdf = version
             .base()
-            .file()
-            .and_then(|index| {
-                index
-                    .bytes()
-                    .get(index.origin()..)?
-                    .strip_prefix(b"%PDF-")
-                    .and_then(parse_version)
-            })
+            .header_bytes()
+            .and_then(|bytes| bytes.strip_prefix(b"%PDF-"))
+            .and_then(parse_version)
             .unwrap_or((1, 7));
         let catalog = match reference(version.trailer().get("Root")) {
             Some(root) => dict_of(version, root, budget)?,
