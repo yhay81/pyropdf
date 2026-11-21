@@ -52,6 +52,8 @@ LimitCode: TypeAlias = Literal[
     "svg_output_size",
     "render_output_size",
     "password_input_size",
+    "recipient_count",
+    "recipient_envelope_size",
     "embedded_file_size",
     "embedded_file_input_size",
     "annotation_count",
@@ -195,6 +197,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "The images that `doc.render` encodes write more bytes in all than the call's `max_size`."
         ),
         "password_input_size": "A password is longer in UTF-8 than PDF 2.0 allows.",
+        "recipient_count": "A recipient operation exceeds 128 certificates or CMS envelopes.",
+        "recipient_envelope_size": (
+            "A CMS recipient envelope exceeds 64 KiB before the credential provider processes it."
+        ),
         "embedded_file_size": (
             "An attachment that `Attachment.read`, `Attachment.write`, or `Attachments.add` handles is larger than the "
             "call's `max_size`."
