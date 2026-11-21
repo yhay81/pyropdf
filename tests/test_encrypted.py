@@ -1149,3 +1149,14 @@ def test_a_malformed_security_selector_does_not_partially_replace_stream_data() 
             stream.write(b"replacement")
         assert stream.read(decode=False) == b"original"
         assert list(stream["Filter"]) == [pyropdf.Name("FlateDecode"), pyropdf.Name("Crypt")]
+
+
+def test_stream_replacement_preserves_an_unresolved_selector() -> None:
+    with pyropdf.open(numbered(1)) as doc:
+        target = doc.objects[doc.objects.add_stream(b"original", filter=None)]
+        shared = doc.objects[doc.objects.add([pyropdf.Name("Crypt")])]
+        target["Filter"] = shared
+        with pytest.raises(pyropdf.MalformedPdfError, match="unresolved /Filter"):
+            target.write(b"replacement")
+        assert target["Filter"].xref == shared.xref
+        assert target.read(decode=False) == b"original"
