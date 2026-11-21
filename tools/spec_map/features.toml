@@ -35,40 +35,40 @@ objects = ["PageObject", "PageTreeNode", "PageTreeNodeRoot"]
 
 [features.standard-security-handler]
 clause = "7.6.4"
-description = "Standard password authentication, owner and user permissions, and changing or removing encryption. A claim for this handler includes the following revision-specific operations."
+description = "Standard password authentication, owner and user permissions, and changing or removing encryption. A claim for this handler includes the following revision-specific operations. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
 objects = ["EncryptionStandard"]
-interpret = { status = "partial", missing = "Direct rendering of revisions 2 through 4 succeeds with the user password. Under the owner password the store can decrypt, but the pinned renderer declines the original and edited page (#974).", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 1043 }
 includes = ["standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4", "standard-aes-r4", "standard-aes-r5", "standard-aes-r6"]
 
 [features.standard-rc4-r2]
 clause = "7.6.4"
-description = "V1 R2 40-bit RC4."
+description = "V1 R2 40-bit RC4. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
 objects = ["EncryptionStandard"]
-interpret = { status = "partial", missing = "Direct rendering of revisions 2 through 4 succeeds with the user password. Under the owner password the store can decrypt, but the pinned renderer declines the original and edited page (#974).", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 1043 }
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content." }
 
 [features.standard-rc4-r3]
 clause = "7.6.4"
-description = "V2 R3 RC4 with a 128-bit key."
+description = "V2 R3 RC4 with a 128-bit key. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
 objects = ["EncryptionStandard"]
-interpret = { status = "partial", missing = "Direct rendering of revisions 2 through 4 succeeds with the user password. Under the owner password the store can decrypt, but the pinned renderer declines the original and edited page (#974).", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 1043 }
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content." }
 
 [features.standard-rc4-r4]
 clause = "7.6.4"
-description = "V4 R4 with the V2 RC4 crypt filter."
+description = "V4 R4 with the V2 RC4 crypt filter. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
 objects = ["EncryptionStandard"]
-interpret = { status = "partial", missing = "Direct rendering of revisions 2 through 4 succeeds with the user password. Under the owner password the store can decrypt, but the pinned renderer declines the original and edited page (#974).", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 1043 }
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content." }
 
 [features.standard-aes-r4]
 clause = "7.6.4"
-description = "V4 R4 AES-128 CBC with an AESV2 crypt filter."
+description = "V4 R4 AES-128 CBC with an AESV2 crypt filter. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
 objects = ["EncryptionStandard"]
-interpret = { status = "partial", missing = "Direct rendering of revisions 2 through 4 succeeds with the user password. Under the owner password the store can decrypt, but the pinned renderer declines the original and edited page (#974).", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 1043 }
 
 [features.standard-aes-r5]
 clause = "7.6.4"

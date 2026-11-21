@@ -613,6 +613,78 @@ STANDARD_REVISIONS = {
 }
 
 
+@pytest.mark.spec("{profile}", "interpret")
+@pytest.mark.spec("standard-security-handler", "interpret")
+@pytest.mark.parametrize("profile", ["standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4", "standard-aes-r4"])
+def test_legacy_password_roles_interpret_the_same_authenticated_version(profile: str) -> None:
+    for name in STANDARD_REVISIONS[profile][2]:
+        data = (ASSETS / name).read_bytes()
+        with (
+            pyropdf.open(data, password="ownerpw") as owner,
+            pyropdf.open(data, password="userpw") as user,
+            pyropdf.open(owner.to_bytes()) as plain,
+            pikepdf.open(io.BytesIO(data), password="ownerpw") as independent,
+        ):
+            rights = user.permissions
+            assert independent.owner_password_matched
+            for rotation in (0, 90):
+                for doc in (owner, user, plain):
+                    if rotation:
+                        doc.pages[0].rotation = rotation
+                expected = plain.pages[0]
+                assert "Encrypted page one" in expected.text()
+                for doc in (owner, user):
+                    page = doc.pages[0]
+                    assert page.text() == expected.text()
+                    assert bytes(memoryview(page.pixmap(dpi=36))) == bytes(memoryview(expected.pixmap(dpi=36)))
+                    if rotation == 0:
+                        assert doc.to_bytes(incremental=True) == data
+                assert owner.access is Access.OWNER
+                assert owner.permissions == Permissions.ALL
+                assert user.access is Access.USER
+                assert user.permissions == rights
+
+
+@pytest.mark.parametrize("user", ["", "café", "x" * 31 + "猫", "x" * 30 + "🥝", "x" * 32 + "truncated"])
+def test_legacy_owner_uses_the_effective_user_bytes_within_the_reader(user: str) -> None:
+    with pyropdf.open(ASSETS / "user-aes-128.pdf", password="ownerpw") as source:
+        plain = source.to_bytes()
+        data = source.to_bytes(encryption=Encryption(method="aes-128", owner_password="文書管理", user_password=user))
+    with (
+        pyropdf.open(data, password="文書管理") as owner,
+        pyropdf.open(data, password=user) as by_user,
+        pyropdf.open(plain) as baseline,
+    ):
+        for doc in (owner, by_user):
+            assert doc.pages[0].text() == baseline.pages[0].text()
+            assert bytes(memoryview(doc.pages[0].pixmap(dpi=36))) == bytes(memoryview(baseline.pages[0].pixmap(dpi=36)))
+            assert doc.to_bytes(incremental=True) == data
+        assert owner.access is Access.OWNER
+        assert by_user.access is Access.USER
+    if user:
+        with pytest.raises(pyropdf.PasswordError):
+            pyropdf.open(data, password="wrong")
+
+
+def test_legacy_pdfdocencoded_user_password_remains_a_typed_reader_boundary() -> None:
+    data = io.BytesIO()
+    with pikepdf.open(ASSETS / "user-aes-128.pdf", password="ownerpw") as independent:
+        independent.save(data, encryption=pikepdf.Encryption(owner="ownerpw", user="é", R=4, aes=True))
+    raw = data.getvalue()
+    with (
+        pyropdf.open(raw, password="ownerpw") as doc,
+        pikepdf.open(io.BytesIO(raw), password="ownerpw") as independent,
+    ):
+        assert independent.owner_password_matched
+        assert doc.access is Access.OWNER
+        assert doc.pages[0].obj["Contents"].read() == independent.pages[0].Contents.read_bytes()
+        for operation in (doc.pages[0].text, doc.pages[0].pixmap):
+            with pytest.raises(pyropdf.EncryptedDocumentError, match="UTF-8"):
+                operation()
+        assert doc.to_bytes(incremental=True) == raw
+        assert doc.permissions == Permissions.ALL
+
+
 def stored_stream(data: bytes, independent: pikepdf.Pdf, stream: pikepdf.Object) -> bytes:
     """Read the actual ciphertext at qpdf's active xref offset and resolved stream length."""
     offset = independent.get_xref_table()[stream.objgen].offset
@@ -661,11 +733,8 @@ def test_password_revision_keeps_old_ciphertext_and_encrypts_new_content(profile
             with pyropdf.open(doc.to_bytes()) as plain:
                 assert not plain.needs_password
                 expected = bytes(memoryview(plain.pages[0].pixmap(dpi=36)))
-                if revision <= 4:
-                    with pytest.raises(pyropdf.PdfError, match="hayro cannot read the document"):
-                        doc.pages[0].pixmap(dpi=36)
-                else:
-                    assert bytes(memoryview(doc.pages[0].pixmap(dpi=36))) == expected
+                assert bytes(memoryview(doc.pages[0].pixmap(dpi=36))) == expected
+                assert doc.pages[0].text() == plain.pages[0].text()
                 with pyropdf.open(source, password=user) as by_user:
                     by_user.pages[0].rotation = 90
                     assert bytes(memoryview(by_user.pages[0].pixmap(dpi=36))) == expected
