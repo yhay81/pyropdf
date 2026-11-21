@@ -897,6 +897,7 @@ Document.prepare_signature(
     *,
     doc_mdp: DocMdpPermission | None = None,
     field_lock: FieldLock | None = None,
+    seed_values: Mapping[str, object] | None = None,
     is_timestamp: bool = False,
     reason: str | None = None,
     location: str | None = None,
@@ -911,7 +912,10 @@ Creates an invisible signature field `field` on the first page when
 none exists, writes `/Lock` for `field_lock` and `/SV` seed values
 for `doc_mdp`, `is_timestamp`, and `reason`, and returns the field
 dictionary's object number so external signers such as pyHanko (or a
-subsequent `sign` call) can fill it cleanly.
+subsequent `sign` call) can fill it cleanly. `seed_values`
+adds or updates entries of the ISO seed dictionary. Use
+`Name` for PDF names and lists for PDF arrays. Other entries
+and other fields sharing the old seed dictionary retain their values.
 
 ### `Document.sign`
 
@@ -926,6 +930,7 @@ Document.sign(
     reason: str | None = None,
     location: str | None = None,
     contact: str | None = None,
+    build_properties: Mapping[str, Mapping[str, object]] | None = None,
     reserve: int = 16384,
 ) -> bytes
 ```
@@ -941,7 +946,15 @@ signature dictionary's `/M` is the current time, and `reason`,
 `location`, and `contact` become `/Reason`, `/Location`, and
 `/ContactInfo`. `doc_mdp` certifies an unsigned document with a
 `DocMDP` transform and `Catalog['Perms']['DocMDP']`, and
-`field_lock` records a `FieldMDP` transform.
+`field_lock` records a `FieldMDP` transform. An existing field's
+lock and required seed values must permit the requested signature.
+The direct `/Prop_Build` dictionary records pyropdf's name and version
+by default. Supply `build_properties` with PDF build entries for
+`App`, `Filter`, `PubSec` or `SigQ` to identify the signing components.
+Required seed conditions that the CAdES profile cannot satisfy, including
+a named signature appearance or an explicit CMS signature policy, raise
+`ValueError`. Checking certificate issuer, subject DN, policy OIDs
+or key usage requires the optional `cryptography` package.
 
 `timestamper` receives the digest of the signature value and the
 name of its hash algorithm, and returns an RFC 3161 time-stamp token

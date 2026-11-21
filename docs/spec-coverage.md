@@ -30,10 +30,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 42 | 42 | 747 |
-| interpret | 1 | 13 | 0 | 38 | 662 | 117 |
-| create | 0 | 0 | 9 | 643 | 78 | 101 |
-| edit | 0 | 0 | 0 | 669 | 65 | 97 |
+| read | 0 | 0 | 0 | 41 | 42 | 748 |
+| interpret | 1 | 13 | 0 | 37 | 662 | 118 |
+| create | 0 | 0 | 9 | 641 | 78 | 103 |
+| edit | 0 | 0 | 0 | 667 | 65 | 99 |
 | preserve | 0 | 0 | 0 | 28 | 662 | 141 |
 
 ## Clauses
@@ -187,11 +187,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.7.5.2 | Button fields | `button-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.5.3 | Text fields | `text-fields` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
 | 12.7.5.4 | Choice fields | `choice-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.7.5.5 | Signature fields | `signature-fields` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 12.7.5.5 | Signature fields | `signature-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.6 | Form actions | `form-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.8 | Forms data format | `fdf` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.9 | Non-interactive forms | `non-interactive-forms` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.8 | Digital signatures | `digital-signatures` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
+| 12.8 | Digital signatures | `digital-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.2 | Transform methods | `signature-transforms` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.4.3 | Document security store | `document-security-store` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.5 | Document timestamp dictionary | `document-timestamps` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,930 unfinished cells in 831 features: 1 engine, 1,420 partial, 1,509 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,924 unfinished cells in 831 features: 1 engine, 1,414 partial, 1,509 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -351,9 +351,6 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - interpret — `public-key-security-handler`.
 - [#893](https://github.com/yhay81/pyropdf/issues/893) Resolve stream Crypt overrides and embedded-file filter selection. Resolve and update EFF and per-stream filter choices. Check selection for both standard and public-key recipients once the recipient handler in #864 is available.
     - read, interpret, create, edit, preserve — `crypt-filters`.
-- [#905](https://github.com/yhay81/pyropdf/issues/905) Resolve signature seed constraints and build properties through signing and editing. Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification.
-    - read, interpret — `signature-fields`.
-    - create, edit — `signature-fields`, `digital-signatures`.
 - [#893](https://github.com/yhay81/pyropdf/issues/893) Resolve stream Crypt overrides and embedded-file filter selection. Select a named Crypt filter per stream, honor Identity and EFF defaults, and exercise standard-handler strings, streams and attachments through full and incremental saves. Cover per-stream overrides separately from public-key recipients.
     - read, create, edit, preserve — `crypt-filter`.
 - [#891](https://github.com/yhay81/pyropdf/issues/891) Complete stream filter read, rewrite and preservation cases. Round-trip encoded and decoded streams across the listed filter chains and parameters. Cover ASCIIHex re-encoding, Group 3 fax and JPX output gaps, and retain untouched encoded data. Account for unsupported encoder paths explicitly.
