@@ -2,13 +2,14 @@
 //! store selects the crypt filter, derives its key, and applies its rules.
 
 use std::sync::{
-    Arc,
+    Arc, OnceLock,
     atomic::{AtomicBool, Ordering},
 };
 
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
+use super::filters::{Filters, IDENTITY, Key, selected};
 use super::{Access, Handler, Method, PasswordEncryption, copy, crypto, integer};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::value::{Array, Dict, Name, PdfString, StringForm, Value};
@@ -49,6 +50,7 @@ fn name<'a>(dict: &'a Dict, field: &str) -> Result<&'a [u8]> {
 
 #[derive(Clone)]
 pub(super) struct RecipientAccess {
+    profile_id: Option<[u8; 32]>,
     pub(super) subfilter: &'static str,
     owner: Arc<AtomicBool>,
 }
@@ -128,7 +130,6 @@ impl Profile {
                     encrypt,
                 )
             }
-            (b"adbe.pkcs7.s5", Some(v @ (4 | 5))) => Self::crypt_filter(encrypt, v as u8)?,
             _ => {
                 return Err(Error::malformed(
                     "invalid public-key SubFilter and V combination; adbe.pkcs7.s5 needs V4 or V5",
@@ -149,37 +150,7 @@ impl Profile {
         Ok((profile, envelopes))
     }
 
-    fn crypt_filter(encrypt: &Dict, version: u8) -> Result<(Self, &Dict)> {
-        let selected = |key| match encrypt.get(key) {
-            None => Ok(b"Identity".as_slice()),
-            _ => name(encrypt, key),
-        };
-        let strings = selected("StrF")?;
-        let streams = selected("StmF")?;
-        let active = if streams == b"Identity" {
-            strings
-        } else {
-            streams
-        };
-        if active == b"Identity"
-            || (strings != b"Identity" && strings != active)
-            || (encrypt.get("EFF").is_some() && name(encrypt, "EFF")? != streams)
-        {
-            return Err(Error::malformed(
-                "public-key encryption requires a single default crypt filter; distinct /EFF is unsupported",
-            ));
-        }
-        let Some(Value::Dict(filters)) = encrypt.get("CF") else {
-            return Err(Error::malformed("missing public-key /CF"));
-        };
-        if filters.len() != 1 {
-            return Err(Error::malformed(
-                "multiple public-key crypt filters require separate recipient selection",
-            ));
-        }
-        let Some(Value::Dict(cf)) = filters.get(active) else {
-            return Err(Error::malformed("undefined public-key crypt filter"));
-        };
+    fn crypt_filter(encrypt: &Dict, cf: &Dict, version: u8) -> Result<Self> {
         let (cipher, bits) = match (version, name(cf, "CFM")?) {
             (5, b"AESV3") => (Method::Aes256, 256),
             (4, b"AESV2") => (Method::Aes128, 128),
@@ -214,30 +185,20 @@ impl Profile {
                 ));
             }
         };
-        let method = |cf: &[u8]| {
-            if cf == b"Identity" {
-                Method::Identity
-            } else {
-                cipher
-            }
-        };
-        Ok((
-            Self {
-                subfilter: "adbe.pkcs7.s5",
-                version,
-                length: bits as usize / 8,
-                strings: method(strings),
-                streams: method(streams),
-                metadata,
-            },
-            cf,
-        ))
+        Ok(Self {
+            subfilter: "adbe.pkcs7.s5",
+            version,
+            length: bits as usize / 8,
+            strings: cipher,
+            streams: cipher,
+            metadata,
+        })
     }
 
     fn handler(
         self,
         seed: &[u8],
-        envelopes: &Array,
+        envelopes: &[Value],
         permissions: u32,
         budget: &Budget,
     ) -> Result<Handler> {
@@ -248,8 +209,10 @@ impl Profile {
             derive_key::<Sha1>(seed, envelopes, clear_metadata, self.length, budget)?
         };
         Ok(Handler {
+            filters: super::filters::Filters::default(),
             key,
             recipient: Some(RecipientAccess {
+                profile_id: None,
                 subfilter: self.subfilter,
                 owner: Arc::new(AtomicBool::new(permissions & 2 != 0)),
             }),
@@ -280,12 +243,17 @@ impl Handler {
     /// credential opens this same file key. The version and its edits remain
     /// in place; unrelated documents cannot inherit the new authority.
     pub fn retain_recipient_access(&self, verified: &Self) {
-        if let Some(recipient) = &self.recipient
-            && verified.is_recipient()
-            && verified.access() == Access::Owner
-            && self.key == verified.key
+        if let (Some(recipient), Some(other)) = (&self.recipient, &verified.recipient)
+            && match (recipient.profile_id, other.profile_id) {
+                (Some(current), Some(verified)) => current == verified,
+                (None, None) => !self.key.is_empty() && self.key == verified.key,
+                _ => false,
+            }
         {
-            recipient.owner.store(true, Ordering::Relaxed);
+            self.filters.retain_keys(&verified.filters);
+            if verified.access() == Access::Owner {
+                recipient.owner.store(true, Ordering::Relaxed);
+            }
         }
     }
 
@@ -299,35 +267,26 @@ impl Handler {
         if name(encrypt, "Filter")? != b"Adobe.PubSec" {
             return Err(Password::Recipient.into());
         }
-        let (profile, envelopes) = Profile::read(encrypt, budget)?;
-        let mut payload = None;
-        for value in envelopes.iter() {
-            budget.poll()?;
-            let envelope = envelope(value, budget)?;
-            if payload.is_none() {
-                budget.charge(LimitCode::MemorySize, envelope.len() as u64)?;
-                let opened = decrypt(envelope);
-                budget.release(LimitCode::MemorySize, envelope.len() as u64);
-                payload = opened?;
-            }
+        if name(encrypt, "SubFilter")? == b"adbe.pkcs7.s5"
+            && let Some(version @ (4 | 5)) = integer(encrypt, "V")
+        {
+            return open_filters(encrypt, version as u8, &mut decrypt, budget);
         }
-        let RecipientPayload::Document(payload) = payload.ok_or(Password::Recipient)? else {
+        let (profile, envelopes) = Profile::read(encrypt, budget)?;
+        let payload =
+            unwrap_list(envelopes.as_slice(), &mut decrypt, budget)?.ok_or(Password::Recipient)?;
+        let RecipientPayload::Document(payload) = payload else {
             return Err(Error::malformed(
                 "a default recipient filter requires four permission bytes after its seed",
             ));
         };
-        let permissions = u32::from_be_bytes(payload[20..].try_into().expect("four bytes"));
-        if profile.version == 5 && permissions & (1 << 12) == 0 {
-            return Err(Error::malformed(
-                "public-key encryption requires unsupported PDF MAC validation",
-            ));
-        }
+        let permissions = permissions(&payload)?;
         let permissions = if profile.subfilter == "adbe.pkcs7.s3" {
             permissions & 0x3f
         } else {
             permissions
         };
-        profile.handler(&payload[..20], envelopes, permissions, budget)
+        profile.handler(&payload[..20], envelopes.as_slice(), permissions, budget)
     }
 
     /// For hayro's password-only interface, wrap the authenticated AES-256
@@ -341,14 +300,23 @@ impl Handler {
         if !self.is_recipient() || self.version != 5 {
             return Ok(None);
         }
+        // A public document with protected attachments has no authenticated
+        // document key. Its in-memory wrapper selects Identity on public content.
+        let key: &[u8] = if self.key.len() == 32 {
+            &self.key
+        } else if self.strings == Method::Identity && self.streams == Method::Identity {
+            &[0; 32]
+        } else {
+            return Ok(None);
+        };
         use std::fmt::Write;
         let mut password = String::with_capacity(64);
-        for b in crypto::sha256(&[b"pyropdf hayro bridge password", &self.key]) {
+        for b in crypto::sha256(&[b"pyropdf hayro bridge password", key]) {
             write!(&mut password, "{b:02x}").expect("writing to a string");
         }
         let mut random = [0; 64];
-        random[..32].copy_from_slice(&self.key);
-        random[32..].copy_from_slice(&crypto::sha256(&[b"pyropdf hayro bridge salts", &self.key]));
+        random[..32].copy_from_slice(key);
+        random[32..].copy_from_slice(&crypto::sha256(&[b"pyropdf hayro bridge salts", key]));
         let password_encryption = PasswordEncryption {
             user: password.as_bytes().into(),
             owner: password.as_bytes().into(),
@@ -357,11 +325,39 @@ impl Handler {
             random,
         };
         let (mut dict, _, _) = password_encryption.build(None, budget)?;
-        if self.strings == Method::Identity {
-            put_name(&mut dict, "StrF", "Identity");
+        let Some(Value::Dict(cf)) = dict.get_mut("CF") else {
+            unreachable!("Standard V5 filter dictionary")
+        };
+        let aes = cf
+            .remove("StdCF")
+            .expect("the Standard wrapper defines AES-256");
+        let mut entries = BudgetVec::new(budget);
+        for (name, method, selected) in self.filters.named.iter() {
+            budget.poll()?;
+            let available = match selected {
+                Key::File => true,
+                Key::Recipient(confirmed) => {
+                    confirmed.get().is_some_and(|other| other.as_ref() == key)
+                }
+            };
+            if available && *method == Method::Aes256 {
+                entries.try_push((name.clone(), aes.clone()))?;
+            }
         }
-        if self.streams == Method::Identity {
-            put_name(&mut dict, "StmF", "Identity");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the authenticated filter names are unique and their entries are bounded by the operation budget"
+        )]
+        {
+            *cf = entries.into_vec().into_iter().collect();
+        }
+        for (field, name) in [
+            ("StmF", &self.filters.streams),
+            ("StrF", &self.filters.strings),
+        ] {
+            if let Some(name) = name {
+                put(&mut dict, field, Value::Name(name.clone()));
+            }
         }
         if !self.encrypt_metadata {
             put(&mut dict, "EncryptMetadata", Value::Boolean(false));
@@ -370,7 +366,7 @@ impl Handler {
             perms[..4].copy_from_slice(&p.to_le_bytes());
             perms[4..8].fill(0xff);
             perms[8..12].copy_from_slice(b"Fadb");
-            let perms = crypto::aes256_ecb_block(&self.key, perms, false)?;
+            let perms = crypto::aes256_ecb_block(key, perms, false)?;
             put(
                 &mut dict,
                 "Perms",
@@ -383,7 +379,7 @@ impl Handler {
 
 fn derive_key<D: Digest>(
     seed: &[u8],
-    envelopes: &Array,
+    envelopes: &[Value],
     clear_metadata: bool,
     size: usize,
     budget: &Budget,
@@ -398,81 +394,6 @@ fn derive_key<D: Digest>(
         hash.update([0xff; 4]);
     }
     Ok(Box::from(&hash.finalize()[..size]))
-}
-
-/// Map a clear metadata stream's explicit Identity filter to the store's
-/// ordinary filter chain. Other explicit stream overrides belong to #893.
-pub(super) fn stream_filter(
-    dict: &mut Dict,
-    clear_metadata: bool,
-    encrypt: bool,
-    budget: &Budget,
-) -> Result<()> {
-    fn items(value: Option<&Value>) -> &[Value] {
-        match value {
-            Some(Value::Array(a)) => a.as_slice(),
-            Some(v) => std::slice::from_ref(v),
-            None => &[],
-        }
-    }
-    let filters = items(dict.get("Filter"));
-    let params = items(dict.get("DecodeParms"));
-    budget.check(LimitCode::StreamFilterCount, filters.len() as u64)?;
-    let crypt = |v: &Value| matches!(v, Value::Name(n) if n.as_bytes() == b"Crypt");
-    let explicit = filters.iter().position(crypt);
-    if explicit.is_none() && !(clear_metadata && encrypt) {
-        return Ok(());
-    }
-    if !clear_metadata || explicit.is_some_and(|i| i != 0 || filters[1..].iter().any(crypt)) {
-        return Err(Error::malformed(
-            "explicit public-key stream /Crypt override is unsupported",
-        ));
-    }
-    if !params.is_empty() && params.len() != filters.len() {
-        return Err(Error::malformed(
-            "metadata filter parameters must correspond to its filters",
-        ));
-    }
-    let skip = usize::from(explicit.is_some());
-    if skip != 0 {
-        let selected = match params.first() {
-            None | Some(Value::Null) => None,
-            Some(Value::Dict(param)) => param.get("Name"),
-            _ => return Err(Error::malformed("invalid metadata /Crypt parameters")),
-        };
-        if !matches!(selected, None | Some(Value::Name(_)))
-            || matches!(selected, Some(Value::Name(n)) if n.as_bytes() != b"Identity")
-        {
-            return Err(Error::malformed(
-                "clear metadata requires an Identity crypt filter",
-            ));
-        }
-        if encrypt {
-            return Ok(());
-        }
-    }
-    let mut methods = BudgetVec::new(budget);
-    let mut options = BudgetVec::new(budget);
-    if encrypt {
-        budget.check(LimitCode::StreamFilterCount, filters.len() as u64 + 1)?;
-        methods.try_push(Value::Name(Name::from("Crypt")))?;
-        let mut identity = Dict::new();
-        put_name(&mut identity, "Name", "Identity");
-        options.try_push(Value::Dict(identity))?;
-    }
-    for (i, method) in filters.iter().enumerate().skip(skip) {
-        methods.try_push(method.clone())?;
-        options.try_push(params.get(i).cloned().unwrap_or(Value::Null))?;
-    }
-    dict.remove("Filter");
-    dict.remove("DecodeParms");
-    if !methods.is_empty() {
-        put(dict, "Filter", Value::Array(methods.into_vec().into()));
-        if options.iter().any(|v| !matches!(v, Value::Null)) {
-            put(dict, "DecodeParms", Value::Array(options.into_vec().into()));
-        }
-    }
-    Ok(())
 }
 
 fn envelope<'a>(value: &'a Value, budget: &Budget) -> Result<&'a [u8]> {
@@ -544,7 +465,7 @@ impl RecipientEncryption {
         let profile = Profile::aes(self.aes256, self.encrypt_metadata);
         let bits = (profile.length * 8) as i64;
         let cfm = if self.aes256 { "AESV3" } else { "AESV2" };
-        let handler = profile.handler(&self.seed, &envelopes, u32::MAX, budget)?;
+        let mut handler = profile.handler(&self.seed, envelopes.as_slice(), u32::MAX, budget)?;
         let mut cf = Dict::new();
         put_name(&mut cf, "CFM", cfm);
         put_name(&mut cf, "AuthEvent", "DocOpen");
@@ -569,6 +490,194 @@ impl RecipientEncryption {
         put(&mut dict, "CF", Value::Dict(filters));
         put_name(&mut dict, "StmF", "DefaultCryptFilter");
         put_name(&mut dict, "StrF", "DefaultCryptFilter");
+        let mut entries = BudgetVec::new(budget);
+        entries.try_push((Name::from("DefaultCryptFilter"), profile.streams, Key::File))?;
+        handler.filters = Filters::from_entries(&dict, entries)?;
         Ok((dict, copy(id.unwrap_or(&self.id), budget)?, handler))
     }
+}
+
+fn permissions(payload: &[u8]) -> Result<u32> {
+    let flags: [u8; 4] = payload
+        .get(20..)
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(|| {
+            Error::malformed("a default recipient payload needs a seed and four permission bytes")
+        })?;
+    Ok(u32::from_be_bytes(flags))
+}
+
+fn unwrap_list(
+    values: &[Value],
+    decrypt: &mut impl FnMut(&[u8]) -> Result<Option<RecipientPayload>>,
+    budget: &Budget,
+) -> Result<Option<RecipientPayload>> {
+    let mut payload = None;
+    for value in values {
+        budget.poll()?;
+        let der = envelope(value, budget)?;
+        if payload.is_none() {
+            budget.charge(LimitCode::MemorySize, der.len() as u64)?;
+            let result = decrypt(der);
+            budget.release(LimitCode::MemorySize, der.len() as u64);
+            payload = result?;
+        }
+    }
+    Ok(payload)
+}
+
+fn open_filters(
+    encrypt: &Dict,
+    version: u8,
+    decrypt: &mut impl FnMut(&[u8]) -> Result<Option<RecipientPayload>>,
+    budget: &Budget,
+) -> Result<Handler> {
+    let strings = selected(encrypt, "StrF", IDENTITY)?;
+    let streams = selected(encrypt, "StmF", IDENTITY)?;
+    let embedded = selected(encrypt, "EFF", streams)?;
+    let Some(Value::Dict(filters)) = encrypt.get("CF") else {
+        return Err(Error::malformed("missing public-key /CF"));
+    };
+    let mut entries = BudgetVec::new(budget);
+    let mut primary: Option<(bool, Handler)> = None;
+    let document_public = strings == IDENTITY && streams == IDENTITY;
+    let mut doc_permissions = if document_public { 0 } else { u32::MAX };
+    let mut total = 0usize;
+    for (name, filter) in filters.iter() {
+        budget.poll()?;
+        let name_bytes = name.as_bytes();
+        let Value::Dict(filter) = filter else {
+            return Err(Error::malformed(
+                "a public-key /CF entry must be a dictionary",
+            ));
+        };
+        if name_bytes == IDENTITY {
+            return Err(Error::malformed(
+                "the built-in /Identity crypt filter cannot be redefined",
+            ));
+        }
+        let mut profile = Profile::crypt_filter(encrypt, filter, version)?;
+        let event = selected(filter, "AuthEvent", b"DocOpen")?;
+        if !matches!(event, b"DocOpen" | b"EFOpen") {
+            return Err(Error::malformed("invalid public-key /AuthEvent"));
+        }
+        let required = name_bytes == strings || name_bytes == streams;
+        let (recipients, with_permissions) = match filter.get("Recipients") {
+            Some(Value::Array(array)) if required || name_bytes == embedded => {
+                (array.as_slice(), true)
+            }
+            Some(v @ Value::String(_)) if !required => (std::slice::from_ref(v), false),
+            _ => {
+                return Err(Error::malformed(
+                    "invalid /Recipients for the selected public-key crypt filter",
+                ));
+            }
+        };
+        if recipients.is_empty() {
+            return Err(Error::malformed(
+                "a public-key recipient list must not be empty",
+            ));
+        }
+        total = total.saturating_add(recipients.len());
+        budget.check(LimitCode::RecipientCount, total as u64)?;
+        let method = profile.streams;
+        let key = match unwrap_list(recipients, decrypt, budget)? {
+            Some(payload) => {
+                let payload: &[u8] = match &payload {
+                    RecipientPayload::Document(bytes) => bytes,
+                    RecipientPayload::Stream(bytes) => bytes,
+                };
+                let flags = if with_permissions {
+                    let flags = permissions(payload)?;
+                    if flags & (1 << 12) == 0 && version == 5 {
+                        return Err(Error::malformed(
+                            "public-key encryption requires unsupported PDF MAC validation",
+                        ));
+                    }
+                    flags
+                } else if payload.len() == 20 {
+                    0
+                } else {
+                    return Err(Error::malformed(
+                        "a stream-specific CMS recipient payload must contain only a 20-byte seed",
+                    ));
+                };
+                if required {
+                    doc_permissions &= flags;
+                } else if document_public && name_bytes == embedded {
+                    doc_permissions = flags;
+                }
+                // Only the default stream filter's EncryptMetadata controls its key.
+                if name_bytes != streams && !(name_bytes == embedded && with_permissions) {
+                    profile.metadata = true;
+                }
+                let handler = profile.handler(&payload[..20], recipients, flags, budget)?;
+                let key = handler.key.clone();
+                let preferred = name_bytes == streams
+                    || (streams == IDENTITY && name_bytes == strings)
+                    || (streams == IDENTITY && strings == IDENTITY && name_bytes == embedded);
+                if primary
+                    .as_ref()
+                    .is_none_or(|(was_preferred, _)| preferred && !was_preferred)
+                {
+                    primary = Some((preferred, handler));
+                }
+                Some(key)
+            }
+            None if required => return Err(Password::Recipient.into()),
+            None => None,
+        };
+        let confirmed = OnceLock::new();
+        if let Some(key) = key {
+            let _ = confirmed.set(key);
+        }
+        entries.try_push((name.clone(), method, Key::Recipient(Arc::new(confirmed))))?;
+    }
+    let selection = Filters::from_entries(encrypt, entries)?;
+    let mut handler = match primary {
+        Some((_, handler)) => handler,
+        None if document_public => Handler {
+            key: Box::default(),
+            password: Box::default(),
+            recipient: Some(RecipientAccess {
+                profile_id: None,
+                subfilter: "adbe.pkcs7.s5",
+                owner: Arc::new(AtomicBool::new(false)),
+            }),
+            filters: Filters::default(),
+            version,
+            revision: 0,
+            strings: Method::Identity,
+            streams: Method::Identity,
+            permissions: 0,
+            access: Access::User,
+            encrypt_metadata: false,
+        },
+        None => return Err(Password::Recipient.into()),
+    };
+    if document_public {
+        handler.encrypt_metadata = false;
+    }
+    if streams == IDENTITY && strings == IDENTITY && embedded == IDENTITY {
+        doc_permissions = 0;
+    }
+    handler.permissions = doc_permissions;
+    handler.access = if doc_permissions & 2 != 0 {
+        Access::Owner
+    } else {
+        Access::User
+    };
+    if let Some(access) = &mut handler.recipient {
+        // Subsequent credentials share only keys verified against this same encryption dictionary.
+        access.profile_id = encrypt
+            .lexeme()
+            .map(|bytes| crypto::sha256(&[bytes.as_slice()]));
+        access
+            .owner
+            .store(handler.access == Access::Owner, Ordering::Relaxed);
+    }
+    handler.strings = selection.method(strings)?;
+    handler.streams = selection.method(streams)?;
+    handler.filters = selection;
+    Ok(handler)
 }
