@@ -526,6 +526,7 @@ interpret = { status = "partial", missing = "DeviceN alternate spaces and tint t
 clause = "8.6.7"
 description = "Overprint and its mode."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.tiling-patterns]
 clause = "8.7.3"
@@ -683,27 +684,31 @@ objects = ["ToUnicodeCMapStream"]
 clause = "10.3"
 description = "Converting colors to device colors, with rendering intents."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.device-color-conversion]
 clause = "10.4"
 description = "Conversions among device color spaces, black generation, and undercolor removal."
 objects = []
-edit = { status = "partial", missing = "Recoloring converts among DeviceGray, DeviceRGB, and DeviceCMYK with full black generation, without custom `/BG2` or `/UCR2` functions.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The output-device resources retain custom BG2 and UCR2 functions. Page and document recolouring still use full black generation and undercolor removal when rewriting RGB to CMYK.", milestone = "Phase 4: Specification" }
 
 [features.transfer-functions]
 clause = "10.5"
 description = "Transfer functions."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.halftones]
 clause = "10.6"
 description = "Halftone screens and spot functions."
 objects = ["HalftoneType1", "HalftoneType5", "HalftoneType6", "HalftoneType10", "HalftoneType16"]
+interpret = { status = "engine", upstream = 1001 }
 
 [features.scan-conversion]
 clause = "10.7"
 description = "Flatness, smoothness, and stroke adjustment."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.blend-modes]
 clause = "11.3.5"
@@ -1460,6 +1465,7 @@ objects = []
 clause = "8.6.5.8"
 description = "Select how out-of-gamut colours are translated for the output device."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.colour-operators]
 clause = "8.6.8"
@@ -1470,6 +1476,7 @@ objects = []
 clause = "10.8"
 description = "Render process and spot plates with the specified interactions between colourants."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.alpha-compositing]
 clause = "11.3"
