@@ -784,6 +784,26 @@ def source_matrix(jar: Path, directory: Path) -> list[tuple[str, Path]]:
     return run(jar, files, outcomes=outcomes)
 
 
+def archival_colour_controls(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Compare selected colours, actual painting, local defaults and transparency blending spaces."""
+    fixtures = runpy.run_path(str(ROOT / "tests/test_archival_output_intents.py"))
+    files = {}
+    outcomes = {}
+    for flavour, case, _device, rule in fixtures["CONTROLS"]:
+        with fixtures["control"](flavour, case) as doc:
+            original = doc.to_bytes()
+        with pyropdf.open(original) as doc:
+            doc.pages[0].rotation = 90
+            saves = {"original": original, "full": doc.to_bytes(), "incremental": doc.to_bytes(incremental=True)}
+        for mode, data in saves.items():
+            path = directory / f"archival-colour-{case}-{mode}.pdf"
+            path.write_bytes(data)
+            files[path] = flavour
+            if rule is not None:
+                outcomes[f"{flavour} {path.name}"] = ("device colour use", {rule})
+    return run(jar, files, outcomes=outcomes)
+
+
 def main() -> int:
     """Validate the corpus and its saves, and return the exit status."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -801,7 +821,8 @@ def main() -> int:
         files.update(language_saves(Path(directory)))
         files.update(remove_signature_saves(Path(directory) / "pdfa-2b-sign_revision-incremental.pdf", Path(directory)))
         targeted = profile_saves(Path(directory))
-        failures = source_failures + run(args.jar.resolve(), targeted)
+        failures = source_failures + archival_colour_controls(args.jar.resolve(), Path(directory))
+        failures += run(args.jar.resolve(), targeted)
         failures += run(args.jar.resolve(), dual_archival(targeted))
         failures += run(args.jar.resolve(), files)
         failures += run(args.jar.resolve(), dual_archival(files))
