@@ -43,6 +43,14 @@ Document.pages: Pages
 
 The pages, a sequence of `Page` handles that edits keep valid.
 
+### `Document.alternate_presentations`
+
+```python
+Document.alternate_presentations: dict[bytes, SlideShow]
+```
+
+Read the catalog's multi-level AlternatePresentations name tree as existing slideshows.
+
 ### `Document.attachments`
 
 ```python
