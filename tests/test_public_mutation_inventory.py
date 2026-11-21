@@ -29,6 +29,12 @@ if TYPE_CHECKING:
 # denotes a property assignment and 'del:' denotes a property deletion.
 MUTATIONS = (
     (
+        "model_measurement",
+        "Update existing 3D geometry while retaining the measurement and its other entries.",
+        "ModelMeasurement",
+        "apply_to",
+    ),
+    (
         "sign_revision",
         "Adopt the signed incremental revision, binding the field and its byte ranges.",
         "Document",
@@ -613,6 +619,7 @@ READ_ONLY = {
     "Layers": "visible",
     "Layout": "to_dict to_html to_xml",
     "Matrix": "planish",
+    "ModelMeasurement": "from_view",
     "Operations": "parse to_bytes",
     "Outline": "walk entries",
     "OutlineItem": "to_entry",

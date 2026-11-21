@@ -1983,7 +1983,48 @@ def check_timestamp(doc: pyropdf.Document) -> None:
     assert len(stamp.byte_range) == 4
 
 
+def prepare_model_measurement(doc: pyropdf.Document) -> None:
+    # An unattached measurement exercises the same geometry update on every
+    # corpus edition, including profiles that prohibit 3D annotations.
+    doc.objects.add(
+        {
+            "Type": pyropdf.Name("3DMeasure"),
+            "Subtype": pyropdf.Name("3DC"),
+            "TRL": MARKER,
+            "A1": [0, 0, 0],
+            "TP": [0, 1, 0],
+        }
+    )
+
+
+def model_measurement(doc: pyropdf.Document) -> pyropdf.typed.ThreeDMeasure3DC:
+    for xref in sorted(doc.objects, reverse=True):
+        obj = doc.objects[xref]
+        if isinstance(obj, Dictionary) and obj.get("Type") == "3DMeasure" and obj.get("TRL") == MARKER.encode():
+            return pyropdf.typed.ThreeDMeasure3DC(obj)
+    msg = "missing preservation measurement"
+    raise AssertionError(msg)
+
+
+def edit_model_measurement(doc: pyropdf.Document) -> set[int]:
+    measure = model_measurement(doc)
+    geometry = pyropdf.ModelMeasurement(
+        kind=pyropdf.ModelMeasurementType.POINT_COMMENT, anchor=(2, 3, 5), text_position=(0, 1, 0)
+    )
+    geometry.apply_to(measure)
+    return {number(measure.obj)}
+
+
+def check_model_measurement(doc: pyropdf.Document) -> None:
+    measure = model_measurement(doc)
+    assert tuple(measure.A1.obj) == (2, 3, 5)
+    assert tuple(measure.TP.obj) == (0, 1, 0)
+
+
 FAMILY_EDITS = {
+    "model_measurement": Edit(
+        prepare=prepare_model_measurement, apply=edit_model_measurement, check=check_model_measurement
+    ),
     "action_triggers": Edit(prepare=prepare_widget_events, apply=edit_widget_events, check=check_widget_events),
     "annotation_relations": Edit(
         prepare=prepare_replies, apply=edit_replies, check=check_replies, affected_pages=first_page
