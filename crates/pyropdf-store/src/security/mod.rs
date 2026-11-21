@@ -12,7 +12,7 @@
 
 mod crypto;
 mod recipient;
-pub use recipient::RecipientEncryption;
+pub use recipient::{RecipientEncryption, RecipientPayload};
 #[cfg(test)]
 mod tests;
 mod value;
