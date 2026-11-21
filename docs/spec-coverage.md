@@ -602,12 +602,13 @@ before a test can be cited for that specific correction. The register gives no a
 
 ### Reviewed behavioral requirements
 
-Of 296 correction IDs with behavioral dimensions, 11 have a reviewed crosswalk in at least one scope. 285 await one. One correction can have several role or revision variants.
+Of 296 correction IDs with behavioral dimensions, 12 have a reviewed crosswalk in at least one scope. 284 await one. One correction can have several role or revision variants.
 
-5 open work, 4 reasoned disposition, 16 targeted evidence.
+5 open work, 4 reasoned disposition, 17 targeted evidence.
 
 | Behavior | Edition and provision | Correction | Requirement and evidence |
 | --- | --- | --- | --- |
+| alphabetic-page-labels | ISO 32000-2:2020 12.4.2, Table 161, S entry | [593](https://github.com/pdf-association/pdf-issues/issues/593) | For styles A and a, number successive groups of 26 pages with repeated copies of the same uppercase or lowercase letter. `tests/test_page_labels.py::test_alphabetic_labels_repeat_letters_in_blocks_of_26[uppercase]`, `tests/test_page_labels.py::test_alphabetic_labels_repeat_letters_in_blocks_of_26[lowercase]` |
 | permissions-r5 | ISO 32000-2:2020 7.6.4.3.3, 7.6.4.4.9 and 7.6.4.4.12 | [24](https://github.com/pdf-association/pdf-issues/issues/24) | Decrypt the 16-byte permissions value using the document key; compare the permission bits and metadata indicator. References: FIPS PUB 197 (2001), AES-256, NIST SP 800-38A (2001), ECB. `tests/test_security_corrections.py::test_permissions_are_one_ecb_block_under_the_document_key[read-r5]` |
 | permissions-r6 | ISO 32000-2:2020 7.6.4.3.3, 7.6.4.4.9 and 7.6.4.4.12 | [24](https://github.com/pdf-association/pdf-issues/issues/24) | Decrypt the 16-byte permissions value using the document key; compare the permission bits and metadata indicator. References: FIPS PUB 197 (2001), AES-256, NIST SP 800-38A (2001), ECB. `tests/test_security_corrections.py::test_permissions_are_one_ecb_block_under_the_document_key[read-r6]`, `tests/test_security_corrections.py::test_permissions_are_one_ecb_block_under_the_document_key[write-r6]` |
 | password-hash-user | ISO 32000-2:2020 7.6.4.3.4 | [325](https://github.com/pdf-association/pdf-issues/issues/325) | Check 64 repetitions of the password and hash with no user entry. References: FIPS 180-4 (2015), SHA-256/384/512, FIPS PUB 197 (2001), AES-128. `tests/test_security_corrections.py::test_revision_six_uses_the_correct_password_hash_sequence[user]` |

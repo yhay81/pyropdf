@@ -317,7 +317,7 @@ issue	locations	features	dimensions	work	summary	section_sha256
 567	32000-2-2020/clause08.html#H8.11.4.4	accessibility optional-content	interpret		Language-dependent visibility versus content language
 568	32000-2-2020/clause14.html#H14.13.1	associated-files xmp-metadata	read interpret create edit preserve		File associations on XML metadata streams
 577	32000-2-2020/clause12.html#H12.5.2	annotations	read interpret create edit preserve		Nonstroking alpha for a form object
-593	32000-2-2020/clause12.html#H12.4.2	page-labels	interpret		Alphabetic numbering in page labels
+593	32000-2-2020/clause12.html#H12.4.2	page-labels	interpret		Alphabetic numbering in page labels	1005f7873c0be0cf44a9211dbdd44cb9f3bf9ad07e2366639616415119525a97
 594	32000-2-2020/clause07.html#H7.5.7	object-streams	read interpret create edit preserve		References to object streams
 598	32000-2-2020/clause07.html#H7.11.4.1	embedded-files	read interpret create edit preserve		Date entries for an embedded file
 602	32002-2022/clause01.html	ecc-signatures			Terminology for elliptic curve signatures

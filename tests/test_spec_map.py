@@ -532,6 +532,20 @@ def test_clause_claims_resolve_typed_objects_and_report_their_work(tmp_path: Pat
     assert "page-tree edit tests: tests/test_pages.py::" in narrow.stdout
 
 
+@pytest.mark.parametrize("case", ["uppercase", "lowercase"])
+def test_page_label_scope_requires_each_corrected_alphabetic_sequence(tmp_path: Path, case: str) -> None:
+    root = copy_root(tmp_path)
+    evidence = record_evidence(root)
+    node = f"tests/test_page_labels.py::test_alphabetic_labels_repeat_letters_in_blocks_of_26[{case}]"
+    del evidence["tests"][node]
+
+    result = claim(root, 'features = ["page-labels"]', evidence)
+    assert result.returncode == 1, result.stderr
+    assert any(
+        "pdf-issues#593" in line and f"Missing passing evidence: {node}" in line for line in result.stdout.splitlines()
+    )
+
+
 def test_claimed_standards_require_their_own_passing_evidence(tmp_path: Path) -> None:
     root = copy_root(tmp_path)
     metadata = {"profiles": ["PDF/UA-2"], "extensions": ["ISO/TS 32003:2023"]}

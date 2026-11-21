@@ -27,6 +27,17 @@ page_only = [422]
 # Reviewed behavior-level obligations. The pinned correction register records the source section digest.
 
 [[behaviors]]
+id = "alphabetic-page-labels"
+edition = "ISO 32000-2:2020"
+provision = "12.4.2, Table 161, S entry"
+features = ["page-labels"]
+dimensions = ["interpret"]
+summary = "For styles A and a, number successive groups of 26 pages with repeated copies of the same uppercase or lowercase letter."
+correction = 593
+reviewed_sha256 = "1005f7873c0be0cf44a9211dbdd44cb9f3bf9ad07e2366639616415119525a97"
+tests = ["tests/test_page_labels.py::test_alphabetic_labels_repeat_letters_in_blocks_of_26[uppercase]", "tests/test_page_labels.py::test_alphabetic_labels_repeat_letters_in_blocks_of_26[lowercase]"]
+
+[[behaviors]]
 id = "permissions-r5"
 edition = "ISO 32000-2:2020"
 provision = "7.6.4.3.3, 7.6.4.4.9 and 7.6.4.4.12"
