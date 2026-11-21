@@ -780,6 +780,19 @@ def artifact_widget_label_controls(jar: Path, directory: Path) -> list[tuple[str
             files[path] = "ua2"
             if mode != "original" and not has_label:
                 outcomes[f"ua2 {path.name}"] = ("#1094", {"8.10.2.3-1"})
+
+    with pyropdf.open(fixtures["tagged_signature_widget"]("legacy")) as doc:
+        del doc.form["Review"].obj["Contents"]
+        labeled = directory / "widget-role-map-original.pdf"
+        labeled.write_bytes(doc.to_bytes())
+        files[labeled] = "ua2"
+    with pyropdf.open(labeled) as doc:
+        doc.catalog["StructTreeRoot"]["RoleMap"] = {"ReviewLabel": pyropdf.Name("Span")}
+        for mode, incremental in (("full", False), ("incremental", True)):
+            path = directory / f"widget-role-map-{mode}.pdf"
+            path.write_bytes(doc.to_bytes(incremental=incremental))
+            files[path] = "ua2"
+            outcomes[f"ua2 {path.name}"] = ("#1094", {"8.10.2.3-1"})
     return run(jar, files, outcomes=outcomes)
 
 
