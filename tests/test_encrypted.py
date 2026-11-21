@@ -12,14 +12,18 @@ save: every fixture holds the same two pages. Intended differences:
 
 from __future__ import annotations
 
+import sysconfig
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 from test_pages import build_raw_pdf, numbered
 
 import pyropdf
 from pyropdf import Access, Encryption, Permissions
+
+if TYPE_CHECKING:
+    from pyhanko.pdf_utils.reader import PdfFileReader
 
 ASSETS = Path(__file__).parent / "assets" / "encrypted"
 
@@ -447,15 +451,21 @@ def test_public_key_edit_keeps_untouched_ciphertext(*, incremental: bool) -> Non
                     assert previous.objects[4]["FixtureValue"] == RECIPIENT_STRING
 
 
+@pytest.fixture(scope="module")
+def _pyhanko_oracle() -> None:
+    if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
+        pytest.skip("pyHanko imports enable the GIL on free-threaded Python")
+    # Register RFC 3161 before asn1crypto caches the reverse CMS content-type map.
+    from asn1crypto import tsp  # noqa: F401, PLC0415
+
+
 @pytest.mark.spec("public-key-security-handler", "create")
 @pytest.mark.parametrize("encrypt_metadata", [True, False])
 @pytest.mark.parametrize("method", ["aes-256", "aes-128"])
+@pytest.mark.usefixtures("_pyhanko_oracle")
 def test_public_key_output_read_by_pyhanko(method: Literal["aes-256", "aes-128"], *, encrypt_metadata: bool) -> None:
     import io  # noqa: PLC0415
-    import sysconfig  # noqa: PLC0415
 
-    if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
-        pytest.skip("pyHanko imports enable the GIL on free-threaded Python")
     from asn1crypto import keys, x509  # noqa: PLC0415
     from pyhanko.pdf_utils.crypt.pubkey import SimpleEnvelopeKeyDecrypter  # noqa: PLC0415
     from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
@@ -837,3 +847,440 @@ def test_recipient_cms_seed_shape_does_not_grant_default_permissions(length: int
             with pytest.raises(pyropdf.MalformedPdfError, match=message):
                 doc.unlock(owner)
             assert doc.needs_password
+
+
+def _independent_crypt_reader(data: bytes, handler: str) -> PdfFileReader:
+    """Open the result with pyHanko's independent crypt-filter implementation."""
+    import io  # noqa: PLC0415
+
+    from asn1crypto import keys, x509  # noqa: PLC0415
+    from pyhanko.pdf_utils.crypt.pubkey import SimpleEnvelopeKeyDecrypter  # noqa: PLC0415
+    from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
+
+    reader = PdfFileReader(io.BytesIO(data))
+    if handler == "password":
+        reader.decrypt("owner")
+    else:
+        key = keys.PrivateKeyInfo.load((RECIPIENT_ASSETS / "recipient-owner.key").read_bytes())
+        cert = x509.Certificate.load((RECIPIENT_ASSETS / "recipient-owner.cer").read_bytes())
+        reader.decrypt_pubkey(SimpleEnvelopeKeyDecrypter(cert, key))
+    return reader
+
+
+def _add_crypt_streams(
+    doc: pyropdf.Document, selected: str, attachment: bytes, clear: bytes, private: bytes
+) -> tuple[int, int, int, int]:
+    name = pyropdf.Name
+    doc.attachments.add("file.bin", attachment)
+    ef = doc.catalog["Names"]["EmbeddedFiles"]["Names"][1]["EF"]["F"]
+    ef.write(attachment, filter=None)
+    ef_ref = ef.xref
+    public_ref = doc.objects.add_stream(clear, filter=None)
+    public = doc.objects[public_ref]
+    public["Filter"] = name("Crypt")
+    # A missing /Name means /Identity. Dictionary strings still use StrF.
+    public["Marker"] = b"a protected PDF string"
+    private_ref = doc.objects.add_stream(private)
+    protected = doc.objects[private_ref]
+    protected["Filter"] = [name("Crypt"), name("FlateDecode")]
+    protected["DecodeParms"] = [{"Name": name(selected)}, None]
+    ordinary_ref = doc.objects.add_stream(b"unrelated private stream", filter=None)
+    return ef_ref, public_ref, private_ref, ordinary_ref
+
+
+@pytest.mark.parametrize("handler", ["password", "recipient"])
+@pytest.mark.parametrize("method", ["aes-128", "aes-256"])
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.spec("crypt-filter", "read", "create", "edit", "preserve")
+@pytest.mark.spec("crypt-filters", "read", "interpret", "create", "edit", "preserve")
+@pytest.mark.usefixtures("_pyhanko_oracle")
+def test_explicit_stream_crypt_and_embedded_defaults(
+    handler: str, method: Literal["aes-128", "aes-256"], *, incremental: bool
+) -> None:
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+
+    name = pyropdf.Name
+    password = "owner" if handler == "password" else None
+    credential = recipient("owner") if handler == "recipient" else None
+    options = (
+        pyropdf.RecipientEncryption(recipients={credential.certificate: None}, method=method)
+        if credential is not None
+        else Encryption(user_password="user", owner_password="owner", method=method)
+    )
+    selected = "StdCF" if handler == "password" else "DefaultCryptFilter"
+    attachment = b"data governed by the embedded-file default"
+    clear = b"explicitly public ordinary stream"
+    private = b"a distinct named and compressed stream"
+    with pyropdf.open(numbered(1)) as doc:
+        ef_ref, public_ref, private_ref, ordinary_ref = _add_crypt_streams(doc, selected, attachment, clear, private)
+        initial = doc.to_bytes(encryption=options)
+    assert clear in initial
+    assert private not in initial
+    assert attachment not in initial
+    reader = _independent_crypt_reader(initial, handler)
+    assert reader.get_object(generic.Reference(private_ref, 0, reader)).data == private
+    assert reader.get_object(generic.Reference(public_ref, 0, reader)).data == clear
+    untouched = initial.split(f"{ordinary_ref} 0 obj\n".encode(), 1)[1].split(b"\nendobj", 1)[0]
+    with pyropdf.open(initial, password=password, credential=credential) as doc:
+        assert doc.objects[private_ref].read() == private
+        assert doc.objects[public_ref]["Marker"] == b"a protected PDF string"
+        assert doc.attachments["file.bin"].read() == attachment
+        doc.trailer["Encrypt"]["EFF"] = name("Identity")
+        doc.objects[private_ref]["DecodeParms"][0]["Name"] = name("Identity")
+        # The old public stream is now protected by the explicit named filter.
+        doc.objects[public_ref]["DecodeParms"] = {"Name": name(selected)}
+        changed = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
+    assert untouched in changed
+    if incremental:
+        assert changed.startswith(initial)
+    reader = _independent_crypt_reader(changed, handler)
+    for reference, expected in ((public_ref, clear), (private_ref, private), (ef_ref, attachment)):
+        assert reader.get_object(generic.Reference(reference, 0, reader)).data == expected
+    assert attachment in changed
+    with pyropdf.open(changed, password=password, credential=credential) as doc:
+        assert doc.objects[public_ref].read() == clear
+        assert doc.objects[private_ref].read() == private
+        assert doc.attachments["file.bin"].read() == attachment
+        assert doc.objects[ordinary_ref].read() == b"unrelated private stream"
+        if incremental:
+            with doc.revisions[0].open() as old:
+                assert old.attachments["file.bin"].read() == attachment
+                assert old.objects[private_ref].read() == private
+                assert "EFF" not in old.trailer["Encrypt"]
+        plain = doc.to_bytes()
+    with pyropdf.open(plain) as doc:
+        assert doc.objects[private_ref].read() == private
+        assert name("Crypt") not in doc.objects[private_ref]["Filter"]
+        assert "Filter" not in doc.objects[public_ref]
+
+
+@pytest.mark.parametrize(
+    ("filters", "params", "message"),
+    [
+        (["FlateDecode", "Crypt"], [None, None], "first"),
+        (["Crypt", "Crypt"], [None, None], "only"),
+        (["Crypt", "FlateDecode"], [None], "correspond"),
+        (["Crypt"], [{"Name": 12}], "must name"),
+        (["Crypt"], [{"Type": pyropdf.Name("Wrong")}], "parameter /Type"),
+        (["Crypt"], [{"Name": pyropdf.Name("Absent")}], "undefined"),
+    ],
+)
+@pytest.mark.spec("crypt-filter", "create", "edit")
+def test_malformed_explicit_stream_crypt_refuses_save(
+    filters: list[str], params: list[object], message: str, tmp_path: Path
+) -> None:
+    path = tmp_path / "unchanged.pdf"
+    path.write_bytes(b"untouched")
+    with pyropdf.open(numbered(1)) as doc:
+        ref = doc.objects.add_stream(b"secret", filter=None)
+        doc.objects[ref]["Filter"] = [pyropdf.Name(f) for f in filters]
+        doc.objects[ref]["DecodeParms"] = params
+        with pytest.raises(pyropdf.MalformedPdfError, match=message):
+            doc.save(path, encryption=Encryption(user_password="u"))
+    assert path.read_bytes() == b"untouched"
+
+
+@pytest.mark.spec("crypt-filters", "create")
+def test_encryption_requires_a_resolved_filter_selector(tmp_path: Path) -> None:
+    path = tmp_path / "existing.pdf"
+    path.write_bytes(b"unchanged")
+    with pyropdf.open(numbered(1)) as doc:
+        stream = doc.objects[doc.objects.add_stream(b"test data", filter=None)]
+        filters = doc.objects[doc.objects.add([pyropdf.Name("Crypt")])]
+        stream["Filter"] = filters
+        with pytest.raises(pyropdf.MalformedPdfError, match="unresolved /Filter"):
+            doc.save(path, encryption=Encryption(user_password="reader"))
+        assert stream["Filter"].xref == filters.xref
+    assert path.read_bytes() == b"unchanged"
+
+
+def _private_recipient_control(*, attachment_only: bool, implicit: bool) -> bytes:
+    """Produce two independent recipient seeds with pyHanko (ISO Table 27)."""
+    import io  # noqa: PLC0415
+    import re  # noqa: PLC0415
+
+    from asn1crypto import x509  # noqa: PLC0415
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.crypt.api import CryptFilterConfiguration, SecurityHandlerVersion  # noqa: PLC0415
+    from pyhanko.pdf_utils.crypt.pubkey import (  # noqa: PLC0415
+        PubKeyAdbeSubFilter,
+        PubKeyAESCryptFilter,
+        PubKeySecurityHandler,
+        RecipientEncryptionPolicy,
+    )
+    from pyhanko.pdf_utils.embed import EmbeddedFileObject  # noqa: PLC0415
+    from pyhanko.pdf_utils.writer import PageObject, PdfFileWriter  # noqa: PLC0415
+
+    name = generic.pdf_name
+    writer = PdfFileWriter(stream_xrefs=False)
+    public, private = name("/PublicDefault"), name("/PrivateContent")
+    default = name("/Identity") if attachment_only else public
+    normal = PubKeyAESCryptFilter(keylen=32, acts_as_default=True)
+    restricted = PubKeyAESCryptFilter(keylen=32, acts_as_default=False)
+    config = CryptFilterConfiguration(
+        {private: restricted} if attachment_only else {public: normal, private: restricted},
+        default_stream_filter=default,
+        default_string_filter=default,
+        default_file_filter=private,
+    )
+    crypto = PubKeySecurityHandler(
+        SecurityHandlerVersion.AES256, PubKeyAdbeSubFilter.S5, 32, crypt_filter_config=config, compat_entries=False
+    )
+    certs = [
+        x509.Certificate.load((RECIPIENT_ASSETS / f"recipient-{label}.cer").read_bytes())
+        for label in ("owner", "editor")
+    ]
+    if not attachment_only:
+        normal.add_recipients(certs, policy=RecipientEncryptionPolicy())
+    restricted.add_recipients(certs[:1], policy=RecipientEncryptionPolicy())
+    writer._assign_security_handler(crypto)  # noqa: SLF001 - pyHanko accepts a custom crypt-filter configuration here.
+    page = PageObject(writer.add_object(generic.StreamObject(stream_data=b"0 g 1 2 3 4 re f\n")), [0, 0, 40, 50])
+    page[name("/FixtureName")] = generic.TextStringObject("fixture string")
+    writer.insert_page(page)
+    named = generic.StreamObject(stream_data=b"Named private data")
+    named.compress()
+    named.add_crypt_filter(private, handler=crypto)
+    writer.root[name("/FixtureNamed")] = writer.add_object(named)
+    embedded = EmbeddedFileObject.from_file_data(writer, b"Embedded private data", compress=False)
+    writer.root[name("/FixtureEmbedded")] = embedded.ef_stream_ref
+    output = io.BytesIO()
+    writer.write(output)
+    data = output.getvalue()
+    if implicit:
+        # pyHanko explicitly spells its /EFF on embedded-file writes. Remove
+        # just those entries without disturbing any offsets or ciphertext.
+        start = data.index(b"/Type /EmbeddedFile")
+        end = data.index(b"stream", start)
+        head = data[start:end]
+        for pattern in (rb"/Filter\s*/Crypt\b", rb"/DecodeParms\s*<<[^>]*>>"):
+            head, count = re.subn(pattern, lambda m: b" " * len(m[0]), head)
+            assert count == 1
+        data = data[:start] + head + data[end:]
+    return data
+
+
+@pytest.mark.spec("crypt-filter", "read", "preserve")
+@pytest.mark.spec("crypt-filters", "read", "interpret")
+@pytest.mark.parametrize("attachment_only", [False, True])
+@pytest.mark.parametrize("implicit", [False, True])
+@pytest.mark.usefixtures("_pyhanko_oracle")
+def test_distinct_cms_filter_keys_and_credential_upgrade(*, attachment_only: bool, implicit: bool) -> None:
+    data = _private_recipient_control(attachment_only=attachment_only, implicit=implicit)
+    owner, editor = recipient("owner"), recipient("editor")
+    with pyropdf.open(data, credential=None if attachment_only else editor) as doc:
+        assert doc.pages[0].obj["Contents"].read() == b"0 g 1 2 3 4 re f\n"
+        assert doc.pages[0].obj["FixtureName"] == b"fixture string"
+        with pytest.raises(pyropdf.PasswordError):
+            doc.catalog["FixtureNamed"].read()
+        with pytest.raises(pyropdf.PasswordError):
+            doc.catalog["FixtureEmbedded"].read()
+        doc.catalog["KeepThisEdit"] = 1
+        doc.unlock(owner)
+        assert doc.catalog["FixtureNamed"].read() == b"Named private data"
+        assert doc.catalog["FixtureEmbedded"].read() == b"Embedded private data"
+        assert doc.catalog["KeepThisEdit"] == 1
+        for incremental in (True, False):
+            output = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
+            with pyropdf.open(output, credential=owner) as reopened:
+                assert reopened.catalog["FixtureNamed"].read() == b"Named private data"
+                assert reopened.catalog["FixtureEmbedded"].read() == b"Embedded private data"
+                assert reopened.catalog["KeepThisEdit"] == 1
+            with pyropdf.open(output, credential=editor) as limited, pytest.raises(pyropdf.PasswordError):
+                limited.catalog["FixtureEmbedded"].read()
+
+
+@pytest.mark.parametrize("use_aes", [True, False], ids=["AESV2", "V2"])
+@pytest.mark.spec("crypt-filter", "read")
+@pytest.mark.usefixtures("_pyhanko_oracle")
+def test_explicit_legacy_filter_uses_the_global_key_from_an_independent_writer(*, use_aes: bool) -> None:
+    import io  # noqa: PLC0415
+
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.crypt.standard import StandardSecurityHandler, StandardSecuritySettingsRevision  # noqa: PLC0415
+    from pyhanko.pdf_utils.writer import PdfFileWriter  # noqa: PLC0415
+
+    writer = PdfFileWriter(stream_xrefs=False)
+    handler = StandardSecurityHandler.build_from_pw_legacy(
+        StandardSecuritySettingsRevision.RC4_OR_AES128,
+        writer.document_id[0],
+        "owner",
+        "user",
+        use_aes128=use_aes,
+    )
+    writer._assign_security_handler(handler)  # noqa: SLF001 - supply the independent writer's exact R4 configuration.
+    payload = b"a stream with the shared key"
+    stream = generic.StreamObject(stream_data=payload)
+    stream.compress()
+    stream.add_crypt_filter(generic.pdf_name("/StdCF"), handler=handler)
+    writer.root[generic.pdf_name("/WithCrypt")] = writer.add_object(stream)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    original = buffer.getvalue()
+    with pyropdf.open(original, password="user") as doc:
+        assert doc.catalog["WithCrypt"].read() == payload
+        saved = doc.to_bytes(incremental=True, encryption=Encryption.KEEP)
+        assert saved == original
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.spec("crypt-filters", "edit")
+def test_invalid_embedded_file_default_refuses_atomically(tmp_path: Path, *, incremental: bool) -> None:
+    with pyropdf.open(numbered(1)) as doc:
+        initial = doc.to_bytes(encryption=Encryption(owner_password="owner"))
+    with pyropdf.open(initial, password="owner") as doc:
+        path = tmp_path / "keep.pdf"
+        path.write_bytes(initial)
+        doc.trailer["Encrypt"]["EFF"] = pyropdf.Name("Undefined")
+        with pytest.raises(pyropdf.MalformedPdfError, match="undefined"):
+            doc.save(path, incremental=incremental, encryption=Encryption.KEEP)
+        assert path.read_bytes() == initial
+
+
+@pytest.mark.spec("crypt-filter", "read")
+def test_undefined_crypt_name_on_an_existing_stream_refuses_its_data() -> None:
+    with pyropdf.open(numbered(1)) as doc:
+        ref = doc.objects.add_stream(b"declared clear data", filter=None)
+        doc.objects[ref]["Filter"] = pyropdf.Name("Crypt")
+        doc.objects[ref]["DecodeParms"] = {"Name": pyropdf.Name("Identity")}
+        original = doc.to_bytes(encryption=Encryption(user_password="pw"))
+    assert original.count(b"/Name /Identity") == 1
+    damaged = original.replace(b"/Name /Identity", b"/Name /UnknownX")
+    with pyropdf.open(damaged, password="pw") as doc, pytest.raises(pyropdf.MalformedPdfError, match="undefined"):
+        doc.objects[ref].read()
+
+
+@pytest.mark.parametrize("selected", ["Identity", "StdCF"])
+@pytest.mark.parametrize("repeat_count", [False, True])
+@pytest.mark.spec("crypt-filter", "read")
+@pytest.mark.usefixtures("_pyhanko_oracle")
+def test_object_stream_members_obey_the_containers_explicit_crypt_filter(
+    monkeypatch: pytest.MonkeyPatch, selected: str, *, repeat_count: bool
+) -> None:
+    import io  # noqa: PLC0415
+
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.writer import PdfFileWriter  # noqa: PLC0415
+    from pyhanko.pdf_utils.xref import ObjectStream  # noqa: PLC0415
+
+    writer = PdfFileWriter()
+    writer.encrypt("owner", "user", pdf_mac=False)
+    container = writer.prepare_object_stream()
+    materialise = container.as_pdf_object
+
+    def with_filter() -> generic.StreamObject:
+        result = materialise()
+        result.add_crypt_filter(generic.pdf_name(f"/{selected}"), handler=writer.security_handler)
+        if repeat_count:
+            result[generic.pdf_name("/X")] = generic.NumberObject(1)
+        return result
+
+    assert isinstance(container, ObjectStream)
+    monkeypatch.setattr(container, "as_pdf_object", with_filter)
+    ref = writer.add_object(generic.TextStringObject("object stream member"), obj_stream=container)
+    writer.root[generic.pdf_name("/Packed")] = ref
+    output = io.BytesIO()
+    writer.write(output)
+    data = output.getvalue()
+    if repeat_count:
+        # The last /N supplies the member count. Equal-width replacements keep xref offsets valid.
+        assert data.count(b"/N 1\n/First") == data.count(b"/X 1\n/Length") == 1
+        data = data.replace(b"/N 1\n/First", b"/N 0\n/First").replace(b"/X 1\n/Length", b"/N 1\n/Length")
+    with pyropdf.open(data, password="user") as doc:
+        assert doc.catalog["Packed"] == b"object stream member"
+
+
+@pytest.mark.spec("crypt-filters", "interpret")
+@pytest.mark.parametrize("handler", ["password", "recipient"])
+@pytest.mark.parametrize("selected", ["default", "Identity"])
+def test_aes256_named_page_content_matches_the_clear_render(handler: str, selected: str) -> None:
+    with pyropdf.open(numbered(1)) as doc:
+        content = doc.objects[doc.objects.add_stream(b"0 g 11 12 18 33 re f\n", filter=None)]
+        doc.pages[0].obj["Contents"] = content
+        expected = doc.pages[0].pixmap(dpi=20).to_bytes()
+        default = "StdCF" if handler == "password" else "DefaultCryptFilter"
+        content["Filter"] = pyropdf.Name("Crypt")
+        content["DecodeParms"] = {"Name": pyropdf.Name(default if selected == "default" else selected)}
+        if handler == "password":
+            saved = doc.to_bytes(encryption=Encryption(user_password="pw"))
+            reopened = pyropdf.open(saved, password="pw")
+        else:
+            owner = recipient("owner")
+            saved = doc.to_bytes(encryption=pyropdf.RecipientEncryption(recipients={owner.certificate: None}))
+            reopened = pyropdf.open(saved, credential=owner)
+    with reopened:
+        assert reopened.pages[0].pixmap(dpi=20).to_bytes() == expected
+
+
+@pytest.mark.parametrize("role", ["EF", "RF"])
+@pytest.mark.parametrize("incremental", [True, False])
+@pytest.mark.spec("crypt-filters", "read", "edit", "preserve")
+@pytest.mark.usefixtures("_pyhanko_oracle")
+def test_untyped_file_streams_follow_their_current_file_specification(role: str, *, incremental: bool) -> None:
+    import io  # noqa: PLC0415
+
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
+
+    raw_a, raw_b = b"first untyped payload", b"second untyped payload"
+    with pyropdf.open(numbered(1)) as doc:
+        doc.attachments.add("file.bin", raw_a)
+        spec = doc.catalog["Names"]["EmbeddedFiles"]["Names"][1]
+        original = spec["EF"]["F"]
+        original.write(raw_a, filter=None)
+        del original["Type"]
+        other = doc.objects[doc.objects.add_stream(raw_b, filter=None)]
+        if role == "RF":
+            links = doc.objects[doc.objects.add([b"related.bin", original])]
+            spec["RF"] = doc.objects[doc.objects.add({"F": links})]
+            base = doc.objects[doc.objects.add_stream(b"primary file", filter=None)]
+            base["Type"] = pyropdf.Name("EmbeddedFile")
+            spec["EF"] = {"F": base}
+        else:
+            spec["EF"] = doc.objects[doc.objects.add({"F": original})]
+        first, second = original.xref, other.xref
+        protected = doc.to_bytes(
+            encryption=Encryption(user_password="user", owner_password="owner"), object_streams=True
+        )
+    with pyropdf.open(protected, password="owner") as doc:
+        doc.trailer["Encrypt"]["EFF"] = pyropdf.Name("Identity")
+        initial = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+    with pyropdf.open(initial, password="owner") as doc:
+        assert doc.objects[first].read() == raw_a
+        assert doc.objects[second].read() == raw_b
+        spec = doc.catalog["Names"]["EmbeddedFiles"]["Names"][1]
+        if role == "EF":
+            spec["EF"] = {"F": doc.objects[second]}
+        else:
+            spec["RF"] = {"F": [b"related.bin", doc.objects[second]]}
+        changed = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+    for data, clear_id, secret_id, clear_data, secret_data in (
+        (initial, first, second, raw_a, raw_b),
+        (changed, second, first, raw_b, raw_a),
+    ):
+        reader = PdfFileReader(io.BytesIO(data))
+        reader.decrypt("user")
+        # Inspect the actual active objects, including the last revision of
+        # an incremental edit, independently of any reader's type heuristic.
+        raw_clear = reader.get_object(generic.Reference(clear_id, 0, reader), never_decrypt=True).encoded_data
+        raw_secret = reader.get_object(generic.Reference(secret_id, 0, reader), never_decrypt=True).encoded_data
+        assert raw_clear == clear_data
+        assert raw_secret != secret_data
+        with pyropdf.open(data, password="user") as doc:
+            assert doc.objects[clear_id].read() == clear_data
+            assert doc.objects[secret_id].read() == secret_data
+
+
+@pytest.mark.spec("crypt-filters", "edit")
+def test_invalid_related_file_pairs_refuse_a_new_default_without_overwriting_the_original(tmp_path: Path) -> None:
+    with pyropdf.open(numbered(1)) as doc:
+        doc.attachments.add("file.bin", b"payload")
+        initial = doc.to_bytes(encryption=Encryption(owner_password="owner"))
+    with pyropdf.open(initial, password="owner") as doc:
+        spec = doc.catalog["Names"]["EmbeddedFiles"]["Names"][1]
+        spec["RF"] = {"F": [b"missing stream"]}
+        doc.trailer["Encrypt"]["EFF"] = pyropdf.Name("Identity")
+        path = tmp_path / "original.pdf"
+        path.write_bytes(initial)
+        with pytest.raises(pyropdf.MalformedPdfError, match="name and stream pairs"):
+            doc.save(path, incremental=True, encryption=Encryption.KEEP)
+        assert path.read_bytes() == initial
