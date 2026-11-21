@@ -652,7 +652,7 @@ def test_gcm_edit_keeps_original_ciphertext(*, incremental: bool) -> None:
 
 
 @pytest.mark.spec("aes-gcm", "create")
-@pytest.mark.parametrize("layout", ["table", "object-stream", "linearized"])
+@pytest.mark.parametrize("layout", ["table", "object-stream", "hybrid", "packed-hybrid", "linearized"])
 def test_gcm_new_save_interoperates_with_pyhanko(layout: str, tmp_path: Path) -> None:
     import io  # noqa: PLC0415
     import sysconfig  # noqa: PLC0415
@@ -671,7 +671,10 @@ def test_gcm_new_save_interoperates_with_pyhanko(layout: str, tmp_path: Path) ->
         doc.pages[0].obj["XXLabel"] = b"repeated"
         doc.pages[0].obj["XXOther"] = b"repeated"
         data = doc.to_bytes(
-            encryption=config, object_streams=layout == "object-stream", linearize=layout == "linearized"
+            encryption=config,
+            object_streams=layout in {"object-stream", "packed-hybrid"},
+            linearize=layout == "linearized",
+            cross_reference="hybrid" if layout.endswith("hybrid") else None,
         )
         assert data.startswith(b"%PDF-2.0")
         assert b"repeated" not in data
