@@ -2,7 +2,7 @@
 //! placeholder (e.g. a cross-reference stream) waits for the final length.
 
 use sha2::{Digest, Sha256};
-use std::io::Write;
+use std::io::{self, Write};
 
 use super::{Error, Mode, Output, Result, StoreError};
 use crate::budget::{Budget, BudgetVec, LimitCode};
@@ -190,6 +190,22 @@ impl<'b> MacOutput<'b> {
         format!("[0 {first:20} {end:20} {last:20}] /MAC ")
     }
 
+    /// Finish the classic portion of a hybrid and hash its actual token into the next revision.
+    pub(super) fn next_revision(out: &mut Output<'b>) -> Result<()> {
+        let Some(current) = out.mac.take() else {
+            return Ok(());
+        };
+        let mut next = Self::new(current.key.next_revision()?);
+        next.covered = current.covered.clone();
+        let mut sink = HashedWriter {
+            target: out.target,
+            hash: &mut next.covered,
+        };
+        current.finish(&mut sink, out.budget)?;
+        out.mac = Some(next);
+        Ok(())
+    }
+
     pub(super) fn finish(mut self, target: &mut dyn Write, budget: &Budget) -> Result<()> {
         let tail = self
             .tail
@@ -221,5 +237,22 @@ impl<'b> MacOutput<'b> {
             target.write_all(part)?;
         }
         Ok(())
+    }
+}
+
+struct HashedWriter<'a> {
+    target: &'a mut dyn Write,
+    hash: &'a mut Sha256,
+}
+
+impl Write for HashedWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let length = self.target.write(bytes)?;
+        self.hash.update(&bytes[..length]);
+        Ok(length)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.target.flush()
     }
 }

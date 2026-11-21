@@ -81,7 +81,7 @@ def test_incomplete_or_malformed_protection_is_reported(kind: str) -> None:
         assert doc.verify_integrity().status == "invalid"
 
 
-def _independent(data: bytes, *, rsa: bool = False) -> str:
+def _independent(data: bytes, *, rsa: bool = False, gcm: bool = False) -> str:
     from asn1crypto import keys, x509  # noqa: PLC0415
     from pyhanko.pdf_utils.crypt import SimpleEnvelopeKeyDecrypter  # noqa: PLC0415
     from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
@@ -98,6 +98,14 @@ def _independent(data: bytes, *, rsa: bool = False) -> str:
     assert result.mac_status is not None
     assert result.mac_status.name == "SUCCESSFUL", result.mac_failure_reason
     assert len(reader.security_handler.get_kdf_salt()) == 32
+    if gcm:
+        levels = {int(entry.get_object()["/ExtensionLevel"]) for entry in reader.root["/Extensions"]["/ISO_"]}
+        assert {32003, 32004} <= levels
+        encryption = reader.trailer_view["/Encrypt"]
+        assert encryption["/V"] == 6
+        assert encryption["/CF"][encryption["/StmF"]]["/CFM"] == "/AESV4"
+        if not rsa:
+            assert encryption["/R"] == 7
     return str(reader.trailer_view["/AuthCode"]["/MACLocation"])
 
 
@@ -276,3 +284,77 @@ def test_reject_removal_of_catalog_declaration() -> None:
         for incremental in (False, True):
             with pytest.raises(MalformedPdfError, match="catalog extension"):
                 doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+
+
+@requires_pyhanko
+@pytest.mark.spec("integrity-protection", "read", "interpret", "create", "edit", "preserve")
+@pytest.mark.parametrize("producer", ["pyhanko", "password", "recipient"])
+def test_document_mac_and_aes_gcm(producer: str) -> None:
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.writer import PageObject, PdfFileWriter  # noqa: PLC0415
+    from test_signing import _pem_signer, make_pki  # noqa: PLC0415
+
+    owner = recipient("owner") if producer == "recipient" else None
+    if producer == "pyhanko":
+        writer = PdfFileWriter()
+        contents = writer.add_object(generic.StreamObject(stream_data=b"q Q"))
+        writer.insert_page(PageObject(contents, (0, 0, 100, 100)))
+        writer.encrypt("ownerpw", "userpw", use_gcm=True, pdf_mac=True)
+        output = io.BytesIO()
+        writer.write(output)
+        data = output.getvalue()
+    else:
+        options = (
+            Encryption(user_password="userpw", owner_password="ownerpw", method="aes-gcm", integrity=True)
+            if owner is None
+            else pyropdf.RecipientEncryption(recipients={owner.certificate: None}, method="aes-gcm", integrity=True)
+        )
+        with pyropdf.Document() as doc:
+            doc.pages.new()
+            data = doc.to_bytes(encryption=options)
+    password = "userpw" if owner is None else None
+    with pyropdf.open(data, password=password, credential=owner) as doc:
+        assert doc.verify_integrity().status == "valid"
+        doc.pages[0].rotation = 90
+        appended = doc.to_bytes(incremental=True)
+        rewritten = doc.to_bytes(encryption=Encryption.KEEP)
+    assert appended.startswith(data)
+    with pyropdf.open(appended, password=password, credential=owner) as doc:
+        signed = doc.sign("Signer", _pem_signer(make_pki()))
+    assert signed.startswith(appended)
+    for revision, location in (
+        (data, "/Standalone"),
+        (rewritten, "/Standalone"),
+        (appended, "/Standalone"),
+        (signed, "/AttachedToSig"),
+    ):
+        assert _independent(revision, rsa=owner is not None, gcm=True) == location
+
+
+@requires_pyhanko
+@pytest.mark.spec("integrity-protection", "create", "edit", "preserve")
+@pytest.mark.parametrize("packed", [False, True])
+def test_every_hybrid_revision_has_its_own_mac(*, packed: bool) -> None:
+    from test_signing import _pem_signer, make_pki  # noqa: PLC0415
+
+    protected = Encryption(user_password="userpw", owner_password="ownerpw", integrity=True)
+    with pyropdf.Document() as doc:
+        doc.pages.new()
+        original = doc.to_bytes(encryption=protected, cross_reference="hybrid", object_streams=packed)
+    first_end = original.index(b"\n%%EOF\n") + len(b"\n%%EOF\n")
+    assert _independent(original[:first_end]) == "/Standalone"
+    assert _independent(original) == "/Standalone"
+    with pyropdf.open(original, password="ownerpw") as doc:
+        assert len(doc.revisions) == 2
+        for revision in doc.revisions:
+            with revision.open() as historical:
+                assert historical.verify_integrity().status == "valid"
+        doc.pages[0].rotation = 90
+        updated = doc.to_bytes(incremental=True)
+        assert updated.startswith(original)
+        assert _independent(updated) == "/Standalone"
+    with pyropdf.open(updated, password="userpw") as doc:
+        signed = doc.sign("Signer", _pem_signer(make_pki()))
+        assert signed.startswith(updated)
+        assert _independent(signed) == "/AttachedToSig"
+        assert doc.verify_integrity().status == "valid"

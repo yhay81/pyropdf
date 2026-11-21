@@ -58,6 +58,8 @@ pub enum Error {
     PasswordNotUtf8,
     /// Hayro accepts standard passwords, not a pre-V5 recipient file key.
     LegacyRecipientKey,
+    /// The pinned hayro password interface cannot authenticate individual AESV4 objects.
+    AesGcm,
     /// hayro could not read the bridged version.
     Unreadable,
     /// hayro's page list differs from the store's page index.
@@ -99,6 +101,7 @@ impl fmt::Display for Error {
                 f.write_str("a document opened with a password that is not UTF-8 cannot be interpreted")
             }
             Self::LegacyRecipientKey => f.write_str("hayro cannot interpret a legacy public-key file key through its password interface"),
+            Self::AesGcm => f.write_str("the current hayro reader cannot interpret AES-GCM encrypted pages"),
             Self::Unreadable => f.write_str("hayro cannot read the document"),
             Self::PageMismatch { store, hayro } => write!(
                 f,
@@ -167,6 +170,9 @@ impl Bridged {
     ) -> Result<Self> {
         let started = Instant::now();
         let handler = handler(version)?;
+        if handler.is_some_and(Handler::uses_gcm) {
+            return Err(Error::AesGcm);
+        }
         let bridge = handler
             .map(|h| h.recipient_bridge(budget))
             .transpose()?

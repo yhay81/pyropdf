@@ -314,7 +314,7 @@ def test_encryption_bounds_password_input(field: str) -> None:
         ({"permissions": True}, TypeError, "permissions must be Permissions flags"),
         ({"method": "rc4-128"}, ValueError, "does not write rc4-128 encryption"),
         ({"method": "RC4-40"}, ValueError, "does not write RC4-40 encryption"),
-        ({"method": "aes"}, ValueError, "method must be 'aes-256' or 'aes-128'"),
+        ({"method": "aes"}, ValueError, "method must be 'aes-256', 'aes-128' or 'aes-gcm'"),
         ({"method": "keep", "user_password": "u"}, ValueError, "Encryption.KEEP takes the passwords"),
     ],
 )
@@ -431,8 +431,10 @@ def test_public_key_edit_keeps_untouched_ciphertext(*, incremental: bool) -> Non
 
 @pytest.mark.spec("public-key-security-handler", "create")
 @pytest.mark.parametrize("encrypt_metadata", [True, False])
-@pytest.mark.parametrize("method", ["aes-256", "aes-128"])
-def test_public_key_output_read_by_pyhanko(method: Literal["aes-256", "aes-128"], *, encrypt_metadata: bool) -> None:
+@pytest.mark.parametrize("method", ["aes-256", "aes-128", "aes-gcm"])
+def test_public_key_output_read_by_pyhanko(
+    method: Literal["aes-256", "aes-128", "aes-gcm"], *, encrypt_metadata: bool
+) -> None:
     import io  # noqa: PLC0415
     import sysconfig  # noqa: PLC0415
 
@@ -581,3 +583,184 @@ def test_public_key_equal_permissions_share_a_cms_envelope() -> None:
         with pyropdf.open(saved, credential=credential) as doc:
             assert doc.permissions == Permissions.COPY
             assert len(doc.trailer["Encrypt"]["CF"]["DefaultCryptFilter"]["Recipients"]) == 1
+
+
+GCM_SOURCE = ASSETS / "user-aes-gcm.pdf"
+GCM_CONTENT = b"0 0 1 rg 1 1 6 5 re f\n"
+
+
+@pytest.mark.spec("aes-gcm", "read", "interpret")
+def test_gcm_authenticates_independent_password_and_recipient_inputs() -> None:
+    for password, access in (("ownerpw", Access.OWNER), ("userpw", Access.USER)):
+        with pyropdf.open(GCM_SOURCE, password=password) as doc:
+            assert doc.access is access
+            assert doc.encryption_method == "Standard V6 R7 256-bit AES-GCM"
+            assert doc.pages[0].obj["XXLabel"] == b"independent GCM label"
+            assert doc.pages[0].obj["Contents"].read() == GCM_CONTENT
+            with pytest.raises(pyropdf.EncryptedDocumentError, match=r"hayro.*AES-GCM"):
+                doc.pages[0].pixmap(dpi=36)
+    with pytest.raises(pyropdf.PasswordError):
+        pyropdf.open(GCM_SOURCE, password="wrong")
+    with pyropdf.open(RECIPIENT_ASSETS / "pyhanko-gcm.pdf", credential=recipient("owner")) as doc:
+        assert doc.encryption_method == "Adobe.PubSec adbe.pkcs7.s5 V6 256-bit AES-GCM"
+        assert doc.objects[3].read() == RECIPIENT_STREAM
+        assert doc.objects[4]["FixtureValue"] == RECIPIENT_STRING
+
+
+@pytest.mark.spec("aes-gcm", "interpret")
+@pytest.mark.parametrize("kind", ["string", "stream", "short-stream"])
+def test_gcm_rejects_bad_tags_before_releasing_data(kind: str, tmp_path: Path) -> None:
+    import re  # noqa: PLC0415
+
+    source = GCM_SOURCE.read_bytes()
+    if kind == "string":
+        match = re.search(rb"/XXLabel <([0-9a-fA-F]+)>", source)
+        assert match
+        at = match.end(1) - 1
+        corrupted = source[:at] + (b"1" if source[at : at + 1] == b"0" else b"0") + source[at + 1 :]
+    else:
+        start = source.index(b"3 0 obj\n")
+        at = source.index(b"\nendstream", start) - 1
+        corrupted = source[:at] + bytes([source[at] ^ 1]) + source[at + 1 :]
+        if kind == "short-stream":
+            corrupted = corrupted.replace(b"/Length 50\n", b"/Length 10\n", 1)
+    target = tmp_path / "output.pdf"
+    target.write_bytes(b"previous output")
+    with pyropdf.open(corrupted, password="ownerpw") as doc:
+        with pytest.raises(pyropdf.MalformedPdfError, match="AES-GCM authentication failed"):
+            _ = doc.objects[4] if kind == "string" else doc.objects[3]
+        with pytest.raises(pyropdf.MalformedPdfError, match="AES-GCM authentication failed"):
+            doc.save(target)
+    assert target.read_bytes() == b"previous output"
+
+
+@pytest.mark.spec("aes-gcm", "edit", "preserve")
+@pytest.mark.parametrize("incremental", [False, True])
+def test_gcm_edit_keeps_original_ciphertext(*, incremental: bool) -> None:
+    source = GCM_SOURCE.read_bytes()
+    untouched = source.split(b"3 0 obj\n")[1].split(b"\nendobj")[0]
+    with pyropdf.open(source, password="ownerpw") as doc:
+        assert doc.to_bytes(incremental=True) == source
+        doc.pages[0].obj["XXLabel"] = b"edited GCM label"
+        out = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
+        assert out.startswith(source) is incremental
+        assert untouched in out
+        assert b"edited GCM label" not in out
+        with pyropdf.open(out, password="userpw") as after:
+            assert after.pages[0].obj["Contents"].read() == GCM_CONTENT
+            assert after.pages[0].obj["XXLabel"] == b"edited GCM label"
+
+
+@pytest.mark.spec("aes-gcm", "create")
+@pytest.mark.parametrize("layout", ["table", "object-stream", "hybrid", "packed-hybrid", "linearized"])
+def test_gcm_new_save_interoperates_with_pyhanko(layout: str, tmp_path: Path) -> None:
+    import io  # noqa: PLC0415
+    import sysconfig  # noqa: PLC0415
+
+    if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
+        pytest.skip("pyHanko imports enable the GIL on free-threaded Python")
+    from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
+
+    config = Encryption(user_password="customer", owner_password="owner", method="aes-gcm")
+    with pyropdf.open(numbered(1)) as doc:
+        # Exercise other owners of an indirect /Extensions dictionary.
+        base = {"Private": {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": 4}}
+        old = doc.objects[doc.objects.add(base)]
+        doc.catalog["Extensions"] = old
+        doc.catalog["XXOther"] = old
+        doc.pages[0].obj["XXLabel"] = b"repeated"
+        doc.pages[0].obj["XXOther"] = b"repeated"
+        data = doc.to_bytes(
+            encryption=config,
+            object_streams=layout in {"object-stream", "packed-hybrid"},
+            linearize=layout == "linearized",
+            cross_reference="hybrid" if layout.endswith("hybrid") else None,
+        )
+        assert data.startswith(b"%PDF-2.0")
+        assert b"repeated" not in data
+        assert "ISO_" not in old
+        assert doc.catalog.get("Version") != pyropdf.Name("2.0")
+        target = tmp_path / "existing.pdf"
+        target.write_bytes(b"original")
+        with pytest.raises(ValueError, match="incremental save keeps"):
+            doc.save(target, incremental=True, encryption=config)
+        assert target.read_bytes() == b"original"
+    reader = PdfFileReader(io.BytesIO(data))
+    assert reader.decrypt("customer").status.name == "USER"
+    security = reader.trailer_view["/Encrypt"]
+    assert (security["/V"], security["/R"], security["/CF"]["/StdCF"]["/CFM"]) == (6, 7, "/AESV4")
+    extensions = reader.root["/Extensions"]
+    assert extensions["/Private"]["/ExtensionLevel"] == 4
+    assert "/ISO_" not in reader.root["/XXOther"]
+    assert len(extensions["/ISO_"]) == 1
+    iso = extensions["/ISO_"][0]
+    assert (iso["/BaseVersion"], iso["/ExtensionLevel"], iso["/ExtensionRevision"]) == ("/2.0", 32003, ":2023")
+    page = reader.root["/Pages"]["/Kids"][0].get_object()
+    assert page["/XXLabel"].original_bytes == page["/XXOther"].original_bytes == b"repeated"
+    if layout == "table":
+        import re  # noqa: PLC0415
+
+        values = [re.search(b"/" + key + rb"\s*<([0-9a-fA-F]+)>", data) for key in (b"XXLabel", b"XXOther")]
+        assert all(values)
+        assert len({bytes.fromhex(item[1].decode())[:12] for item in values if item}) == 2
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "reason"),
+    [
+        (b"/R 7", b"/R 6", "V6 and R7"),
+        (b"/AESV4", b"/AESV3", "declare an AESV4"),
+        (b"/Length 256", b"/Length 128", "256-bit file encryption key"),
+        (b"/Length 32", b"/Length 16", "32-byte crypt filter key"),
+        (b"/P -4", b"/P -8", "encrypted permissions"),
+    ],
+)
+def test_gcm_refuses_inconsistent_declarations(before: bytes, after: bytes, reason: str) -> None:
+    source = GCM_SOURCE.read_bytes()
+    assert source.count(before) == 1
+    with pytest.raises(pyropdf.MalformedPdfError, match=reason):
+        pyropdf.open(source.replace(before, after), password="ownerpw")
+
+
+def test_gcm_keeps_other_iso_extensions_and_repairs_matching_declaration() -> None:
+    with pyropdf.open(numbered(1)) as doc:
+
+        def extension(level: int) -> pyropdf.Dictionary:
+            return doc.objects[
+                doc.objects.add({"BaseVersion": pyropdf.Name("2.0"), "ExtensionLevel": level, "XXKey": 15})
+            ]
+
+        other, incomplete = extension(32001), extension(32003)
+        doc.catalog["Extensions"] = {"ISO_": [other, incomplete]}
+        doc.catalog["XXBackup"] = incomplete
+        other_xref = other.xref
+        out = doc.to_bytes(encryption=Encryption(method="aes-gcm"))
+    with pyropdf.open(out) as result:
+        declarations = result.catalog["Extensions"]["ISO_"]
+        assert len(declarations) == 2
+        assert declarations[0].xref == other_xref
+        assert declarations[0]["ExtensionLevel"] == 32001
+        assert declarations[1]["ExtensionRevision"] == b":2023"
+        assert declarations[1]["URL"] == b"https://www.iso.org/standard/45876.html"
+        assert declarations[1]["XXKey"] == result.catalog["XXBackup"]["XXKey"] == 15
+        assert "ExtensionRevision" not in result.catalog["XXBackup"]
+
+
+def test_gcm_repeated_incremental_updates_have_fresh_nonces_for_the_same_key() -> None:
+    import re  # noqa: PLC0415
+
+    source = GCM_SOURCE.read_bytes()
+    with pyropdf.open(source, password="ownerpw") as doc:
+        doc.pages[0].obj["XXLabel"] = b"same plaintext"
+        outputs = [doc.to_bytes(incremental=True) for _ in range(2)]
+    nonces = set()
+    for data in outputs:
+        assert data.startswith(source)
+        match = re.search(rb"/XXLabel\s*<([A-Fa-f0-9]+)>", data[len(source) :])
+        assert match
+        encrypted = bytes.fromhex(match[1].decode())
+        assert len(encrypted) == 12 + len(b"same plaintext") + 16
+        nonces.add(encrypted[:12])
+        with pyropdf.open(data, password="userpw") as doc:
+            assert doc.pages[0].obj["XXLabel"] == b"same plaintext"
+    assert len(nonces) == 2

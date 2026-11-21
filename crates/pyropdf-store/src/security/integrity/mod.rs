@@ -61,19 +61,27 @@ pub struct Writer {
 
 impl Writer {
     pub(crate) fn new(handler: &Handler, salt: [u8; 32]) -> Result<Self> {
-        let mut mac_key = [0; 32];
-        getrandom::fill(&mut mac_key)
-            .map_err(|_| Error::malformed("cannot obtain randomness for the PDF MAC key"))?;
         let file_key = handler
             .key
             .as_ref()
             .try_into()
             .map_err(|_| Error::malformed("PDF MAC requires a 256-bit file key"))?;
+        Self::for_file(file_key, salt)
+    }
+
+    fn for_file(file_key: [u8; 32], salt: [u8; 32]) -> Result<Self> {
+        let mut mac_key = [0; 32];
+        getrandom::fill(&mut mac_key)
+            .map_err(|_| Error::malformed("cannot obtain randomness for the PDF MAC key"))?;
         Ok(Self {
             file_key,
             salt,
             mac_key,
         })
+    }
+
+    pub(crate) fn next_revision(&self) -> Result<Self> {
+        Self::for_file(self.file_key, self.salt)
     }
 
     /// Add the MAC as an unsigned attribute of the newly generated signature

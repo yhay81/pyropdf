@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import subprocess
 from pathlib import Path
 
+import pikepdf
 import pytest
 from corpus import ASSETS, NAMES
 from test_attachments import build_pdf, build_raw_pdf
@@ -320,6 +322,130 @@ def _require_qpdf() -> str:
     return QPDF
 
 
+def _check_hybrid_sections(data: bytes, *, packed: bool) -> int:
+    """Check both visible views of the file and return the latest table offset."""
+    assert data.startswith(b"%PDF-1.5")
+    latest = STARTXREF.search(data)
+    assert latest
+    table = int(latest[1])
+    with pikepdf.open(io.BytesIO(data), attempt_recovery=False) as pdf:
+        assert pdf.check_pdf_syntax() == []
+        previous = int(pdf.trailer.Prev)
+        supplement = int(pdf.trailer.XRefStm)
+        assert previous < supplement < table
+        assert data[previous:].startswith(b"xref\n")
+        assert data[table:].startswith(b"xref\n")
+        stream = pdf.get_object(int(data[supplement:].split(maxsplit=1)[0]), 0)
+        assert str(stream.Type) == "/XRef"
+        assert stream.Size == pdf.trailer.Size
+        assert "/Prev" not in stream
+        primary = data[: data.index(b"%%EOF", previous) + 5]
+        with pikepdf.open(io.BytesIO(primary), attempt_recovery=False) as classic:
+            assert "/XRefStm" not in classic.trailer
+            assert list(classic.trailer.ID) == list(pdf.trailer.ID)
+            assert len(classic.pages) == 1
+            assert str(classic.Root.XXVisible.Text) == "legacy-visible"
+            if packed:
+                assert classic.get_object(7, 0) is None
+            else:
+                assert str(classic.get_object(7, 0).Text) == "hidden candidate"
+        entries = pdf.get_xref_table()
+        assert entries[(7, 0)].type == (2 if packed else 1)
+        assert (5, 0) not in entries
+        assert str(pdf.get_object(7, 0).Text) == "hidden candidate"
+        assert str(pdf.Root.XXVisible.Text) == "legacy-visible"
+    return table
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_hybrid_sections_keep_the_document_visible_to_a_table_only_reader(tmp_path: Path, *, packed: bool) -> None:
+    source = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /XXVisible 3 0 R >>",
+            2: "<< /Type /Pages /Count 1 /Kids [4 0 R] >>",
+            3: "<< /Text (legacy-visible) >>",
+            4: "<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 20 20] >>",
+            7: "<< /Text (hidden candidate) >>",
+        },
+    ).replace(b"%PDF-1.7", b"%PDF-1.4", 1)
+    with pyropdf.open(source) as doc:
+        data = doc.to_bytes(cross_reference="hybrid", object_streams=packed, keep_id=False)
+        out = tmp_path / "hybrid.pdf"
+        doc.save(out, cross_reference="hybrid", object_streams=packed, keep_id=False)
+        assert out.read_bytes() == data
+        with pytest.raises(LimitError, match="PDF output"):
+            doc.to_bytes(cross_reference="hybrid", object_streams=packed, keep_id=False, max_size=len(data) - 1)
+    table = _check_hybrid_sections(data, packed=packed)
+    qpdf = _require_qpdf()
+    command = [qpdf, "--ignore-xref-streams", "--show-npages", str(out)]
+    legacy = subprocess.run(command, capture_output=True, check=True)  # noqa: S603 - local qpdf on generated data.
+    assert legacy.stdout.strip() == b"1"
+    with pyropdf.open(data) as reopened:
+        assert reopened.to_bytes(incremental=True) == data
+        reopened.pages[0].rotation = 90
+        updated = reopened.to_bytes(incremental=True)
+    assert updated.startswith(data)
+    with pikepdf.open(io.BytesIO(updated), attempt_recovery=False) as edited:
+        assert edited.check_pdf_syntax() == []
+        assert int(edited.trailer.Prev) == table
+        assert int(edited.trailer.XRefStm) >= len(data)
+        assert edited.pages[0].Rotate == 90
+        assert str(edited.get_object(7, 0).Text) == "hidden candidate"
+
+
+@pytest.mark.parametrize("renumber", [False, True])
+def test_an_encrypted_hybrid_keeps_its_document_id_and_visible_page(*, renumber: bool) -> None:
+    with pyropdf.Document() as doc:
+        page = doc.pages.new()
+        page.obj["Resources"] = {}
+        doc.objects.add({"XXSecret": b"an unreferenced encrypted value"})
+        data = doc.to_bytes(
+            cross_reference="hybrid",
+            object_streams=True,
+            renumber=renumber,
+            keep_id=False,
+            encryption=Encryption(user_password="reader", owner_password="owner"),
+        )
+    assert b"an unreferenced encrypted value" not in data
+    with pikepdf.open(io.BytesIO(data), password="reader", attempt_recovery=False) as pdf:
+        assert pdf.check_pdf_syntax() == []
+        previous = int(pdf.trailer.Prev)
+        main = data[: data.index(b"%%EOF", previous) + 5]
+        with pikepdf.open(io.BytesIO(main), password="reader", attempt_recovery=False) as classic:
+            assert len(classic.pages) == len(pdf.pages) == 1
+            assert list(classic.trailer.ID) == list(pdf.trailer.ID)
+        hidden = [key for key, entry in pdf.get_xref_table().items() if entry.type == 2]
+        assert any(bytes(pdf.get_object(*key).XXSecret) == b"an unreferenced encrypted value" for key in hidden)
+    with pyropdf.open(data, password="owner") as opened:
+        opened.pages[0].rotation = 90
+        changed = opened.to_bytes(incremental=True, keep_id=False)
+    with pikepdf.open(io.BytesIO(changed), password="reader", attempt_recovery=False) as updated:
+        assert updated.pages[0].Rotate == 90
+        assert updated.check_pdf_syntax() == []
+
+
+def test_a_sparse_hybrid_main_table_respects_the_object_budget(tmp_path: Path) -> None:
+    source = build_pdf(["Visible"])
+    sparse = re.sub(rb"/Size \d+", b"/Size 70000", source)
+    target = tmp_path / "existing.pdf"
+    target.write_bytes(b"existing destination")
+    with pyropdf.open(sparse, limits=pyropdf.DocumentLimits(max_objects=50)) as doc:
+        with pytest.raises(LimitError) as caught:
+            doc.save(target, cross_reference="hybrid")
+        assert caught.value.code == "object_count"
+    assert target.read_bytes() == b"existing destination"
+
+
+def test_hybrid_creation_refuses_incompatible_layouts_before_replacing_a_file(tmp_path: Path) -> None:
+    with pyropdf.open(build_pdf(["Visible"])) as doc:
+        target = tmp_path / "existing.pdf"
+        target.write_bytes(b"existing destination")
+        for incremental in (True, False):
+            with pytest.raises(ValueError, match="cross_reference"):
+                doc.save(target, cross_reference="hybrid", incremental=incremental, linearize=not incremental)
+            assert target.read_bytes() == b"existing destination"
+
+
 def _new_qpdf_warnings(saved: Path, source: Path, password: str) -> set[str]:
     """Return the warnings of ``qpdf --check`` on the encrypted ``saved`` that ``source`` lacks."""
     qpdf = _require_qpdf()
@@ -419,7 +545,7 @@ def test_cross_reference_options_are_checked() -> None:
     for options in ({"cross_reference": "stream"}, {"cross_reference": "table"}, {"object_streams": True}):
         with pytest.raises(ValueError, match="full save"):
             doc.to_bytes(incremental=True, **options)  # ty: ignore[invalid-argument-type]
-    with pytest.raises(ValueError, match="needs cross_reference='stream' or None"):
+    with pytest.raises(ValueError, match="needs cross_reference="):
         doc.to_bytes(object_streams=True, cross_reference="table")
     with pytest.raises(TypeError, match="object_streams must be a bool"):
         doc.to_bytes(object_streams=1)  # ty: ignore[invalid-argument-type]

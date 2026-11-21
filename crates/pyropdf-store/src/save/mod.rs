@@ -7,6 +7,7 @@
 
 mod base;
 mod extensions;
+mod hybrid;
 mod integrity;
 pub(crate) use base::encryption_dict;
 mod linear;
@@ -245,6 +246,8 @@ pub enum CrossReference {
     /// A cross-reference stream (section 7.5.8). A full save raises the
     /// header's version to 1.5 when it is lower.
     Stream,
+    /// A classic main section with a supplemental cross-reference stream in an update.
+    Hybrid,
 }
 
 impl CrossReference {
@@ -252,7 +255,7 @@ impl CrossReference {
     fn stream(self, version: &Version) -> bool {
         match self {
             Self::Table => false,
-            Self::Stream => true,
+            Self::Stream | Self::Hybrid => true,
             Self::Base => version
                 .base()
                 .file()
@@ -292,27 +295,38 @@ pub fn full_with(
         )
         .into());
     }
-    let declared = if matches!(
+    let mut declared = None;
+    if encryption.is_some_and(|config| config.method() == security::Method::AesGcm) {
+        declared = Some(extensions::declare(
+            version,
+            32003,
+            ":2023",
+            "https://www.iso.org/standard/45876.html",
+            budget,
+        )?);
+    }
+    if matches!(
         encryption,
         Some(Encryption::PasswordWithMac(_) | Encryption::RecipientWithMac(_))
     ) {
-        Some(extensions::declare(
-            version,
+        declared = Some(extensions::declare(
+            declared.as_deref().unwrap_or(version),
             32004,
             ":2024",
             "https://www.iso.org/standard/45877.html",
             budget,
-        )?)
-    } else {
-        None
-    };
+        )?);
+    }
     let version = declared.as_deref().unwrap_or(version);
     let mut mode = Mode::of(version, encryption, budget)?;
     let mac = integrity::plan(version, &mode, true, options.linearize, budget)?;
     if options.linearize {
         if options.object_streams
             || options.dedupe
-            || options.cross_reference == CrossReference::Stream
+            || matches!(
+                options.cross_reference,
+                CrossReference::Stream | CrossReference::Hybrid
+            )
         {
             return Err(Error::Refused(Refusal::Linearization));
         }
@@ -382,27 +396,18 @@ pub fn full_with(
         None
     };
     let renumbering = renumbering.as_ref();
+    let hybrid = options.cross_reference == CrossReference::Hybrid;
     let stream = options.object_streams || options.cross_reference.stream(version);
+    // Packing in a hybrid is optional. Keep everything reachable with a
+    // classic reader, including the catalog, pages, resources and trailer.
+    let visible = if hybrid && options.object_streams && !options.prune {
+        Some(prune::reachable(version, &rows, true, budget)?)
+    } else {
+        None
+    };
     let mut out = Output::new(target, budget, 0, options.renew_id);
     out.mac = mac.map(integrity::MacOutput::new);
-    let header = version
-        .base()
-        .file()
-        .and_then(|file| file.bytes().get(file.origin()..file.origin() + 8))
-        .filter(|bytes| bytes.starts_with(b"%PDF-"))
-        .unwrap_or(b"%PDF-1.7");
-    // Cross-reference streams and object streams are of PDF 1.5.
-    if out.mac.is_some() && header < b"%PDF-2.0" {
-        out.bytes(b"%PDF-2.0")?;
-    } else if stream
-        && header
-            .get(5..)
-            .is_some_and(|number| number < b"1.5".as_slice())
-    {
-        out.bytes(b"%PDF-1.5")?;
-    } else {
-        out.bytes(header)?;
-    }
+    out.bytes(mode.header(version, stream, out.mac.is_some()))?;
     out.bytes(b"\n%\xE2\xE3\xCF\xD3\n")?;
     // A copied linearization dictionary must not remain the first object:
     // its old offsets describe the base, not this full save. Write the
@@ -419,16 +424,16 @@ pub fn full_with(
     };
     let next = size + u64::from(matches!(mode, Mode::New { .. }));
     let level = level(options.streams);
-    let mut packer = options
-        .object_streams
+    let mut packer = (options.object_streams && !(hybrid && options.prune))
         .then(|| pack::Packer::new(budget, level, next));
     let encrypt = match version.trailer().get("Encrypt") {
         Some(Value::Reference(encrypt)) => Some(encrypt.number()),
         _ => None,
     };
-    let mut place = |row: &mut Row, out: &mut Output<'_>| {
+    let mut place = |at: usize, row: &mut Row, out: &mut Output<'_>| {
         let rewriting = renumbering.filter(|renumbering| renumbering.rewrites(row.number));
         if let Some(packer) = &mut packer
+            && !visible.as_ref().is_some_and(|marked| marked[at])
             && packer.pack(version, row, encrypt, rewriting, out, &mode)?
         {
             return Ok(());
@@ -437,11 +442,11 @@ pub fn full_with(
     };
     if let Some(at) = root.and_then(|root| rows.binary_search_by_key(&root, |row| row.number).ok())
     {
-        place(&mut rows[at], &mut out)?;
+        place(at, &mut rows[at], &mut out)?;
     }
-    for row in &mut rows {
+    for (at, row) in rows.iter_mut().enumerate() {
         if Some(row.number) != root {
-            place(row, &mut out)?;
+            place(at, row, &mut out)?;
         }
     }
     if let Some(renumbering) = renumbering
@@ -476,6 +481,7 @@ pub fn full_with(
     }
     let ending = Ending {
         previous: None,
+        hybrid,
         size,
         renew_id: options.renew_id,
         stream: if stream {
@@ -601,11 +607,17 @@ fn write_incremental(
     }
     // The update keeps the form of the base's cross-reference data.
     let mut next = version.next_number();
+    let hybrid = file
+        .revisions()
+        .last()
+        .and_then(|revision| revision.sections().first())
+        .is_some_and(|section| matches!(section.kind(), SectionKind::Hybrid { .. }));
     let ending = Ending {
         previous: Some(previous as u64),
+        hybrid,
         size: version.next_number(),
         renew_id: options.renew_id,
-        stream: if CrossReference::Base.stream(version) {
+        stream: if hybrid || CrossReference::Base.stream(version) {
             Some((pack::take(&mut next)?, level(options.streams)))
         } else {
             None
@@ -696,6 +708,22 @@ impl<'a> Mode<'a> {
                 })
             }
             _ => Err(Error::Refused(Refusal::Encryption)),
+        }
+    }
+
+    fn header<'v>(&self, version: &'v Version, xref_stream: bool, mac: bool) -> &'v [u8] {
+        let original = version
+            .base()
+            .file()
+            .and_then(|file| file.bytes().get(file.origin()..file.origin() + 8))
+            .filter(|bytes| bytes.starts_with(b"%PDF-"))
+            .unwrap_or(b"%PDF-1.7");
+        if (mac || self.handler().is_some_and(Handler::uses_gcm)) && original < b"%PDF-2.0" {
+            b"%PDF-2.0"
+        } else if xref_stream && original < b"%PDF-1.5" {
+            b"%PDF-1.5"
+        } else {
+            original
         }
     }
 
@@ -838,6 +866,8 @@ struct Ending<'a> {
     /// The offset of the base's last cross-reference section, for an
     /// incremental save.
     previous: Option<u64>,
+    /// The final table points to a supplemental cross-reference stream.
+    hybrid: bool,
     /// The `/Size` of a save that writes no cross-reference stream and no
     /// new encryption.
     size: u64,
@@ -867,6 +897,9 @@ fn finish(
             }
         }
     }
+    if ending.hybrid {
+        return hybrid::finish(version, rows, out, mode, &ending);
+    }
     let xref = out.offset()?;
     let mut size = match mode {
         Mode::New { number, .. } => u64::from(*number) + 1,
@@ -880,6 +913,36 @@ fn finish(
         table(rows, out)?;
         out.bytes(b"trailer\n<<")?;
     }
+    trailer_fields(version, mode, out, &ending, &mut None)?;
+    out.display(format_args!(" /Size {size}"))?;
+    if let Some(previous) = ending.previous {
+        out.display(format_args!(" /Prev {previous}"))?;
+    }
+    out.authentication()?;
+    if let Some((number, level)) = ending.stream {
+        let own = Row {
+            number,
+            generation: 0,
+            offset: Some(xref),
+            next_free: 0,
+            member: None,
+        };
+        stream(rows.iter(), &own, level, out)?;
+        out.display(format_args!("startxref\n{xref}\n%%EOF\n"))
+    } else {
+        out.display(format_args!(" >>\nstartxref\n{xref}\n%%EOF\n"))
+    }
+}
+
+/// Writes the document trailer keys. A hybrid repeats the same identifier
+/// in both its classic main trailer and its final update.
+fn trailer_fields(
+    version: &Version,
+    mode: &Mode<'_>,
+    out: &mut Output<'_>,
+    ending: &Ending<'_>,
+    digest: &mut Option<Value>,
+) -> Result<()> {
     if let Mode::New { id, number, .. } = mode {
         trailer(
             version.trailer(),
@@ -890,41 +953,20 @@ fn finish(
         out.display(format_args!(" /Encrypt {number} 0 R"))?;
         // The keys derive from the first element.
         let first = Value::String(PdfString::hexadecimal(id.as_slice()));
-        let second = out.digest().unwrap_or_else(|| first.clone());
+        let second = digest
+            .get_or_insert_with(|| out.digest().unwrap_or_else(|| first.clone()))
+            .clone();
         identifier(out, first, second)?;
     } else if let Some(first) = renews(version, ending.renew_id) {
         trailer(version.trailer(), out, &[b"ID"], ending.renumbering)?;
-        let digest = out.digest().expect("a renewing save keeps a digest");
+        let digest = digest
+            .get_or_insert_with(|| out.digest().expect("a renewing save keeps a digest"))
+            .clone();
         identifier(out, first.unwrap_or_else(|| digest.clone()), digest)?;
     } else {
         trailer(version.trailer(), out, &[], ending.renumbering)?;
     }
-    out.display(format_args!(" /Size {size}"))?;
-    if let Some(previous) = ending.previous {
-        out.display(format_args!(" /Prev {previous}"))?;
-    }
-    if let Some(r) = out.attached {
-        out.display(format_args!(
-            " /AuthCode << /MACLocation /AttachedToSig /SigObjRef {} {} R >>",
-            r.number(),
-            r.generation()
-        ))?;
-    } else {
-        integrity::MacOutput::reserve(out)?;
-    }
-    if let Some((number, level)) = ending.stream {
-        let own = Row {
-            number,
-            generation: 0,
-            offset: Some(xref),
-            next_free: 0,
-            member: None,
-        };
-        stream(rows, &own, level, out)?;
-        out.display(format_args!("startxref\n{xref}\n%%EOF\n"))
-    } else {
-        out.display(format_args!(" >>\nstartxref\n{xref}\n%%EOF\n"))
-    }
+    Ok(())
 }
 
 /// Writes the rows as a classic cross-reference table.
@@ -938,23 +980,28 @@ fn table(rows: &[Row], out: &mut Output<'_>) -> Result<()> {
         }
         out.display(format_args!("{} {}\n", rows[start].number, end - start))?;
         for row in &rows[start..end] {
-            match row.offset {
-                Some(offset) => {
-                    if offset > 9_999_999_999 {
-                        return Err(StoreError::malformed(
-                            "an offset exceeds the classic xref table's ten digits",
-                        )
-                        .into());
-                    }
-                    out.display(format_args!("{offset:010} {:05} n \n", row.generation))?;
-                }
-                None => {
-                    let next = row.next_free;
-                    out.display(format_args!("{next:010} {:05} f \n", row.generation))?;
-                }
-            }
+            table_row(row, out)?;
         }
         start = end;
+    }
+    Ok(())
+}
+
+fn table_row(row: &Row, out: &mut Output<'_>) -> Result<()> {
+    match row.offset {
+        Some(offset) => {
+            if offset > 9_999_999_999 {
+                return Err(StoreError::malformed(
+                    "an offset exceeds the classic xref table's ten digits",
+                )
+                .into());
+            }
+            out.display(format_args!("{offset:010} {:05} n \n", row.generation))?;
+        }
+        None => {
+            let next = row.next_free;
+            out.display(format_args!("{next:010} {:05} f \n", row.generation))?;
+        }
     }
     Ok(())
 }
@@ -972,9 +1019,14 @@ fn fields(row: &Row) -> (u8, u64, u64) {
 /// Writes the entries of a cross-reference stream that describe its data,
 /// which lists the rows and then the stream itself, `own`, and then the
 /// data and the end of the stream's object.
-fn stream(rows: &[Row], own: &Row, level: Option<u8>, out: &mut Output<'_>) -> Result<()> {
+fn stream<'a>(
+    rows: impl Iterator<Item = &'a Row> + Clone,
+    own: &'a Row,
+    level: Option<u8>,
+    out: &mut Output<'_>,
+) -> Result<()> {
     let budget = out.budget;
-    let all = || rows.iter().chain(std::iter::once(own));
+    let all = || rows.clone().chain(std::iter::once(own));
     // The fewest bytes that hold each field, and at least one.
     let width = |max: u64| (u64::BITS - max.leading_zeros()).div_ceil(8).max(1) as usize;
     let (second, third) = all().fold((0, 0), |(second, third), row| {
@@ -1162,6 +1214,18 @@ impl<'a> Output<'a> {
                 .ok_or_else(|| StoreError::malformed("PDF output size overflow"))?;
         }
         Ok(())
+    }
+
+    fn authentication(&mut self) -> Result<()> {
+        if let Some(r) = self.attached {
+            self.display(format_args!(
+                " /AuthCode << /MACLocation /AttachedToSig /SigObjRef {} {} R >>",
+                r.number(),
+                r.generation()
+            ))
+        } else {
+            integrity::MacOutput::reserve(self)
+        }
     }
 
     fn display(&mut self, args: fmt::Arguments<'_>) -> Result<()> {

@@ -122,6 +122,15 @@ with pyropdf.open("locked.pdf", password="reader") as doc:
     print(doc.encryption_method, doc.permissions)
 ```
 
+Use `method="aes-gcm"` on `Encryption` or `RecipientEncryption` to save
+a PDF 2.0 file with the ISO/TS 32003:2023 extension. The store authenticates
+each encrypted string and stream before returning it. A damaged authentication
+tag raises `MalformedPdfError`. Both an incremental update and a full
+`Encryption.KEEP` save preserve the ciphertext of untouched objects.
+Selecting a new method requires a full save. Direct page rendering and text
+extraction from an AES-GCM file await the authenticated object source in
+hayro. [Engine integration #968](https://github.com/yhay81/pyropdf/issues/968)
+
 A 256-bit password or recipient encryption option accepts `integrity=True`
 to add an ISO/TS 32004:2024 document MAC. Open the output and call
 `doc.verify_integrity()` to check the original bytes. Its status is

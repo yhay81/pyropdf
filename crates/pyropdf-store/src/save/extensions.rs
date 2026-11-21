@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::budget::Budget;
-use crate::refs::copy_for_edit;
+use crate::refs::{copy_array_for_edit, copy_for_edit};
 use crate::tree::{catalog_of, resolve_in};
 use crate::value::{Array, Dict, Name, PdfString, Value};
 use crate::version::{Document, Transaction, Version};
@@ -13,7 +13,7 @@ use crate::{Error, Result};
 /// registered extensions intact, including their indirect references.
 #[expect(
     clippy::disallowed_methods,
-    reason = "adds at most one extension of five fixed-width fields and updates the catalog and two bounded containers"
+    reason = "the new declaration has five fixed keys; budgeted editable copies reserve room for the single addition"
 )]
 pub(super) fn declare(
     version: &Version,
@@ -35,7 +35,7 @@ pub(super) fn declare(
     let mut entries = match original {
         None => Array::new(),
         Some(value) => match resolve_in(version, Some(value), budget)? {
-            Some(Value::Array(array)) => array,
+            Some(Value::Array(array)) => copy_array_for_edit(&array, budget)?,
             Some(Value::Dict(_)) => {
                 let mut array = Array::new();
                 array.push(copy_for_edit(value, budget)?);
@@ -44,30 +44,44 @@ pub(super) fn declare(
             _ => return Err(Error::malformed("invalid /ISO_ extension declaration")),
         },
     };
+    let mut required = Dict::new();
+    required.insert(Name::from("Type"), Name::from("DeveloperExtensions").into());
+    required.insert(Name::from("BaseVersion"), Name::from("2.0").into());
+    required.insert(Name::from("ExtensionLevel"), level.into());
+    required.insert(
+        Name::from("ExtensionRevision"),
+        PdfString::literal(revision.as_bytes()).into(),
+    );
+    required.insert(Name::from("URL"), PdfString::literal(url.as_bytes()).into());
     let mut found = false;
-    for entry in entries.iter() {
-        let Some(Value::Dict(dict)) = resolve_in(version, Some(entry), budget)? else {
+    for entry in entries.iter_mut() {
+        let Some(Value::Dict(mut dict)) = resolve_in(version, Some(entry), budget)? else {
             return Err(Error::malformed("invalid /ISO_ extension entry"));
         };
-        if dict.get("ExtensionLevel") == Some(&Value::Integer(level)) {
-            if !matches!(dict.get("BaseVersion"), Some(Value::Name(name)) if name.as_bytes() == b"2.0")
-            {
-                return Err(Error::malformed("ISO extension requires /BaseVersion /2.0"));
+        if dict.get("ExtensionLevel") != Some(&Value::Integer(level)) {
+            continue;
+        }
+        if !matches!(dict.get("BaseVersion"), Some(Value::Name(name)) if name.as_bytes() == b"2.0")
+        {
+            return Err(Error::malformed("ISO extension requires /BaseVersion /2.0"));
+        }
+        if matches!(dict.get("ExtensionRevision"), Some(Value::String(other)) if other.as_bytes() != revision.as_bytes())
+        {
+            continue;
+        }
+        found = true;
+        if required
+            .iter()
+            .any(|(key, value)| dict.get(key.as_bytes()) != Some(value))
+        {
+            for (key, value) in required.iter() {
+                dict.insert(key.clone(), value.clone());
             }
-            found = true;
+            *entry = preserve_indirection(&mut writer, Some(entry), dict.into(), budget)?;
         }
     }
     if !found {
-        let mut extension = Dict::new();
-        extension.insert(Name::from("Type"), Name::from("DeveloperExtensions").into());
-        extension.insert(Name::from("BaseVersion"), Name::from("2.0").into());
-        extension.insert(Name::from("ExtensionLevel"), level.into());
-        extension.insert(
-            Name::from("ExtensionRevision"),
-            PdfString::literal(revision.as_bytes()).into(),
-        );
-        extension.insert(Name::from("URL"), PdfString::literal(url.as_bytes()).into());
-        entries.push(extension.into());
+        entries.push(required.into());
     }
     let array = preserve_indirection(&mut writer, original, entries.into(), budget)?;
     extensions.insert(Name::from("ISO_"), array);

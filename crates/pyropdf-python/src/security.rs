@@ -156,8 +156,8 @@ pub fn unlock(
 /// Returns the version that a save writes and the encryption of a full
 /// save, from `encryption`: `None` decrypts in a full save and keeps the
 /// encryption in an incremental one; `"keep"` keeps it; a tuple of the
-/// user and owner passwords, the permission flags, whether AES-256, and 64
-/// random bytes encrypts anew, in a full save only.
+/// user and owner passwords, the permission flags, the AES method, 64 random
+/// bytes and the document MAC flag encrypts anew, in a full save only.
 pub(crate) fn prepare(
     py: Python<'_>,
     document: &_Document,
@@ -182,8 +182,8 @@ pub(crate) fn prepare(
             }
             if value.len()? == 4 {
                 type RecipientRequest<'py> =
-                    ([u8; 20], [u8; 16], (bool, bool, bool), Bound<'py, PyAny>);
-                let (seed, id, (encrypt_metadata, aes256, integrity), wrapped): RecipientRequest<
+                    ([u8; 20], [u8; 16], (bool, String, bool), Bound<'py, PyAny>);
+                let (seed, id, (encrypt_metadata, method, integrity), wrapped): RecipientRequest<
                     '_,
                 > = value.extract()?;
                 let budget = document.budget();
@@ -209,7 +209,7 @@ pub(crate) fn prepare(
                     seed,
                     id,
                     encrypt_metadata,
-                    aes256,
+                    method: aes_method(&method)?,
                     envelopes: envelopes.into_vec(),
                 };
                 let encryption = if integrity {
@@ -219,11 +219,11 @@ pub(crate) fn prepare(
                 };
                 return Ok((saved(py, document, false)?, Some(encryption)));
             }
-            let (user, owner, permissions, aes256, random, integrity): (
+            let (user, owner, permissions, method, random, integrity): (
                 Vec<u8>,
                 Vec<u8>,
                 u32,
-                bool,
+                String,
                 Vec<u8>,
                 bool,
             ) = value.extract()?;
@@ -234,7 +234,7 @@ pub(crate) fn prepare(
                 user,
                 owner,
                 permissions,
-                aes256,
+                method: aes_method(&method)?,
                 random,
             };
             let encryption = if integrity {
@@ -273,4 +273,14 @@ fn saved(py: Python<'_>, document: &_Document, decrypt: bool) -> PyResult<Arc<Ve
         }
         Ok(transaction.snapshot())
     })
+}
+
+fn aes_method(name: &str) -> PyResult<pyropdf_store::security::Method> {
+    use pyropdf_store::security::Method;
+    match name {
+        "aes-128" => Ok(Method::Aes128),
+        "aes-256" => Ok(Method::Aes256),
+        "aes-gcm" => Ok(Method::AesGcm),
+        _ => Err(PyValueError::new_err("unknown encryption method")),
+    }
 }

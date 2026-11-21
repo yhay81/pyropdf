@@ -952,14 +952,7 @@ impl Writer<'_> {
     ) -> Result<Fields> {
         let plan = self.plan;
         let fields = fields.unwrap_or_default();
-        let header = plan
-            .version
-            .base()
-            .file()
-            .and_then(|file| file.bytes().get(file.origin()..file.origin() + 8))
-            .filter(|bytes| bytes.starts_with(b"%PDF-"))
-            .unwrap_or(b"%PDF-1.7");
-        out.bytes(header)?;
+        out.bytes(self.mode.header(plan.version, false, false))?;
         out.bytes(b"\n%\xE2\xE3\xCF\xD3\n")?;
         let linearization = plan.linearization();
         let first_page = plan.infos[plan.pages[0]].new;

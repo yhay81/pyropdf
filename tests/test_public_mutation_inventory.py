@@ -41,6 +41,12 @@ MUTATIONS = (
         "timestamp",
     ),
     ("catalog_entry", "Name and scalar dictionary entries rewrite their owner.", "Dictionary", "__setitem__"),
+    (
+        "geospatial_registration",
+        "Replace only the owner's registration, retaining independent controls and shared dictionaries.",
+        "Dictionary",
+        "geospatial_measure=",
+    ),
     ("delete_entry", "Removing a dictionary key preserves its siblings.", "Dictionary", "__delitem__"),
     (
         "array_insert_delete",
@@ -90,6 +96,7 @@ MUTATIONS = (
         "Annotations",
         "add",
     ),
+    ("add_screen", "Validate and commit changes to the linked rendition.", "RenditionAction", "edit_rendition"),
     ("delete_annotation", "Detach annotation and owned appearance from page Annots.", "Annotations", "__delitem__"),
     (
         "edit_annotation",
@@ -616,6 +623,7 @@ READ_ONLY = {
     "Revision": "open",
     "Signature": "verify",
     "Signer": "from_pem from_pkcs12 callback",
+    "Dictionary": "geospatial_point",
     "Stream": "read",
     "StructureTree": "resolve_role walk",
     "Table": "markdown",

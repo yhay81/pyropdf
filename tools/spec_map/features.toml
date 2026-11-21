@@ -1121,11 +1121,6 @@ objects = ["RequirementsHandler"]
 clause = "13.2"
 description = "Renditions, media clips, play and screen parameters, and media players."
 objects = ["RenditionMedia", "RenditionSelector", "MediaClipData", "MediaClipSection", "MediaPlayParameters", "MediaScreenParameters", "MediaPlayers", "MediaPlayerInfo", "MediaCriteria"]
-read = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
 
 [features.sounds]
 clause = "13.3"
@@ -1299,6 +1294,7 @@ edit = { status = "partial", missing = "Signing fills existing signature fields 
 clause = "ISO/TS 32003"
 description = "AES-GCM encryption in PDF."
 objects = []
+interpret = { status = "partial", missing = "Standard and recipient AESV4 strings and streams are authenticated before use. Direct page rendering and extraction await the engine's authenticated object source (#968).", milestone = "Phase 4: Specification" }
 
 [features.integrity-protection]
 clause = "ISO/TS 32004"
@@ -1491,11 +1487,6 @@ objects = []
 clause = "12.10"
 description = "Relate positions on a PDF page to locations in a geographic coordinate system."
 objects = []
-read = { status = "partial", missing = "Viewport registrations expose decimal coordinates, CRS and point data. Image/form registrations and Geospatial3D control triples need owner-level reading.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "2D viewport local points resolve to their matching geographic or projected control values. Projected matrix precedence, geographic fallback and Geospatial3D controls need verification.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Page viewports write typed 2D registrations. Required LPTS, image/form owners and Geospatial3D triples need verified creation.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Viewport control points can be replaced and invalid paired lengths refused. Enforce required LPTS and maintain the other registration owners.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Exact viewport registration data survives full and incremental saving. Image/form and Geospatial3D registration references still need preservation evidence.", milestone = "Phase 4: Specification" }
 
 [features.procedure-sets]
 clause = "14.2"
