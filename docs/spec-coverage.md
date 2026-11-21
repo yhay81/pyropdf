@@ -345,9 +345,7 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 - [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
     - interpret — `public-key-security-handler`.
 - [#1056](https://github.com/yhay81/pyropdf/issues/1056) Resolve indirect stream filter selectors and parameters in their document revision. Resolve filter names and parameter references in the correct revision before reading or creating encrypted streams, and retain their reference identities through saves.
-    - read, create, preserve — `crypt-filter`, `crypt-filters`.
-- [#992](https://github.com/yhay81/pyropdf/issues/992) Keep stream crypt-filter selection when replacing attachment or stream data. Retain the leading security filter and its parameters when replacing the decoded payload or compression, including an attachment restricted to a distinct recipient audience.
-    - edit — `crypt-filter`, `crypt-filters`.
+    - read, create, edit, preserve — `crypt-filter`, `crypt-filters`.
 - [#905](https://github.com/yhay81/pyropdf/issues/905) Resolve signature seed constraints and build properties through signing and editing. Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification.
     - read, interpret — `signature-fields`.
     - create, edit — `signature-fields`, `digital-signatures`.
