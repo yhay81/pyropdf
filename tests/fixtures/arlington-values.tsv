@@ -1,0 +1,608 @@
+Object	Key	Kind	Expected	Value	Invalid
+3DActivation	Window	dictionary	RichMediaWindow	<< /Type /RichMediaWindow >>	false
+3DAnimationStyle	Type	name	3DAnimationStyle	/3DAnimationStyle	false
+3DBackground	C	array	ArrayOf_3RGBNumbers	[1 1 1]	false
+3DCrossSection	C	array	ArrayOf_3CenterOfRotationNumbers	[2.5 2.5 2.5]	false
+3DLightingScheme	Type	name	3DLightingScheme	/3DLightingScheme	false
+3DMeasure3DC	A1	array	ArrayOf_3Numbers	[2.5 2.5 2.5]	false
+3DMeasureAD3	AP	array	ArrayOf_3Numbers	[2.5 2.5 2.5]	false
+3DMeasureLD3	AP	array	ArrayOf_3Numbers	[2.5 2.5 2.5]	false
+3DMeasurePD3	AP	array	ArrayOf_3Numbers	[2.5 2.5 2.5]	false
+3DMeasureRD3	AP	array	ArrayOf_3Numbers	[2.5 2.5 2.5]	false
+3DNode	M	array	ArrayOf3DTransMatrix	[2.5 2.5 2.5 2.5 2.5 2.5 2.5 2.5 2.5 2.5 2.5 2.5]	false
+3DReference	3DD	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+3DRenderMode	AC	array	ArrayOf_4ColourSpaceEntries	[/DeviceRGB 1 1 1]	false
+3DStream	VA	array	ArrayOf3DView	[]	false
+3DUnits	TSm	number	2.5	2.5	false
+3DView	MA	array	ArrayOf3DMeasure	[]	false
+3DViewAddEntries	MA	array	ArrayOf3DMeasure	[]	false
+AAPL_ST	Offset	array	ArrayOf_2Numbers	[2.5 2.5]	false
+AFEmbeddedFileParameter	Mac	dictionary	Mac	<<  >>	false
+AFEmbeddedFileStream	Params	dictionary	AFEmbeddedFileParameter	<<  >>	false
+AFFileSpecEF	F	stream	AFEmbeddedFileStream	<< /Type /EmbeddedFile /Length 0 >>\nstream\n\nendstream	false
+AFFileSpecification	ID	array	ArrayOf_2StringsByte	[(ab) (ab)]	false
+ActionECMAScript	Next	array	ArrayOfActions	[]	false
+ActionGoTo	Next	array	ArrayOfActions	[]	false
+ActionGoTo3DView	Next	array	ArrayOfActions	[]	false
+ActionGoToDp	Next	array	ArrayOfActions	[]	false
+ActionGoToE	Next	array	ArrayOfActions	[]	false
+ActionGoToR	Next	array	ArrayOfActions	[]	false
+ActionHide	Next	array	ArrayOfActions	[]	false
+ActionImportData	Next	array	ArrayOfActions	[]	false
+ActionLaunch	Next	array	ArrayOfActions	[]	false
+ActionMovie	Next	array	ArrayOfActions	[]	false
+ActionNOP	Next	array	ArrayOfActions	[]	false
+ActionNamed	Next	array	ArrayOfActions	[]	false
+ActionRendition	Next	array	ArrayOfActions	[]	false
+ActionResetForm	Next	array	ArrayOfActions	[]	false
+ActionRichMediaExecute	Next	array	ArrayOfActions	[]	false
+ActionSetOCGState	Next	array	ArrayOfActions	[]	false
+ActionSetState	T	array	ArrayOfAnnots	[]	false
+ActionSound	Next	array	ArrayOfActions	[]	false
+ActionSubmitForm	F	dictionary	FileSpecification	<< /Type /Filespec >>	false
+ActionThread	Next	array	ArrayOfActions	[]	false
+ActionTransition	Next	array	ArrayOfActions	[]	false
+ActionURI	Next	array	ArrayOfActions	[]	false
+AddActionCatalog	DC	dictionary	ActionECMAScript	<< /Type /Action /S /JavaScript >>	false
+AddActionFormField	K	dictionary	ActionECMAScript	<< /Type /Action /S /JavaScript >>	false
+AddActionPageObject	O	dictionary	ActionECMAScript	<< /Type /Action /S /JavaScript >>	false
+AddActionScreenAnnotation	E	dictionary	ActionECMAScript	<< /Type /Action /S /JavaScript >>	false
+AddActionWidgetAnnotation	E	dictionary	ActionECMAScript	<< /Type /Action /S /JavaScript >>	false
+AlternateImage	Image	stream	XObjectImage	<< /Type /XObject /Subtype /Image /Length 0 >>\nstream\n\nendstream	false
+Annot3D	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotCaret	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotCircle	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotFileAttachment	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotFreeText	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotHighlight	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotInk	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotLine	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotLink	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotMovie	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotPolyLine	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotPolygon	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotPopup	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotPrinterMark	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotProjection	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotRedact	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotRichMedia	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotScreen	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotSound	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotSquare	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotSquiggly	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotStamp	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotStrikeOut	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotText	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotTrapNetwork	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotUnderline	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotWatermark	P	dictionary	PageObject	<< /Type /Page >>	false
+AnnotWidget	P	dictionary	PageObject	<< /Type /Page >>	false
+Appearance	N	stream	XObjectFormPS	<< /Type /XObject /Subtype /PS /Length 0 >>\nstream\n\nendstream	false
+AppearanceCharacteristics	BC	array	ArrayOfNumbersGeneral	[]	false
+AppearancePrinterMark	N	dictionary	AppearancePrinterMarkSubDict	<<  >>	false
+AppearancePrinterMarkSubDict	*	stream	XObjectFormPrinterMark	<< /Type /XObject /Subtype /Form /Length 0 >>\nstream\n\nendstream	false
+AppearanceSubDict	*	stream	XObjectFormType1	<< /Type /XObject /Subtype /Form /Length 0 >>\nstream\n\nendstream	false
+AppearanceTrapNet	N	dictionary	AppearanceTrapNetSubDict	<<  >>	false
+AppearanceTrapNetSubDict	*	stream	XObjectFormTrapNet	<< /Type /XObject /Subtype /Form /PCM /DeviceGray /Length 0 >>\nstream\n\nendstream	false
+ArrayOf3DCrossSection	*	dictionary	3DCrossSection	<< /Type /3DCrossSection >>	false
+ArrayOf3DMeasure	*	dictionary	3DMeasure3DC	<< /Type /3DMeasure /Subtype /3DC >>	false
+ArrayOf3DNode	*	dictionary	3DNode	<< /Type /3DNode >>	false
+ArrayOf3DTransMatrix	0	number	2.5	2.5	false
+ArrayOf3DView	*	dictionary	3DView	<< /Type /3DView >>	false
+ArrayOf3DViewAddEntries	*	dictionary	3DViewAddEntries	<< /Type /3DView >>	false
+ArrayOf3PDUNames	0	name	M	/M	false
+ArrayOf4Functions	0	stream	FunctionType0	<< /FunctionType 0 /BitsPerSample 1 /Length 0 >>\nstream\n\nendstream	false
+ArrayOfAFFileSpecifications	0	dictionary	AFFileSpecification	<< /Type /Filespec /AFRelationship /Source >>	false
+ArrayOfActionHideAnnots	*	dictionary	Annot3D	<< /Type /Annot /Subtype /3D >>	false
+ArrayOfActions	*	dictionary	ActionECMAScript	<< /Type /Action /S /JavaScript >>	false
+ArrayOfAnnotStates	*	name	Sample	/Sample	false
+ArrayOfAnnots	*	dictionary	Annot3D	<< /Type /Annot /Subtype /3D >>	false
+ArrayOfArraysInkList	*	array	ArrayOfNumbersGeneral	[]	false
+ArrayOfArraysPaths	0	array	ArrayOfPaths	[2.5 2.5]	false
+ArrayOfArraysRBGroups	*	array	ArrayOfOptContentGroups	[]	false
+ArrayOfArraysURLStrings	*	array	ArrayOfURLStrings	[]	false
+ArrayOfArraysXPTSValues	*	array	ArrayOfXPTSValues	[]	false
+ArrayOfAttributeObjects	*	dictionary	StructureAttributesDict	<< /Type /Pagination /Subtype /Header >>	false
+ArrayOfAttributeRevisions	0*	dictionary	StructureAttributesDict	<< /Type /Pagination /Subtype /Header >>	false
+ArrayOfBeads	*	dictionary	Bead	<< /Type /Bead >>	false
+ArrayOfBlendModes	*	name	Normal	/Normal	false
+ArrayOfCIDGlyphMetricsW	*	array	ArrayOfNumbersGeneral	[]	false
+ArrayOfCIDGlyphMetricsW2	*	array	ArrayOfNumbersGeneral	[]	false
+ArrayOfCIP4_AssemblingIntent	*	dictionary	CIP4_AssemblingIntent	<< /Type /CIP4_AssemblingIntent >>	false
+ArrayOfCIP4_AssemblyItem	*	dictionary	CIP4_AssemblyItem	<< /Type /CIP4_AssemblyItem >>	false
+ArrayOfCIP4_BindIn	*	dictionary	CIP4_BindIn	<< /Type /CIP4_BindIn >>	false
+ArrayOfCIP4_BindingIntent	*	dictionary	CIP4_BindingIntent	<< /Type /CIP4_BindingIntent /CIP4_BindingType /AdhesiveNote >>	false
+ArrayOfCIP4_BlowIn	*	dictionary	CIP4_BlowIn	<< /Type /CIP4_BlowIn >>	false
+ArrayOfCIP4_ChannelUsage	*	name	Business	/Business	false
+ArrayOfCIP4_Coatings	*	name	Aqueous	/Aqueous	false
+ArrayOfCIP4_ColorIntent	*	dictionary	CIP4_ColorIntent	<< /Type /CIP4_ColorIntent >>	false
+ArrayOfCIP4_ComChannel	*	dictionary	CIP4_ComChannel	<< /Type /CIP4_ComChannel >>	false
+ArrayOfCIP4_ContactTypes	*	name	Accounting	/Accounting	false
+ArrayOfCIP4_FinishedDimensions	0	number	1	1	false
+ArrayOfCIP4_FoldingIntent	*	dictionary	CIP4_FoldingIntent	<< /Type /CIP4_FoldingIntent >>	false
+ArrayOfCIP4_HoleMakingIntent	*	dictionary	CIP4_HoleMakingIntent	<< /Type /CIP4_HoleMakingIntent >>	false
+ArrayOfCIP4_HolePattern	*	dictionary	CIP4_HolePattern	<< /Type /CIP4_HolePattern >>	false
+ArrayOfCIP4_LABColorValue	0	number	2.5	2.5	false
+ArrayOfCIP4_LayoutIntent	*	dictionary	CIP4_LayoutIntent	<< /Type /CIP4_LayoutIntent /CIP4_Sides /OneSided >>	false
+ArrayOfCIP4_MediaIntent	*	dictionary	CIP4_MediaIntent	<< /Type /CIP4_MediaIntent >>	false
+ArrayOfCIP4_PrintProcess	*	name	DyeSublimation	/DyeSublimation	false
+ArrayOfCIP4_ProductionIntent	*	dictionary	CIP4_ProductionIntent	<< /Type /CIP4_ProductionIntent >>	false
+ArrayOfCIP4_Resource	*	dictionary	_UniversalDictionary	<<  >>	false
+ArrayOfCIP4_StickOn	*	dictionary	CIP4_StickOn	<< /Type /CIP4_StickOn >>	false
+ArrayOfClassNamesRevisions	1*	integer	1	1	false
+ArrayOfCompressionFilterNames	*	name	ASCIIHexDecode	/ASCIIHexDecode	false
+ArrayOfDPartArrays	*	array	ArrayOfDParts	[]	false
+ArrayOfDParts	*	dictionary	DPart	<< /Type /DPart >>	false
+ArrayOfDashPatterns	*	number	2.5	2.5	false
+ArrayOfDecodeParams	*	dictionary	FilterCrypt	<< /Type /CryptFilterDecodeParms >>	false
+ArrayOfDescendantFonts	0	dictionary	FontCIDType0	<< /Type /Font /Subtype /CIDFontType0 >>	false
+ArrayOfDevExtensions	*	dictionary	DevExtensions	<< /BaseVersion /1.7 /ExtensionLevel 5 >>	false
+ArrayOfDifferences	*	integer	7	7	false
+ArrayOfDigestMethod	*	name	SHA256	/SHA256	false
+ArrayOfDuration	0	integer	1	1	false
+ArrayOfFieldChoiceOpt	*	array	ArrayOf_2StringsText	[(Sample) (Sample)]	false
+ArrayOfFieldID	*	dictionary	Field	<<  >>	false
+ArrayOfFields	*	dictionary	AnnotWidget	<< /Type /Annot /Subtype /Widget >>	false
+ArrayOfFileSpecifications	0	dictionary	FileSpecification	<< /Type /Filespec >>	false
+ArrayOfFilterNames	*	name	ASCIIHexDecode	/ASCIIHexDecode	false
+ArrayOfFontAndSize	0	dictionary	FontCIDType0	<< /Type /Font /Subtype /CIDFontType0 >>	false
+ArrayOfFonts	*	dictionary	FontCIDType0	<< /Type /Font /Subtype /CIDFontType0 >>	false
+ArrayOfFunctions	*	stream	FunctionType0	<< /FunctionType 0 /BitsPerSample 1 /Length 0 >>\nstream\n\nendstream	false
+ArrayOfGSPDashPatterns	0	array	ArrayOfDashPatterns	[]	false
+ArrayOfImageAlternates	*	dictionary	AlternateImage	<<  >>	false
+ArrayOfIndirectFileSpecifications	*	dictionary	FileSpecification	<< /Type /Filespec >>	false
+ArrayOfIntegersGreaterThanZero	*	integer	1	1	false
+ArrayOfMediaPlayerInfo	*	dictionary	MediaPlayerInfo	<< /Type /MediaPlayerInfo >>	false
+ArrayOfNamesForEnforce	*	name	PrintScaling	/PrintScaling	false
+ArrayOfNamesForPrintingOrder	*	name	Sample	/Sample	false
+ArrayOfNamesForProcSet	*	name	PDF	/PDF	false
+ArrayOfNamesInPtData	*	name	LAT	/LAT	false
+ArrayOfNamespace	*	dictionary	Namespace	<< /Type /Namespace >>	false
+ArrayOfNavigatorLayoutNames	*	name	D	/D	false
+ArrayOfNonNegativeIntegersGeneral	*	integer	7	7	false
+ArrayOfNumberFormats	*	dictionary	NumberFormat	<< /Type /NumberFormat >>	false
+ArrayOfOCConfig	*	dictionary	OptContentConfig	<<  >>	false
+ArrayOfOCG	*	dictionary	OptContentGroup	<< /Type /OCG >>	false
+ArrayOfOCGState	*	dictionary	OptContentGroup	<< /Type /OCG >>	false
+ArrayOfOCGindirect	*	dictionary	OptContentGroup	<< /Type /OCG >>	false
+ArrayOfOCUsage	*	dictionary	OptContentUsageApplication	<< /Event /View >>	false
+ArrayOfOPI13Color	0	number	1	1	false
+ArrayOfOPI2Inks	0	name	monochrome	/monochrome	false
+ArrayOfOptContentGroups	*	dictionary	OptContentGroup	<< /Type /OCG >>	false
+ArrayOfOptContentOrderElements	*	array	ArrayOfOptContentOrders	[<< >>]	false
+ArrayOfOptContentOrders	0	dictionary	OptContentGroup	<< /Type /OCG >>	false
+ArrayOfOutputIntents	*	dictionary	OutputIntents	<< /Type /OutputIntent /S /GTS_PDFX >>	false
+ArrayOfPageTreeNodeKids	*	dictionary	PageObject	<< /Type /Page >>	false
+ArrayOfPages	*	dictionary	PageObject	<< /Type /Page >>	false
+ArrayOfPaths	0	number	2.5	2.5	false
+ArrayOfQuadPoints	0*	number	2.5	2.5	false
+ArrayOfRenditions	*	dictionary	RenditionMedia	<< /Type /Rendition /S /MR >>	false
+ArrayOfRequirements	*	dictionary	Requirements3DMarkup	<< /Type /Requirement /S /3DMarkup >>	false
+ArrayOfRequirementsHandlers	*	dictionary	RequirementsHandler	<< /Type /ReqHandler /S /JS >>	false
+ArrayOfRichMediaConfiguration	*	dictionary	RichMediaConfiguration	<< /Type /RichMediaConfiguration /Subtype /3D >>	false
+ArrayOfRichMediaCuePoints	*	dictionary	RichMediaCuePoint	<< /Type /CuePoint /Subtype /Navigation >>	false
+ArrayOfRichMediaInstances	*	dictionary	RichMediaInstance	<< /Type /RichMediaInstance /Subtype /3D >>	false
+ArrayOfSignatureReferences	*	dictionary	SignatureReferenceDocMDP	<< /Type /SigRef /TransformMethod /DocMDP >>	false
+ArrayOfSignatureSubFilterNames	*	name	adbe.pkcs7.detached	/adbe.pkcs7.detached	false
+ArrayOfSoftwareIdentifiers	*	dictionary	SoftwareIdentifier	<< /Type /SoftwareIdentifier >>	false
+ArrayOfSoftwareVersions	*	integer	1	1	false
+ArrayOfSourceInformation	*	dictionary	SourceInformation	<< /S 0 >>	false
+ArrayOfStreamsGeneral	*	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+ArrayOfStringsASCII	*	string-ascii	ASCII	(ASCII)	false
+ArrayOfStringsByte	*	string-byte	ab	(ab)	false
+ArrayOfStringsText	*	string-text	Sample	(Sample)	false
+ArrayOfStringsTextOrNames	*	string-text	Sample	(Sample)	false
+ArrayOfStructElem	*	dictionary	StructElem	<< /Type /StructElem >>	false
+ArrayOfStructElemKids	*	dictionary	MarkedContentReference	<< /Type /MCR >>	false
+ArrayOfStructElemParentTree	*	dictionary	StructElem	<< /Type /StructElem >>	false
+ArrayOfSubjectDN	*	dictionary	SubjectDN	<<  >>	false
+ArrayOfTags	0*	integer	7	7	false
+ArrayOfThreads	*	dictionary	Thread	<< /Type /Thread >>	false
+ArrayOfTrapNetVersionObjects	*	array	CalGrayColorSpace	[/CalGray << >>]	false
+ArrayOfTrapRegions	*	dictionary	TrapRegion	<<  >>	false
+ArrayOfURLStrings	*	string-text	Sample	(Sample)	false
+ArrayOfURLs	*	dictionary	FileSpecification	<< /Type /Filespec >>	false
+ArrayOfUserProperty	*	dictionary	UserProperty	<<  >>	false
+ArrayOfViewParams	*	dictionary	ViewParams	<<  >>	false
+ArrayOfViewports	*	dictionary	Viewport	<< /Type /Viewport >>	false
+ArrayOfWebCaptureCommands	*	dictionary	WebCaptureCommand	<<  >>	false
+ArrayOfWebCaptureImages	*	stream	XObjectImage	<< /Type /XObject /Subtype /Image /Length 0 >>\nstream\n\nendstream	false
+ArrayOfWebCapturePages	*	dictionary	PageObject	<< /Type /Page >>	false
+ArrayOfXFA	1*	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+ArrayOfXPTSValues	*	number	2.5	2.5	false
+ArrayOfXRefIndexIntegers	0*	integer	7	7	false
+ArrayOfXRefWIntegers	0	integer	1	1	false
+ArrayOf_2Booleans	0	boolean	true	true	-9
+ArrayOf_2DashNumbers	0	number	2.5	2.5	false
+ArrayOf_2Integers	0	integer	7	7	false
+ArrayOf_2LineEndingsNames	0	name	Square	/Square	false
+ArrayOf_2NonNegativeIntegers	0	integer	7	7	false
+ArrayOf_2Numbers	0	number	2.5	2.5	false
+ArrayOf_2StringsByte	0	string-byte	ab	(ab)	false
+ArrayOf_2StringsText	0	string-text	Sample	(Sample)	false
+ArrayOf_3CenterOfRotationNumbers	0	number	2.5	2.5	false
+ArrayOf_3NonNegativeIntegers	0	integer	1	1	false
+ArrayOf_3Numbers	0	number	2.5	2.5	false
+ArrayOf_3OrientationNumbers	0	null	null	null	false
+ArrayOf_3RGBNumbers	0	number	1	1	false
+ArrayOf_3or4CalloutLineNumbers	0	number	2.5	2.5	false
+ArrayOf_4AnnotBorderCharacteristics	3	array	ArrayOf_2DashNumbers	[2.5 2.5]	false
+ArrayOf_4BorderColorArrays	0	array	ArrayOf_3RGBNumbers	[1 1 1]	false
+ArrayOf_4BorderStyleNames	0	name	None	/None	false
+ArrayOf_4BorderThicknessNumbers	0	number	1	1	false
+ArrayOf_4ColourSpaceEntries	0	name	DeviceRGB	/DeviceRGB	false
+ArrayOf_4Integers	0	integer	7	7	false
+ArrayOf_4Numbers	0	number	2.5	2.5	false
+ArrayOf_4NumbersColorAnnotation	0	number	1	1	false
+ArrayOf_6Numbers	0	number	2.5	2.5	false
+ArrayOf_8Numbers	0	number	2.5	2.5	false
+ArrayOf_9Numbers	0	number	2.5	2.5	false
+ArrayOf_ArrayOfNumbers	*	array	ArrayOfNumbersGeneral	[]	false
+ArrayOf_RoleMapNS	1	dictionary	Namespace	<< /Type /Namespace >>	false
+AuthCode	ByteRange	array	ArrayOf_4Integers	[7 7 7 7]	false
+Bead	T	dictionary	Thread	<< /Type /Thread >>	false
+BeadFirst	T	dictionary	Thread	<< /Type /Thread >>	false
+BlackpointArray	0	number	1	1	false
+BorderEffect	S	name	C	/C	false
+BorderStyle	D	array	ArrayOfDashPatterns	[]	false
+BoxColorInfo	CropBox	dictionary	BoxStyle	<< /S /S >>	false
+BoxStyle	C	array	ArrayOf_3RGBNumbers	[1 1 1]	false
+CIDFontDescriptorMetrics	Type	name	FontDescriptor	/FontDescriptor	false
+CIDSystemInfo	Registry	string-ascii	ASCII	(ASCII)	false
+CIP4_Address	CIP4_AddressLines	array	ArrayOfStringsText	[]	false
+CIP4_AssemblingIntent	CIP4_Container	dictionary	DPart	<< /Type /DPart >>	false
+CIP4_AssemblyItem	CIP4_Child	dictionary	DPart	<< /Type /DPart >>	false
+CIP4_BindIn	CIP4_Child	dictionary	DPart	<< /Type /DPart >>	false
+CIP4_BindingIntent	CIP4_SaddleStitching	dictionary	CIP4_SaddleStitching	<< /Type /CIP4_SaddleStitching >>	false
+CIP4_BlowIn	CIP4_Child	dictionary	DPart	<< /Type /DPart >>	false
+CIP4_ColorIntent	CIP4_Coatings	array	ArrayOfCIP4_Coatings	[]	false
+CIP4_ComChannel	CIP4_ChannelUsage	array	ArrayOfCIP4_ChannelUsage	[]	false
+CIP4_Company	Type	name	CIP4_Company	/CIP4_Company	false
+CIP4_Contact	CIP4_Address	dictionary	CIP4_Address	<< /Type /CIP4_Address >>	false
+CIP4_FoldingIntent	Type	name	CIP4_FoldingIntent	/CIP4_FoldingIntent	false
+CIP4_HoleMakingIntent	CIP4_HolePattern	array	ArrayOfCIP4_HolePattern	[]	false
+CIP4_HolePattern	Type	name	CIP4_HolePattern	/CIP4_HolePattern	false
+CIP4_Intent	CIP4_AssemblingIntent	dictionary	CIP4_AssemblingIntent	<< /Type /CIP4_AssemblingIntent >>	false
+CIP4_IntentSummary	CIP4_AssemblingIntent	array	ArrayOfCIP4_AssemblingIntent	[]	false
+CIP4_LayoutIntent	CIP4_FinishedDimensions	array	ArrayOfCIP4_FinishedDimensions	[1 1 1]	false
+CIP4_MediaIntent	CIP4_LABColorValue	array	ArrayOfCIP4_LABColorValue	[2.5 2.5 2.5]	false
+CIP4_Metadata	CIP4_Accounting	dictionary	CIP4_Contact	<< /Type /CIP4_Contact >>	false
+CIP4_Person	Type	name	CIP4_Person	/CIP4_Person	false
+CIP4_Production	CIP4_Resource	array	ArrayOfCIP4_Resource	[]	false
+CIP4_ProductionIntent	CIP4_PrintProcess	array	ArrayOfCIP4_PrintProcess	[]	false
+CIP4_Recipient	CIP4_Contact	dictionary	CIP4_Contact	<< /Type /CIP4_Contact >>	false
+CIP4_Root	CIP4_Intent	dictionary	CIP4_Intent	<< /Type /CIP4_Intent >>	false
+CIP4_SaddleStitching	Type	name	CIP4_SaddleStitching	/CIP4_SaddleStitching	false
+CIP4_SideStitching	Type	name	CIP4_SideStitching	/CIP4_SideStitching	false
+CIP4_StickOn	CIP4_Child	dictionary	DPart	<< /Type /DPart >>	false
+CMapStream	CIDSystemInfo	dictionary	CIDSystemInfo	<<  >>	false
+CalGrayColorSpace	1	dictionary	CalGrayDict	<<  >>	false
+CalGrayDict	WhitePoint	array	WhitepointArray	[1 1 1]	false
+CalRGBColorSpace	1	dictionary	CalRGBDict	<<  >>	false
+CalRGBDict	WhitePoint	array	WhitepointArray	[1 1 1]	false
+Catalog	Extensions	dictionary	Extensions	<< /Type /Extensions >>	false
+CertSeedValue	Subject	array	ArrayOfStringsByte	[]	false
+CharProcMap	*	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+ClassMap	*	array	ArrayOfAttributeObjects	[]	false
+Collection	Schema	dictionary	CollectionSchema	<< /Type /CollectionSchema >>	false
+CollectionColors	Background	array	ArrayOf_3RGBNumbers	[1 1 1]	false
+CollectionField	Type	name	CollectionField	/CollectionField	false
+CollectionFolder	Parent	dictionary	CollectionFolder	<< /Type /Folder >>	false
+CollectionItem	*	dictionary	CollectionSubitem	<< /Type /CollectionSubitem >>	false
+CollectionSchema	*	dictionary	CollectionField	<< /Type /CollectionField /Subtype /S >>	false
+CollectionSort	S	array	ArrayOfNamesGeneral	[]	false
+CollectionSplit	Type	name	CollectionSplit	/CollectionSplit	false
+CollectionSubitem	Type	name	CollectionSubitem	/CollectionSubitem	false
+ColorSpaceMap	*	name	DeviceCMYK	/DeviceCMYK	false
+ColorantsDict	*	array	SeparationColorSpace	[/Separation /Spot /DeviceRGB << /FunctionType 2 >>]	false
+CryptFilter	Type	name	CryptFilter	/CryptFilter	false
+CryptFilterMap	Identity	dictionary	CryptFilter	<< /Type /CryptFilter >>	false
+CryptFilterPublicKey	Recipients	array	ArrayOfStringsByte	[]	false
+CryptFilterPublicKeyMap	DefaultCryptFilter	dictionary	CryptFilterPublicKey	<< /Type /CryptFilter >>	false
+DPM	GTS_Managed	dictionary	_UniversalDictionary	<<  >>	false
+DPart	DParts	array	ArrayOfDPartArrays	[]	false
+DPartRoot	DPartRootNode	dictionary	DPart	<< /Type /DPart >>	false
+DSS	VRI	dictionary	VRIMap	<<  >>	false
+Data	LastModified	date	D:20260101000000Z	(D:20260101000000Z)	false
+Dest0Array	0	dictionary	PageObject	<< /Type /Page >>	false
+Dest0StructArray	0	dictionary	StructElem	<< /Type /StructElem >>	false
+Dest1Array	0	dictionary	PageObject	<< /Type /Page >>	false
+Dest1StructArray	0	dictionary	StructElem	<< /Type /StructElem >>	false
+Dest4Array	0	dictionary	PageObject	<< /Type /Page >>	false
+Dest4StructArray	0	dictionary	StructElem	<< /Type /StructElem >>	false
+DestDict	D	array	Dest0Array	[<< >> /Fit]	false
+DestOutputProfileRef	ColorantTable	array	ArrayOfNamesGeneral	[]	false
+DestXYZArray	0	dictionary	PageObject	<< /Type /Page >>	false
+DestXYZStructArray	0	dictionary	StructElem	<< /Type /StructElem >>	false
+DestsMap	*	array	Dest0Array	[<< >> /Fit]	false
+DevExtensions	Type	name	DeveloperExtensions	/DeveloperExtensions	false
+DeviceCMYKColorSpace	0	name	DeviceCMYK	/DeviceCMYK	false
+DeviceGrayColorSpace	0	name	DeviceGray	/DeviceGray	false
+DeviceNColorSpace	1	array	ArrayOfNamesGeneral	[]	false
+DeviceNDict	Colorants	dictionary	ColorantsDict	<<  >>	false
+DeviceNMixingHints	Solidities	dictionary	Solidities	<<  >>	false
+DeviceNProcess	Components	array	ArrayOfNamesGeneral	[]	false
+DeviceRGBColorSpace	0	name	DeviceRGB	/DeviceRGB	false
+DictionaryOfDictionaries	*	dictionary	_UniversalDictionary	<<  >>	false
+DictionaryOfFunctions	Default	dictionary	FunctionType2	<< /FunctionType 2 >>	false
+DocInfo	AAPL:Keywords	array	ArrayOfStringsText	[]	false
+DocMDPTransformParameters	Type	name	TransformParams	/TransformParams	false
+DocTimeStamp	Cert	array	ArrayOfStringsByte	[]	false
+EmbeddedFileParameter	Mac	dictionary	Mac	<<  >>	false
+EmbeddedFileStream	Params	dictionary	EmbeddedFileParameter	<<  >>	false
+Encoding	Differences	array	ArrayOfDifferences	[]	false
+EncryptedPayload	Type	name	EncryptedPayload	/EncryptedPayload	false
+EncryptionPublicKey	Recipients	array	ArrayOfStringsByte	[]	false
+EncryptionStandard	CF	dictionary	CryptFilterMap	<<  >>	false
+ExData3DMarkup	3DA	dictionary	Annot3D	<< /Type /Annot /Subtype /3D >>	false
+ExDataMarkupGeo	Type	name	ExData	/ExData	false
+ExDataProjection	Type	name	ExData	/ExData	false
+Extensions	ISO_	dictionary	ISO_DevExtensions	<< /Type /DeveloperExtensions /BaseVersion /2.0 /ExtensionLevel 32001 >>	false
+FDDict	*	dictionary	CIDFontDescriptorMetrics	<< /Type /FontDescriptor >>	false
+Field	Kids	array	ArrayOfFields	[]	false
+FieldBtnCheckbox	Kids	array	ArrayOfFields	[]	false
+FieldBtnPush	Kids	array	ArrayOfFields	[]	false
+FieldBtnRadio	Kids	array	ArrayOfFields	[]	false
+FieldChoice	Kids	array	ArrayOfFields	[]	false
+FieldMDPTransformParameters	Fields	array	ArrayOfStringsText	[]	false
+FieldSig	Kids	array	ArrayOfFields	[]	false
+FieldTx	Kids	array	ArrayOfFields	[]	false
+FileSpecEF	F	stream	EmbeddedFileStream	<< /Type /EmbeddedFile /Length 0 >>\nstream\n\nendstream	false
+FileSpecRF	F	array	RelatedFilesArray	[]	false
+FileSpecification	ID	array	ArrayOf_2StringsByte	[(ab) (ab)]	false
+FileTrailer	Root	dictionary	Catalog	<< /Type /Catalog >>	false
+FilterCCITTFaxDecode	Columns	integer	1	1	false
+FilterCrypt	Type	name	CryptFilterDecodeParms	/CryptFilterDecodeParms	false
+FilterDCTDecode	ColorTransform	integer	0	0	false
+FilterFlateDecode	Predictor	integer	1	1	false
+FilterJBIG2Decode	JBIG2Globals	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+FilterLZWDecode	Predictor	integer	1	1	false
+FixedPrint	Type	name	FixedPrint	/FixedPrint	false
+FloatingWindowParameters	D	array	ArrayOf_2Integers	[7 7]	false
+FontCIDType0	CIDSystemInfo	dictionary	CIDSystemInfo	<<  >>	false
+FontCIDType2	CIDSystemInfo	dictionary	CIDSystemInfo	<<  >>	false
+FontDescriptorCIDType0	FontFile	stream	FontFile	<< /Subtype /Type1C /Length 0 >>\nstream\n\nendstream	false
+FontDescriptorCIDType2	FontFile	stream	FontFile	<< /Subtype /Type1C /Length 0 >>\nstream\n\nendstream	false
+FontDescriptorTrueType	FontFile	stream	FontFileType1	<< /Subtype /Type1C /Length 0 >>\nstream\n\nendstream	false
+FontDescriptorType1	FontFile	stream	FontFileType1	<< /Subtype /Type1C /Length 0 >>\nstream\n\nendstream	false
+FontDescriptorType3	Type	name	FontDescriptor	/FontDescriptor	false
+FontFile	Filter	array	ArrayOfCompressionFilterNames	[]	false
+FontFile2	Filter	array	ArrayOfCompressionFilterNames	[]	false
+FontFile3CIDType0	Filter	array	ArrayOfCompressionFilterNames	[]	false
+FontFile3OpenType	Filter	array	ArrayOfCompressionFilterNames	[]	false
+FontFile3Type1	Filter	array	ArrayOfCompressionFilterNames	[]	false
+FontFileType1	Filter	array	ArrayOfCompressionFilterNames	[]	false
+FontMap	*	dictionary	FontCIDType0	<< /Type /Font /Subtype /CIDFontType0 >>	false
+FontMultipleMaster	Widths	array	ArrayOfNumbersGeneral	[]	false
+FontTrueType	Widths	array	ArrayOfNumbersGeneral	[]	false
+FontType0	Encoding	stream	CMapStream	<< /Type /CMap /Length 0 >>\nstream\n\nendstream	false
+FontType1	Widths	array	ArrayOfNumbersGeneral	[]	false
+FontType3	CharProcs	dictionary	CharProcMap	<<  >>	false
+FunctionType0	Domain	array	ArrayOfNumbersGeneral	[]	false
+FunctionType2	Domain	array	ArrayOfNumbersGeneral	[]	false
+FunctionType3	Domain	array	ArrayOfNumbersGeneral	[]	false
+FunctionType4	Domain	array	ArrayOfNumbersGeneral	[]	false
+GTS_ProcStepsGroup	GTS_ProcStepsGroup	name	Structural	/Structural	false
+GTSm_DevExtensions	Type	name	DeveloperExtensions	/DeveloperExtensions	false
+GammaArray	0	number	1	1	false
+GeographicCoordinateSystem	Type	name	GEOGCS	/GEOGCS	false
+GraphicsStateParameter	D	array	ArrayOfGSPDashPatterns	[[] 2.5]	false
+GraphicsStateParameterMap	*	dictionary	GraphicsStateParameter	<< /Type /ExtGState >>	false
+GroupAttributes	Type	name	Group	/Group	false
+HalftoneType1	SpotFunction	array	ArrayOfFunctions	[]	false
+HalftoneType10	Filter	array	ArrayOfCompressionFilterNames	[]	false
+HalftoneType16	Filter	array	ArrayOfCompressionFilterNames	[]	false
+HalftoneType5	Default	dictionary	HalftoneType1	<< /Type /Halftone /HalftoneType 1 /Frequency 60 /Angle 45 /SpotFunction /Round /TransferFunction /Identity >>	false
+HalftoneType6	Filter	array	ArrayOfCompressionFilterNames	[]	false
+ICCBasedColorSpace	1	stream	ICCProfileStream	<< /N 1 /Length 0 >>\nstream\n\nendstream	false
+ICCProfileStream	Range	array	ArrayOfNumbersGeneral	[]	false
+ISO_DevExtensions	Type	name	DeveloperExtensions	/DeveloperExtensions	false
+IconFit	A	array	ArrayOf_2Numbers	[2.5 2.5]	false
+IndexedColorSpace	3	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+InteractiveForm	Fields	array	ArrayOfFields	[]	false
+LabColorSpace	1	dictionary	LabDict	<<  >>	false
+LabDict	WhitePoint	array	WhitepointArray	[1 1 1]	false
+LabRangeArray	0	number	1	1	false
+LegalAttestation	JavaScriptActions	integer	7	7	false
+LinearizationParameterDict	Linearized	number	1.0	1.0	false
+MDPDict	P	integer	0	0	false
+Mac	ResFork	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+MarkInfo	Marked	boolean	true	true	-9
+MarkedContentReference	Pg	dictionary	PageObject	<< /Type /Page >>	false
+MeasureGEO	Bounds	array	ArrayOfNumbersGeneral	[]	false
+MeasureRL	X	array	ArrayOfNumberFormats	[]	false
+MediaClipData	D	dictionary	FileSpecification	<< /Type /Filespec >>	false
+MediaClipDataMHBE	BU	string-ascii	ASCII	(ASCII)	false
+MediaClipSection	Alt	array	ArrayOfStringsText	[]	false
+MediaClipSectionMHBE	B	dictionary	MediaOffsetFrame	<< /Type /MediaOffset /S /F /F 1 >>	false
+MediaCriteria	D	dictionary	MinimumBitDepth	<< /Type /MinBitDepth >>	false
+MediaDuration	T	dictionary	Timespan	<< /Type /Timespan /S /S >>	false
+MediaOffsetFrame	Type	name	MediaOffset	/MediaOffset	false
+MediaOffsetMarker	Type	name	MediaOffset	/MediaOffset	false
+MediaOffsetTime	T	dictionary	Timespan	<< /Type /Timespan /S /S >>	false
+MediaPermissions	Type	name	MediaPermissions	/MediaPermissions	false
+MediaPlayParameters	PL	dictionary	MediaPlayers	<< /Type /MediaPlayers >>	false
+MediaPlayParametersBE	D	dictionary	MediaDuration	<< /Type /MediaDuration /S /I >>	false
+MediaPlayParametersMH	D	dictionary	MediaDuration	<< /Type /MediaDuration /S /I >>	false
+MediaPlayerInfo	PID	dictionary	SoftwareIdentifier	<< /Type /SoftwareIdentifier >>	false
+MediaPlayers	MU	array	ArrayOfMediaPlayerInfo	[]	false
+MediaScreenParameters	MH	dictionary	MediaScreenParametersMHBE	<<  >>	false
+MediaScreenParametersMHBE	B	array	ArrayOf_3RGBNumbers	[1 1 1]	false
+Metadata	Filter	array	ArrayOfCompressionFilterNames	[]	false
+MicrosoftWindowsLaunchParam	O	string-ascii	open	(open)	false
+MinimumBitDepth	Type	name	MinBitDepth	/MinBitDepth	false
+MinimumScreenSize	V	array	ArrayOf_2Integers	[7 7]	false
+Movie	F	dictionary	FileSpecification	<< /Type /Filespec >>	false
+MovieActivation	Start	array	ArrayOfDuration	[1 1]	false
+Name	Dests	name-tree	dictionary	<< /Names [] >>	false
+Namespace	Schema	dictionary	FileSpecification	<< /Type /Filespec >>	false
+NavNode	Next	dictionary	NavNode	<< /Type /NavNode >>	false
+Navigator	Layout	array	ArrayOfNavigatorLayoutNames	[]	false
+NumberFormat	Type	name	NumberFormat	/NumberFormat	false
+OOAdditionalStmsArray	1*	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+OPIVersion13	1.3	dictionary	OPIVersion13Dict	<< /Type /OPI >>	false
+OPIVersion13Dict	F	dictionary	FileSpecification	<< /Type /Filespec >>	false
+OPIVersion20	2.0	dictionary	OPIVersion20Dict	<< /Type /OPI >>	false
+OPIVersion20Dict	F	dictionary	FileSpecification	<< /Type /Filespec >>	false
+ObjectReference	Pg	dictionary	PageObject	<< /Type /Page >>	false
+ObjectStream	Extends	stream	ObjectStream	<< /Type /ObjStm /N 1 /First 1 /Length 0 >>\nstream\n\nendstream	false
+OptContentConfig	ON	array	ArrayOfOptContentGroups	[]	false
+OptContentCreatorInfo	Subtype	name	Artwork	/Artwork	false
+OptContentExport	ExportState	name	ON	/ON	false
+OptContentGroup	Intent	array	ArrayOfNamesGeneral	[]	false
+OptContentLanguage	Preferred	name	ON	/ON	false
+OptContentMembership	OCGs	array	ArrayOfOCG	[]	false
+OptContentPageElement	Subtype	name	HF	/HF	false
+OptContentPrint	PrintState	name	ON	/ON	false
+OptContentProperties	OCGs	array	ArrayOfOCGindirect	[]	false
+OptContentUsage	CreatorInfo	dictionary	OptContentCreatorInfo	<< /Subtype /Artwork >>	false
+OptContentUsageApplication	OCGs	array	ArrayOfOCG	[]	false
+OptContentUser	Name	array	ArrayOfStringsText	[]	false
+OptContentView	ViewState	name	ON	/ON	false
+OptContentZoom	min	number	1	1	false
+Outline	First	dictionary	OutlineItem	<<  >>	false
+OutlineItem	Prev	dictionary	OutlineItem	<<  >>	false
+OutputIntents	DestOutputProfile	stream	ICCProfileStream	<< /N 1 /Length 0 >>\nstream\n\nendstream	false
+PageLabel	Type	name	PageLabel	/PageLabel	false
+PageObject	Resources	dictionary	Resource	<<  >>	false
+PagePiece	*	dictionary	Data	<<  >>	false
+PageTreeNode	Kids	array	ArrayOfPageTreeNodeKids	[]	false
+PageTreeNodeRoot	Kids	array	ArrayOfPageTreeNodeKids	[]	false
+PaperMetaData	Type	name	PaperMetaData	/PaperMetaData	false
+PatternColorSpace	0	name	Pattern	/Pattern	false
+PatternMap	*	stream	PatternType1	<< /Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /Length 0 >>\nstream\n\nendstream	false
+PatternType1	Resources	dictionary	Resource	<<  >>	false
+PatternType2	ExtGState	dictionary	GraphicsStateParameter	<< /Type /ExtGState >>	false
+Permissions	DocMDP	dictionary	Signature	<< /Type /Sig /Filter /Adobe.PPKLite >>	false
+PointData	Names	array	ArrayOfNamesInPtData	[]	false
+ProjectedCoordinateSystem	Type	name	PROJCS	/PROJCS	false
+Projection	Subtype	name	O	/O	false
+Reference	F	dictionary	FileSpecification	<< /Type /Filespec >>	false
+RelatedFilesArray	1*	stream	EmbeddedFileStream	<< /Type /EmbeddedFile /Length 0 >>\nstream\n\nendstream	false
+RenditionBE	C	dictionary	MediaCriteria	<< /Type /MediaCriteria >>	false
+RenditionMH	C	dictionary	MediaCriteria	<< /Type /MediaCriteria >>	false
+RenditionMedia	MH	dictionary	RenditionMH	<<  >>	false
+RenditionSelector	MH	dictionary	RenditionMH	<<  >>	false
+Requirements3DMarkup	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsAcroFormInteract	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsAction	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsAttachment	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsAttachmentEditing	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsCollection	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsCollectionEditing	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsDPartInteract	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsDigSig	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsDigSigMDP	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsDigSigValidation	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsEnableJavaScripts	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsEncryption	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsGeospatial2D	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsGeospatial3D	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsHandler	Type	name	ReqHandler	/ReqHandler	false
+RequirementsMarkup	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsMultimedia	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsNavigation	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsOCAutoStates	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsOCInteract	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsPRC	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsRichMedia	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsSTEP	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsSeparationSimulation	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsTransitions	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsU3D	V	dictionary	Extensions	<< /Type /Extensions >>	false
+RequirementsglTF	RH	array	ArrayOfRequirementsHandlers	[]	false
+Resource	ExtGState	dictionary	GraphicsStateParameterMap	<<  >>	false
+RichMediaActivation	Animation	dictionary	RichMediaAnimation	<< /Type /RichMediaAnimation /Subtype /None >>	false
+RichMediaAnimation	Type	name	RichMediaAnimation	/RichMediaAnimation	false
+RichMediaCommand	A	array	RichMediaCommandArray	[]	/Bogus
+RichMediaCommandArray	*	boolean	true	true	/Bogus
+RichMediaConfiguration	Instances	array	ArrayOfRichMediaInstances	[]	false
+RichMediaContent	Configurations	array	ArrayOfRichMediaConfiguration	[]	false
+RichMediaCuePoint	Type	name	CuePoint	/CuePoint	false
+RichMediaDeactivation	Type	name	RichMediaDeactivation	/RichMediaDeactivation	false
+RichMediaHeight	Default	integer	1	1	false
+RichMediaInstance	Asset	dictionary	FileSpecification	<< /Type /Filespec >>	false
+RichMediaParams	FlashVars	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+RichMediaPosition	Type	name	RichMediaPosition	/RichMediaPosition	false
+RichMediaPresentation	Window	dictionary	RichMediaWindow	<< /Type /RichMediaWindow >>	false
+RichMediaSettings	Activation	dictionary	RichMediaActivation	<< /Type /RichMediaActivation >>	false
+RichMediaWidth	Default	integer	1	1	false
+RichMediaWindow	Width	dictionary	RichMediaWidth	<<  >>	false
+RoleMap	*	name	Sample	/Sample	false
+RoleMapNS	*	array	ArrayOf_RoleMapNS	[/Sample << >>]	false
+Separation	Pages	array	ArrayOfPages	[]	false
+SeparationColorSpace	0	name	Separation	/Separation	false
+ShadingMap	*	dictionary	ShadingType1	<< /ShadingType 1 /ColorSpace /DeviceRGB /Function << /FunctionType 2 >> >>	false
+ShadingType1	Domain	array	ArrayOf_4Numbers	[2.5 2.5 2.5 2.5]	false
+ShadingType2	Coords	array	ArrayOf_4Numbers	[2.5 2.5 2.5 2.5]	false
+ShadingType3	Coords	array	ArrayOf_6Numbers	[2.5 2.5 2.5 2.5 2.5 2.5]	false
+ShadingType4	Decode	array	ArrayOfNumbersGeneral	[]	false
+ShadingType5	Decode	array	ArrayOfNumbersGeneral	[]	false
+ShadingType6	Decode	array	ArrayOfNumbersGeneral	[]	false
+ShadingType7	Decode	array	ArrayOfNumbersGeneral	[]	false
+SigFieldLock	Fields	array	ArrayOfStringsText	[]	false
+SigFieldSeedValue	SubFilter	array	ArrayOfSignatureSubFilterNames	[]	false
+Signature	Cert	array	ArrayOfStringsByte	[]	false
+SignatureBuildDataAppDict	OS	array	ArrayOfStringsTextOrNames	[]	false
+SignatureBuildDataDict	OS	array	ArrayOfStringsText	[]	false
+SignatureBuildDataSigQDict	OS	array	ArrayOfStringsText	[]	false
+SignatureBuildPropDict	Filter	dictionary	SignatureBuildDataDict	<<  >>	false
+SignatureReferenceDocMDP	TransformParams	dictionary	DocMDPTransformParameters	<< /Type /TransformParams >>	false
+SignatureReferenceFieldMDP	TransformParams	dictionary	FieldMDPTransformParameters	<< /Type /TransformParams /V /1.2 >>	false
+SignatureReferenceIdentity	DigestLocation	array	ArrayOf_2NonNegativeIntegers	[7 7]	false
+SignatureReferenceUR	TransformParams	dictionary	URTransformParameters	<< /Type /TransformParams >>	false
+SlideShow	Type	name	SlideShow	/SlideShow	false
+SoftMaskAlpha	G	stream	XObjectFormType1	<< /Type /XObject /Subtype /Form /Length 0 >>\nstream\n\nendstream	false
+SoftMaskLuminosity	G	stream	XObjectFormType1	<< /Type /XObject /Subtype /Form /Length 0 >>\nstream\n\nendstream	false
+SoftwareIdentifier	L	array	ArrayOfSoftwareVersions	[]	false
+Solidities	Default	number	1	1	false
+SoundObject	CP	array	_UniversalArray	[]	false
+SourceInformation	AU	dictionary	URLAlias	<<  >>	false
+SpectralData	*	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+Stream	Filter	array	ArrayOfFilterNames	[]	false
+StructElem	Ref	array	ArrayOfStructElem	[]	false
+StructTreeRoot	K	array	ArrayOfStructElem	[]	false
+StructureAttributesDict	NS	dictionary	Namespace	<< /Type /Namespace >>	false
+StyleDict	Panose	string-byte	ab	(ab)	false
+SubjectDN	*	string-text	Sample	(Sample)	false
+Target	T	dictionary	TargetEmbedded	<< /R /P >>	false
+TargetEmbedded	T	dictionary	Target	<< /R /P >>	false
+Thread	F	dictionary	BeadFirst	<< /Type /Bead >>	false
+Thumbnail	Decode	array	ArrayOfNumbersGeneral	[]	false
+TimeStampDict	Ff	integer	0	0	false
+Timespan	Type	name	Timespan	/Timespan	false
+ToUnicodeCMapStream	CIDSystemInfo	dictionary	CIDSystemInfo	<<  >>	false
+TrailerIDArray	0	string-byte	ab	(ab)	false
+Transition	Type	name	Trans	/Trans	false
+TrapRegion	TZ	array	ArrayOf_ArrayOfNumbers	[]	false
+URI	Base	string-ascii	ASCII	(ASCII)	false
+URLAlias	C	array	ArrayOfArraysURLStrings	[]	false
+URTransformParamAnnotsArray	*	name	Create	/Create	false
+URTransformParamDocumentArray	*	name	FullSave	/FullSave	false
+URTransformParamEFArray	*	name	Create	/Create	false
+URTransformParamFormArray	*	name	Add	/Add	false
+URTransformParamSignatureArray	*	name	Modify	/Modify	false
+URTransformParameters	Document	array	URTransformParamDocumentArray	[]	false
+UserProperty	N	string-text	Sample	(Sample)	false
+VRI	Cert	array	ArrayOfStreamsGeneral	[]	false
+VRIMap	*	dictionary	VRI	<< /Type /VRI >>	false
+ViewParams	Instance	dictionary	RichMediaInstance	<< /Type /RichMediaInstance /Subtype /3D >>	false
+ViewerPreferences	PrintPageRange	array	ArrayOfIntegersGreaterThanZero	[]	false
+Viewport	PtData	dictionary	PointData	<< /Type /PtData /Subtype /Cloud >>	false
+VisibilityExpressionArray	1	array	VisibilityExpressionArray	[/And []]	false
+WebCaptureCommand	P	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+WebCaptureCommandSettings	G	dictionary	_UniversalDictionary	<<  >>	false
+WebCaptureImageSet	O	array	ArrayOfWebCaptureImages	[]	false
+WebCaptureInfo	C	array	ArrayOfWebCaptureCommands	[]	false
+WebCapturePageSet	O	array	ArrayOfWebCapturePages	[]	false
+WhitepointArray	0	number	1	1	false
+XObjectFormPS	Level1	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+XObjectFormPSpassthrough	Level1	stream	Stream	<< /Length 0 >>\nstream\n\nendstream	false
+XObjectFormPrinterMark	Resources	dictionary	Resource	<<  >>	false
+XObjectFormTrapNet	Resources	dictionary	Resource	<<  >>	false
+XObjectFormType1	Resources	dictionary	Resource	<<  >>	false
+XObjectImage	Mask	array	ArrayOfIntegersGeneral	[]	false
+XObjectImageMask	Decode	array	ArrayOfNumbersGeneral	[0 1]	false
+XObjectImageSoftMask	ColorSpace	array	DeviceGrayColorSpace	[/DeviceGray]	false
+XObjectMap	*	stream	XObjectFormPS	<< /Type /XObject /Subtype /PS /Length 0 >>\nstream\n\nendstream	false
+XRefStream	Index	array	ArrayOfXRefIndexIntegers	[]	false

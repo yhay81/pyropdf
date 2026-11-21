@@ -31,7 +31,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
 | read | 0 | 0 | 0 | 42 | 42 | 747 |
-| interpret | 1 | 13 | 0 | 39 | 662 | 116 |
+| interpret | 1 | 19 | 0 | 39 | 49 | 723 |
 | create | 0 | 0 | 9 | 643 | 78 | 101 |
 | edit | 0 | 0 | 0 | 669 | 65 | 97 |
 | preserve | 0 | 0 | 0 | 27 | 662 | 142 |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,930 unfinished cells in 831 features: 1 engine, 1,420 partial, 1,509 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,317 unfinished cells in 831 features: 1 engine, 1,420 partial, 896 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -271,8 +271,7 @@ Milestone [#246](https://github.com/yhay81/pyropdf/issues/246).
 
 Milestone [#247](https://github.com/yhay81/pyropdf/issues/247).
 
-- [#888](https://github.com/yhay81/pyropdf/issues/888) Interpret the linked objects and values of standalone Arlington types. Resolve linked object types, arrays and conditional values through the versioned store. Exercise ambiguous links and invalid references with bounded, per-type fixtures. Record clause-backed exceptions for types with no distinct interpretation.
-    - interpret — all 613 standalone Arlington object rows.
+No unfinished specification-map cells assigned.
 
 ### 248 Rendering
 
@@ -1005,6 +1004,12 @@ before a test can be cited for that specific correction. The register gives no a
 
 ## Exclusions
 
+- `ArrayOfBooleansGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
+- `ArrayOfIntegersGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
+- `ArrayOfNamesGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
+- `ArrayOfNumbersGeneral` interpret: n/a, 7.3.6: these unconstrained arrays only convey their primitive elements in order, which their per-type Read cases cover.
+- `_UniversalArray` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
+- `_UniversalDictionary` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
 - `flate-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.
 - `lexical-conventions` interpret: n/a, 7.2: lexical conventions define file tokens only, whose parsing Read covers.
 - `basic-objects` interpret: n/a, 7.3: basic objects are syntax values, whose clause-specific meaning later clauses cover.
