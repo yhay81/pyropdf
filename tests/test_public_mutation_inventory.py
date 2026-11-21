@@ -604,7 +604,7 @@ READ_ONLY = {
     "Chars": "column",
     "Chunk": "to_dict",
     "Content": "path_clusters",
-    "Document": "changes check to_bytes render text markdown to_json to_chunks font_program",
+    "Document": "changes check to_bytes render text markdown to_json to_chunks font_program image_for_output",
     "DocumentLimits": "web",
     "Element": "to_dict",
     "Font": "from_file from_bytes standard chars char_widths char_bbox program text_width text_height has_glyph",

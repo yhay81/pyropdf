@@ -143,14 +143,19 @@ def _append_group(array: Array, group: Dictionary) -> None:
     array.append(group)
 
 
-def _xrefs(value: object) -> tuple[int, ...]:
-    """Return the object numbers of the indirect dictionaries of array ``value``."""
+def _group_entries(value: object) -> Array | tuple[()]:
+    """Bound a group array before resolving any of its entries."""
     if not isinstance(value, Array):
         return ()
     if len(value) > _MAX_LAYERS:
         msg = f"an optional content array has more than {_MAX_LAYERS} entries"
         raise LimitError(_COUNT, msg)
-    return tuple(item.xref for item in value if isinstance(item, Dictionary) and item.xref is not None)
+    return value
+
+
+def _xrefs(value: object) -> tuple[int, ...]:
+    """Return the object numbers of indirect dictionaries in the group array."""
+    return tuple(item.xref for item in _group_entries(value) if isinstance(item, Dictionary) and item.xref is not None)
 
 
 def _intents(value: object) -> tuple[str, ...]:
@@ -390,16 +395,20 @@ class Layers(Sequence[Layer]):
         if not isinstance(oc, Dictionary):
             msg = f"oc must be a Dictionary or None: {type(oc).__name__}"
             raise TypeError(msg)
-        off = self._off()
-        if oc.get("Type") != "OCMD":
-            return oc.get("Type") != "OCG" or oc.xref not in off
-        expression = oc.get("VE")
-        if isinstance(expression, Array):
-            return _evaluate(expression, off)
-        groups = oc.get("OCGs")
-        members = [groups] if isinstance(groups, Dictionary) else list(groups) if isinstance(groups, Array) else []
-        states = [member.xref not in off for member in members if isinstance(member, Dictionary)]
-        return _policy(oc.get("P"), states)
+        return _visible_with_state(oc, self._off())
+
+
+def _visible_with_state(oc: Dictionary, off: set[int]) -> bool:
+    """Evaluate a selector using group states already read for the current operation."""
+    if oc.get("Type") != "OCMD":
+        return oc.get("Type") != "OCG" or oc.xref not in off
+    expression = oc.get("VE")
+    if isinstance(expression, Array):
+        return _evaluate(expression, off)
+    groups = oc.get("OCGs")
+    members = (groups,) if isinstance(groups, Dictionary) else _group_entries(groups)
+    states = [member.xref not in off for member in members if isinstance(member, Dictionary)]
+    return _policy(oc.get("P"), states)
 
 
 def _policy(policy: object, states: list[bool]) -> bool:

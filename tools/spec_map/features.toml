@@ -578,9 +578,7 @@ objects = ["XObjectMap"]
 clause = "8.9.5"
 description = "Image XObjects: samples, decoding, interpolation, and alternates."
 objects = ["XObjectImage", "AlternateImage"]
-read = { status = "partial", missing = "Image XObjects and their stored bytes and masks are extracted, without reading `/Alternates`.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Canvas and image pages embed JPEG, JPEG 2000, and Flate image XObjects, without writing `/Alternates`.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Images are replaced, resampled, recompressed, and recolored, without editing `/Alternates`.", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 947 }
 
 [features.image-masks]
 clause = "8.9.6"
