@@ -64,6 +64,12 @@ MUTATIONS = (
         "typed.View",
         "__setattr__ __setitem__",
     ),
+    (
+        "checked_typed_objects",
+        "Checked indirect objects validate their graph in one transaction.",
+        "typed.View",
+        "create replace remove",
+    ),
     ("typed_delete", "Both spellings remove the selected described key.", "typed.View", "__delattr__ __delitem__"),
     ("new_page", "Insert a new leaf into the page tree.", "Pages", "new"),
     ("move_page", "Reorder the page tree and update its label ranges.", "Pages", "move"),
