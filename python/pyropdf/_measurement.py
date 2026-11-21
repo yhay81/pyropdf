@@ -8,13 +8,14 @@ import math
 import secrets
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Context, Decimal, InvalidOperation, localcontext
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from pyropdf import _core
 from pyropdf._actions import _MAX_ENCODED_SCRIPT_SIZE, _MAX_SCRIPT_SIZE, _validate_script
-from pyropdf._errors import LimitError
+from pyropdf._errors import LimitError, PdfError
 from pyropdf._geometry import Rect
+from pyropdf._media import _base_or_extension
 from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, Real, Stream, String, _catalog, _Handle, _unlocked
 from pyropdf._presentations import _FLOAT32_MAX, _to_display
@@ -31,6 +32,8 @@ _INT64_MAX = (1 << 63) - 1
 _RECT_COORDS = 4
 _ORIGIN_LEN = 2
 _PDU_LEN = 3
+_PAIR: Literal[2] = 2
+_TRIPLE: Literal[3] = 3
 _PCSM_LEN = 12
 _MAX_PENALTY = 100
 
@@ -204,10 +207,23 @@ def _read_pdf_decimal(value: object) -> Decimal | None:
 
 def _require_measurement_version(document: Document, catalog: Dictionary, minimum: tuple[int, int]) -> None:
     """Promote ``catalog['Version']`` to ``minimum`` and ensure PDF 2.0 trailer ``/ID`` when needed."""
+    from pyropdf._annotations import _version  # noqa: PLC0415
+
+    before = document.check() if _version(document) < (2, 0) <= minimum else None
     _require_version(document, catalog, minimum)
     if minimum >= (2, 0) and "ID" not in document.trailer:
         file_id = secrets.token_bytes(16)
         document.trailer["ID"] = [file_id, file_id]
+    if before is not None:
+        after = document.check()
+        if before.truncated or after.truncated:
+            msg = "cannot verify PDF 2.0 promotion with a truncated structural report"
+            raise PdfError(msg)
+        existing = set(before.defects)
+        for defect in after.defects:
+            if defect not in existing:
+                msg = f"PDF 2.0 promotion would introduce a structural defect: {defect.clause}"
+                raise PdfError(msg)
 
 
 def _container_children(container: Array | Dictionary) -> list[Array | Dictionary]:
@@ -570,12 +586,16 @@ class GeospatialMeasure:
     ``gpts`` (``/GPTS``), ``lpts`` (``/LPTS``), ``bounds`` (``/Bounds``), and
     ``pcsm`` (``/PCSM``) hold :class:`~decimal.Decimal` values that write their
     exact positional digits into the PDF object store without ``float`` rounding.
+    Each local point must have a matching ground point. By default, local pairs
+    lie in the unit square. Set ``dimensions=3`` for a declared Geospatial3D
+    annotation's world-coordinate triples, with ground elevation last.
     """
 
     gcs: CoordinateSystem
     gpts: tuple[Decimal, ...]
     dcs: CoordinateSystem | None
-    lpts: tuple[Decimal, ...] | None
+    lpts: tuple[Decimal, ...]
+    dimensions: Literal[2, 3]
     bounds: tuple[Decimal, ...] | None
     pdu: tuple[str, str, str] | None
     pcsm: tuple[Decimal, ...] | None
@@ -586,7 +606,8 @@ class GeospatialMeasure:
         gpts: Iterable[Decimal | Real | float | str],
         *,
         dcs: CoordinateSystem | None = None,
-        lpts: Iterable[Decimal | Real | float | str] | None = None,
+        lpts: Iterable[Decimal | Real | float | str],
+        dimensions: Literal[2, 3] = 2,
         bounds: Iterable[Decimal | Real | float | str] | None = None,
         pdu: Sequence[str] | None = None,
         pcsm: Iterable[Decimal | Real | float | str] | None = None,
@@ -599,13 +620,20 @@ class GeospatialMeasure:
             msg = f"dcs must be a CoordinateSystem or None: {type(dcs).__name__}"
             raise TypeError(msg)
 
-        checked_gpts = _validate_decimal_tuple(gpts, "gpts", max_len=_MAX_GEO_NUMBERS, even=True)
-        checked_lpts: tuple[Decimal, ...] | None = None
-        if lpts is not None:
-            checked_lpts = _validate_decimal_tuple(lpts, "lpts", max_len=_MAX_GEO_NUMBERS, even=True)
-            if len(checked_lpts) != len(checked_gpts):
-                msg = f"lpts length ({len(checked_lpts)}) must match gpts length ({len(checked_gpts)})"
-                raise ValueError(msg)
+        if type(dimensions) is not int or dimensions not in (2, 3):
+            msg = "dimensions must be 2 or 3"
+            raise ValueError(msg)
+        checked_gpts = _validate_decimal_tuple(gpts, "gpts", max_len=_MAX_GEO_NUMBERS, even=dimensions == _PAIR)
+        checked_lpts = _validate_decimal_tuple(lpts, "lpts", max_len=_MAX_GEO_NUMBERS)
+        if len(checked_gpts) % dimensions:
+            msg = "3D gpts must contain complete triples"
+            raise ValueError(msg)
+        if len(checked_lpts) != len(checked_gpts):
+            msg = f"lpts length ({len(checked_lpts)}) must match gpts length ({len(checked_gpts)})"
+            raise ValueError(msg)
+        if dimensions == _PAIR and any(not 0 <= number <= 1 for number in checked_lpts):
+            msg = "2D lpts coordinates must be in the unit square"
+            raise ValueError(msg)
 
         checked_bounds = (
             None if bounds is None else _validate_decimal_tuple(bounds, "bounds", max_len=_MAX_GEO_NUMBERS, even=True)
@@ -617,6 +645,7 @@ class GeospatialMeasure:
 
         object.__setattr__(self, "gcs", gcs)
         object.__setattr__(self, "gpts", checked_gpts)
+        object.__setattr__(self, "dimensions", dimensions)
         object.__setattr__(self, "dcs", dcs)
         object.__setattr__(self, "lpts", checked_lpts)
         object.__setattr__(self, "bounds", checked_bounds)
@@ -728,6 +757,9 @@ class Viewport:
         if measure is not None and not isinstance(measure, (RectilinearMeasure, GeospatialMeasure)):
             msg = f"measure must be a RectilinearMeasure, GeospatialMeasure, or None: {type(measure).__name__}"
             raise TypeError(msg)
+        if isinstance(measure, GeospatialMeasure) and measure.dimensions != _PAIR:
+            msg = "a viewport requires a 2D geospatial registration"
+            raise ValueError(msg)
         if point_data is not None and not isinstance(point_data, PointData):
             msg = f"point_data must be a PointData or None: {type(point_data).__name__}"
             raise TypeError(msg)
@@ -1089,15 +1121,15 @@ def _read_decimal_array(
     return tuple(out)
 
 
-def _read_geospatial_measure(d: Dictionary) -> GeospatialMeasure | None:
+def _read_geospatial_measure(d: Dictionary, dimensions: Literal[2, 3] = 2) -> GeospatialMeasure | None:
     gcs = _read_coordinate_system(d.get("GCS"))
-    gpts = _read_decimal_array(d.get("GPTS"), max_len=_MAX_GEO_NUMBERS, even=True)
+    gpts = _read_decimal_array(d.get("GPTS"), max_len=_MAX_GEO_NUMBERS)
     if gcs is None or gpts is None:
         return None
     dcs = _read_coordinate_system(d.get("DCS"))
-    lpts = _read_decimal_array(d.get("LPTS"), max_len=_MAX_GEO_NUMBERS, even=True)
-    if lpts is not None and len(lpts) != len(gpts):
-        lpts = None
+    lpts = _read_decimal_array(d.get("LPTS"), max_len=_MAX_GEO_NUMBERS)
+    if lpts is None or len(lpts) != len(gpts):
+        return None
     bounds = _read_decimal_array(d.get("Bounds"), max_len=_MAX_GEO_NUMBERS, even=True)
 
     pdu: tuple[str, str, str] | None = None
@@ -1107,13 +1139,17 @@ def _read_geospatial_measure(d: Dictionary) -> GeospatialMeasure | None:
         if len(pdu_names) == _PDU_LEN:
             pdu = (pdu_names[0], pdu_names[1], pdu_names[2])
 
-    pcsm = _read_decimal_array(d.get("PCSM"), max_len=_PCSM_LEN, exact_len=_PCSM_LEN)
+    raw_pcsm = d.get("PCSM")
+    pcsm = _read_decimal_array(raw_pcsm, max_len=_PCSM_LEN, exact_len=_PCSM_LEN)
+    if raw_pcsm is not None and pcsm is None and gcs.kind == "projected":
+        return None
     try:
         return GeospatialMeasure(
             gcs=gcs,
             gpts=gpts,
             dcs=dcs,
             lpts=lpts,
+            dimensions=dimensions,
             bounds=bounds,
             pdu=pdu,
             pcsm=pcsm,
@@ -1278,8 +1314,7 @@ def _serialize_measure(measure: RectilinearMeasure | GeospatialMeasure) -> dict[
     }
     if measure.dcs is not None:
         geo["DCS"] = _serialize_crs(measure.dcs)
-    if measure.lpts is not None:
-        geo["LPTS"] = list(measure.lpts)
+    geo["LPTS"] = list(measure.lpts)
     if measure.bounds is not None:
         geo["Bounds"] = list(measure.bounds)
     if measure.pdu is not None:
@@ -1287,6 +1322,166 @@ def _serialize_measure(measure: RectilinearMeasure | GeospatialMeasure) -> dict[
     if measure.pcsm is not None:
         geo["PCSM"] = list(measure.pcsm)
     return geo
+
+
+def _is_untyped_viewport(owner: Dictionary) -> bool:
+    # /Type is optional. Only its position in a page's /VP array
+    # distinguishes an untyped viewport from another dictionary with /BBox.
+    remaining = _MAX_CANDIDATE_NODES
+    code: LimitCode = "page_entry_count"
+    for page in owner._document.pages:  # noqa: SLF001
+        viewports = page.obj.get("VP")
+        if isinstance(viewports, Array):
+            for candidate in viewports:
+                if remaining == 0:
+                    msg = "too many entries while locating an untyped viewport"
+                    raise LimitError(code, msg)
+                remaining -= 1
+                if candidate == owner:
+                    return True
+    return False
+
+
+def _registration_owner(owner: Dictionary) -> tuple[str, Literal[2, 3]] | None:
+    kind, subtype = owner.get("Type"), owner.get("Subtype")
+    if isinstance(owner, Stream):
+        if kind in (None, Name("XObject")) and subtype in (Name("Form"), Name("Image")):
+            return "Measure", 2
+    elif kind == Name("Viewport") or (
+        kind is None and subtype is None and "BBox" in owner and _is_untyped_viewport(owner)
+    ):
+        return "Measure", 2
+    elif (
+        (kind == Name("Annot") or (kind is None and "Rect" in owner))
+        and subtype in (Name("3D"), Name("RichMedia"))
+        and any(req.type == RequirementType.GEOSPATIAL_3D for req in owner._document.requirements)  # noqa: SLF001
+    ):
+        return "GEO", 3
+    return None
+
+
+def _owner_measure(owner: Dictionary) -> GeospatialMeasure | None:
+    slot = _registration_owner(owner)
+    if slot is None:
+        return None
+    key, dimensions = slot
+    value = owner.get(key)
+    if isinstance(value, Dictionary) and not isinstance(value, Stream) and value.get("Subtype") == Name("GEO"):
+        return _read_geospatial_measure(value, dimensions)
+    return None
+
+
+def _registration_version(doc: Document, value: GeospatialMeasure) -> tuple[int, int]:
+    # Adobe's PDF 1.7 extension level 3 defines the latitude/longitude
+    # mapping. Projected ground points, PCSM and 3D triples use PDF 2.0.
+    if value.dimensions == _PAIR and value.gcs.kind == "geographic" and value.pcsm is None:
+        return _base_or_extension(doc, 3)
+    return (2, 0)
+
+
+def _set_owner_measure(owner: Dictionary, value: GeospatialMeasure) -> None:
+    if not isinstance(value, GeospatialMeasure):
+        msg = "geospatial_measure must be a GeospatialMeasure"
+        raise TypeError(msg)
+    doc = owner._document  # noqa: SLF001
+    with doc.transaction("geospatial measure"):
+        slot = _registration_owner(owner)
+        if slot is None:
+            msg = "expected a viewport, image, form, or annotation with a declared Geospatial3D requirement"
+            raise ValueError(msg)
+        key, dimensions = slot
+        if value.dimensions != dimensions:
+            msg = f"this owner requires a {dimensions}D registration"
+            raise ValueError(msg)
+        _require_measurement_version(doc, doc.catalog, _registration_version(doc, value))
+        previous = owner.get(key)
+        if isinstance(previous, Dictionary) and not isinstance(previous, Stream) and previous.get("Subtype") == "GEO":
+            _replace_registration(doc, owner, key, previous, value)
+        else:
+            candidates = _collect_indirect_candidates(previous)
+            owner[key] = _serialize_measure(value)
+            if candidates:
+                _core.object_free_unreferenced(doc._core(), candidates)  # noqa: SLF001
+
+
+def _replace_crs(doc: Document, target: Dictionary, name: str, fields: dict[str, object]) -> None:
+    current = target.get(name)
+    if not isinstance(current, Dictionary) or isinstance(current, Stream):
+        target[name] = fields
+        return
+    if current.is_indirect:
+        target[name] = doc.objects[doc.objects.add(current)]
+    entry = target[name]
+    for key in ("EPSG", "WKT"):
+        if key not in fields and key in entry:
+            del entry[key]
+    for key, field in fields.items():
+        entry[key] = field
+
+
+def _replace_registration(
+    doc: Document, owner: Dictionary, key: str, previous: Dictionary, value: GeospatialMeasure
+) -> None:
+    # Copy a shared indirect measurement before editing it. Direct values
+    # already belong to this owner. Unchanged references and private entries
+    # in the measurement survive replacement of the controls.
+    original = _read_geospatial_measure(previous, value.dimensions)
+    candidates = _collect_indirect_candidates(previous)
+    if previous.is_indirect:
+        owner[key] = doc.objects[doc.objects.add(previous)]
+    target = owner[key]
+    fields = _serialize_measure(value)
+    for name in ("DCS", "Bounds", "PDU", "PCSM"):
+        if name not in fields and name in target:
+            del target[name]
+    for name, field in fields.items():
+        if original is not None and name not in ("Type", "Subtype"):
+            attribute = name.lower()
+            if getattr(original, attribute) == getattr(value, attribute):
+                continue
+        if name in ("GCS", "DCS") and isinstance(field, dict):
+            _replace_crs(doc, target, name, field)
+        else:
+            target[name] = field
+    if candidates:
+        _core.object_free_unreferenced(doc._core(), candidates)  # noqa: SLF001
+
+
+def _owner_point(owner: Dictionary, index: int) -> tuple[tuple[Decimal, ...], tuple[Decimal, ...]]:
+    registration = _owner_measure(owner)
+    if registration is None:
+        msg = "owner has no valid geospatial registration"
+        raise ValueError(msg)
+    if not isinstance(index, int) or isinstance(index, bool):
+        msg = "registration point index must be an integer"
+        raise TypeError(msg)
+    dimensions = registration.dimensions
+    count = len(registration.lpts) // dimensions
+    if not -count <= index < count:
+        msg = f"registration point index {index} out of range"
+        raise IndexError(msg)
+    start = (index % count) * dimensions
+    local = registration.lpts[start : start + dimensions]
+    ground = registration.gpts[start : start + dimensions]
+    # A bounds interpolation followed by a matrix product may multiply three
+    # PDF decimals. Keep all positional digits, independent of the caller's
+    # Decimal context, including the carries from the final additions.
+    with localcontext(Context(prec=6 * _MAX_DECIMAL_LEXEME_BYTES + 8)):
+        if dimensions == _PAIR and not (isinstance(owner, Stream) and owner.get("Subtype") == "Image"):
+            box = _read_decimal_array(owner.get("BBox"), max_len=_RECT_COORDS, exact_len=_RECT_COORDS)
+            if box is None:
+                msg = "viewport or form must have a numeric BBox"
+                raise ValueError(msg)
+            x0, y0, x1, y1 = box
+            local = (min(x0, x1) + abs(x1 - x0) * local[0], min(y0, y1) + abs(y1 - y0) * local[1])
+        matrix = registration.pcsm
+        if matrix is not None and registration.gcs.kind == "projected":
+            x, y = local[:2]
+            z = local[2] if dimensions == _TRIPLE else Decimal(0)
+            ground = tuple(
+                x * matrix[i] + y * matrix[3 + i] + z * matrix[6 + i] + matrix[9 + i] for i in range(dimensions)
+            )
+    return local, ground
 
 
 def _serialize_point_data(pt: PointData) -> dict[str, object]:
@@ -1361,15 +1556,11 @@ def _write_page_viewports(page: Page, viewports: Iterable[Viewport]) -> None:
     if not items and "VP" not in page.obj:
         return
 
-    minimum = (
-        (2, 0)
-        if any(isinstance(vp.measure, GeospatialMeasure) or vp.point_data is not None for vp in items)
-        else (1, 6)
-    )
     document = page.document
     with document.transaction("page viewports"):
         _ = page.index
         serialized: list[dict[str, object]] = []
+        minimum = (1, 6)
         for vp in items:
             vp_dict: dict[str, object] = {
                 "Type": Name("Viewport"),
@@ -1377,9 +1568,12 @@ def _write_page_viewports(page: Page, viewports: Iterable[Viewport]) -> None:
             }
             if vp.name is not None:
                 vp_dict["Name"] = vp.name
+            if isinstance(vp.measure, GeospatialMeasure):
+                minimum = max(minimum, _registration_version(document, vp.measure))
             if vp.measure is not None:
                 vp_dict["Measure"] = _serialize_measure(vp.measure)
             if vp.point_data is not None:
+                minimum = (2, 0)
                 vp_dict["PtData"] = _serialize_point_data(vp.point_data)
             serialized.append(vp_dict)
 
