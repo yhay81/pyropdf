@@ -161,6 +161,30 @@ impl Link {
 }
 
 impl Object {
+    /// The PDF container for this descriptor, using the same model convention
+    /// as the generated Python stubs (Arlington does not name it explicitly).
+    #[must_use]
+    pub fn container(&self) -> Kind {
+        let array = self.keys.iter().all(|key| {
+            let position = key.name.trim_end_matches('*');
+            position.bytes().all(|byte| byte.is_ascii_digit())
+        }) && (self.name.contains("Array")
+            || self
+                .keys
+                .iter()
+                .any(|key| key.name.as_bytes().first().is_some_and(u8::is_ascii_digit)));
+        if array {
+            Kind::Array
+        } else if ["Length", "Filter", "DecodeParms"]
+            .iter()
+            .all(|name| self.key(name).is_some())
+        {
+            Kind::Stream
+        } else {
+            Kind::Dictionary
+        }
+    }
+
     /// The key of this type named `name`, as the model writes it.
     #[must_use]
     pub fn key(&self, name: &str) -> Option<&'static Key> {

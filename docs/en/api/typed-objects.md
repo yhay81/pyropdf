@@ -52,7 +52,8 @@ when the model gives one. An absent optional key reads as `None` through an
 attribute, and a `null` value counts as absent (ISO 32000-2 section 7.3.7).
 A required key that is absent, and a value of no declared type, raise
 `pyropdf.PdfError`. Predicates of the model are not evaluated here;
-the structural check evaluates them.
+the structural check evaluates them. Use `view.interpret(key)` to apply the
+model's type, link and value conditions to one entry of the current version.
 
 Writing takes the Python form of a declared type, or a view or handle for a
 container type, and refuses anything else with `TypeError`, or a name
@@ -77,6 +78,19 @@ typed.ArrayView.obj: pyropdf.Dictionary | pyropdf.Array
 ```
 
 The viewed handle.
+
+### `typed.ArrayView.interpret`
+
+```python
+typed.ArrayView.interpret(key: str | int, /) -> Any
+```
+
+Interpret a declared entry in its document's current version.
+
+Return the selected linked view, scalar, default, or `None` for an
+absent optional value. A name or number tree returns a `LinkedTree`
+whose `lookup` resolves and interprets an individual leaf. An ambiguous link, an unresolved reference,
+or a value outside the admitted types and values raises PdfError.
 
 ### `typed.ArrayView.__getitem__`
 
@@ -150,6 +164,19 @@ typed.DictionaryView.obj: pyropdf.Dictionary | pyropdf.Array
 
 The viewed handle.
 
+### `typed.DictionaryView.interpret`
+
+```python
+typed.DictionaryView.interpret(key: str | int, /) -> Any
+```
+
+Interpret a declared entry in its document's current version.
+
+Return the selected linked view, scalar, default, or `None` for an
+absent optional value. A name or number tree returns a `LinkedTree`
+whose `lookup` resolves and interprets an individual leaf. An ambiguous link, an unresolved reference,
+or a value outside the admitted types and values raises PdfError.
+
 ### `typed.DictionaryView.__getitem__`
 
 ```python
@@ -206,6 +233,110 @@ typed.DictionaryView.__contains__(key: object) -> bool
 
 Return whether `key` is stored in the object itself.
 
+## `typed.LinkedTree`
+
+```python
+typed.LinkedTree(tree: pyropdf.Dictionary, descriptor: str, key: str)
+```
+
+A name or number tree with the Arlington types declared for its leaf values.
+
+### `typed.LinkedTree.xref`
+
+```python
+typed.LinkedTree.xref: int | None
+```
+
+The object number of an indirect object, `None` for a direct value or the trailer.
+
+### `typed.LinkedTree.generation`
+
+```python
+typed.LinkedTree.generation: int | None
+```
+
+The generation number of an indirect object, `None` for a direct value or the trailer.
+
+### `typed.LinkedTree.is_indirect`
+
+```python
+typed.LinkedTree.is_indirect: bool
+```
+
+Whether this is an indirect object rather than a direct value inside one.
+
+### `typed.LinkedTree.__len__`
+
+```python
+typed.LinkedTree.__len__() -> int
+```
+
+Return the number of entries or elements.
+
+### `typed.LinkedTree.xmp`
+
+```python
+typed.LinkedTree.xmp: str | None
+```
+
+The UTF-8 XMP packet of this PDF resource, or `None` when absent.
+
+For example, `page.obj.xmp` reads page metadata. The packet must
+contain an XML RDF element and fit in 1 MiB. Invalid packets raise
+`MalformedPdfError` and oversized packets raise `LimitError`
+with code `stream_data_size`. Assign a packet or delete the property
+to change this resource's association. Other owners keep their packet.
+
+Settable.
+
+### `typed.LinkedTree.__getitem__`
+
+```python
+typed.LinkedTree.__getitem__(key: str) -> Any
+```
+
+Return the resolved value of `key`.
+
+### `typed.LinkedTree.__setitem__`
+
+```python
+typed.LinkedTree.__setitem__(key: str, value: object)
+```
+
+Write `value` under `key`.
+
+### `typed.LinkedTree.__delitem__`
+
+```python
+typed.LinkedTree.__delitem__(key: str)
+```
+
+Remove `key`.
+
+### `typed.LinkedTree.__iter__`
+
+```python
+typed.LinkedTree.__iter__() -> Iterator[str]
+```
+
+Iterate over the keys as `Name` values.
+
+### `typed.LinkedTree.__contains__`
+
+```python
+typed.LinkedTree.__contains__(key: object) -> bool
+```
+
+Return whether `key` is present, without resolving its value.
+
+### `typed.LinkedTree.lookup`
+
+```python
+typed.LinkedTree.lookup(key: bytes | int, /) -> Any
+```
+
+Return the typed value for a stored byte-string or integer key, raising KeyError if absent.
+
 ## `typed.StreamView`
 
 ```python
@@ -221,6 +352,19 @@ typed.StreamView.obj: pyropdf.Dictionary | pyropdf.Array
 ```
 
 The viewed handle.
+
+### `typed.StreamView.interpret`
+
+```python
+typed.StreamView.interpret(key: str | int, /) -> Any
+```
+
+Interpret a declared entry in its document's current version.
+
+Return the selected linked view, scalar, default, or `None` for an
+absent optional value. A name or number tree returns a `LinkedTree`
+whose `lookup` resolves and interprets an individual leaf. An ambiguous link, an unresolved reference,
+or a value outside the admitted types and values raises PdfError.
 
 ### `typed.StreamView.__getitem__`
 
@@ -301,6 +445,19 @@ typed.View.obj: pyropdf.Dictionary | pyropdf.Array
 ```
 
 The viewed handle.
+
+### `typed.View.interpret`
+
+```python
+typed.View.interpret(key: str | int, /) -> Any
+```
+
+Interpret a declared entry in its document's current version.
+
+Return the selected linked view, scalar, default, or `None` for an
+absent optional value. A name or number tree returns a `LinkedTree`
+whose `lookup` resolves and interprets an individual leaf. An ambiguous link, an unresolved reference,
+or a value outside the admitted types and values raises PdfError.
 
 ### `typed.View.__getitem__`
 
