@@ -10,11 +10,14 @@ from __future__ import annotations
 import csv
 import io
 import re
+import sysconfig
 from pathlib import Path
 from typing import Any, cast
 
 import pikepdf
 import pytest
+from arlington_preservation import graph, packed_pdf, reachable_sample
+from arlington_samples import object_pdf
 from assets.broken.generate import pdf
 from corpus import ASSETS
 
@@ -585,3 +588,168 @@ def test_a_later_required_value_allows_an_earlier_declared_extension() -> None:
     doc.unlock("userpw")
     assert doc.catalog["Extensions"]["ADBE"]["ExtensionLevel"] == 8
     assert typed.EncryptionStandard(doc.trailer["Encrypt"]).interpret("R") == 6
+
+
+@pytest.mark.spec("arlington", "preserve")
+@pytest.mark.parametrize("name", sorted(typed.TYPES))
+def test_an_unrelated_edit_preserves_the_reachable_descriptor_and_its_targets(name: str) -> None:
+    if name in _PHYSICAL_OBJECT_CHECKS:
+        _PHYSICAL_OBJECT_CHECKS[name]()
+        return
+    source, number = reachable_sample(name)
+    with pikepdf.open(io.BytesIO(source)) as original:
+        reachable = graph(original, original.Root.objgen)
+        assert (number, 0) in reachable
+        expected = graph(original, (number, 0))
+    with pyropdf.open(source) as doc:
+        assert doc.to_bytes(incremental=True) == source
+        doc.metadata["subject"] = "Unrelated edit"
+        for incremental in (False, True):
+            saved = doc.to_bytes(incremental=incremental)
+            assert saved != source
+            if incremental:
+                assert saved.startswith(source)
+            with pikepdf.open(io.BytesIO(saved)) as reopened:
+                assert str(reopened.docinfo.Subject) == "Unrelated edit"
+                assert (number, 0) in graph(reopened, reopened.Root.objgen)
+                assert graph(reopened, (number, 0)) == expected
+
+
+def test_the_preservation_comparison_distinguishes_reference_targets_and_encoded_stream_bytes() -> None:
+    ordinary = ["<< /Data 4 0 R >>", "<< /Length 4 >>\nstream\nfeed\nendstream", "<< >>"]
+    changed_target = [ordinary[0].replace("4 0 R", "5 0 R"), *ordinary[1:]]
+    changed_stream = [ordinary[0], ordinary[1].replace("feed", "deed"), ordinary[2]]
+    snapshots = []
+    for example in (ordinary, changed_target, changed_stream):
+        with pikepdf.open(io.BytesIO(object_pdf(example))) as reader:
+            snapshots.append(graph(reader, (3, 0)))
+    assert snapshots[0] != snapshots[1]
+    assert snapshots[0] != snapshots[2]
+
+
+def _check_packed_file() -> None:
+    source = packed_pdf()
+    with pikepdf.open(io.BytesIO(source)) as original:
+        expected = graph(original, original.Root.objgen)
+        first_id = bytes(original.trailer.ID[0])
+        physical = {
+            obj.objgen: (obj.to_json(dereference=True), obj.read_raw_bytes())
+            for obj in original.objects
+            if isinstance(obj, pikepdf.Stream) and obj.get("/Type") in {pikepdf.Name.ObjStm, pikepdf.Name.XRef}
+        }
+        assert len(physical) == 2
+        assert any(entry.type == 2 for entry in original.get_xref_table().values())
+        old_start = int(source.rsplit(b"startxref", 1)[1].split()[0])
+    with pyropdf.open(source) as doc:
+        assert doc.to_bytes(incremental=True) == source
+        doc.metadata["subject"] = "Unrelated edit"
+        for incremental in (False, True):
+            saved = doc.to_bytes(incremental=incremental)
+            if incremental:
+                assert saved.startswith(source)
+            with pikepdf.open(io.BytesIO(saved)) as reopened:
+                assert reopened.check_pdf_syntax() == []
+                assert str(reopened.docinfo.Subject) == "Unrelated edit"
+                assert graph(reopened, reopened.Root.objgen) == expected
+                for ref, (fields, data) in physical.items():
+                    obj = reopened.get_object(ref)
+                    assert obj.to_json(dereference=True) == fields
+                    assert obj.read_raw_bytes() == data
+                # The live revision has recomputed offsets and a new changing ID.
+                # The original xref stream remains an intact object of its own.
+                assert reopened.trailer.Type == pikepdf.Name.XRef
+                assert reopened.trailer.Size == 1 + max(ref[0] for ref in reopened.get_xref_table())
+                assert bytes(reopened.trailer.ID[0]) == first_id
+                assert bytes(reopened.trailer.ID[1]) != first_id
+                assert reopened.trailer.get("/Prev") == (old_start if incremental else None)
+
+
+def _check_linearization() -> None:
+    source = packed_pdf(linearize=True)
+    with pikepdf.open(io.BytesIO(source)) as original:
+        assert original.check_linearization()
+        (params,) = [obj for obj in original.objects if isinstance(obj, pikepdf.Dictionary) and "/Linearized" in obj]
+        ref, fields = params.objgen, params.to_json(dereference=True)
+        assert len(source) == params.L
+        offset, span = map(int, params.H[:2])
+        assert 0 < offset < offset + span <= len(source)
+    with pyropdf.open(source) as doc:
+        doc.metadata["subject"] = "Unrelated edit"
+        for incremental in (False, True):
+            saved = doc.to_bytes(incremental=incremental)
+            if incremental:
+                assert saved.startswith(source)
+            with pikepdf.open(io.BytesIO(saved)) as reopened:
+                assert str(reopened.docinfo.Subject) == "Unrelated edit"
+                assert reopened.get_object(ref).to_json(dereference=True) == fields
+                assert not reopened.is_linearized
+        with pikepdf.open(io.BytesIO(doc.to_bytes(linearize=True))) as rebuilt:
+            assert rebuilt.check_linearization()
+            assert str(rebuilt.docinfo.Subject) == "Unrelated edit"
+
+
+def _check_standard_handler() -> None:
+    # Public test credentials are documented in tests/assets/encrypted/README.md.
+    user, owner = "userpw", "ownerpw"
+    source = (ASSETS.parent / "encrypted/user-aes-256.pdf").read_bytes()
+    with pikepdf.open(io.BytesIO(source), password=owner) as original:
+        ref = original.trailer.Encrypt.objgen
+        expected = graph(original, ref)
+        assert original.trailer.Encrypt.Filter == pikepdf.Name.Standard
+    with pyropdf.open(source, password=owner) as doc:
+        doc.metadata["subject"] = "Unrelated edit"
+        for incremental in (False, True):
+            saved = doc.to_bytes(incremental=incremental, encryption=pyropdf.Encryption.KEEP)
+            if incremental:
+                assert saved.startswith(source)
+            with pikepdf.open(io.BytesIO(saved), password=user) as reopened:
+                assert str(reopened.docinfo.Subject) == "Unrelated edit"
+                assert reopened.trailer.Encrypt.objgen == ref
+                assert graph(reopened, ref) == expected
+
+
+def _check_recipient_handler() -> None:
+    if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
+        pytest.skip("pyHanko imports enable the GIL on free-threaded Python")
+    from asn1crypto import keys, x509  # noqa: PLC0415 - optional free-threaded dependency
+    from pyhanko.pdf_utils.crypt.pubkey import SimpleEnvelopeKeyDecrypter  # noqa: PLC0415
+    from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
+    from test_encrypted import RECIPIENT_ASSETS, recipient  # noqa: PLC0415
+
+    source = (RECIPIENT_ASSETS / "pyhanko-recipients.pdf").read_bytes()
+    key = SimpleEnvelopeKeyDecrypter(
+        x509.Certificate.load((RECIPIENT_ASSETS / "recipient-owner.cer").read_bytes()),
+        keys.PrivateKeyInfo.load((RECIPIENT_ASSETS / "recipient-owner.key").read_bytes()),
+    )
+
+    def envelope(data: bytes, *, edited: bool) -> tuple[int, int, bytes]:
+        reader = PdfFileReader(io.BytesIO(data))
+        assert reader.decrypt_pubkey(key).status.name == "USER"
+        if edited:
+            assert str(reader.trailer["/Info"]["/Subject"]) == "Unrelated edit"
+        ref = reader.trailer.raw_get("/Encrypt")
+        obj = reader.get_object(ref.reference, never_decrypt=True)
+        assert obj["/Filter"] == "/Adobe.PubSec"
+        buffer = io.BytesIO()
+        obj.write_to_stream(buffer)
+        return ref.idnum, ref.generation, buffer.getvalue()
+
+    expected = envelope(source, edited=False)
+    with pyropdf.open(source, credential=recipient("editor")) as doc:
+        doc.metadata["subject"] = "Unrelated edit"
+        for incremental in (False, True):
+            saved = doc.to_bytes(incremental=incremental, encryption=pyropdf.Encryption.KEEP)
+            if incremental:
+                assert saved.startswith(source)
+            assert envelope(saved, edited=True) == expected
+
+
+_PHYSICAL_OBJECT_CHECKS = {
+    "FileTrailer": _check_packed_file,
+    "TrailerIDArray": _check_packed_file,
+    "ObjectStream": _check_packed_file,
+    "XRefStream": _check_packed_file,
+    "LinearizationParameterDict": _check_linearization,
+    "EncryptionStandard": _check_standard_handler,
+    "EncryptionPublicKey": _check_recipient_handler,
+}
