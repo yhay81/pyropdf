@@ -762,13 +762,18 @@ def test_malformed_explicit_stream_crypt_refuses_save(
 def test_encryption_requires_a_resolved_filter_selector(tmp_path: Path) -> None:
     path = tmp_path / "existing.pdf"
     path.write_bytes(b"unchanged")
-    with pyropdf.open(numbered(1)) as doc:
-        stream = doc.objects[doc.objects.add_stream(b"test data", filter=None)]
-        filters = doc.objects[doc.objects.add([pyropdf.Name("Crypt")])]
-        stream["Filter"] = filters
+    source = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Fixture 3 0 R >>",
+            2: "<< /Type /Pages /Kids [] /Count 0 >>",
+            3: "<< /Filter 4 1 R /Length 9 >>\nstream\ntest data\nendstream",
+            4: "[/Crypt]",
+        }
+    )
+    with pyropdf.open(source) as doc:
         with pytest.raises(pyropdf.MalformedPdfError, match="unresolved /Filter"):
             doc.save(path, encryption=Encryption(user_password="reader"))
-        assert stream["Filter"].xref == filters.xref
+        assert doc.to_bytes(incremental=True) == source
     assert path.read_bytes() == b"unchanged"
 
 
