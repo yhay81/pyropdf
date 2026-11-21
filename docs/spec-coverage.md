@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 40 | 35 | 756 |
-| interpret | 8 | 19 | 0 | 36 | 42 | 726 |
-| create | 0 | 0 | 9 | 636 | 68 | 118 |
-| edit | 0 | 0 | 0 | 665 | 53 | 113 |
-| preserve | 0 | 0 | 0 | 25 | 653 | 153 |
+| read | 0 | 0 | 0 | 39 | 34 | 758 |
+| interpret | 9 | 19 | 0 | 35 | 41 | 727 |
+| create | 0 | 0 | 9 | 636 | 60 | 126 |
+| edit | 0 | 0 | 0 | 660 | 50 | 121 |
+| preserve | 0 | 0 | 0 | 25 | 652 | 154 |
 
 ## Clauses
 
@@ -82,17 +82,17 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 8.4 | Graphics state | `graphics-state` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.5 | Path construction and painting | `paths` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.4 | Device colour spaces | `device-color-spaces` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 8.6.5.2 | CalGray colour spaces | `calgray-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.5.3 | CalRGB colour spaces | `calrgb-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.5.4 | Lab colour spaces | `lab-color-space` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
-| 8.6.5.5 | ICCBased colour spaces | `icc-based-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
+| 8.6.5.2 | CalGray colour spaces | `calgray-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.5.3 | CalRGB colour spaces | `calrgb-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.5.4 | Lab colour spaces | `lab-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.5.5 | ICCBased colour spaces | `icc-based-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.5.8 | Rendering intent selection | `rendering-intents` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 8.6.6.2 | Pattern colour spaces | `pattern-color-space` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
-| 8.6.6.3 | Indexed colour spaces | `indexed-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.6.4 | Separation colour spaces | `separation-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.6.5 | DeviceN colour spaces | `devicen-color-space` | 1 partial | 1 partial | 1 planned | 1 planned | 1 done |
+| 8.6.6.3 | Indexed colour spaces | `indexed-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.6.4 | Separation colour spaces | `separation-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.6.6.5 | DeviceN colour spaces | `devicen-color-space` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 8.6.7 | Overprint control | `overprint` | 1 done | 1 engine | 1 done | 1 done | 1 done |
-| 8.6.8 | Colour-setting operators | `colour-operators` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.6.8 | Colour-setting operators | `colour-operators` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.7.3 | Tiling patterns | `tiling-patterns` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
 | 8.7.4 | Shading patterns | `shading-patterns` | 1 done | 1 done | 1 done | 1 planned | 1 done |
 | 8.7.4.5.2 | Type 1 function-based shadings | `function-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,261 unfinished cells in 831 features: 8 engine, 1,402 partial, 851 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,241 unfinished cells in 831 features: 9 engine, 1,395 partial, 837 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -279,7 +279,7 @@ Milestone [#248](https://github.com/yhay81/pyropdf/issues/248).
 
 - [#1001](https://github.com/yhay81/pyropdf/issues/1001) hayro: apply output-device parameters when proofing print and screened output. Apply per-object ICC intent, four-channel transfer, process and named spot plate overprint, selected halftones and scan parameters on suitable devices. RGB alternate, calibrated and transfer samples are verified.
     - interpret — `overprint`, `color-conversion`, `transfer-functions`, `halftones`, `scan-conversion`, `rendering-intents`, `separation-rendering`.
-- [#1002](https://github.com/yhay81/pyropdf/issues/1002) Apply active black generation and undercolor removal when rewriting CMYK colours. Evaluate the active BG2/UCR2 functions when converting paint and image samples to DeviceCMYK in Page.recolor and Document.recolor.
+- [#1007](https://github.com/yhay81/pyropdf/issues/1007) Extend active CMYK rewriting to filtered and nested budgeted PDF functions. Evaluate filtered sampled or calculator streams, nested stitching and calculator procedures with released construction and execution budgets.
     - edit — `device-color-conversion`.
 - [#372](https://github.com/yhay81/pyropdf/issues/372) hayro: evaluate optional content visibility expressions and annotation /OC. Adopt engine evaluation of visibility expressions and annotation OC. Track the upstream issue directly. #373 owns local adoption.
     - interpret — `optional-content`.
@@ -298,10 +298,8 @@ Milestone [#249](https://github.com/yhay81/pyropdf/issues/249).
     - create, edit — `appearance-streams`, `line-annotations`, `widget-annotations`.
 - [#903](https://github.com/yhay81/pyropdf/issues/903) Write rollover/down and widget icon appearances and line or popup annotation details. Inspect and edit stored redaction marks, overlay text and appearance streams. Preserve the marks through reopening before destructive application.
     - read, create, edit, preserve — `redaction-annotations`.
-- [#897](https://github.com/yhay81/pyropdf/issues/897) Write and edit calibrated and special colour spaces and their paint operators. Retain source operands and independently verify calibration, ICC profiles, palettes and tint transforms including DeviceN mixing hints. Construct and edit colour resources and exercise the corresponding operators.
-    - read, interpret — `devicen-color-space`, `colour-operators`.
-    - create, edit — `calgray-color-space`, `calrgb-color-space`, `lab-color-space`, `icc-based-color-space`, `indexed-color-space`, `separation-color-space`, `devicen-color-space`, `colour-operators`.
-    - preserve — `colour-operators`.
+- [#1016](https://github.com/yhay81/pyropdf/issues/1016) hayro: offer DeviceN mixing hints to colour-proofing devices. Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked.
+    - interpret — `devicen-color-space`.
 - [#904](https://github.com/yhay81/pyropdf/issues/904) Support rich variable text, password appearances and legacy XFA form data. Read and edit RV/DS field data, mask displayed password glyphs, and inspect, edit/remove and preserve existing XFA packets under the recorded creation exclusion. Verify field values and appearances independently.
     - read — `variable-text`, `xfa`.
     - interpret, edit — `variable-text`, `text-fields`, `xfa`.
