@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 40 | 36 | 755 |
-| interpret | 8 | 19 | 0 | 36 | 43 | 725 |
+| read | 0 | 0 | 0 | 33 | 36 | 762 |
+| interpret | 8 | 19 | 0 | 29 | 43 | 732 |
 | create | 0 | 0 | 9 | 640 | 71 | 111 |
-| edit | 0 | 0 | 0 | 666 | 59 | 106 |
-| preserve | 0 | 0 | 0 | 25 | 654 | 152 |
+| edit | 0 | 0 | 0 | 659 | 59 | 113 |
+| preserve | 0 | 0 | 0 | 18 | 654 | 159 |
 
 ## Clauses
 
@@ -154,8 +154,8 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.5.6.13 | Ink annotations | `ink-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.14 | Popup annotations | `popup-annotations` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 12.5.6.15 | File attachment annotations | `file-attachment-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.5.6.16 | Sound annotations | `sound-annotations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
-| 12.5.6.17 | Movie annotations | `movie-annotations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
+| 12.5.6.16 | Sound annotations | `sound-annotations` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
+| 12.5.6.17 | Movie annotations | `movie-annotations` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 12.5.6.18 | Screen annotations | `screen-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.19 | Widget annotations | `widget-annotations` | 1 partial | 1 done | 1 partial | 1 partial | 1 done |
 | 12.5.6.20 | Printer's mark annotations | `printer-mark-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -172,8 +172,8 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.6.4.6 | Launch actions | `launch-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
 | 12.6.4.7 | Thread actions | `thread-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.8 | URI actions | `uri-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
-| 12.6.4.9 | Sound actions | `sound-actions` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
-| 12.6.4.10 | Movie actions | `movie-actions` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
+| 12.6.4.9 | Sound actions | `sound-actions` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
+| 12.6.4.10 | Movie actions | `movie-actions` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 12.6.4.11 | Hide actions | `hide-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.12 | Named actions | `named-actions` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 12.6.4.13 | Set-OCG-state actions | `set-ocg-state-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -201,9 +201,9 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.10 | Geospatial coordinates | `geospatial` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.11 | Document requirements | `document-requirements` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 13.2 | Multimedia | `renditions` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 13.3 | Sounds | `sounds` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
-| 13.4 | Movies | `movies` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
-| 13.5 | Alternate presentations | `alternate-presentations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
+| 13.3 | Sounds | `sounds` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
+| 13.4 | Movies | `movies` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
+| 13.5 | Alternate presentations | `alternate-presentations` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 13.6 | 3D artwork | `3d-artwork` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 13.7 | Rich media | `rich-media` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.2 | Legacy resource procedure sets | `procedure-sets` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,278 unfinished cells in 831 features: 8 engine, 1,407 partial, 863 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,250 unfinished cells in 831 features: 8 engine, 1,379 partial, 863 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -408,8 +408,6 @@ Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
     - preserve — `developer-extensions`, `page-piece`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
 - [#913](https://github.com/yhay81/pyropdf/issues/913) Author 3D scene settings and dimensional measurements as PDF data. Resolve scene, camera and activation settings and each dimensional measurement geometry. Verify view, stream and measurement references after editing.
     - read, interpret, create, edit, preserve — `3d-artwork`.
-- [#915](https://github.com/yhay81/pyropdf/issues/915) Complete existing legacy movie, sound and alternate-presentation relationship editing. Resolve external sound parameters, movie posters, timing, title-based action targets and alternate-presentation name trees. Verify reference-safe edits in existing files.
-    - read, interpret, edit, preserve — `sound-annotations`, `movie-annotations`, `sound-actions`, `movie-actions`, `sounds`, `movies`, `alternate-presentations`.
 - [#861](https://github.com/yhay81/pyropdf/issues/861) Complete prepress dictionaries and print annotation relationships. Resolve box colour, separations, trapping, OPI and print annotation relationships and preserve or edit them under the edition policy.
     - read, edit — `page-boundaries`, `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
     - interpret, create, preserve — `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.

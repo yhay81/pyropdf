@@ -71,6 +71,7 @@ from pyropdf._measurement import (
     _read_document_requirements,
     _write_document_requirements,
 )
+from pyropdf._media import SlideShow, alternate_presentations
 from pyropdf._metadata import (
     METADATA_KEYS,
     MarkInfo,
@@ -212,6 +213,12 @@ class Document:
         """Return the pages, a sequence of :class:`Page` handles that edits keep valid."""
         self._ensure_open()
         return Pages(self)
+
+    @property
+    def alternate_presentations(self) -> dict[bytes, SlideShow]:
+        """Read the catalog's multi-level AlternatePresentations name tree as existing slideshows."""
+        self._ensure_open()
+        return alternate_presentations(self)
 
     @property
     def attachments(self) -> Attachments:
