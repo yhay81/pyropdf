@@ -9,6 +9,9 @@
 //! are counted in [`Report::unchecked`] instead of being reported.
 
 mod expr;
+mod interpret;
+
+pub use interpret::{Interpretation, interpret, tree_target};
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -88,6 +91,14 @@ pub trait Graph {
     fn trailer(&self) -> &Self::Value;
     /// The indirect object `number`, or `None` when it does not resolve.
     fn resolve(&self, number: u32) -> Result<Option<Self::Owned>, Self::Error>;
+    /// Resolve a stored reference, including its generation when the graph
+    /// records one. A reference chain and its budget belong to this graph.
+    fn target(&self, reference: &Self::Value) -> Result<Option<Self::Owned>, Self::Error> {
+        match self.view(reference) {
+            View::Reference(number) => self.resolve(number),
+            _ => Ok(None),
+        }
+    }
     fn view<'v>(&self, value: &'v Self::Value) -> View<'v>;
     /// The entry `key` of a dictionary or of a stream's dictionary.
     fn get<'v>(&self, dict: &'v Self::Value, key: &[u8]) -> Option<&'v Self::Value>;
@@ -172,15 +183,7 @@ pub fn check<G: Graph>(graph: &G) -> Result<Report, G::Error> {
         .ok()
         .and_then(|at| u16::try_from(at).ok())
         .unwrap_or(0);
-    let mut walk = Walk {
-        graph,
-        version: graph.version(),
-        report: Report::default(),
-        queue: Vec::new(),
-        visited: HashSet::new(),
-        targets: HashMap::new(),
-        counted: HashSet::new(),
-    };
+    let mut walk = Walk::new(graph);
     let mut met = HashSet::new();
     walk.object(None, graph.trailer(), Target::Object(trailer))?;
     let size = match graph
@@ -251,6 +254,18 @@ struct Walk<'g, G: Graph> {
 type Frame<'v, V> = (&'v V, Target, String);
 
 impl<'g, G: Graph> Walk<'g, G> {
+    fn new(graph: &'g G) -> Self {
+        Self {
+            graph,
+            version: graph.version(),
+            report: Report::default(),
+            queue: Vec::new(),
+            visited: HashSet::new(),
+            targets: HashMap::new(),
+            counted: HashSet::new(),
+        }
+    }
+
     #[expect(
         clippy::disallowed_methods,
         reason = "each call follows a reference of a value that the graph read within the budget, \
@@ -440,7 +455,7 @@ impl<'g, G: Graph> Walk<'g, G> {
             if at >= items.len()
                 && key.required == Condition::Always
                 && !key.deprecated.is_some_and(|dep| self.version >= dep)
-                && self.introduced(array, key)? == Some(true)
+                && self.introduced(array, described, key)? == Some(true)
             {
                 let message = format!("element {at} is required");
                 self.defect(object, path, described, key, DefectKind::Required, message);
@@ -460,21 +475,17 @@ impl<'g, G: Graph> Walk<'g, G> {
     }
 
     /// Whether the file's version and declared extensions introduce `key`.
-    fn introduced(&mut self, holder: &G::Value, key: &Key) -> Result<Option<bool>, G::Error> {
-        match key.since {
-            Since::Version(since) => Ok(Some(since <= self.version)),
-            Since::When(predicate) => {
-                let scope = self.scope(holder, None);
-                let decided = match parse(predicate) {
-                    Some(expr) => scope.eval_since(&expr)?.truth(),
-                    None => None,
-                };
-                if decided.is_none() {
-                    self.report.unchecked += 1;
-                }
-                Ok(decided)
-            }
+    fn introduced(
+        &mut self,
+        holder: &G::Value,
+        described: &Object,
+        key: &Key,
+    ) -> Result<Option<bool>, G::Error> {
+        let decided = self.scope(holder, None).introduced(described, key)?;
+        if decided.is_none() {
+            self.report.unchecked += 1;
         }
+        Ok(decided)
     }
 
     fn required(
@@ -488,7 +499,7 @@ impl<'g, G: Graph> Walk<'g, G> {
         if key.deprecated.is_some_and(|dep| self.version >= dep) {
             return Ok(());
         }
-        if self.introduced(dict, key)? != Some(true) {
+        if self.introduced(dict, described, key)? != Some(true) {
             return Ok(());
         }
         let required = match key.required {
@@ -593,7 +604,7 @@ impl<'g, G: Graph> Walk<'g, G> {
         if view == View::Null {
             return Ok(());
         }
-        if self.introduced(holder, key)? == Some(false) {
+        if self.introduced(holder, described, key)? == Some(false) {
             let needed = match key.since {
                 Since::Version(since) => format!("PDF {since}"),
                 Since::When(predicate) => predicate.to_owned(),
@@ -735,20 +746,15 @@ impl<'g, G: Graph> Walk<'g, G> {
         }
         let view = self.graph.view(value);
         let scope = self.scope(holder, Some(value));
-        let (mut gated, mut undecided) = (false, false);
-        for entry in typed.values {
-            match admits(&scope, entry, &view)? {
-                Admit::Yes => return Ok(()),
-                Admit::No => {}
-                Admit::Gated => gated = true,
-                Admit::Unknown => undecided = true,
-            }
+        let decision = possible(&scope, typed.values, &view)?;
+        if decision == Admit::Yes {
+            return Ok(());
         }
         let list = typed.values.join(", ");
-        if gated {
+        if decision == Admit::Gated {
             let message = format!("{view} is newer than PDF {}: {list}", self.version);
             self.defect(object, path, described, key, DefectKind::Version, message);
-        } else if undecided {
+        } else if decision == Admit::Unknown {
             self.report.unchecked += 1;
         } else {
             let message = format!("{view} is not admitted by {list}");
@@ -766,6 +772,36 @@ impl<'g, G: Graph> Walk<'g, G> {
         if !matches!(self.graph.view(value), View::Dictionary | View::Stream) {
             return Ok(None);
         }
+        if let Some(button) = self.button_field(links, value)? {
+            return Ok(Some(button));
+        }
+        // The most telling keys matched, then the fewest required keys
+        // missing.
+        let mut best: Option<(u16, usize, usize)> = None;
+        let mut tied = false;
+        for link in links {
+            let target = link.target();
+            let Some(score) = self.score(target, value)? else {
+                continue;
+            };
+            let missing = self.missing(target, value)?;
+            match best {
+                Some((_, top, fewest)) if (score, fewest) == (top, missing) => tied = true,
+                Some((_, top, fewest)) if score < top || (score == top && missing > fewest) => {}
+                _ => {
+                    best = Some((link.object, score, missing));
+                    tied = false;
+                }
+            }
+        }
+        Ok(match best {
+            Some((_, 0, _)) if tied => None,
+            Some((at, _, _)) => Some(at),
+            None => None,
+        })
+    }
+
+    fn button_field(&self, links: &[Link], value: &G::Value) -> Result<Option<u16>, G::Error> {
         // All button subtypes have /FT /Btn. ISO 32000-2 Table 229
         // distinguishes them by bits 16 (Radio) and 17 (Pushbutton).
         // A widget-only kid has no field keys and is checked as AnnotWidget.
@@ -796,59 +832,32 @@ impl<'g, G: Graph> Walk<'g, G> {
                 return Ok(Some(link.object));
             }
         }
-        // The most telling keys matched, then the fewest required keys
-        // missing.
-        let mut best: Option<(u16, usize, usize)> = None;
-        let mut tied = false;
-        for link in links {
-            let target = link.target();
-            let Some(score) = self.score(target, value) else {
-                continue;
-            };
-            let missing = self.missing(target, value);
-            match best {
-                Some((_, top, fewest)) if (score, fewest) == (top, missing) => tied = true,
-                Some((_, top, fewest)) if score < top || (score == top && missing > fewest) => {}
-                _ => {
-                    best = Some((link.object, score, missing));
-                    tied = false;
-                }
-            }
-        }
-        Ok(match best {
-            Some((_, 0, _)) if tied => None,
-            Some((at, _, _)) => Some(at),
-            None => None,
-        })
+        Ok(None)
     }
 
     /// How many keys that `described` always requires a dictionary lacks,
     /// leaving out the keys it may inherit.
-    fn missing(&self, described: &Object, dict: &G::Value) -> usize {
+    fn missing(&self, described: &Object, dict: &G::Value) -> Result<usize, G::Error> {
         let scope = self.scope(dict, None);
-        let lacks = |key: &&Key| {
-            let active = match key.since {
-                Since::Version(since) => since <= self.version,
-                Since::When(predicate) => {
-                    parse(predicate)
-                        .and_then(|expr| scope.eval_since(&expr).ok())
-                        .and_then(|val| val.truth())
-                        == Some(true)
-                }
-            };
-            key.required == Condition::Always
-                && !key.inheritable
-                && !key.name.ends_with('*')
-                && !key.deprecated.is_some_and(|dep| self.version >= dep)
-                && active
-                && self.graph.get(dict, key.name.as_bytes()).is_none()
-        };
-        described.keys.iter().filter(lacks).count()
+        let mut missing = 0;
+        for key in described.keys {
+            if key.required != Condition::Always
+                || key.inheritable
+                || key.name.ends_with('*')
+                || key.deprecated.is_some_and(|dep| self.version >= dep)
+                || self.graph.get(dict, key.name.as_bytes()).is_some()
+            {
+                continue;
+            }
+            let active = scope.introduced(described, key)? == Some(true);
+            missing += usize::from(active);
+        }
+        Ok(missing)
     }
 
     /// How many telling keys of `described` a dictionary matches, or `None`
     /// when one of them contradicts it.
-    fn score(&self, described: &Object, dict: &G::Value) -> Option<usize> {
+    fn score(&self, described: &Object, dict: &G::Value) -> Result<Option<usize>, G::Error> {
         let mut score = 0;
         for key in described.keys {
             if key.name.ends_with('*') {
@@ -864,17 +873,6 @@ impl<'g, G: Graph> Walk<'g, G> {
                 .filter(|typed| typed.kind == Kind::Integer && typed.values.len() == 1)
                 .filter_map(|typed| literal(typed.values[0])?.parse::<i64>().ok())
                 .peekable();
-            if integers.peek().is_some()
-                && let Some(View::Integer(actual)) = self
-                    .graph
-                    .get(dict, key.name.as_bytes())
-                    .map(|value| self.graph.view(value))
-            {
-                if !integers.any(|expected| expected == actual) {
-                    return None;
-                }
-                score += 1;
-            }
             #[expect(
                 clippy::disallowed_methods,
                 reason = "the values of one key of the generated model"
@@ -885,23 +883,39 @@ impl<'g, G: Graph> Walk<'g, G> {
                 .filter(|typed| typed.kind == Kind::Name)
                 .flat_map(|typed| typed.values.iter().map(|entry| literal(entry)))
                 .collect();
+            if integers.peek().is_none() && names.as_ref().is_none_or(Vec::is_empty) {
+                continue;
+            }
+            let raw = self.graph.get(dict, key.name.as_bytes());
+            let resolved;
+            let view = match raw {
+                Some(value) if matches!(self.graph.view(value), View::Reference(_)) => {
+                    resolved = self.graph.target(value)?;
+                    resolved.as_deref().map(|v| self.graph.view(v))
+                }
+                other => other.map(|v| self.graph.view(v)),
+            };
+            if integers.peek().is_some()
+                && let Some(View::Integer(actual)) = view
+            {
+                if !integers.any(|expected| expected == actual) {
+                    return Ok(None);
+                }
+                score += 1;
+            }
             let Some(names) = names.filter(|names| !names.is_empty()) else {
                 continue;
             };
-            match self
-                .graph
-                .get(dict, key.name.as_bytes())
-                .map(|value| self.graph.view(value))
-            {
+            match view {
                 Some(View::Name(name)) if names.iter().any(|wanted| wanted.as_bytes() == name) => {
                     score += 1;
                 }
-                Some(View::Name(_)) => return None,
-                None if key.required == Condition::Always => return None,
+                Some(View::Name(_)) => return Ok(None),
+                None if key.required == Condition::Always => return Ok(None),
                 _ => {}
             }
         }
-        Some(score)
+        Ok(Some(score))
     }
 
     /// Checks a node of a name or number tree and queues its kids and its
@@ -1367,6 +1381,28 @@ enum Admit {
     /// The value is admitted only by another version.
     Gated,
     Unknown,
+    /// The condition of a RequiredValue holds, making the value mandatory.
+    Required(bool),
+}
+
+/// Combine the alternatives of one PossibleValues cell. An active
+/// RequiredValue overrides the ordinary alternatives regardless of order.
+fn possible<G: Graph>(
+    scope: &Scope<'_, '_, G>,
+    entries: &[&str],
+    view: &View<'_>,
+) -> Result<Admit, G::Error> {
+    let mut decision = Admit::No;
+    for entry in entries {
+        match admits(scope, entry, view)? {
+            Admit::Required(false) => return Ok(Admit::No),
+            Admit::Yes | Admit::Required(true) => decision = Admit::Yes,
+            Admit::Gated if decision != Admit::Yes => decision = Admit::Gated,
+            Admit::Unknown if decision == Admit::No => decision = Admit::Unknown,
+            _ => {}
+        }
+    }
+    Ok(decision)
 }
 
 /// Whether one possible value admits a value of the document.
@@ -1376,6 +1412,23 @@ fn admits<G: Graph>(
     view: &View<'_>,
 ) -> Result<Admit, G::Error> {
     if entry == "*" {
+        return Ok(Admit::Yes);
+    }
+    if let Some(literal) = entry
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        && let View::Array(len) = view
+        && let Some(value) = scope.subject
+    {
+        let tokens = literal.split_ascii_whitespace();
+        if *len != tokens.clone().count() {
+            return Ok(Admit::No);
+        }
+        for (item, token) in scope.graph.elements(value).iter().zip(tokens) {
+            if !equals(&scope.graph.view(item), token) {
+                return Ok(Admit::No);
+            }
+        }
         return Ok(Admit::Yes);
     }
     if !entry.starts_with("fn:") {
@@ -1404,9 +1457,17 @@ fn admits_expr<G: Graph>(
         } else {
             Admit::No
         }),
+        Expr::Call("fn:RequiredValue", args) if args.len() == 2 => {
+            let candidate = admits_expr(scope, &args[1], view)?;
+            Ok(if scope.eval(&args[0])?.truth() == Some(true) {
+                Admit::Required(candidate == Admit::Yes)
+            } else {
+                candidate
+            })
+        }
         Expr::Call(name, args) if WRAPPERS.contains(name) && args.len() == 2 => {
             let inner = admits_expr(scope, &args[1], view)?;
-            if inner != Admit::Yes {
+            if !matches!(inner, Admit::Yes | Admit::Required(_)) {
                 return Ok(inner);
             }
             let gate = args[0].text().and_then(version);
@@ -1421,7 +1482,13 @@ fn admits_expr<G: Graph>(
                 _ => Some(true),
             };
             Ok(match open {
-                Some(true) => Admit::Yes,
+                Some(true) => inner,
+                // A version gate on a requirement states when the value
+                // becomes mandatory, not when that value first exists. R=6
+                // is required for V=5 in PDF 2.0 and occurs in Adobe's
+                // earlier PDF 1.7 extension level 8 as well.
+                Some(false) if inner == Admit::Required(true) => Admit::Unknown,
+                Some(false) if inner == Admit::Required(false) => Admit::No,
                 Some(false) => Admit::Gated,
                 None => Admit::Unknown,
             })

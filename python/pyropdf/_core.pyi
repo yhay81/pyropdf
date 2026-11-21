@@ -91,6 +91,7 @@ class _Document:
         renumber: bool = False,
         dedupe: bool = False,
         linearize: bool = False,
+        hybrid_reference: bool = False,
         /,
     ) -> None: ...
     def to_bytes(
@@ -107,6 +108,7 @@ class _Document:
         renumber: bool = False,
         dedupe: bool = False,
         linearize: bool = False,
+        hybrid_reference: bool = False,
         /,
     ) -> bytes: ...
     def _objects(self) -> list[tuple[int, int, bytes]]: ...
@@ -863,6 +865,12 @@ _SchemaType: TypeAlias = tuple[str, list[str], str | None, list[str]]
 # One key: name, inheritable, required (TRUE, FALSE, or a predicate), types.
 _SchemaKey: TypeAlias = tuple[str, bool, str, list[_SchemaType]]
 
+def schema_entry(
+    document: _Document, root: _Root, path: list[_Step], step: _Step, descriptor: str, key: str, /
+) -> tuple[str, str | None, str | None, object, tuple[int, int] | None, str | None]: ...
+def schema_leaf(
+    document: _Document, root: _Root, path: list[_Step], descriptor: str, key: str, needle: bytes | int, /
+) -> tuple[str | None, object, _Root, bool, int] | None: ...
 def schema_names() -> list[str]: ...
 def schema_object(name: str, /) -> list[_SchemaKey] | None: ...
 def security_state(document: _Document, /) -> tuple[bool, bool, str | None, int | None, str | None]: ...

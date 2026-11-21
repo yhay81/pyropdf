@@ -714,7 +714,7 @@ Document.save(
     compression_level: int = 6,
     decompress: bool = False,
     keep_id: bool = False,
-    cross_reference: Literal['table', 'stream'] | None = None,
+    cross_reference: Literal['table', 'stream', 'hybrid'] | None = None,
     object_streams: bool = False,
     renumber: bool = False,
     dedupe: bool = False,
@@ -765,7 +765,14 @@ element, which a save keeps.
 or as a `"stream"` (PDF 1.5); `None` keeps the form of the
 section that the opened file's `startxref` names, and writes a
 table for a hybrid-reference file or a document without a file.
-`object_streams=True` packs every object that ISO 32000-2 section
+`cross_reference="hybrid"` writes a complete classic table and
+a supplemental cross-reference stream in a subsequent section.
+When packing is requested it keeps objects reachable from the
+trailer visible to readers that only understand the classic table.
+An edited incremental save of a hybrid appends a new hybrid section.
+
+In a pure cross-reference stream, `object_streams=True` packs
+every object that ISO 32000-2 section
 7.5.7 lets an object stream hold into object streams of up to 100
 objects: those that are not streams, have generation 0, and are not
 the encryption dictionary. It writes a cross-reference stream, so
@@ -801,7 +808,7 @@ the pages, the trailer, and the catalog reach, numbered anew, so it
 prunes and renumbers whatever `prune` and `renumber` say, and
 moves the attributes that pages inherit from the page tree into the
 pages. It writes a cross-reference table, so it refuses
-`cross_reference="stream"`, `object_streams`, and `dedupe`,
+`cross_reference="stream"` or `"hybrid"`, `object_streams`, and `dedupe`,
 and an incremental save refuses it. `is_linearized` reads
 whether an opened file is linearized.
 
@@ -818,7 +825,7 @@ Document.to_bytes(
     compression_level: int = 6,
     decompress: bool = False,
     keep_id: bool = False,
-    cross_reference: Literal['table', 'stream'] | None = None,
+    cross_reference: Literal['table', 'stream', 'hybrid'] | None = None,
     object_streams: bool = False,
     renumber: bool = False,
     dedupe: bool = False,
