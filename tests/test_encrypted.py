@@ -1060,6 +1060,7 @@ def test_invalid_related_file_pairs_refuse_a_new_default_without_overwriting_the
 @pytest.mark.parametrize("incremental", [False, True])
 @pytest.mark.spec("crypt-filter", "edit")
 @pytest.mark.spec("crypt-filters", "edit")
+@pytest.mark.usefixtures("_pyhanko_oracle")
 def test_payload_replacement_keeps_a_private_recipient_audience(operation: str, *, incremental: bool) -> None:
     import io  # noqa: PLC0415
 
