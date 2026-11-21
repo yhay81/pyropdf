@@ -1,13 +1,25 @@
 //! Lossless encoders for PDF stream data, applied in reverse filter order.
 
-use super::{Bytes, Dict, Stream, Value};
+use super::{Bytes, Dict, FilterLookup, Stream, Value};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::{Error, Result};
 
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
-/// Replace the data and filter metadata together, retaining any explicit security selector.
+/// Replace the data and filter metadata together. The filter array is ordered
+/// as a reader decodes it; encoding starts with the innermost filter.
 pub fn write(stream: &mut Stream, data: &[u8], options: Dict, budget: &Budget) -> Result<()> {
+    write_with_lookup(stream, data, options, &|_, _| Ok(None), budget)
+}
+
+/// Encode and replace a stream whose previous security declaration can be indirect.
+pub fn write_with_lookup(
+    stream: &mut Stream,
+    data: &[u8],
+    options: Dict,
+    lookup: &FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<()> {
     let filter = options.get("Filter");
     let parameters = options.get("DecodeParms");
     let filters = match filter {
@@ -57,7 +69,7 @@ pub fn write(stream: &mut Stream, data: &[u8], options: Dict, budget: &Budget) -
         copy.into_vec()
     };
     let charge = bytes.capacity() as u64;
-    let result = stream.replace_encoded_options(Bytes::from(bytes), options, budget);
+    let result = stream.replace_encoded_options_with(Bytes::from(bytes), options, lookup, budget);
     if result.is_err() {
         budget.release(LimitCode::MemorySize, charge);
     }
