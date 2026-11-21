@@ -37,10 +37,11 @@ def test_no_public_text_claims_safety_for_untrusted_input() -> None:
     assert found == {}
 
 
-def test_the_readme_withholds_the_claim() -> None:
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert WITHHOLDING in readme
-    assert "issues/15" in readme
+def test_the_readme_and_security_policy_withhold_the_claim() -> None:
+    for filename in ("README.md", "SECURITY.md"):
+        policy = (ROOT / filename).read_text(encoding="utf-8")
+        assert WITHHOLDING in policy, filename
+        assert "issues/15" in policy, filename
 
 
 def test_a_claim_is_caught() -> None:
