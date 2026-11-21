@@ -51,6 +51,35 @@ impl PageSnapshot {
         crate::errors::boundary(|| self.index.len())
     }
 
+    /// Fill the target's reserved font dictionaries from one captured version.
+    /// The single resource walk shares descendant fonts, programs and encodings.
+    fn copy_fonts(
+        &self,
+        py: Python<'_>,
+        document: &_Document,
+        roots: Vec<(u32, u16, u32)>,
+        operation: &OperationBudget,
+    ) -> PyResult<()> {
+        crate::errors::boundary(|| {
+            if !operation.is_active_on(document) {
+                return Err(PyValueError::new_err(
+                    "the canvas operation is not active on this document",
+                ));
+            }
+            let budget = operation.for_source(self.document.get())?;
+            let roots = roots.into_iter().map(|(number, generation, target)| {
+                (
+                    Reference::new(number, generation),
+                    Reference::new(target, 0),
+                )
+            });
+            document.edit(py, |transaction, _| {
+                pages::import::copy_resources_into(transaction, &self.version, roots, &budget)
+                    .map_err(|error| store_error(&error))
+            })
+        })?
+    }
+
     fn page_object(&self, at: usize) -> PyResult<(u32, u16)> {
         crate::errors::boundary(|| {
             self.budget.poll().map_err(|error| limit_error(&error))?;

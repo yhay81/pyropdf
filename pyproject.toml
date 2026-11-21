@@ -25,6 +25,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+# The CMS provider for recipient-encrypted PDFs.
+recipients = ["cryptography>=44"]
 # pylopdf's PP-OCR models, which `OcrEngine` discovers (DESIGN.md section 14).
 ocr = ["pylopdf-ocr-models>=0.1.0,<0.2"]
 # pylopdf's Noto CJK faces, which render the CJK fonts that a document does
