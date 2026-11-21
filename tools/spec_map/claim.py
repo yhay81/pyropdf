@@ -79,6 +79,12 @@ def in_scope(spec_map: dict[str, Any], scope: dict[str, Any]) -> list[dict[str, 
         raise ScopeError(msg)
     names = [name for name, feature in by_name.items() if feature.get("clause") in clauses]
     names += [name for name in scope.get("features", []) if name not in names]
+    selected = set(names)
+    for name in names:
+        for member in by_name[name].get("includes", []):
+            if member not in selected:
+                selected.add(member)
+                names.append(member)
     validate_exclusions(scope.get("exclusions", {}), names, spec_map["dimensions"])
     return [by_name[name] for name in names]
 

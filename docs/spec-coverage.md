@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 45 | 43 | 743 |
-| interpret | 1 | 13 | 0 | 41 | 663 | 113 |
-| create | 0 | 0 | 9 | 646 | 79 | 97 |
-| edit | 0 | 0 | 0 | 672 | 66 | 93 |
-| preserve | 0 | 0 | 0 | 29 | 663 | 139 |
+| read | 0 | 0 | 0 | 45 | 43 | 749 |
+| interpret | 1 | 13 | 0 | 46 | 663 | 114 |
+| create | 0 | 0 | 13 | 646 | 79 | 99 |
+| edit | 0 | 0 | 0 | 672 | 66 | 99 |
+| preserve | 0 | 0 | 0 | 29 | 663 | 145 |
 
 ## Clauses
 
@@ -35,7 +35,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 7.5.7 | Object streams | `object-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 partial | 1 partial | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.6.4 | Standard security handler | `standard-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 2 done, 5 partial | 3 done, 4 non-goal | 7 done | 7 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 7.6.6 | Crypt filters | `crypt-filters` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-2,948 unfinished cells in 831 features: 1 engine, 1,433 partial, 1,514 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,953 unfinished cells in 837 features: 1 engine, 1,438 partial, 1,514 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -348,6 +348,8 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 - [#892](https://github.com/yhay81/pyropdf/issues/892) Verify hybrid-reference writing and linearized-file preservation. Write and reopen hybrid XRefStm sections and verify fast-web-view hints and offsets after supported saves. Reuse independent qpdf checks, including the modes where linearization cannot survive.
     - create, edit — `xref-streams`.
     - preserve — `linearization`.
+- [#974](https://github.com/yhay81/pyropdf/issues/974) Render owner-authenticated standard-handler PDF revisions 2 to 4. Render authenticated R2 to R4 versions with the owner credentials before and after edits.
+    - interpret — `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`.
 
 ### 253 Understanding
 
@@ -990,6 +992,10 @@ before a test can be cited for that specific correction. The register gives no a
 ## Exclusions
 
 - `flate-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.
+- `standard-rc4-r2` create: non-goal, #256: Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content.
+- `standard-rc4-r3` create: non-goal, #256: Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content.
+- `standard-rc4-r4` create: non-goal, #256: Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content.
+- `standard-aes-r5` create: non-goal, https://github.com/yhay81/pyropdf/blob/main/DESIGN.md#45-encryption: New AES-256 password encryption uses revision 6. The legacy revision 5 handler can be opened and kept while editing.
 - `lexical-conventions` interpret: n/a, 7.2: lexical conventions define file tokens only, whose parsing Read covers.
 - `basic-objects` interpret: n/a, 7.3: basic objects are syntax values, whose clause-specific meaning later clauses cover.
 - `asciihex-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.

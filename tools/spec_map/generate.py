@@ -173,6 +173,11 @@ def declared(root: Path, config: dict[str, Any], names: list[str]) -> dict[str, 
                 features[name].update(applied)
     for name, table in config.get("features", {}).items():
         features[name] = feature(name, dict(table), names)
+    for name, row in features.items():
+        unknown = set(row.get("includes", [])) - features.keys()
+        if unknown:
+            msg = f"{name} includes unknown features: {', '.join(sorted(unknown))}"
+            raise MapError(msg)
     return features
 
 
@@ -182,12 +187,18 @@ def feature(name: str, table: dict[str, Any], names: list[str]) -> dict[str, Any
     if not FEATURE_NAME.fullmatch(name):
         msg = f"{where} is named in lowercase words joined by hyphens"
         raise MapError(msg)
+    included = table.pop("includes", [])
     deprecated = table.pop("deprecated", False)
     about = {field: table.pop(field) for field in ("clause", "description", "objects") if field in table}
     unknown = sorted(set(about.get("objects", [])) - set(names))
     if unknown or set(about) != {"clause", "description", "objects"} or set(table) - set(DIMENSIONS):
         msg = f"{where} takes a clause, a description, objects of the model, and statuses; {unknown or ''}"
         raise MapError(msg)
+    if not isinstance(included, list) or not all(isinstance(item, str) for item in included):
+        msg = f"{where}.includes must list feature names"
+        raise MapError(msg)
+    if included:
+        about["includes"] = included
     if deprecated is not True and deprecated is not False:
         msg = f"{where}.deprecated is true or false"
         raise MapError(msg)
