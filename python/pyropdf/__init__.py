@@ -230,7 +230,9 @@ from pyropdf._structure import (
     ObjectReference,
     RoleMap,
     StructureChildren,
+    StructureChildRule,
     StructureElement,
+    StructureText,
     StructureTree,
 )
 from pyropdf._tables import Table, TableDiagnostics
@@ -577,8 +579,10 @@ __all__ = [
     "Stroke",
     "StructuralDefect",
     "StructuralReport",
+    "StructureChildRule",
     "StructureChildren",
     "StructureElement",
+    "StructureText",
     "StructureTree",
     "SubmitFormAction",
     "SubmitFormFlags",
