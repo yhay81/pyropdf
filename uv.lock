@@ -1465,6 +1465,9 @@ ko = [
 ocr = [
     { name = "pylopdf-ocr-models" },
 ]
+recipients = [
+    { name = "cryptography" },
+]
 zh-cn = [
     { name = "pylopdf-fonts-zh-cn" },
 ]
@@ -1495,13 +1498,14 @@ oracles = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", marker = "extra == 'recipients'", specifier = ">=44" },
     { name = "pylopdf-fonts-jp", marker = "extra == 'jp'", specifier = ">=0.1.1,<0.2" },
     { name = "pylopdf-fonts-ko", marker = "extra == 'ko'", specifier = ">=0.1.1,<0.2" },
     { name = "pylopdf-fonts-zh-cn", marker = "extra == 'zh-cn'", specifier = ">=0.1.1,<0.2" },
     { name = "pylopdf-fonts-zh-tw", marker = "extra == 'zh-tw'", specifier = ">=0.1.1,<0.2" },
     { name = "pylopdf-ocr-models", marker = "extra == 'ocr'", specifier = ">=0.1.0,<0.2" },
 ]
-provides-extras = ["jp", "ko", "ocr", "zh-cn", "zh-tw"]
+provides-extras = ["jp", "ko", "ocr", "recipients", "zh-cn", "zh-tw"]
 
 [package.metadata.requires-dev]
 dev = [
