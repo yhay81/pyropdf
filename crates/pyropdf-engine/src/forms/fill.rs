@@ -267,6 +267,9 @@ pub(super) fn change<'v>(
             dict.insert(Name::from("V"), Value::Name(Name::from(text)));
         }
         Some(text) => {
+            if field.kind == "text" {
+                dict.remove("RV");
+            }
             #[expect(
                 clippy::disallowed_methods,
                 reason = "this call inserts only the fixed /V key"

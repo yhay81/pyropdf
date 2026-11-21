@@ -1983,7 +1983,55 @@ def check_timestamp(doc: pyropdf.Document) -> None:
     assert len(stamp.byte_range) == 4
 
 
+def prepare_xfa_packets(doc: pyropdf.Document) -> None:
+    form = doc.catalog.get("AcroForm")
+    if form is None:
+        form = doc.objects[doc.objects.add({"Fields": []})]
+        doc.catalog["AcroForm"] = form
+
+    def stream(data: bytes) -> pyropdf.Stream:
+        return doc.objects[doc.objects.add_stream(data)]
+
+    # Two legal packets share one original stream. Editing either must retain
+    # the other, without adding an extension key to a profiled AcroForm.
+    shared = stream(b"<config/>")
+    form["XFA"] = [
+        "xdp:xdp",
+        stream(b'<x:xdp xmlns:x="http://ns.adobe.com/xdp/">'),
+        "config",
+        shared,
+        "template",
+        stream(b"<template/>"),
+        "config",
+        shared,
+        "/xdp:xdp",
+        stream(b"</x:xdp>"),
+    ]
+
+
+def edit_xfa_packets(doc: pyropdf.Document) -> set[int]:
+    form = doc.catalog["AcroForm"]
+    packets = form["XFA"]
+    touched = {form.xref if form.xref is not None else number(doc.catalog)} | indirect_numbers(packets, *packets)
+    shared = packets[3].xref
+    assert packets[7].xref == shared
+    doc.form.replace_xfa_packet(1, b'<config id="edited"/>')
+    assert doc.form.xfa_packet(1) == b'<config id="edited"/>'
+    assert form["XFA"][7].xref == shared
+    assert doc.form.xfa_packet(3) == b"<config/>"
+    doc.form.remove_xfa_packet(2)
+    assert doc.form.xfa_packet(2) == b"<config/>"
+    assert doc.form.remove_xfa()
+    return touched
+
+
+def check_xfa_packets(doc: pyropdf.Document) -> None:
+    assert doc.form.xfa_packet_names == ()
+    assert "XFA" not in doc.catalog["AcroForm"]
+
+
 FAMILY_EDITS = {
+    "xfa_packets": Edit(prepare=prepare_xfa_packets, apply=edit_xfa_packets, check=check_xfa_packets),
     "action_triggers": Edit(prepare=prepare_widget_events, apply=edit_widget_events, check=check_widget_events),
     "annotation_relations": Edit(
         prepare=prepare_replies, apply=edit_replies, check=check_replies, affected_pages=first_page
