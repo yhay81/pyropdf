@@ -364,7 +364,16 @@ def test_image_object_reference_can_use_a_nested_annotation_appearance(*, increm
         assert ref.Obj.objgen == pdf.pages[1].Annots[-1].AP.N.Shown.Resources.XObject.Image.objgen
 
 
-def test_whole_xobject_lookup_shares_the_edits_decode_budget() -> None:
+@pytest.mark.parametrize(
+    ("limits", "expected_code"),
+    [
+        (pyropdf.DocumentLimits(max_decompressed_size=1024), "decompressed_size"),
+        (pyropdf.DocumentLimits(max_page_content_size=1024), "page_content_size"),
+    ],
+)
+def test_whole_xobject_lookup_shares_the_edits_decode_budget(
+    limits: pyropdf.DocumentLimits, expected_code: str
+) -> None:
     with pyropdf.open(numbered(1)) as source:
         form = {"Subtype": pyropdf.Name("Form"), "BBox": [0, 0, 1, 1]}
         tile = source.objects[source.objects.add_stream(b"", form)]
@@ -375,14 +384,14 @@ def test_whole_xobject_lookup_shares_the_edits_decode_budget() -> None:
         page.obj["Resources"] = {"XObject": {"Outer": outer}}
         page.obj["Contents"] = source.objects[source.objects.add_stream(b"/Outer Do")]
         data = source.to_bytes()
-    with pyropdf.open(data, limits=pyropdf.DocumentLimits(max_decompressed_size=1024)) as doc:
+    with pyropdf.open(data, limits=limits) as doc:
         element = doc.structure.add("Figure", page=0)
         target = doc.pages[0].obj["Resources"]["XObject"]["Outer"]["Resources"]["XObject"]["Tile"]
         position = doc.history.position
         saved = doc.to_bytes(incremental=True)
         with pytest.raises(pyropdf.LimitError) as caught:
             element.set_object_reference(target, page=0)
-        assert caught.value.code == "decompressed_size"
+        assert caught.value.code == expected_code
         assert doc.history.position == position
         assert doc.to_bytes(incremental=True) == saved
         assert "StructParent" not in target
