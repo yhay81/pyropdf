@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -759,10 +760,16 @@ def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_pat
         str(evidence),
     ]
 
+    observations, minimum_tests = qualifying_workflows(root)
+    results_path = decisions.with_name("workflows.json")
+    results_path.write_text(json.dumps(observations))
+
     def run(status: str) -> subprocess.CompletedProcess[str]:
         feature["edit"]["status"] = status
         (root / MAP).write_text(json.dumps(spec_map))
-        evidence.write_text(json.dumps(record_evidence(root)))
+        collected = record_evidence(root)
+        collected["tests"].update(minimum_tests)
+        evidence.write_text(json.dumps(collected))
         return subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
 
     assert run("partial").returncode != 0
@@ -785,6 +792,13 @@ def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_pat
         assert result.returncode == 0
         assert "4 of 4" in result.stdout
         assert "1 excluded" in result.stdout
+    del observations["workflows"]["stamps"]
+    results_path.write_text(json.dumps(observations))
+    result = run("partial")
+    assert result.returncode == 1
+    assert "The recorded limitation." in result.stdout
+    assert "stamps (" in result.stdout
+    assert "missing delivered result" in result.stdout
     for status in ("engine", "planned"):
         result = run(status)
         assert result.returncode != 0
@@ -856,3 +870,213 @@ def test_updating_published_wording_at_an_existing_anchor_requires_review(tmp_pa
     assert locations == revised_locations
     assert old[24] != new[24]
     assert old[325] == new[325]
+
+
+def qualifying_workflows(root: Path) -> tuple[dict, dict]:
+    """Create synthetic, reproducible observations without claiming a real 1.0 build."""
+    manifest = Path("tools/spec_map/minimum.toml")
+    config = tomllib.loads((ROOT / manifest).read_text())
+    specs = config["workflows"]
+    paths = {Path("DESIGN.md"), Path("Cargo.lock"), manifest}
+    paths.update(Path(w["guide"].split("#")[0]) for w in specs.values())
+    paths.update(Path(w["fixture"]) for w in specs.values())
+    paths.update(Path(p["fixture"]) for p in specs["archives"]["profiles"].values())
+    for path in paths:
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / path, root / path)
+    release = root / "evidence/releases/v1.0.0"
+    release.mkdir(parents=True, exist_ok=True)
+    closed = {"state": "CLOSED", "stateReason": "COMPLETED"}
+    (release / "issue-states.json").write_text(json.dumps({"15": closed, "243": closed}))
+    dist = root / "dist"
+    dist.mkdir()
+    artifacts = {}
+    for runtime in ("native", "server", "cloudflare-worker"):
+        target = "pyemscripten_2026_0_wasm32" if runtime == "cloudflare-worker" else "manylinux_2_28_x86_64"
+        filename = f"pyropdf-1.0.0-cp314-{'cp314' if runtime == 'cloudflare-worker' else 'abi3'}-{target}.whl"
+        wheel = dist / filename
+        wheel.write_bytes(filename.encode())
+        artifacts[runtime] = {
+            "wheel": filename,
+            "target": target,
+            "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+            "interpreter": "CPython 3.14",
+            "extras": [],
+        }
+    lock = next(p for p in tomllib.loads((ROOT / "Cargo.lock").read_text())["package"] if p["name"] == "hayro")
+    proof = "https://example.org/fixture-receipt"
+    records = {
+        "tag": "v1.0.0",
+        "revision": REVISION,
+        "manifest_sha256": hashlib.sha256((root / manifest).read_bytes()).hexdigest(),
+        "artifacts": artifacts,
+        "workflows": {},
+        "upstream": {"version": lock["version"], "source": lock["source"], "release": proof, "adoption": proof},
+    }
+    tests = {t: "passed" for nodes in config["save-guarantees"].values() for t in nodes}
+    for key, spec in specs.items():
+        cases = {}
+        tests.update(dict.fromkeys(spec["tests"], "passed"))
+        for case, outcome in spec["cases"].items():
+            runtime, mode, *variant = case.split("/")
+            fixture = spec["profiles"][variant[0]]["fixture"] if variant else spec["fixture"]
+            source = hashlib.sha256((root / fixture).read_bytes()).hexdigest()
+            subject = hashlib.sha256((key + case).encode()).hexdigest() if outcome == "delivered" else source
+            verdict = {"result": "passed", "sha256": subject, "report": proof}
+            observed = {
+                "input_sha256": source,
+                "artifact_sha256": artifacts[runtime]["sha256"],
+                "outcome": outcome,
+                "proof": proof,
+                "observation": "Synthetic observed outcome.",
+                "checks": dict.fromkeys(spec["checks"], verdict),
+                "guarantees": dict.fromkeys(
+                    [
+                        "untouched-values-and-streams",
+                        "settled-edit",
+                        "pre-save-signatures-and-profiles",
+                        "original-prefix",
+                        "identical-no-op",
+                        "atomic-refusal",
+                    ],
+                    verdict,
+                ),
+            }
+            if outcome == "delivered":
+                observed["output_sha256"] = subject
+            else:
+                observed["refusal"] = {
+                    "type": "LimitError" if mode == "refuse-limit" else "ValueError",
+                    "code": "file_size" if mode == "refuse-limit" else "unavailable",
+                    "output_written": False,
+                }
+            if runtime != "native":
+                observed["deployment"] = {
+                    "receipt": proof,
+                    "deployment_id": "synthetic",
+                    "artifact_sha256": artifacts[runtime]["sha256"],
+                }
+            if variant:
+                levels = spec["profiles"][variant[0]]["levels"]
+                observed["profile_checks"] = dict.fromkeys(levels, verdict)
+                observed["human_review"] = {
+                    **verdict,
+                    "levels": levels,
+                    "reviewer": "Synthetic reviewer",
+                    "reader_and_version": "Fixture 1",
+                    "reading_order": "Observed the expected sequence.",
+                    "alternative_text": "Observed the expected description.",
+                }
+            cases[case] = observed
+        records["workflows"][key] = cases
+    return records, tests
+
+
+def test_minimum_requires_observations_for_every_approved_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(CLAIM.parent))
+    module = runpy.run_path(str(CLAIM))
+    release = tmp_path / "evidence/releases/v1.0.0"
+    results = release / "workflows.json"
+    states = release / "issue-states.json"
+    observations, tests = qualifying_workflows(tmp_path)
+    candidate = module["Candidate"](tmp_path, "v1.0.0", REVISION, results, tmp_path / "dist", states)
+    ci = {"tests": tests, "checks": dict.fromkeys(CHECKS, "passed")}
+
+    def run() -> tuple[list[str], str]:
+        results.write_text(json.dumps(observations))
+        return module["minimum_gate"](candidate, ci)
+
+    assert run()[0] == []
+    workflows = observations["workflows"]
+    assert len(workflows) == 10
+    for name in list(workflows):
+        saved = workflows.pop(name)
+        problems, report = run()
+        assert problems
+        assert all(name in p for p in problems)
+        assert "missing" in report
+        assert saved
+        workflows[name] = saved
+    # The workflow list cannot shrink by editing the manifest and the observations together.
+    path = tmp_path / "tools/spec_map/minimum.toml"
+    manifest = path.read_text()
+    path.write_text(manifest[: manifest.index("[workflows.server-worker]")])
+    observations["manifest_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert "approved DESIGN.md table" in run()[1]
+
+
+def test_minimum_rejects_stale_and_incomplete_delivery_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(CLAIM.parent))
+    module = runpy.run_path(str(CLAIM))
+    release = tmp_path / "evidence/releases/v1.0.0"
+    results = release / "workflows.json"
+    states = release / "issue-states.json"
+    observations, tests = qualifying_workflows(tmp_path)
+    candidate = module["Candidate"](tmp_path, "v1.0.0", REVISION, results, tmp_path / "dist", states)
+    ci = {"tests": tests, "checks": dict.fromkeys(CHECKS, "passed")}
+
+    def reject(record: dict, field: str, value: object, message: str) -> None:
+        old = record[field]
+        record[field] = value
+        results.write_text(json.dumps(observations))
+        blockers, _ = module["minimum_gate"](candidate, ci)
+        assert any(message in reason for reason in blockers), blockers
+        record[field] = old
+
+    wf = observations["workflows"]
+    archives = wf["archives"]["native/full/dual"]
+    reject(observations, "revision", "0" * 40, "candidate tag, revision")
+    reject(observations, "manifest_sha256", "0" * 64, "workflow manifest")
+    reject(ci["checks"], "arlington", "skipped", "validator arlington")
+    reject(
+        tests,
+        "tests/test_history.py::test_undoing_to_the_original_saves_incrementally_as_read",
+        "skipped",
+        "save guarantee incremental",
+    )
+    reject(tests, "tests/test_ocr_layer.py::test_ocr_layer_survives_save_roundtrip", "skipped", "test_ocr_layer")
+    reject(wf["redaction"]["native/full"], "outcome", "refused", "expected an observed delivered")
+    reject(wf["images"]["native/read"], "artifact_sha256", "b" * 64, "candidate wheel")
+    reject(
+        wf["repair"]["native/refuse-incremental"]["refusal"],
+        "output_written",
+        value=True,
+        message="before producing output",
+    )
+    reject(wf["pages"]["native/incremental"]["guarantees"], "original-prefix", {}, "original-prefix")
+    reject(archives["checks"], "verapdf", {}, "verapdf report")
+    reject(archives["human_review"], "sha256", "a" * 64, "human reading order")
+    reject(archives["human_review"], "levels", ["PDF/UA-1"], "human reading order")
+    reject(archives["human_review"], "alternative_text", "", "human reading order")
+    reject(archives["profile_checks"], "PDF/A-4", {}, "validation for PDF/A-4")
+    reject(wf["server-worker"]["server/read"]["deployment"], "artifact_sha256", "", "deployment receipt")
+    reject(wf["server-worker"]["cloudflare-worker/refuse-limit"]["refusal"], "code", "unknown", "file_size LimitError")
+    reject(observations["artifacts"]["server"], "target", "wasm32", "target/runtime")
+    reject(observations["upstream"], "version", "stale", "locked hayro")
+    results.write_text(json.dumps(observations))
+    (candidate.dist / observations["artifacts"]["cloudflare-worker"]["wheel"]).write_bytes(b"changed")
+    states.write_text(
+        json.dumps({"15": {"state": "OPEN", "stateReason": ""}, "243": {"state": "CLOSED", "stateReason": "COMPLETED"}})
+    )
+    blockers, _ = module["minimum_gate"](candidate, ci)
+    assert any("wheel digest differs" in b for b in blockers)
+    assert any("closed adoption #15 and #243" in b for b in blockers)
+
+
+def test_only_one_point_zero_tags_check_the_minimum_before_uploading_to_pypi() -> None:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text()
+    publish = workflow.split("\n  publish:\n", 1)[1].split("\n  github-release:", 1)[0]
+    step = publish.split("Check the 1.0 specification map", 1)[1].split("      - uses:", 1)[0]
+    assert "if: startsWith(github.ref, 'refs/tags/v1.0.')" in step
+    assert 'gh run list --workflow ci.yml --commit "$revision"' in step
+    assert "stateReason" in step
+    assert "workflows.json?ref=$source" in step
+    assert (
+        publish.index("path: dist")
+        < publish.index('--artifacts "$GITHUB_WORKSPACE/dist"')
+        < publish.index("pypi-publish")
+    )

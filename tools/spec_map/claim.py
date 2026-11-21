@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import behaviors
+from minimum import Candidate, minimum_gate
 from release_evidence import SUITES, VALIDATORS, digest, suite_outcomes, test_outcomes
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -398,11 +399,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--evidence", type=Path, required=True, help="release-evidence.json from the matching CI run")
     parser.add_argument("--release", help="check the entire 1.0 map for this tag")
     parser.add_argument("--revision", help="release checkout SHA, required with --release")
+    parser.add_argument("--workflow-results", type=Path, help="external observations of the 1.0 candidate")
+    parser.add_argument("--artifacts", type=Path, help="directory containing the actual candidate wheels")
+    parser.add_argument("--issue-states", type=Path, help="GitHub states for the untrusted-input adoption issues")
     args = parser.parse_args(argv)
     if bool(args.scope) == bool(args.release) or bool(args.release) != bool(args.revision):
         parser.error("supply either a scope or --release and --revision")
     if args.release and not re.fullmatch(r"v1\.0\.\d+(?:[-+][0-9A-Za-z.-]+)?", args.release):
         parser.error("the 1.0 release gate expects a v1.0.x tag")
+    if args.scope and (args.workflow_results or args.artifacts or args.issue_states):
+        parser.error("workflow results, artifacts and issue states apply only to a release")
     spec_map = json.loads((args.root / MAP).read_text(encoding="utf-8"))
     try:
         evidence = read_evidence(args.evidence, args.root / MAP)
@@ -410,6 +416,17 @@ def main(argv: list[str] | None = None) -> int:
             path = args.root / "evidence/releases" / args.release / "decisions.toml"
             decisions = tomllib.loads(path.read_text()) if path.is_file() else {}
             blockers, report = release_gate(spec_map, args.release, args.revision, evidence, decisions)
+            candidate = Candidate(
+                args.root,
+                args.release,
+                args.revision,
+                args.workflow_results or path.with_name("workflows.json"),
+                args.artifacts or args.root / "dist",
+                args.issue_states or path.with_name("issue-states.json"),
+            )
+            missing, minimum = minimum_gate(candidate, evidence)
+            blockers.extend(missing)
+            report += minimum
         else:
             blockers, report = check(spec_map, tomllib.loads(args.scope.read_text(encoding="utf-8")), evidence)
     except (ScopeError, OSError, ValueError) as error:
