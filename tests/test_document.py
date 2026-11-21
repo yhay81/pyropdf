@@ -421,3 +421,45 @@ def test_the_public_names_have_docstrings() -> None:
         for member, value in vars(public).items() if isinstance(public, type) else ():
             if not member.startswith("_") and callable(value):
                 assert value.__doc__, f"{name}.{member}"
+
+
+@pytest.mark.parametrize("version", ["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "2.0"])
+def test_create_with_a_base_version_and_check_the_current_store(version: str) -> None:
+    doc = Document(version=version)
+    assert doc.check().version == version
+    doc.pages.new((100, 100))
+    with pytest.raises(PdfError, match="original PDF file"):
+        doc.to_bytes(incremental=True)
+    data = doc.to_bytes()
+    assert pyropdf.probe(data).version == version
+    reopened = pyropdf.open(data)
+    assert reopened.check().version == version
+    reopened.pages[0].rotation = 90
+    appended = reopened.to_bytes(incremental=True)
+    assert appended.startswith(data)
+    assert pyropdf.probe(appended).version == version
+
+
+@pytest.mark.parametrize("version", ["1.4", "1.7", "2.0"])
+def test_linearized_headers_and_xref_feature_floors(version: str) -> None:
+    doc = Document(version=version)
+    doc.pages.new((100, 100))
+    assert pyropdf.probe(doc.to_bytes(linearize=True)).version == version
+    stream = doc.to_bytes(cross_reference="stream")
+    assert pyropdf.probe(stream).version == max(version, "1.5")
+    assert doc.check().version == version
+
+
+def test_version_sensitive_edits_use_the_new_documents_header() -> None:
+    for version, override in (("1.3", "1.4"), ("1.7", None), ("2.0", None)):
+        doc = Document(version=version)
+        doc.xmp = '<x:xmpmeta xmlns:x="adobe:ns:meta/"/>'
+        assert doc.catalog.get("Version") == override
+        assert doc.check().version == max(version, "1.4")
+        assert pyropdf.probe(doc.to_bytes()).version == version
+
+
+@pytest.mark.parametrize("version", ["", "1", "1.8", "1.70", "2.1", "%PDF-1.7", " 1.7", "１.７"])
+def test_unknown_new_document_versions_are_rejected(version: str) -> None:
+    with pytest.raises(ValueError, match="version"):
+        Document(version=version)
