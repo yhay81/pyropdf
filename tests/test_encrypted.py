@@ -1314,8 +1314,8 @@ def test_stream_replacement_resolves_a_shared_identity_selector() -> None:
 @pytest.mark.parametrize("incremental", [False, True])
 @pytest.mark.parametrize("compress", [False, True])
 @pytest.mark.usefixtures("_pyhanko_oracle")
-@pytest.mark.spec("crypt-filter", "read", "edit", "preserve")
-@pytest.mark.spec("crypt-filters", "read", "edit", "preserve")
+@pytest.mark.spec("crypt-filter", "read", "create", "edit", "preserve")
+@pytest.mark.spec("crypt-filters", "read", "create", "edit", "preserve")
 def test_indirect_private_stream_parameters_remain_shared_after_replacement(
     *, incremental: bool, compress: bool
 ) -> None:
@@ -1333,10 +1333,15 @@ def test_indirect_private_stream_parameters_remain_shared_after_replacement(
         number = options.xref
         stream["Filter"] = doc.objects[doc.objects.add([pyropdf.Name("Crypt"), pyropdf.Name("FlateDecode")])]
         stream["DecodeParms"] = doc.objects[doc.objects.add([options, None])]
+        filter_id, params_id = stream["Filter"].xref, stream["DecodeParms"].xref
         shared = doc.to_bytes(encryption=Encryption.KEEP)
     with pyropdf.open(shared, credential=owner) as doc:
         stream = doc.catalog["FixtureNamed"]
         assert stream.read() == b"Named private data"
+        sibling = doc.objects[doc.objects.add_stream(b"new private sibling", filter="FlateDecode")]
+        sibling["Filter"] = stream["Filter"]
+        sibling["DecodeParms"] = stream["DecodeParms"]
+        doc.catalog["NewPrivateSibling"] = sibling
         stream.write(b"revised private stream", filter="FlateDecode" if compress else None)
         saved = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
     assert saved.startswith(shared) is incremental
@@ -1345,8 +1350,11 @@ def test_indirect_private_stream_parameters_remain_shared_after_replacement(
         assert stream.read() == b"revised private stream"
         selected = stream["DecodeParms"][0] if compress else stream["DecodeParms"]
         assert selected.xref == number
-    with pyropdf.open(saved, credential=recipient("editor")) as doc, pytest.raises(pyropdf.PasswordError):
-        doc.catalog["FixtureNamed"].read()
+        assert doc.catalog["NewPrivateSibling"].read() == b"new private sibling"
+    with pyropdf.open(saved, credential=recipient("editor")) as doc:
+        for key in ("FixtureNamed", "NewPrivateSibling"):
+            with pytest.raises(pyropdf.PasswordError):
+                doc.catalog[key].read()
     reader = PdfFileReader(io.BytesIO(saved))
     credential = SimpleEnvelopeKeyDecrypter.load(
         str(RECIPIENT_ASSETS / "recipient-owner.key"), str(RECIPIENT_ASSETS / "recipient-owner.cer")
@@ -1357,6 +1365,11 @@ def test_indirect_private_stream_parameters_remain_shared_after_replacement(
     assert handler.get_stream_filter(generic.pdf_name("/PrivateContent")).authenticate(credential).status.value > 0
     stream = reader.root["/FixtureNamed"]
     assert stream.data == b"revised private stream"
+    sibling = reader.root["/NewPrivateSibling"]
+    assert sibling.data == b"new private sibling"
+    assert sibling.raw_get("/Filter").idnum == filter_id
+    assert sibling.raw_get("/DecodeParms").idnum == params_id
+    assert sibling["/DecodeParms"].raw_get(0).idnum == number
 
 
 @pytest.mark.parametrize("incremental", [False, True])
