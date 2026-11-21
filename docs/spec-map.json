@@ -214,31 +214,31 @@
   },
   "coverage": {
     "read": {
-      "done": 745,
-      "partial": 43,
+      "done": 746,
+      "partial": 42,
       "planned": 43
     },
     "interpret": {
-      "done": 722,
+      "done": 723,
       "engine": 1,
       "n/a": 19,
-      "partial": 39,
+      "partial": 38,
       "planned": 50
     },
     "create": {
-      "done": 99,
+      "done": 100,
       "non-goal": 9,
-      "partial": 644,
+      "partial": 643,
       "planned": 79
     },
     "edit": {
-      "done": 95,
-      "partial": 670,
+      "done": 96,
+      "partial": 669,
       "planned": 66
     },
     "preserve": {
-      "done": 140,
-      "partial": 28,
+      "done": 141,
+      "partial": 27,
       "planned": 663
     }
   },

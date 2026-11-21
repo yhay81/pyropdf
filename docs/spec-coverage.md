@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 43 | 43 | 745 |
-| interpret | 1 | 19 | 0 | 39 | 50 | 722 |
-| create | 0 | 0 | 9 | 644 | 79 | 99 |
-| edit | 0 | 0 | 0 | 670 | 66 | 95 |
-| preserve | 0 | 0 | 0 | 28 | 663 | 140 |
+| read | 0 | 0 | 0 | 42 | 43 | 746 |
+| interpret | 1 | 19 | 0 | 38 | 50 | 723 |
+| create | 0 | 0 | 9 | 643 | 79 | 100 |
+| edit | 0 | 0 | 0 | 669 | 66 | 96 |
+| preserve | 0 | 0 | 0 | 27 | 663 | 141 |
 
 ## Clauses
 
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,326 unfinished cells in 831 features: 1 engine, 1,424 partial, 901 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,321 unfinished cells in 831 features: 1 engine, 1,419 partial, 901 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
