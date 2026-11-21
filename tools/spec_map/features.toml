@@ -22,7 +22,7 @@ clause = "7.4.4"
 description = "The FlateDecode filter: zlib-compressed stream data."
 objects = []
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "planned", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The current decoder cannot round-trip TIFF Predictor 2 rows ending in a partial byte or predictor pixels wider than 255 bits.", milestone = "Phase 4: Specification" }
 
 [features.page-tree]
 clause = "7.7.3"
@@ -266,7 +266,6 @@ clause = "7.4.2"
 description = "The ASCIIHexDecode filter: stream data as hexadecimal digits."
 objects = []
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "partial", missing = "Decompressed saves remove ASCIIHexDecode, without re-encoding streams in hexadecimal.", milestone = "Phase 4: Specification" }
 
 [features.ascii85-filter]
 clause = "7.4.3"
@@ -278,6 +277,10 @@ interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a
 clause = "7.4.4"
 description = "The LZWDecode filter: LZW-compressed stream data, with its predictors."
 objects = ["FilterLZWDecode"]
+read = { status = "partial", missing = "The pinned reader misreads packed TIFF row boundaries, some externally filtered partial PNG pixel strides, and pixels wider than 255 bits.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Content with ordinary LZW data renders, but the pinned decoder cannot supply correct samples for the remaining packed or wide predictor layouts.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "The stream writer refuses TIFF Predictor 2 rows ending in a partial byte or predictor pixels wider than 255 bits until they round-trip in the pinned reader.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The stream editor refuses TIFF Predictor 2 rows ending in a partial byte or predictor pixels wider than 255 bits until they round-trip in the pinned reader.", milestone = "Phase 4: Specification" }
 
 [features.run-length-filter]
 clause = "7.4.5"
@@ -290,7 +293,6 @@ clause = "7.4.6"
 description = "The CCITTFaxDecode filter: Group 3 and Group 4 fax encoding of monochrome images."
 objects = ["FilterCCITTFaxDecode"]
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "partial", missing = "Image rewriting encodes monochrome images with Group 4 CCITTFaxDecode, without Group 3 encoding.", milestone = "Phase 4: Specification" }
 
 [features.jbig2-filter]
 clause = "7.4.7"
@@ -308,7 +310,6 @@ interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a
 clause = "7.4.9"
 description = "The JPXDecode filter: JPEG 2000 images, with their own color and transparency."
 objects = []
-edit = { status = "partial", missing = "Image rewriting transcodes JPEG 2000 images to JPEG or Flate, without encoding new JPX streams.", milestone = "Phase 4: Specification" }
 
 [features.crypt-filter]
 clause = "7.4.10"
