@@ -336,7 +336,7 @@ impl _Document {
 
     /// Writes the document to the file at `path`, created or truncated; the
     /// caller replaces the target with it.
-    #[pyo3(signature = (path, incremental, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false, linearize=false))]
+    #[pyo3(signature = (path, incremental, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false, linearize=false, hybrid_reference=false))]
     #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn save_path(
         &self,
@@ -353,6 +353,7 @@ impl _Document {
         renumber: bool,
         dedupe: bool,
         linearize: bool,
+        hybrid_reference: bool,
     ) -> PyResult<()> {
         crate::errors::boundary(|| {
             let options = save_options(
@@ -365,6 +366,7 @@ impl _Document {
                 renumber,
                 dedupe,
                 linearize,
+                hybrid_reference,
             );
             let (version, encryption) =
                 crate::security::prepare(py, self, incremental, encryption)?;
@@ -391,7 +393,7 @@ impl _Document {
     }
 
     /// Returns the document as PDF bytes, at most `max_size` of them.
-    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false, linearize=false))]
+    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false, linearize=false, hybrid_reference=false))]
     #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn to_bytes<'py>(
         &self,
@@ -408,6 +410,7 @@ impl _Document {
         renumber: bool,
         dedupe: bool,
         linearize: bool,
+        hybrid_reference: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         crate::errors::boundary(|| {
             let options = save_options(
@@ -420,6 +423,7 @@ impl _Document {
                 renumber,
                 dedupe,
                 linearize,
+                hybrid_reference,
             );
             let (version, encryption) =
                 crate::security::prepare(py, self, incremental, encryption)?;
@@ -599,6 +603,7 @@ const fn save_options(
     renumber: bool,
     dedupe: bool,
     linearize: bool,
+    hybrid_reference: bool,
 ) -> save::Options {
     let streams = match (compress, decompress) {
         (Some(level), _) => save::Streams::Compress(level),
@@ -609,10 +614,11 @@ const fn save_options(
         prune,
         streams,
         renew_id,
-        cross_reference: match cross_reference_stream {
-            None => save::CrossReference::Base,
-            Some(false) => save::CrossReference::Table,
-            Some(true) => save::CrossReference::Stream,
+        cross_reference: match (hybrid_reference, cross_reference_stream) {
+            (true, _) => save::CrossReference::Hybrid,
+            (false, None) => save::CrossReference::Base,
+            (false, Some(false)) => save::CrossReference::Table,
+            (false, Some(true)) => save::CrossReference::Stream,
         },
         object_streams,
         renumber,

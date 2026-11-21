@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pikepdf
 import pytest
+from test_actions import _build_raw_pdf
 
 import pyropdf
 from pyropdf import (
@@ -286,13 +287,13 @@ def test_measurement_validation_errors() -> None:
 
     gcs = CoordinateSystem("geographic", epsg=4326)
     with pytest.raises(ValueError, match="even"):
-        GeospatialMeasure(gcs, (Decimal("35.0"), Decimal("139.0"), Decimal("36.0")))
+        GeospatialMeasure(gcs, (Decimal("35.0"), Decimal("139.0"), Decimal("36.0")), lpts=(0, 0))
     with pytest.raises(ValueError, match="match gpts"):
         GeospatialMeasure(gcs, (1, 2, 3, 4), lpts=(0, 0))
     with pytest.raises(ValueError, match="pdu"):
-        GeospatialMeasure(gcs, (1, 2), pdu=("M", "SQM", "BAD"))
+        GeospatialMeasure(gcs, (1, 2), lpts=(0, 0), pdu=("M", "SQM", "BAD"))
     with pytest.raises(ValueError, match="12 numbers"):
-        GeospatialMeasure(gcs, (1, 2), pcsm=(1, 2, 3))
+        GeospatialMeasure(gcs, (1, 2), lpts=(0, 0), pcsm=(1, 2, 3))
 
     with pytest.raises(ValueError, match="LAT"):
         PointData(("BAD",), ((1,),))  # ty: ignore[invalid-argument-type]
@@ -445,6 +446,193 @@ def test_projected_viewport_registration_keeps_matching_local_and_ground_points(
         assert list(vp.Measure.LPTS) == list(map(Decimal, local))
         assert list(vp.Measure.GPTS) == list(map(Decimal, corrected))
         assert bytes(independent.Root.PrivateSurvey) == b"keep"
+
+
+def _registration_pdf() -> bytes:
+    """Independent asymmetric controls, with two XObjects sharing an indirect measure."""
+    source = _build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Private (untouched) >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: (
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 300] /Rotate 90 /VP [4 0 R]"
+                " /Resources << /XObject << /Survey 5 0 R /Map 6 0 R >> >> >>"
+            ),
+            4: "<< /BBox [100 10 500 210] /Measure 7 0 R >>",
+            5: (
+                "<< /Type /XObject /Subtype /Form /Resources <<>> /BBox [10 20 50 100]"
+                " /Matrix [2 0 0 2 90 70] /Measure 8 0 R /Length 0 >>\nstream\n\nendstream"
+            ),
+            6: (
+                "<< /Type /XObject /Subtype /Image /Width 4 /Height 2 /BitsPerComponent 8"
+                " /ColorSpace /DeviceGray /Measure 8 0 R /Length 8 >>\nstream\n12345678\nendstream"
+            ),
+            7: (
+                "<< /Type /Measure /Subtype /GEO /GCS << /Type /GEOGCS /EPSG 4326 >>"
+                " /GPTS [35.5 -117.25 36 -118] /LPTS [0.25 0.75 1 0] /PCSM 10 0 R >>"
+            ),
+            8: (
+                "<< /Type /Measure /Subtype /GEO /GCS 9 0 R /Private (survey)"
+                " /GPTS [400012 4800345 400200 4799999] /LPTS 11 0 R /PCSM 10 0 R >>"
+            ),
+            9: "<< /Type /PROJCS /EPSG 32611 /Private (reference) >>",
+            10: "[2 3 4 5 7 11 13 17 19 100 200 300]",
+            11: "[0.25 0.75 1 0]",
+        },
+        version="2.0",
+    )
+    return source.replace(b"/Root 1 0 R >>", b"/Root 1 0 R /ID [<1234567890abcdef> <1234567890abcdef>] >>")
+
+
+@pytest.mark.spec("geospatial", "read", "interpret")
+def test_registration_uses_owner_positions_and_only_projected_matrices() -> None:
+    with pyropdf.open(_registration_pdf()) as doc:
+        page = doc.pages[0]
+        viewport = page.obj["VP"][0]
+        assert page.viewports[0].measure == viewport.geospatial_measure
+        assert viewport.geospatial_point(0) == ((200, 160), (Decimal("35.5"), Decimal("-117.25")))
+        objects = page.obj["Resources"]["XObject"]
+        assert objects["Survey"].geospatial_point(0) == ((20, 80), (540, 820))
+        assert objects["Map"].geospatial_point(0) == ((Decimal("0.25"), Decimal("0.75")), (Decimal("104.25"), 206))
+        assert objects["Survey"].geospatial_point(-1) == ((50, 20), (300, 490))
+        with pytest.raises(IndexError):
+            objects["Map"].geospatial_point(2)
+
+
+@pytest.mark.spec("geospatial", "create", "interpret")
+def test_author_registration_on_a_viewport_without_optional_type_or_existing_measure() -> None:
+    with pyropdf.open(_registration_pdf()) as doc:
+        viewport = doc.pages[0].obj["VP"][0]
+        del viewport["Measure"]
+        viewport.geospatial_measure = GeospatialMeasure(CoordinateSystem(epsg=4326), (37, -122), lpts=(0, 1))
+        assert viewport.geospatial_point(0) == ((100, 210), (37, -122))
+        doc.catalog["PrivateBox"] = {"BBox": [0, 0, 1, 1]}
+        with pytest.raises(ValueError, match="expected a viewport"):
+            doc.catalog["PrivateBox"].geospatial_measure = viewport.geospatial_measure
+        form = doc.pages[0].obj["Resources"]["XObject"]["Survey"]
+        form["Measure"]["PCSM"] = [0, 1]
+        assert form.geospatial_measure is None
+        with pytest.raises(ValueError, match="no valid"):
+            form.geospatial_point(0)
+
+
+@pytest.mark.spec("geospatial", "create", "edit", "preserve")
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_replacing_form_registration_preserves_shared_image_and_exact_ground_controls(*, incremental: bool) -> None:
+    source = _registration_pdf()
+    exact = Decimal("400012.123456789012345678901234567890123456789")
+    with pyropdf.open(source) as doc:
+        form = doc.pages[0].obj["Resources"]["XObject"]["Survey"]
+        old = form.geospatial_measure
+        updated = GeospatialMeasure(old.gcs, (exact, *old.gpts[1:]), lpts=old.lpts)
+        form.geospatial_measure = updated
+        assert doc.history.steps[-1] == "geospatial measure"
+        # hayro-syntax currently exposes read reals at float precision (#16).
+        # The independent reader below also checks every written decimal digit.
+        assert form.geospatial_point(0) == ((20, 80), (Decimal(str(float(exact))), 4800345))
+        doc.history.undo()
+        assert form["Measure"].xref == 8
+        doc.history.redo()
+        saved = doc.to_bytes(incremental=incremental)
+
+    if incremental:
+        assert saved.startswith(source)
+    with pikepdf.open(io.BytesIO(saved)) as pdf:
+        xo = pdf.pages[0].Resources.XObject
+        form_measure, image_measure = xo.Survey.Measure, xo.Map.Measure
+        assert form_measure.objgen != image_measure.objgen
+        assert form_measure.GCS.objgen == image_measure.GCS.objgen == (9, 0)
+        assert form_measure.LPTS.objgen == image_measure.LPTS.objgen == (11, 0)
+        assert form_measure.GCS.Private == "reference"
+        assert form_measure.Private == "survey"
+        assert form_measure.GPTS[0] == exact
+        assert "/PCSM" not in form_measure
+        assert list(image_measure.GPTS) == [400012, 4800345, 400200, 4799999]
+        assert list(image_measure.PCSM) == [2, 3, 4, 5, 7, 11, 13, 17, 19, 100, 200, 300]
+        assert xo.Map.read_bytes() == b"12345678"
+        assert pdf.Root.Private == "untouched"
+
+
+@pytest.mark.spec("geospatial", "edit", "preserve")
+def test_editing_a_shared_coordinate_system_keeps_its_extensions_and_other_owner() -> None:
+    with pyropdf.open(_registration_pdf()) as doc:
+        xobjects = doc.pages[0].obj["Resources"]["XObject"]
+        form, image = xobjects["Survey"], xobjects["Map"]
+        registration = form.geospatial_measure
+        form.geospatial_measure = GeospatialMeasure(
+            CoordinateSystem("projected", epsg=32612), registration.gpts, lpts=registration.lpts
+        )
+        assert form["Measure"]["GCS"].get("EPSG") == 32612
+        assert image["Measure"]["GCS"].get("EPSG") == 32611
+        assert form["Measure"]["GCS"]["Private"] == image["Measure"]["GCS"]["Private"] == b"reference"
+
+
+@pytest.mark.spec("geospatial", "create", "edit", "preserve")
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_declared_legacy_geographic_extension_edits_without_pdf2_promotion(*, incremental: bool) -> None:
+    # Standard 14 fonts without Widths or FontDescriptor are legal in 1.7,
+    # and prevent this source from being promoted wholesale to PDF 2.0.
+    source = _build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Extensions << /ADBE << /BaseVersion /1.7 /ExtensionLevel 3 >> >> >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /Font << /F 4 0 R >> >> >>",
+            4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        }
+    )
+    geographic = GeospatialMeasure(CoordinateSystem(epsg=4326), (38, -121), lpts=(1, 0))
+    projected = GeospatialMeasure(CoordinateSystem("projected", epsg=32611), (400000, 4810000), lpts=(0, 0))
+    with pyropdf.open(source) as doc:
+        page = doc.pages[0]
+        page.viewports = [Viewport((10, 20, 110, 70), measure=geographic)]
+        assert "Version" not in doc.catalog
+        owner = page.obj["VP"][0]
+        edited = GeospatialMeasure(geographic.gcs, (37, -122), lpts=(1, 0))
+        owner.geospatial_measure = edited
+        assert owner.geospatial_point(0) == ((110, 30), (37, -122))
+        before, history = doc.to_bytes(incremental=True), doc.history.save()
+        with pytest.raises(pyropdf.PdfError, match="promotion would introduce"):
+            owner.geospatial_measure = projected
+        with pytest.raises(pyropdf.PdfError, match="promotion would introduce"):
+            page.viewports = [Viewport((10, 20, 110, 70), measure=projected)]
+        assert doc.history.save() == history
+        assert doc.to_bytes(incremental=True) == before
+        saved = doc.to_bytes(incremental=incremental)
+    with pikepdf.open(io.BytesIO(saved)) as independent:
+        assert independent.pdf_version == "1.7"
+        assert "/Version" not in independent.Root
+        assert independent.Root.Extensions.ADBE.ExtensionLevel == 3
+        assert list(independent.pages[0].VP[0].Measure.GPTS) == [37, -122]
+        assert independent.pages[0].Resources.Font.F.BaseFont == "/Helvetica"
+
+
+@pytest.mark.spec("geospatial", "read", "edit")
+def test_malformed_registration_remains_raw_and_rejected_edits_keep_history_and_bytes() -> None:
+    with pyropdf.open(_registration_pdf()) as original:
+        viewport = original.pages[0].obj["VP"][0]
+        del viewport["Measure"]["LPTS"]
+        malformed = original.to_bytes()
+    with pyropdf.open(malformed) as doc:
+        page = doc.pages[0]
+        viewport = page.obj["VP"][0]
+        assert page.viewports[0].measure is viewport.geospatial_measure is None
+        assert len(viewport["Measure"]["GPTS"]) == 4
+        position = doc.history.position
+        with pytest.raises(TypeError, match="lpts"):
+            viewport.geospatial_measure = GeospatialMeasure(CoordinateSystem(epsg=4326), (1, 2))  # ty: ignore[missing-argument]
+        with pytest.raises(ValueError, match="unit square"):
+            viewport.geospatial_measure = GeospatialMeasure(CoordinateSystem(epsg=4326), (1, 2), lpts=(1, 2))
+        with pytest.raises(ValueError, match="triples"):
+            GeospatialMeasure(CoordinateSystem(epsg=4326), (1, 2), lpts=(0, 0), dimensions=3)
+        with pytest.raises(ValueError, match="must match"):
+            GeospatialMeasure(CoordinateSystem(epsg=4326), (1, 2, 3), lpts=(1, 2), dimensions=3)
+        measure = GeospatialMeasure(CoordinateSystem(epsg=4326), (1, 2, 3), lpts=(-3, 4, 5), dimensions=3)
+        with pytest.raises(ValueError, match="2D"):
+            page.obj["Resources"]["XObject"]["Map"].geospatial_measure = measure
+        with pytest.raises(ValueError, match="2D"):
+            page.viewports = [Viewport((10, 10, 100, 100), measure=measure)]
+        assert doc.history.position == position
+        assert doc.to_bytes(incremental=True) == malformed
 
 
 @pytest.mark.spec("document-requirements", "read", "interpret", "create", "edit", "preserve")

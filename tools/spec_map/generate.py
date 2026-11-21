@@ -121,6 +121,13 @@ def marked(root: Path, names: list[str]) -> dict[tuple[str, str], list[str]]:
                     continue
                 feature, *dimensions = marker
                 cases = {name: f"{where}[{name}]" for name in names} if feature == ARLINGTON else {feature: where}
+                if feature == "arlington-values":
+                    fixture = root / "tests/fixtures/arlington-values.tsv"
+                    with fixture.open(encoding="utf-8", newline="") as samples:
+                        cases = {
+                            row["Object"]: f"{where}[{row['Object']}]"
+                            for row in csv.DictReader(samples, delimiter="\t")
+                        }
                 if feature == "{profile}":
                     cases = profile_cases(node, where)
                 for name, test in cases.items():
@@ -165,12 +172,13 @@ def declared(root: Path, config: dict[str, Any], names: list[str]) -> dict[str, 
     for index, rule in enumerate(rules):
         where = f"{ARLINGTON}.rule[{index}]"
         keys = set(rule.pop("keys", []))
-        if not keys or set(rule) - set(DIMENSIONS):
+        objects = set(rule.pop("objects", []))
+        if bool(keys) == bool(objects) or objects - set(names) or set(rule) - set(DIMENSIONS):
             msg = f"{where} names keys and statuses for {', '.join(DIMENSIONS)}"
             raise MapError(msg)
         applied = {dimension: status(value, f"{where}.{dimension}") for dimension, value in rule.items()}
         for name in names:
-            if keys <= object_keys(root, name):
+            if name in objects or (keys and keys <= object_keys(root, name)):
                 features[name].update(applied)
     for name, table in config.get("features", {}).items():
         features[name] = feature(name, dict(table), names)
