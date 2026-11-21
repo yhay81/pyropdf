@@ -9,7 +9,7 @@ import pytest
 from test_attachments import build_raw_pdf
 
 import pyropdf
-from pyropdf._fragments import PdfFragment
+from pyropdf import PdfFragment
 
 
 def _source() -> bytes:
@@ -55,7 +55,8 @@ def test_structure_ids_use_exact_index_keys_and_allow_wide_shallow_trees(*, inde
         root = doc.catalog["StructTreeRoot"]
         element = doc.objects[11]
         if indexed:
-            root["IDTree"] = {"Kids": [{"Names": [b"\x00\xff+", element], "Limits": [b"\x00\xff+", b"\x00\xff+"]}]}
+            leaf = doc.objects.add({"Names": [b"\x00\xff+", element], "Limits": [b"\x00\xff+", b"\x00\xff+"]})
+            root["IDTree"] = {"Kids": [doc.objects[leaf]]}
         else:
             # A width of 300 is not a depth of 300. The preceding integers are MCIDs.
             root["K"] = [*range(300), element]
@@ -81,6 +82,7 @@ def test_annex_o_open_parameters_remain_ordered_data() -> None:
         assert PdfFragment.parse("view=FitR,0,0,10,10").resolve(doc)[0].value == ("FitR", 0, 0, 10, 10)
 
 
+@pytest.mark.spec("embedded-files", "interpret")
 @pytest.mark.spec("fragment-identifiers", "create", "edit", "preserve")
 @pytest.mark.parametrize("incremental", [False, True])
 def test_a_fragment_edit_preserves_other_uri_bytes_and_the_embedded_remainder(*, incremental: bool) -> None:

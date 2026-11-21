@@ -150,17 +150,6 @@ features = [
 dimensions = ["create", "edit"]
 behavior = "Generate a role inventory from the pinned descriptors. For each applicable role, construct the required references and settle or reject replacements and removals atomically. Exercise already-implemented page, form and structure rules before adding missing rules."
 
-[families.name-tree-navigation]
-tracker = 251
-issue = 895
-title = "Resolve catalog name trees, structure destinations and viewer action parameters"
-features = [
-    "name-dictionary", "embedded-files", "destinations", "remote-goto-actions", "launch-actions",
-    "uri-actions", "named-actions", "fragment-identifiers",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Follow named resources and structure destinations, resolve base URI/IsMap, Windows launch and remote/named targets as data, and round-trip fragment selection and navigation options. Expose unresolved targets without executing actions."
-
 [families.tagged-authoring]
 tracker = 251
 issue = 908

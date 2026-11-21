@@ -1140,6 +1140,49 @@ def check_metadata(doc: pyropdf.Document) -> None:
     assert "2025-02-02T00:00:00" in doc.xmp
 
 
+def prepare_catalog_navigation(doc: pyropdf.Document) -> None:
+    doc.base_uri = "https://example.org/old/"
+    doc.named_resources("Templates")[MARKER.encode()] = doc.pages[0].obj
+    section = doc.structure.add("Sect", page=doc.pages[0])
+    doc.destinations.set_structure(
+        MARKER, pyropdf.StructureDestination(element=section.xref, fallback=pyropdf.Destination(0))
+    )
+
+
+def edit_catalog_navigation(doc: pyropdf.Document) -> set[int]:
+    catalog = doc.catalog
+    names = catalog["Names"]
+    touched = {number(catalog)} | indirect_numbers(names, names["Templates"], names["Dests"], catalog.get("URI"))
+    # The name-tree writer replaces only the path to this existing key.
+    node = names["Dests"]
+    while "Kids" in node:
+        node = next(kid for kid in node["Kids"] if kid["Limits"][0] <= MARKER.encode() <= kid["Limits"][1])
+        touched.update(indirect_numbers(node))
+    original = doc.destinations.structure(MARKER)
+    assert original is not None
+    del doc.base_uri
+    doc.base_uri = "https://example.org/new/"
+    resources = doc.named_resources("Templates")
+    del resources[MARKER.encode()]
+    resources[b"replacement"] = doc.pages[0].obj
+    doc.destinations.set_structure(
+        MARKER,
+        pyropdf.StructureDestination(
+            element=original.element, fallback=pyropdf.Destination(0), fit="FitH", operands=(15,)
+        ),
+    )
+    return touched
+
+
+def check_catalog_navigation(doc: pyropdf.Document) -> None:
+    assert doc.base_uri == "https://example.org/new/"
+    assert doc.named_resources("Templates")[b"replacement"] == doc.pages[0].obj
+    dest = doc.destinations.structure(MARKER)
+    assert dest is not None
+    assert dest.fit == "FitH"
+    assert dest.operands == (15,)
+
+
 def prepare_catalog_records(doc: pyropdf.Document) -> None:
     doc.legal_attestation = pyropdf.LegalAttestation(attestation="before")
     doc.requirements = (pyropdf.DocumentRequirement(pyropdf.RequirementType.ENABLE_JAVASCRIPTS),)
@@ -1905,6 +1948,9 @@ FAMILY_EDITS = {
         apply=edit_canvas_resources,
         check=check_canvas_resources,
         affected_pages=last_page,
+    ),
+    "catalog_navigation": Edit(
+        prepare=prepare_catalog_navigation, apply=edit_catalog_navigation, check=check_catalog_navigation
     ),
     "catalog_records": Edit(prepare=prepare_catalog_records, apply=edit_catalog_records, check=check_catalog_records),
     "clean_content": Edit(prepare=prepare_to_clean, apply=clean_page, check=check_clean_page),

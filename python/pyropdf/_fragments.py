@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal
 from urllib.parse import quote_from_bytes, unquote_to_bytes
 
 from pyropdf import _core
+from pyropdf._errors import MalformedPdfError
 from pyropdf._name_resources import _scan
 from pyropdf._objects import Array, Dictionary, String, _unlocked
 
@@ -138,7 +139,10 @@ def _value(name: str, encoded: str) -> int | str | bytes | tuple[str | float, ..
 def _indexed_structure_id(root: Dictionary, identifier: bytes, budget: _core._OperationBudget) -> Dictionary | None:
     tree = root.get("IDTree")
     if isinstance(tree, Dictionary):
-        pairs, _ = _scan(tree, budget)
+        try:
+            pairs, _ = _scan(tree, budget)
+        except MalformedPdfError:
+            return None
         if identifier in pairs:
             leaf, at = pairs[identifier]
             found = leaf.obj["Names"][at + 1]

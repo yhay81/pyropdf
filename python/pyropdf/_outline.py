@@ -123,10 +123,14 @@ def _rgb(color: Color | None) -> tuple[float, float, float] | None:
 
 def _resolve_outline_target(document: Document, item_id: tuple[int, int], raw: _Target) -> Target | None:
     resolved = _target_from_core(raw)
-    if resolved is not None or not item_id[0]:
+    if not item_id[0] or (resolved is not None and raw[0] not in {"uri", "goto", "launch", "gotor"}):
         return resolved
     holder = Dictionary(document, item_id)
-    return _read_custom_holder_action(document, holder)
+    if raw[0] == "gotor":
+        from pyropdf._presentations import _read_remote_destination  # noqa: PLC0415
+
+        return _read_remote_destination(holder["A"])
+    return _read_custom_holder_action(document, holder) or resolved
 
 
 class OutlineItem:

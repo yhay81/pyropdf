@@ -378,9 +378,6 @@ objects = []
 clause = "7.7.4"
 description = "The name dictionary: the name trees of destinations, attachments, scripts, and other named objects."
 objects = ["Name"]
-interpret = { status = "partial", missing = "Destination, embedded-file, page, and JavaScript name trees are resolved, without Appearance, Templates, IDS, URLS, or Renditions trees.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Attachments, named pages, and document scripts create `/Names` entries for embedded files, pages, and JavaScript, without high-level creation for other `/Names` trees.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Attachments, named pages, document scripts, page cleanup, and sanitize edit `/Names` entries for destinations, embedded files, pages, and JavaScript, without high-level APIs for other trees.", milestone = "Phase 4: Specification" }
 
 [features.content-streams]
 clause = "7.8"
@@ -730,10 +727,6 @@ objects = ["ViewerPreferences"]
 clause = "12.3.2"
 description = "Explicit and named destinations."
 objects = ["DestDict", "DestsMap", "Dest0Array", "Dest1Array", "Dest4Array", "DestXYZArray", "Dest0StructArray", "Dest1StructArray", "Dest4StructArray", "DestXYZStructArray"]
-read = { status = "partial", missing = "Page-based explicit and named destinations are read, without structure-element destinations.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Page-based explicit and named destinations resolve to display coordinates, without structure-element destinations.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Links and outline items create page-based destinations, without structure-element destinations.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Links, outline items, and page edits update page-based destinations, without structure-element destinations.", milestone = "Phase 4: Specification" }
 
 [features.outline]
 clause = "12.3.3"
@@ -940,9 +933,6 @@ objects = ["ActionGoToDp"]
 clause = "12.6.4.6"
 description = "Launch actions: opening a file or application."
 objects = ["ActionLaunch", "MicrosoftWindowsLaunchParam"]
-read = { status = "partial", missing = "File launch actions on links and outline items are read, without Windows launch parameter dictionaries.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Links and outline items create file launch actions, without Windows launch parameter dictionaries.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Links, outline items, and sanitize edit or remove launch actions, without Windows launch parameter dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.thread-actions]
 clause = "12.6.4.7"
@@ -953,9 +943,6 @@ objects = ["ActionThread"]
 clause = "12.6.4.8"
 description = "URI actions and the document's base URI."
 objects = ["ActionURI", "URI"]
-read = { status = "partial", missing = "Link and outline URI actions are read, without resolving the catalog's base URI dictionary or `/IsMap`.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Links and outline items create URI actions, without a high-level API for the catalog's base URI dictionary or `/IsMap`.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Links, outline items, and sanitize edit or remove URI actions, without a high-level API for the catalog's base URI dictionary.", milestone = "Phase 4: Specification" }
 
 [features.sound-actions]
 clause = "12.6.4.9"

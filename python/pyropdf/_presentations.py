@@ -519,15 +519,29 @@ def _read_remote_destination(action: Dictionary) -> RemoteDestination | None:
     if not file:
         return None
     dest = action.get("D")
+    page, name = 0, None
     if isinstance(dest, Name) and str(dest):
-        return RemoteDestination(file, 0, str(dest))
-    if isinstance(dest, String) and len(dest) > 0:
-        return RemoteDestination(file, 0, bytes(dest).decode("utf-8", "replace"))
-    if isinstance(dest, Array) and len(dest) >= 1:
-        page_num = dest[0]
-        is_valid_int = isinstance(page_num, int) and not isinstance(page_num, bool) and page_num >= 0
-        return RemoteDestination(file, page_num if is_valid_int else 0, None)
-    return RemoteDestination(file, 0, None)
+        name = str(dest)
+    elif isinstance(dest, String) and len(dest) > 0:
+        name = dest.text
+    elif isinstance(dest, Array) and len(dest) and type(dest[0]) is int and dest[0] >= 0:
+        page = dest[0]
+    else:
+        return None
+    view = action.get("SD")
+    if isinstance(view, Array) and 2 <= len(view) <= 6 and isinstance(view[0], String) and isinstance(view[1], Name):  # noqa: PLR2004 - Table 149 syntax.
+        try:
+            return RemoteDestination(
+                file,
+                page,
+                name,
+                structure_id=bytes(view[0]),
+                structure_fit=str(view[1]),
+                structure_operands=tuple(view[2:]),
+            )
+        except ValueError:
+            pass
+    return RemoteDestination(file, page, name)
 
 
 class _ActionReadContext:
@@ -605,6 +619,10 @@ class _ActionReadContext:
         kind = action.get("S")
         if not isinstance(kind, Name):
             return None
+        if kind in {"URI", "Launch", "GoTo"}:
+            expanded = _read_custom_action_dict(self._document, action)
+            if expanded is not None:
+                return expanded
         match str(kind):
             case "URI":
                 uri = action.get("URI")

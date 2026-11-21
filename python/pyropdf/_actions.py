@@ -26,6 +26,8 @@ from pyropdf._objects import (
     _Handle,
     _unlocked,
 )
+from pyropdf._viewer_actions import StructureDestination, UriAction, WindowsLaunch, read_extra
+from pyropdf._viewer_actions import action_dict as viewer_action_dict
 
 if TYPE_CHECKING:
     from pyropdf._document import Document
@@ -643,7 +645,11 @@ class ImportDataAction:
 def _is_custom_target(target: object) -> bool:
     """Return whether ``target`` serializes via a Python-built action dictionary outside the Rust link/outline core."""
     from pyropdf._presentations import TransitionAction  # noqa: PLC0415
+    from pyropdf._targets import RemoteDestination  # noqa: PLC0415
     from pyropdf._threads import ThreadAction  # noqa: PLC0415
+
+    if isinstance(target, RemoteDestination) and target.structure_id is not None:
+        return True
 
     return isinstance(
         target,
@@ -655,6 +661,9 @@ def _is_custom_target(target: object) -> bool:
             ThreadAction,
             JavaScriptAction,
             EmbeddedDestination,
+            StructureDestination,
+            UriAction,
+            WindowsLaunch,
             HideAction,
             SetLayerStateAction,
             SubmitFormAction,
@@ -664,9 +673,19 @@ def _is_custom_target(target: object) -> bool:
     )
 
 
-def _custom_target_budget_text(target: object) -> str | None:  # noqa: PLR0911 - one branch per action.
+def _custom_target_budget_text(target: object) -> str | None:  # noqa: C901, PLR0911 - one branch per action.
     """Return representative non-script text of a custom action for aggregate link, outline, or step UTF-8 checks."""
     match target:
+        case UriAction(uri=uri):
+            return uri
+        case WindowsLaunch(
+            file=file, directory=directory, parameters=parameters, operation=operation, fallback_file=fallback
+        ):
+            return (
+                "".join(value.decode("latin1") for value in (file, directory, parameters) if value)
+                + (operation or "")
+                + (fallback or "")
+            )
         case GoTo3DView(view=str(view)):
             return view
         case RichMediaExecute(command=command, arguments=arg):
@@ -844,15 +863,27 @@ def _import_data_action_dict(action: ImportDataAction) -> tuple[dict[str, object
     )
 
 
-def _custom_target_action_dict(  # noqa: C901, PLR0911 - dispatches one branch per custom action class.
+def _custom_target_action_dict(  # noqa: C901, PLR0911, PLR0912 - dispatches one branch per custom action class.
     document: Document,
     target: object,
 ) -> tuple[dict[str, object], tuple[int, int]]:
     """Serialize a custom :data:`Target` into ``(action_dict, minimum_pdf_version)``."""
     from pyropdf._presentations import TransitionAction, _transition_action_dict  # noqa: PLC0415
+    from pyropdf._targets import RemoteDestination  # noqa: PLC0415
     from pyropdf._threads import ThreadAction, _thread_action_dict  # noqa: PLC0415
 
     match target:
+        case RemoteDestination(structure_id=bytes(identifier)):
+            destination: object = target.name.encode() if target.name is not None else [target.page, Name("Fit")]
+            return {
+                "Type": Name("Action"),
+                "S": Name("GoToR"),
+                "F": target.file,
+                "D": destination,
+                "SD": [identifier, Name(target.structure_fit), *target.structure_operands],
+            }, (2, 0)
+        case StructureDestination() | UriAction() | WindowsLaunch():
+            return viewer_action_dict(document, target)
         case GoTo3DView() | RenditionAction() | RichMediaExecute():
             return media_action_dict(document, target)
         case TransitionAction():
@@ -1214,6 +1245,8 @@ def _read_custom_action_dict(
     if not isinstance(kind, Name):
         return None
     kind_name = str(kind)
+    if kind_name in {"Launch", "GoTo", "URI"}:
+        return read_extra(document, action)
     if kind_name == "Trans":
         trans = _read_transition(action.get("Trans"))
         return None if trans is None else TransitionAction(trans)
@@ -1226,6 +1259,11 @@ def _read_custom_action_dict(
 def _read_custom_holder_action(document: Document, holder: Dictionary) -> Target | None:
     """Return a custom :data:`Target` when ``holder['A']`` holds one, else ``None``."""
     raw = holder.get("A")
+    if raw is None and isinstance(named := holder.get("Dest"), (Name, String)):
+        from pyropdf._viewer_actions import lookup_destination, read_structure  # noqa: PLC0415
+
+        target = lookup_destination(document, named)
+        return read_structure(document, target) if isinstance(target, Dictionary) else None
     if not _is_dict(raw):
         return None
     return _read_custom_action_dict(document, raw)

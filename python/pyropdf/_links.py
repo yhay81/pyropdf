@@ -15,13 +15,14 @@ from pyropdf._annotations import _rect
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Rect
 from pyropdf._metadata import _require_version
-from pyropdf._objects import Dictionary, _catalog
+from pyropdf._objects import Dictionary, Name, _catalog, _encode_text_string
 from pyropdf._targets import Destination, Target, _destination, _target_from_core, _target_to_core
 
 if TYPE_CHECKING:
     from pyropdf._core import _Document, _Link, _Target
     from pyropdf._document import Document
     from pyropdf._page import Page
+    from pyropdf._viewer_actions import StructureDestination
 
 #: The texts that one link edit may write: its subtype and target texts.
 _MAX_LINK_INPUT_TEXT_SIZE = 1024 * 1024
@@ -117,14 +118,18 @@ class Link:
 
     def _resolve_target(self, raw: _Target) -> Target | None:
         resolved = _target_from_core(raw)
-        if resolved is not None:
+        if raw[0] not in {"uri", "gotor", "launch", "goto", "none"} and resolved is not None:
             return resolved
         holder = (
             Dictionary(self._page._document, self._id)  # noqa: SLF001
             if self._id[0]
             else self._page.obj["Annots"][self._index]
         )
-        return _read_custom_holder_action(self._page._document, holder)  # noqa: SLF001
+        if raw[0] == "gotor":
+            from pyropdf._presentations import _read_remote_destination  # noqa: PLC0415
+
+            return _read_remote_destination(holder["A"])
+        return _read_custom_holder_action(self._page._document, holder) or resolved  # noqa: SLF001
 
     @property
     def target(self) -> Target | None:
@@ -292,6 +297,32 @@ class Destinations(Mapping[str, Destination | None]):
         if not isinstance(name, str) or name not in items:
             raise KeyError(name)
         return items[name]
+
+    def structure(self, name: str) -> StructureDestination | None:
+        """Return the optional PDF 2.0 structure destination of a named page destination."""
+        from pyropdf._viewer_actions import lookup_destination, read_structure  # noqa: PLC0415
+
+        target = lookup_destination(self._document, _encode_text_string(name))
+        if target is None:
+            target = lookup_destination(self._document, Name(name))
+        return read_structure(self._document, target) if isinstance(target, Dictionary) else None
+
+    def set_structure(self, name: str, target: StructureDestination) -> None:
+        """Write a named PDF 2.0 destination with its structure and fallback page views."""
+        from pyropdf._viewer_actions import StructureDestination, action_dict  # noqa: PLC0415
+
+        if not isinstance(target, StructureDestination):
+            msg = "target must be a StructureDestination"
+            raise TypeError(msg)
+        with self._document.transaction("set named structure destination"):
+            raw, minimum = action_dict(self._document, target)
+            _require_version(self._document, _catalog(self._document), minimum)
+            resources = self._document.named_resources("Dests")
+            key = _encode_text_string(name)
+            old = resources.get(key)
+            entry = dict(old) if isinstance(old, Dictionary) else {}
+            entry.update(D=raw["D"], SD=raw["SD"])
+            resources[key] = entry
 
     def __iter__(self) -> Iterator[str]:
         """Iterate over the names, tree entries first."""

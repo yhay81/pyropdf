@@ -48,6 +48,22 @@ Destinations.__getitem__(name: str) -> Destination | None
 
 Return where `name` leads; an unknown name raises `KeyError`.
 
+### `Destinations.structure`
+
+```python
+Destinations.structure(name: str) -> StructureDestination | None
+```
+
+Return the optional PDF 2.0 structure destination of a named page destination.
+
+### `Destinations.set_structure`
+
+```python
+Destinations.set_structure(name: str, target: StructureDestination)
+```
+
+Write a named PDF 2.0 destination with its structure and fallback page views.
+
 ### `Destinations.__iter__`
 
 ```python
@@ -63,6 +79,21 @@ Destinations.__len__() -> int
 ```
 
 Return the number of names.
+
+## `FragmentParameter`
+
+```python
+FragmentParameter(
+    *,
+    name: str,
+    value: int | str | bytes | tuple[str | float, ...],
+    outcome: Literal['resolved', 'unresolved', 'option', 'unknown'],
+    target: Page | Destination | Dictionary | Annotation | Attachment | None = None,
+    remainder: str | None = None,
+)
+```
+
+One parameter of a PDF fragment, resolved in its original order.
 
 ## `Launch`
 
@@ -207,13 +238,164 @@ A viewer action by name (ISO 32000-2 Table 213).
 The standard names are `"NextPage"`, `"PrevPage"`, `"FirstPage"`,
 and `"LastPage"`; viewers may know others.
 
+### `NamedAction.resolve`
+
+```python
+NamedAction.resolve(document: Document, *, current_page: int) -> Destination | None
+```
+
+Return the target page of a standard navigation action, or None when unavailable.
+
+## `NamedResources`
+
+```python
+class NamedResources(Mapping[bytes, object])
+NamedResources(document: Document, kind: str)
+```
+
+Live byte-string keys and PDF objects in one catalog resource name tree.
+
+Use `Document.named_resources` with `AP`, `Templates`, `IDS`,
+`URLS`, `AlternatePresentations`, `Renditions` or `Dests`.
+Values use the document's object model. Reading a target has no viewer
+side effects. Malformed or cyclic trees raise `MalformedPdfError`.
+
+### `NamedResources.__iter__`
+
+```python
+NamedResources.__iter__() -> Iterator[bytes]
+```
+
+Return the raw keys in PDF byte order.
+
+### `NamedResources.__len__`
+
+```python
+NamedResources.__len__() -> int
+```
+
+Return the number of entries.
+
+### `NamedResources.__getitem__`
+
+```python
+NamedResources.__getitem__(key: bytes) -> object
+```
+
+Return the referenced PDF object; a missing key raises `KeyError`.
+
+### `NamedResources.__setitem__`
+
+```python
+NamedResources.__setitem__(key: bytes, value: object)
+```
+
+Insert or replace one resource, preserving the other names and trees.
+
+### `NamedResources.__delitem__`
+
+```python
+NamedResources.__delitem__(key: bytes)
+```
+
+Remove a resource name while retaining the resource object for other owners.
+
+## `PdfFragment`
+
+```python
+PdfFragment(*, text: str)
+```
+
+Ordered content selectors and viewer parameters from a PDF URI's fragment.
+
+### `PdfFragment.parse`
+
+```python
+PdfFragment.parse(text: str, /) -> PdfFragment
+```
+
+Read the fragment portion of a URI, optionally including its leading hash.
+
+### `PdfFragment.with_parameter`
+
+```python
+PdfFragment.with_parameter(name: str, value: str | bytes, /) -> PdfFragment
+```
+
+Replace the last occurrence of a parameter, or insert it before an embedded file's fragment.
+
+Supply the decoded value. For example, pass `"125,0,50"` for a zoom or raw
+bytes for a structure ID. Other parameters keep their original spelling and escapes.
+
+### `PdfFragment.resolve`
+
+```python
+PdfFragment.resolve(document: Document, /) -> tuple[FragmentParameter, ...]
+```
+
+Resolve selectors left to right and return viewer requests as data.
+
+A comment uses the page selected earlier in the fragment. An embedded
+file receives the remaining fragment verbatim. FDF URIs are returned
+for the caller to handle.
+
 ## `RemoteDestination`
 
 ```python
-RemoteDestination(file: str, page: int = 0, name: str | None = None)
+RemoteDestination(
+    file: str,
+    page: int = 0,
+    name: str | None = None,
+    *,
+    structure_id: bytes | None = None,
+    structure_fit: str = 'Fit',
+    structure_operands: tuple[float | None, ...] = (),
+)
 ```
 
 A place in another PDF file: a zero-based page or a named destination.
+
+### `RemoteDestination.resolve_structure`
+
+```python
+RemoteDestination.resolve_structure(document: Document) -> StructureElement | None
+```
+
+Resolve the optional structure ID in the supplied remote PDF without opening a file.
+
+### `RemoteDestination.resolve`
+
+```python
+RemoteDestination.resolve(document: Document) -> Destination | None
+```
+
+Resolve the page or named target in a caller-supplied remote document.
+
+## `StructureDestination`
+
+```python
+StructureDestination(
+    *,
+    element: int | Name | bytes,
+    fallback: Destination,
+    fit: str = 'Fit',
+    operands: tuple[float | None, ...] = (),
+)
+```
+
+A PDF 2.0 structure destination and its page-based fallback.
+
+`element` is an indirect structure-element object number, a destination
+name object or a byte-string destination key. Fit operands are preserved in
+the PDF coordinate system, including explicit nulls.
+
+### `StructureDestination.resolve`
+
+```python
+StructureDestination.resolve(document: Document) -> StructureElement | None
+```
+
+Return the referenced structure element, or None for an unresolved or cyclic destination.
 
 ## `Target`
 
@@ -221,6 +403,9 @@ A place in another PDF file: a zero-based page or a named destination.
 Target: TypeAlias = (
     Destination
     | RemoteDestination
+    | StructureDestination
+    | UriAction
+    | WindowsLaunch
     | EmbeddedDestination
     | GoTo3DView
     | RenditionAction
@@ -241,3 +426,53 @@ Target: TypeAlias = (
 
 Where a link or trigger leads: a destination, a file to open, a viewer,
 transition, thread, script, hide, layer-state, or form action, or a URI string.
+
+## `UriAction`
+
+```python
+UriAction(*, uri: str, is_map: bool = False)
+```
+
+A URI reference and the optional image-map click flag of a PDF URI action.
+
+### `UriAction.resolve`
+
+```python
+UriAction.resolve(
+    document: Document,
+    *,
+    document_uri: str | None = None,
+    position: tuple[float, float] | None = None,
+    rectangle: tuple[float, float, float, float] | None = None,
+) -> str
+```
+
+Resolve the URI without opening it.
+
+The catalog base takes precedence over the supplied document location.
+For an image map, supply a click in PDF user space and the annotation
+rectangle, or coordinates already relative to its upper-left corner.
+
+## `WindowsLaunch`
+
+```python
+WindowsLaunch(
+    *,
+    file: bytes,
+    directory: bytes | None = None,
+    operation: str | None = None,
+    parameters: bytes | None = None,
+    fallback_file: str | None = None,
+    new_window: bool | None = None,
+)
+```
+
+Windows-specific fields in a launch action, retained as data (PDF 1.1 through 1.7).
+
+### `WindowsLaunch.effective_operation`
+
+```python
+WindowsLaunch.effective_operation: str
+```
+
+The declared verb or the Windows default, open.

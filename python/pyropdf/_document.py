@@ -98,6 +98,7 @@ from pyropdf._metadata import (
     write_viewer_preferences,
     write_xmp,
 )
+from pyropdf._name_resources import NamedResources
 from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
 from pyropdf._outline import Outline, OutlineEntry, _write_outline
 from pyropdf._page import _clip_box, _ExportPage, _render_scale
@@ -333,6 +334,48 @@ class Document:
         objects = Objects(self)
         objects._core()  # noqa: SLF001 - refuses a locked document now.
         return objects
+
+    @property
+    def base_uri(self) -> str | None:
+        """Return the base URI for relative URI actions in this document."""
+        from pyropdf._objects import Dictionary, String, _catalog  # noqa: PLC0415
+
+        uri = _catalog(self).get("URI")
+        value = uri.get("Base") if isinstance(uri, Dictionary) else None
+        return bytes(value).decode("utf-8", "replace") if isinstance(value, String) else None
+
+    @base_uri.setter
+    def base_uri(self, value: str) -> None:
+        from pyropdf._actions import _check_text_budget, _non_empty_str  # noqa: PLC0415
+        from pyropdf._metadata import _require_version  # noqa: PLC0415
+        from pyropdf._objects import Dictionary, _catalog  # noqa: PLC0415
+
+        _check_text_budget((_non_empty_str(value, "base_uri"),), "base URI")
+        with self.transaction("set catalog base URI"):
+            catalog = _catalog(self)
+            uri = catalog.get("URI")
+            _require_version(self, catalog, (1, 1))
+            if isinstance(uri, Dictionary):
+                uri["Base"] = value.encode()
+            else:
+                catalog["URI"] = {"Base": value.encode()}
+
+    @base_uri.deleter
+    def base_uri(self) -> None:
+        from pyropdf._objects import Dictionary, _catalog  # noqa: PLC0415
+
+        with self.transaction("remove catalog base URI"):
+            catalog = _catalog(self)
+            uri = catalog.get("URI")
+            if isinstance(uri, Dictionary) and "Base" in uri:
+                del uri["Base"]
+                if not uri:
+                    del catalog["URI"]
+
+    def named_resources(self, kind: str) -> NamedResources:
+        """Return the resource objects of a catalog name tree indexed by PDF byte-string keys."""
+        self._ensure_open()
+        return NamedResources(self, kind)
 
     @property
     def destinations(self) -> Destinations:
