@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from _pytest.mark.structures import ParameterSet
 
 FAMILIES = ("sampled", "calculator", "conditional", "nested")
+SAMPLES = (0.0, 0.125, 0.2, 0.25, 0.4, 0.499, 0.5, 0.51, 0.75, 191 / 255, 1.0)
 FILL = (0.2, 0.45, 0.75)
 STROKE = (0.25, 0.125, 0.0625)
 PIXELS = ((204, 153, 128), (64, 32, 16))
@@ -87,22 +88,10 @@ def input_pdf(family: str, role: str, *, filtered: bool) -> bytes:
     )
 
 
-@pytest.mark.parametrize("family", FAMILIES)
-@pytest.mark.parametrize("filtered", [False, True])
-@pytest.mark.parametrize("renderer", ["gs", "pdftoppm"])
-def test_gray_tint_transform_matches_analytic_controls(
-    tmp_path: Path, family: str, renderer: str, *, filtered: bool
-) -> None:
+def _check_tint_strip(tmp_path: Path, family: str, renderer: str, content: str, *, filtered: bool) -> None:
     executable = shutil.which(renderer)
     if executable is None:
         pytest.skip(f"{renderer} unavailable")
-    samples = (0.0, 0.125, 0.2, 0.25, 0.4, 0.499, 0.5, 0.51, 0.75, 191 / 255, 1.0)
-    # Match a tint patch to a directly painted DeviceGray patch on the same
-    # page, under the same output profile and any device transfer function.
-    content = " ".join(
-        f"/Alt cs {x:.9f} scn {i * 8} 50 7 7 re f {expected_tint(family, x):.9f} g {i * 8} 30 7 7 re f"
-        for i, x in enumerate(samples)
-    )
     source = tmp_path / "tints.pdf"
     source.write_bytes(
         pages_pdf(
@@ -119,12 +108,36 @@ def test_gray_tint_transform_matches_analytic_controls(
     subprocess.run(args, check=True, capture_output=True, timeout=15)  # noqa: S603 -- fixed render tools and flags
     with Image.open(bitmap) as image:
         assert image.size == (100, 100)
-        for i, x in enumerate(samples):
+        reference_shades: list[int] = []
+        for i, x in enumerate(SAMPLES):
             observed = image.getpixel((i * 8 + 3, 46))
             reference = image.getpixel((i * 8 + 3, 66))
             assert isinstance(observed, int)
             assert isinstance(reference, int)
+            reference_shades.append(reference)
             assert abs(observed - reference) <= 1, (x, observed, reference)
+        # Even the narrowest reference strip spans half the gray ramp in both renderers.
+        assert max(reference_shades) - min(reference_shades) >= 64, "reference swatches lack contrast"
+
+
+@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("filtered", [False, True])
+@pytest.mark.parametrize("renderer", ["gs", "pdftoppm"])
+def test_gray_tint_transform_matches_analytic_controls(
+    tmp_path: Path, family: str, renderer: str, *, filtered: bool
+) -> None:
+    # Compare both rows under the same output profile and device transfer function.
+    content = " ".join(
+        f"/Alt cs {x:.9f} scn {i * 8} 50 7 7 re f {expected_tint(family, x):.9f} g {i * 8} 30 7 7 re f"
+        for i, x in enumerate(SAMPLES)
+    )
+    _check_tint_strip(tmp_path, family, renderer, content, filtered=filtered)
+
+
+@pytest.mark.parametrize("renderer", ["gs", "pdftoppm"])
+def test_blank_tint_strip_is_rejected(tmp_path: Path, renderer: str) -> None:
+    with pytest.raises(AssertionError, match="reference swatches lack contrast"):
+        _check_tint_strip(tmp_path, "sampled", renderer, "q Q", filtered=False)
 
 
 class BoundedFunctionPendingError(Exception):
