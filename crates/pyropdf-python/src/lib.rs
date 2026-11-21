@@ -56,9 +56,10 @@ mod _core {
     };
     #[pymodule_export]
     use super::annotations::{
-        _stale_appearances, annotation_add, annotation_draw_face, annotation_edit, annotation_face,
-        annotation_geometry, annotation_list, annotation_open, annotation_pixmap, annotation_popup,
-        annotation_read, annotation_remove, annotation_reply, annotation_text,
+        _stale_appearances, annotation_add, annotation_attach, annotation_draw_face,
+        annotation_edit, annotation_face, annotation_geometry, annotation_list, annotation_open,
+        annotation_pixmap, annotation_popup, annotation_read, annotation_remove, annotation_reply,
+        annotation_text,
     };
     #[pymodule_export]
     use super::buffers::{CharColumns, Column, PathColumns};

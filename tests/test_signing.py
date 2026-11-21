@@ -27,6 +27,7 @@ if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
     # tests/test_threads.py checks that pyropdf keeps disabled.
     pytest.skip("pyHanko enables the GIL of a free-threaded build", allow_module_level=True)
 
+import pikepdf
 from asn1crypto import keys as asn1_keys
 from asn1crypto import x509 as asn1_x509
 from cryptography import x509
@@ -46,6 +47,7 @@ from pyhanko_certvalidator import ValidationContext
 from pyhanko_certvalidator.context import CertValidationPolicySpec
 from pyhanko_certvalidator.policy_decl import NO_REVOCATION, CertRevTrustPolicy
 from pyhanko_certvalidator.registry import SimpleTrustManager
+from test_prepress import prepress_source
 
 import pyropdf
 from pyropdf import FieldType, PdfError, SignatureField, Signer
@@ -174,6 +176,47 @@ def _assert_whole_file(status: Any) -> None:  # noqa: ANN401 - pyHanko's status 
 
 def _document() -> pyropdf.Document:
     return pyropdf.open(DOCUMENT.read_bytes())
+
+
+@pytest.mark.spec("trap-network-annotations", "edit", "preserve")
+@pytest.mark.parametrize("shared", [False, True], ids=["trap-network", "shared-empty-annots"])
+@pytest.mark.parametrize("operation", ["prepare-full", "prepare-incremental", "sign-incremental"])
+def test_implicit_signature_widget_preserves_page_annotation_relationships(
+    pki: Pki, operation: str, *, shared: bool
+) -> None:
+    source = prepress_source()
+    if shared:
+        with pikepdf.open(io.BytesIO(source)) as pdf:
+            annots = pdf.make_indirect(pikepdf.Array())
+            for page in pdf.pages[:2]:
+                page.Annots = annots
+            baseline = io.BytesIO()
+            pdf.save(baseline)
+            source = baseline.getvalue()
+    with pyropdf.open(source) as doc:
+        if operation == "sign-incremental":
+            output = doc.sign("Press", _pem_signer(pki))
+            [status] = _statuses(pki, output)
+            _assert_whole_file(status)
+        else:
+            doc.prepare_signature("Press")
+            output = doc.to_bytes(incremental=operation == "prepare-incremental")
+    if operation.endswith("incremental"):
+        assert output.startswith(source)
+    with pikepdf.open(io.BytesIO(output)) as pdf:
+        assert not pdf.check_pdf_syntax()
+        page, other = pdf.pages[:2]
+        if shared:
+            [widget] = page.Annots
+            assert list(other.Annots) == []
+            assert other.Annots.is_indirect
+        else:
+            mark, watermark, widget, trap = page.Annots
+            assert [mark.Subtype, watermark.Subtype, trap.Subtype] == ["/PrinterMark", "/Watermark", "/TrapNet"]
+        assert widget.Subtype == "/Widget"
+        assert widget.P.objgen == page.objgen
+        assert widget.objgen == pdf.Root.AcroForm.Fields[0].objgen
+        assert pdf.Root.AcroForm.SigFlags == (3 if operation == "sign-incremental" else 1)
 
 
 @pytest.mark.spec("digital-signatures", "create")

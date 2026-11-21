@@ -133,6 +133,36 @@ pub fn resolve(
     }
 }
 
+/// A separation group has one ordered /Pages membership list on each plate.
+/// An operation may keep or transfer the complete group, but cannot leave a
+/// surviving plate pointing to a page outside its page tree.
+fn require_complete_separations(
+    version: &Version,
+    page: &Dict,
+    included: &[u32],
+    budget: &Budget,
+) -> Result<()> {
+    let Some(info) = resolve(version, page.get("SeparationInfo"), budget)? else {
+        return Ok(());
+    };
+    if let Value::Dict(dict) = info
+        && let Some(Value::Array(members)) = resolve(version, dict.get("Pages"), budget)?
+        && !members.is_empty()
+    {
+        for member in members.iter() {
+            budget.poll()?;
+            if !matches!(member, Value::Reference(r) if included.binary_search(&r.number()).is_ok())
+            {
+                return Err(PageError::Value(
+                    "the edit would split a separation group".into(),
+                ));
+            }
+        }
+        return Ok(());
+    }
+    Err(PageError::Malformed("invalid /SeparationInfo/Pages".into()))
+}
+
 fn page_dict(version: &Version, reference: Reference, budget: &Budget) -> Result<Dict> {
     match resolve(version, Some(&Value::Reference(reference)), budget)? {
         Some(Value::Dict(dict)) => Ok(dict),

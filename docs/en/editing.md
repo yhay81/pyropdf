@@ -790,3 +790,42 @@ with pyropdf.open("input.pdf") as doc:
     print(catalog["Type"], doc.pages[0].obj["MediaBox"])
     print(doc.check().defects)
 ```
+
+## Print production data
+
+`page.box_styles` describes stored guides for the crop, bleed, trim and art
+boxes. An omitted guide uses the reader's settings. The page box itself
+controls whether the guide applies. `page.separations` lists the actual
+page handles for a pre-separated sheet, in plate order.
+
+```python
+import pyropdf
+
+with pyropdf.Document() as doc:
+    cyan, black = doc.pages.new(), doc.pages.new()
+    cyan.separations = {
+        cyan: pyropdf.SeparationPlate(colorant=pyropdf.Name("Cyan")),
+        black: pyropdf.SeparationPlate(colorant=pyropdf.Name("Black")),
+    }
+    assert list(black.separations) == [cyan, black]
+```
+
+Assign the group again to change its members or order. Deleting
+`cyan.separations` clears the group on both pages. Moving a plate keeps its
+identity. Removing or importing part of a group and duplicating an individual
+plate require detaching it first.
+
+`PrinterMark` and `Watermark` take an existing Form XObject from the same
+document. The annotation's `print_appearance` resolves the selected normal
+appearance and its resources. On a watermark, `fixed_print` stores the matrix
+and translation fractions relative to the print medium. On legacy trap
+networks, the selected Form exposes the process colour model, separation
+names, and trap regions. The annotation dictionary retains the original
+trapping snapshot. An image or Form's `opi` exposes the existing proxy
+file specification and version-specific parameters. Use these views to edit
+existing legacy data.
+
+The stored parameters describe the intended output. Device separation,
+trap generation, OPI substitution and physical press placement belong to
+the rendering engine. [Rendering work](https://github.com/yhay81/pyropdf/issues/248)
+and [engine tracker](https://github.com/yhay81/pyropdf/issues/7).

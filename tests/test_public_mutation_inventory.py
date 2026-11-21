@@ -96,6 +96,14 @@ MUTATIONS = (
     ("delete_attachment", "Prune the name tree and release unreferenced streams.", "Attachments", "__delitem__"),
     ("write_attachment", "Replace the embedded stream; update size and checksum.", "Attachment", "write"),
     (
+        "prepress",
+        "Keep ordered plate memberships and local boundary guidelines.",
+        "Page",
+        "separations= del:separations box_styles= del:box_styles",
+    ),
+    ("prepress", "Store the print Form and parent page in a printer's mark or watermark.", "Annotations", "add"),
+    ("prepress", "Keep fixed placement local to its watermark.", "Annotation", "fixed_print= del:fixed_print"),
+    (
         "rich_media_settings",
         "A named alias and a configuration edit preserve the shared file and the annotation's settings.",
         "Annotation",

@@ -388,6 +388,27 @@ options; an appearance that draws no text, or a hidden annotation,
 gives `""`. `/Contents` is not read; `contents` returns
 it.
 
+### `Annotation.print_appearance`
+
+```python
+Annotation.print_appearance: typed.XObjectFormPrinterMark | typed.XObjectFormTrapNet | typed.XObjectFormType1 | None
+```
+
+The active normal printer's mark, trap network or watermark Form.
+
+For a state dictionary this selects /AS. The Form view exposes
+resources, mark style and colorants or trapping process and regions.
+
+### `Annotation.fixed_print`
+
+```python
+Annotation.fixed_print: FixedPrint | None
+```
+
+The watermark placement matrix and translation fractions on the target print media.
+
+Settable.
+
 ### `Annotation.media`
 
 ```python
@@ -698,6 +719,8 @@ AnnotationSpecification: TypeAlias = (
     | FreeText
     | Stamp
     | MediaSpecification
+    | PrinterMark
+    | Watermark
 )
 ```
 
