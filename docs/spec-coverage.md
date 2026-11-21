@@ -279,7 +279,7 @@ Milestone [#248](https://github.com/yhay81/pyropdf/issues/248).
 
 - [#1001](https://github.com/yhay81/pyropdf/issues/1001) hayro: apply output-device parameters when proofing print and screened output. Apply per-object ICC intent, four-channel transfer, process and named spot plate overprint, selected halftones and scan parameters on suitable devices. RGB alternate, calibrated and transfer samples are verified.
     - interpret — `overprint`, `color-conversion`, `transfer-functions`, `halftones`, `scan-conversion`, `rendering-intents`, `separation-rendering`.
-- [#1002](https://github.com/yhay81/pyropdf/issues/1002) Apply active black generation and undercolor removal when rewriting CMYK colours. Evaluate the active BG2/UCR2 functions when converting paint and image samples to DeviceCMYK in Page.recolor and Document.recolor.
+- [#1007](https://github.com/yhay81/pyropdf/issues/1007) Extend active CMYK rewriting to filtered and nested budgeted PDF functions. Evaluate filtered sampled or calculator streams, nested stitching and calculator procedures with released construction and execution budgets.
     - edit — `device-color-conversion`.
 - [#372](https://github.com/yhay81/pyropdf/issues/372) hayro: evaluate optional content visibility expressions and annotation /OC. Adopt engine evaluation of visibility expressions and annotation OC. Track the upstream issue directly. #373 owns local adoption.
     - interpret — `optional-content`.

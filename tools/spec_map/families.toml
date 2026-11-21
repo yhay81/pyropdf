@@ -40,11 +40,11 @@ behavior = "Apply per-object ICC intent, four-channel transfer, process and name
 [families.recolour-black-generation]
 tracker = 248
 parent = 250
-issue = 1002
-title = "Apply active black generation and undercolor removal when rewriting CMYK colours"
+issue = 1007
+title = "Extend active CMYK rewriting to filtered and nested budgeted PDF functions"
 features = ["device-color-conversion"]
 dimensions = ["edit"]
-behavior = "Evaluate the active BG2/UCR2 functions when converting paint and image samples to DeviceCMYK in Page.recolor and Document.recolor."
+behavior = "Evaluate filtered sampled or calculator streams, nested stitching and calculator procedures with released construction and execution budgets."
 
 [families.optional-content-engine]
 tracker = 248
