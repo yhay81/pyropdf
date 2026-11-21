@@ -56,13 +56,43 @@ fn internal_destination(version: &Version, dict: &Dict, budget: &Budget) -> Resu
         .is_some_and(|dict| named(dict, "Type", b"Page")))
 }
 
+fn archival_annotation_flags(
+    version: &Version,
+    dict: &Dict,
+    budget: &Budget,
+) -> Result<Option<&'static str>> {
+    if !is_annotation_dict(dict) {
+        return Ok(None);
+    }
+    let value = entry(version, dict, "F", budget)?;
+    let flags = match value.as_deref() {
+        None | Some(Value::Null) => {
+            return Ok(
+                (!named(dict, "Subtype", b"Popup")).then_some("PDF/A-4 requires annotation flags")
+            );
+        }
+        Some(Value::Integer(flags)) => *flags,
+        // veraPDF interprets a numeric F as an integer for the profile's bit test.
+        // The separate structural check verifies that F has the PDF integer type.
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "testing the integer portion of numeric flag bits"
+        )]
+        Some(Value::Real(real)) => real.value() as i64,
+        _ => 0,
+    };
+    // ISO 19005-4, 6.3.2: Print set; Invisible, Hidden, NoView and ToggleNoView clear.
+    Ok((flags & 0x127 != 4)
+        .then_some("the annotation flags disable printing or hide the annotation"))
+}
+
 fn local_rules(
     claim: Claim,
     version: &Version,
     dict: &Dict,
     budget: &Budget,
-) -> Result<[Option<&'static str>; 5]> {
-    let mut reasons = [None; 5];
+) -> Result<[Option<&'static str>; 8]> {
+    let mut reasons = [None; 8];
     match claim {
         Claim::A(part, level) => {
             reasons[0] = widget_action(claim, dict)
@@ -86,6 +116,24 @@ fn local_rules(
                 reasons[2] = (is_annotation_dict(dict)
                     && named(dict, "Subtype", b"FileAttachment"))
                 .then_some("this PDF/A-4 flavour forbids FileAttachment annotations");
+            }
+            if part == 4 {
+                reasons[5] = archival_annotation_flags(version, dict, budget)?;
+                if named(dict, "Type", b"Filespec") && dict.get("EF").is_some() {
+                    reasons[6] = (!matches!(
+                        entry(version, dict, "F", budget)?.as_deref(),
+                        Some(Value::String(_))
+                    ) || !matches!(
+                        entry(version, dict, "UF", budget)?.as_deref(),
+                        Some(Value::String(_))
+                    ))
+                    .then_some("the embedded file specification lacks a required filename");
+                    reasons[7] = (!matches!(
+                        entry(version, dict, "AFRelationship", budget)?.as_deref(),
+                        Some(Value::Name(_))
+                    ))
+                    .then_some("the embedded file specification lacks its AFRelationship");
+                }
             }
         }
         Claim::Ua(2) => {
@@ -117,7 +165,7 @@ pub(super) fn object_changes<'b>(
     let before = old
         .map(|d| local_rules(claim, opened, d, budget))
         .transpose()?
-        .unwrap_or([None; 5]);
+        .unwrap_or([None; 8]);
     for reason in local_rules(claim, version, dict, budget)?
         .into_iter()
         .flatten()
