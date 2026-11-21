@@ -973,7 +973,7 @@ def test_encryption_requires_a_resolved_filter_selector(tmp_path: Path) -> None:
     assert path.read_bytes() == b"unchanged"
 
 
-def _private_recipient_control(*, attachment_only: bool, implicit: bool, mac: bool = False) -> bytes:
+def _private_recipient_control(*, attachment_only: bool, implicit: bool, mac: bool = False, gcm: bool = False) -> bytes:
     """Produce two independent recipient seeds with pyHanko (ISO Table 27)."""
     import io  # noqa: PLC0415
     import re  # noqa: PLC0415
@@ -985,6 +985,7 @@ def _private_recipient_control(*, attachment_only: bool, implicit: bool, mac: bo
     from pyhanko.pdf_utils.crypt.pubkey import (  # noqa: PLC0415
         PubKeyAdbeSubFilter,
         PubKeyAESCryptFilter,
+        PubKeyAESGCMCryptFilter,
         PubKeySecurityHandler,
         RecipientEncryptionPolicy,
     )
@@ -995,8 +996,12 @@ def _private_recipient_control(*, attachment_only: bool, implicit: bool, mac: bo
     writer = PdfFileWriter(stream_xrefs=False)
     public, private = name("/PublicDefault"), name("/DefaultCryptFilter" if mac else "/PrivateContent")
     default = name("/Identity") if attachment_only else public
-    normal = PubKeyAESCryptFilter(keylen=32, acts_as_default=True)
-    restricted = PubKeyAESCryptFilter(keylen=32, acts_as_default=False)
+    if gcm:
+        normal = PubKeyAESGCMCryptFilter(acts_as_default=True)
+        restricted = PubKeyAESGCMCryptFilter(acts_as_default=False)
+    else:
+        normal = PubKeyAESCryptFilter(keylen=32, acts_as_default=True)
+        restricted = PubKeyAESCryptFilter(keylen=32, acts_as_default=False)
     config = CryptFilterConfiguration(
         {private: restricted} if attachment_only else {public: normal, private: restricted},
         default_stream_filter=default,
@@ -1004,7 +1009,7 @@ def _private_recipient_control(*, attachment_only: bool, implicit: bool, mac: bo
         default_file_filter=private,
     )
     crypto = PubKeySecurityHandler(
-        SecurityHandlerVersion.AES256,
+        SecurityHandlerVersion.AES_GCM if gcm else SecurityHandlerVersion.AES256,
         PubKeyAdbeSubFilter.S5,
         32,
         crypt_filter_config=config,

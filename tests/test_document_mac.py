@@ -186,8 +186,16 @@ def test_attachment_only_recipient_permissions_do_not_imply_a_missing_mac() -> N
 @requires_pyhanko
 @pytest.mark.spec("integrity-protection", "read", "interpret", "preserve")
 @pytest.mark.parametrize("incremental", [False, True])
-def test_recipient_mac_uses_the_named_key_after_credential_upgrade(*, incremental: bool) -> None:
-    source = _private_recipient_control(attachment_only=False, implicit=False, mac=True)
+@pytest.mark.parametrize("gcm", [False, True], ids=["AESV3", "AESV4"])
+def test_recipient_mac_uses_the_named_key_after_credential_upgrade(*, incremental: bool, gcm: bool) -> None:
+    from unittest.mock import patch  # noqa: PLC0415
+
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.crypt.pdfmac import PdfMacValidationError, validate_pdf_mac  # noqa: PLC0415
+    from pyhanko.pdf_utils.crypt.pubkey import SimpleEnvelopeKeyDecrypter  # noqa: PLC0415
+    from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
+
+    source = _private_recipient_control(attachment_only=False, implicit=False, mac=True, gcm=gcm)
     with pyropdf.open(source, credential=recipient("editor")) as doc:
         assert doc.pages[0].obj["Contents"].read() == b"0 g 1 2 3 4 re f\n"
         assert doc.verify_integrity().status == "locked"
@@ -199,6 +207,21 @@ def test_recipient_mac_uses_the_named_key_after_credential_upgrade(*, incrementa
         assert reopened.verify_integrity().status == "valid"
         assert reopened.catalog["FixtureNamed"].read() == b"Named private data"
         assert reopened.pages[0].rotation == 90
+
+    reader = PdfFileReader(io.BytesIO(saved))
+    handler = reader.security_handler
+    credential = SimpleEnvelopeKeyDecrypter.load(
+        str(RECIPIENT_ASSETS / "recipient-owner.key"), str(RECIPIENT_ASSETS / "recipient-owner.cer")
+    )
+    private = handler.get_stream_filter(generic.pdf_name("/DefaultCryptFilter"))
+    assert handler.get_stream_filter().authenticate(credential).status.value > 0
+    assert private.authenticate(credential).status.value > 0
+    assert reader.root["/FixtureNamed"].data == b"Named private data"
+    # pyHanko ordinarily selects /StmF. Only the distinct ISO/TS 32004 key verifies this token.
+    with pytest.raises(PdfMacValidationError):
+        validate_pdf_mac(reader)
+    with patch.object(handler, "get_file_encryption_key", return_value=private.shared_key):
+        validate_pdf_mac(reader)
 
 
 @pytest.mark.spec("integrity-protection", "edit")
