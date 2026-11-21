@@ -98,6 +98,14 @@ fn with_settlers(document: Document) -> Document {
 
 impl _Document {
     pub(crate) fn new(document: Document, limits: DocumentLimits) -> Self {
+        Self::with_history(document, limits, crate::history::State::default())
+    }
+
+    fn with_history(
+        document: Document,
+        limits: DocumentLimits,
+        history: crate::history::State,
+    ) -> Self {
         let document = with_settlers(document);
         Self {
             document: RwLock::new(Some(Arc::new(document))),
@@ -118,8 +126,18 @@ impl _Document {
             bridge: pyropdf_engine::bridge::Cache::new(),
             fallback: RwLock::new(Fallback::default()),
             references: pyropdf_store::refs::Cache::new(),
-            history: Arc::new(crate::history::State::default()),
+            history: Arc::new(history),
         }
+    }
+
+    /// A private view for catalog reads after a page import, sharing exactly
+    /// the version that supplied the graph without retaining source history.
+    pub(crate) fn import_source(&self, version: Arc<Version>, operation: SharedBudget) -> Self {
+        Self::with_history(
+            Document::from_version(version, Some(0)),
+            self.limits.clone(),
+            crate::history::State::import_view(operation),
+        )
     }
 
     /// Returns the faces that render the CJK fonts that the document does

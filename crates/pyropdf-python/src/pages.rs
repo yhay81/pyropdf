@@ -668,6 +668,8 @@ pub fn set_pages(
     })?
 }
 
+type ImportedMedia = (u8, u8, u32, bool);
+
 /// Inserts copies of the pages of `source` at `at` in one transaction.
 #[pyfunction]
 pub fn import_pages(
@@ -676,18 +678,52 @@ pub fn import_pages(
     source: &_Document,
     pages: Vec<(u32, u16)>,
     at: usize,
-) -> PyResult<Option<(u8, u8, u32, bool)>> {
+) -> PyResult<Option<ImportedMedia>> {
+    copy_pages(py, document, source, pages, at, None).map(|result| result.map(|(media, _)| media))
+}
+
+/// Also return the immutable source of any imported media. The caller can
+/// then read its catalog declarations while another thread changes the source.
+#[pyfunction]
+pub fn import_pages_with_source(
+    py: Python<'_>,
+    document: &_Document,
+    source: &_Document,
+    pages: Vec<(u32, u16)>,
+    at: usize,
+) -> PyResult<Option<(ImportedMedia, _Document)>> {
+    crate::errors::boundary(|| {
+        let operation = document
+            .budget()
+            .constrained_by(&source.fresh_budget())
+            .map_err(|error| limit_error(&error))?;
+        Ok(
+            copy_pages(py, document, source, pages, at, Some(&operation))?
+                .map(|(media, version)| (media, source.import_source(version, operation))),
+        )
+    })?
+}
+
+fn copy_pages(
+    py: Python<'_>,
+    document: &_Document,
+    source: &_Document,
+    pages: Vec<(u32, u16)>,
+    at: usize,
+    operation: Option<&Budget>,
+) -> PyResult<Option<(ImportedMedia, Arc<Version>)>> {
     crate::errors::boundary(|| {
         // Pin the source before taking the destination's writer lock.
         // The import itself, including the source index, uses the edit budget.
-        let (version, parent) = source.reading_parent()?;
+        let (version, parent) = source.reading_parent_with(operation)?;
         let memo = if parent.is_none() && source.in_transaction() {
             &source.draft_pages
         } else {
             &source.pages
         };
         let destinations = destinations_memo(source);
-        document.edit(py, |transaction, budget| {
+        let media = document.edit(py, |transaction, budget| {
+            let budget = operation.unwrap_or(budget);
             let index = PageIndex::memoized(memo, parent.as_ref().unwrap_or(&version), budget)
                 .map_err(|error| store_error(&error))?;
             let source = pages::import::Source {
@@ -708,7 +744,8 @@ pub fn import_pages(
             )
             .map(|media| media.map(|(version, first, prc)| (version.0, version.1, first, prc)))
             .map_err(page_error)
-        })
+        })?;
+        Ok(media.map(|summary| (summary, version)))
     })?
 }
 
