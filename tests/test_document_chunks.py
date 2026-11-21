@@ -341,3 +341,21 @@ def test_retrieval_uses_one_version_while_the_source_changes_between_passes(monk
         assert all(s.version.same_as(first.version) for s in captured.sources)
         assert all(s.operation_sha256 == first.operation_sha256 for s in captured.sources)
         assert document.to_chunks([0], provenance=True)[0].elements[0].text == "new"
+
+
+def test_retrieval_version_keeps_the_callers_uncommitted_operator_after_rollback() -> None:
+    old = "BT /F1 12 Tf 40 300 Td (old) Tj ET"
+    with _document(first=old) as document:
+        original = document.to_chunks([0], provenance=True)[0].elements[0].sources[0]
+        with pytest.raises(ValueError, match="discard draft"), document.transaction():  # noqa: PT012 - capture the draft.
+            document.objects[7].write(old.replace("old", "draft").encode())
+            captured = document.to_chunks([0], provenance=True)[0].elements[0].sources[0]
+            msg = "discard draft"
+            raise ValueError(msg)
+        restored = document.to_chunks([0], provenance=True)[0].elements[0].sources[0]
+        assert restored.version.same_as(original.version)
+        assert not captured.version.same_as(original.version)
+        captured.version.page_operations(1)
+        op = captured.resolve()
+        assert op is not None
+        assert op.operands == (pyropdf.String(b"draft"),)
