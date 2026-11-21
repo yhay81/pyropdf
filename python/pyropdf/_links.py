@@ -14,9 +14,9 @@ from pyropdf._actions import (
 from pyropdf._annotations import _rect
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Rect
-from pyropdf._metadata import _require_version
 from pyropdf._objects import Dictionary, Name, _catalog, _encode_text_string
 from pyropdf._targets import Destination, Target, _destination, _target_from_core, _target_to_core
+from pyropdf._viewer_actions import require_navigation_version
 
 if TYPE_CHECKING:
     from pyropdf._core import _Document, _Link, _Target
@@ -144,7 +144,7 @@ class Link:
             action_dict, minimum = _custom_target_action_dict(document, target)
             with document.transaction("link target"):
                 self._edit(None, ("none", None, None, None, None, None))
-                _require_version(document, _catalog(document), minimum)
+                require_navigation_version(document, _catalog(document), minimum)
                 Dictionary(document, self._id)["A"] = action_dict
             return
         self._edit(None, _link_target(target, self._page))
@@ -250,7 +250,7 @@ class Links(Sequence[Link]):
                 )
                 if result is None:
                     raise page._stale()  # noqa: SLF001
-                _require_version(document, _catalog(document), minimum)
+                require_navigation_version(document, _catalog(document), minimum)
                 Dictionary(document, result)["A"] = action_dict
             return Link(page, result, 0)
         spec = _link_target(target, page)
@@ -316,7 +316,7 @@ class Destinations(Mapping[str, Destination | None]):
             raise TypeError(msg)
         with self._document.transaction("set named structure destination"):
             raw, minimum = action_dict(self._document, target)
-            _require_version(self._document, _catalog(self._document), minimum)
+            require_navigation_version(self._document, _catalog(self._document), minimum)
             resources = self._document.named_resources("Dests")
             key = _encode_text_string(name)
             old = resources.get(key)

@@ -294,3 +294,39 @@ def test_invalid_structure_views_fall_back_to_the_page() -> None:
         assert link.target == p.Destination(0)
         with pytest.raises(ValueError, match="rectangle coordinates"):
             p.StructureDestination(element=elem.xref, fallback=p.Destination(0), fit="FitR", operands=(0, None, 2, 3))
+
+
+@pytest.mark.spec("destinations", "create", "edit")
+@pytest.mark.parametrize("holder", ["link", "outline", "open", "names"])
+def test_refuse_incompatible_pdf2_navigation_promotion_without_changing_the_document(holder: str) -> None:
+    from test_attachments import build_raw_pdf  # noqa: PLC0415
+
+    legacy = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 50] /Resources << /Font << /F1 4 0 R >> >> >>",
+            4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        }
+    )
+    with p.open(legacy) as doc:
+        elem = doc.structure.add("Sect", page=doc.pages[0])
+        target = p.StructureDestination(element=elem.xref, fallback=p.Destination(0))
+        before = doc.to_bytes(incremental=True)
+        history = doc.history.save()
+
+        def write_target() -> None:
+            match holder:
+                case "link":
+                    doc.pages[0].links.add(RECT, target)
+                case "outline":
+                    doc.outline = [p.OutlineEntry(1, "Section", target)]
+                case "open":
+                    doc.open_action = target
+                case _:
+                    doc.destinations.set_structure("section", target)
+
+        with pytest.raises(p.PdfError, match=r"cannot promote.*FontType1"):
+            write_target()
+        assert doc.history.save() == history
+        assert doc.to_bytes(incremental=True) == before

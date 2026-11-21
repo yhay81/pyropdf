@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from pyropdf import _core
 from pyropdf._errors import LimitError, StaleObjectError
-from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, Stream, String, _catalog, _Handle
 from pyropdf._pixmap import Colorspace, Pixmap
+from pyropdf._viewer_actions import require_navigation_version
 
 if TYPE_CHECKING:
     from pyropdf._document import Document
@@ -737,7 +737,7 @@ def _write_page_transition(page: Page, transition: Transition) -> None:
     with document.transaction("page transition"):
         _ = page.index
         if minimum >= (1, 5):
-            _require_version(document, _catalog(document), minimum)
+            require_navigation_version(document, _catalog(document), minimum)
         old_xref = _indirect_xref(page.obj.get("Trans"))
         page.obj["Trans"] = entries
         if old_xref is not None:
@@ -858,7 +858,7 @@ def _write_navigation_steps(page: Page, steps: Iterable[NavigationStep]) -> None
                 del page.obj["PresSteps"]
         else:
             first_xref, minimum = _write_nav_chain(document, items)
-            _require_version(document, _catalog(document), minimum)
+            require_navigation_version(document, _catalog(document), minimum)
             page.obj["PresSteps"] = document.objects[first_xref]
         if candidates:
             _core.object_free_unreferenced(document._core(), candidates)  # noqa: SLF001
@@ -907,7 +907,7 @@ def _write_page_thumbnail(page: Page, pixmap: Pixmap) -> None:
     document = page.document
     with document.transaction("page thumbnail"):
         _ = page.index
-        _require_version(document, _catalog(document), (1, 3))
+        require_navigation_version(document, _catalog(document), (1, 3))
         old_xref = _indirect_xref(page.obj.get("Thumb"))
         xref = document.objects.add_stream(samples, dictionary=thumb_dict, filter="FlateDecode")
         page.obj["Thumb"] = document.objects[xref]

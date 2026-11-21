@@ -18,6 +18,16 @@ if TYPE_CHECKING:
 _FITS = {"Fit": 0, "FitB": 0, "FitH": 1, "FitV": 1, "FitBH": 1, "FitBV": 1, "FitR": 4, "XYZ": 3}
 
 
+def require_navigation_version(document: Document, catalog: Dictionary, minimum: tuple[int, int]) -> None:
+    """Check existing objects before promoting a document to PDF 2.0 for navigation."""
+    from pyropdf._metadata import _require_pdf20, _require_version  # noqa: PLC0415
+
+    if minimum == (2, 0):
+        _require_pdf20(document, catalog, "PDF 2.0 navigation")
+    else:
+        _require_version(document, catalog, minimum)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class UriAction:
     """A URI reference and the optional image-map click flag of a PDF URI action."""

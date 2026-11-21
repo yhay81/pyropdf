@@ -14,7 +14,6 @@ from pyropdf import _core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Point
 from pyropdf._media_actions import GoTo3DView, RenditionAction, RichMediaExecute, media_action_dict, read_media_action
-from pyropdf._metadata import _require_version
 from pyropdf._objects import (
     Array,
     Dictionary,
@@ -26,7 +25,13 @@ from pyropdf._objects import (
     _Handle,
     _unlocked,
 )
-from pyropdf._viewer_actions import StructureDestination, UriAction, WindowsLaunch, read_extra
+from pyropdf._viewer_actions import (
+    StructureDestination,
+    UriAction,
+    WindowsLaunch,
+    read_extra,
+    require_navigation_version,
+)
 from pyropdf._viewer_actions import action_dict as viewer_action_dict
 
 if TYPE_CHECKING:
@@ -1343,7 +1348,7 @@ def _write_open_action(document: Document, target: Target | None) -> None:
         else:
             value, minimum = _target_action_dict(document, target)
         retired = _collect_action_xrefs(catalog.get("OpenAction"))
-        _require_version(document, catalog, max((1, 1), minimum))
+        require_navigation_version(document, catalog, max((1, 1), minimum))
         catalog["OpenAction"] = value
         if retired:
             _core.object_free_unreferenced(document._core(), sorted(set(retired)))  # noqa: SLF001
@@ -1545,7 +1550,7 @@ def _write_js_tree_entries(document: Document, entries: list[_ScriptTreeEntry]) 
         return
 
     entries_sorted = sorted(entries, key=lambda item: item.raw_key)
-    _require_version(document, catalog, (1, 3))
+    require_navigation_version(document, catalog, (1, 3))
     new_root = _build_canonical_js_tree(document, entries_sorted)
     if names_dict is None:
         names_xref = document.objects.add({"JavaScript": new_root})
@@ -1778,7 +1783,7 @@ def _write_document_aa(document: Document, mapping: Mapping[DocumentTrigger, str
         if trigger in mapping:
             preserved[pdf_key] = {"Type": Name("Action"), "S": Name("JavaScript"), "JS": mapping[trigger]}
     if preserved:
-        _require_version(document, catalog, (1, 4))
+        require_navigation_version(document, catalog, (1, 4))
         catalog["AA"] = preserved
     elif "AA" in catalog:
         del catalog["AA"]
@@ -2020,7 +2025,7 @@ class PageTriggers(MutableMapping[PageTrigger, "Target"]):
             retired = _collect_aa_xrefs(current_aa, prepared)
             merged = {k: current_aa[k] for k in current_aa} if _is_dict(current_aa) else {}
             merged.update(prepared)
-            _require_version(document, _catalog(document), minimum)
+            require_navigation_version(document, _catalog(document), minimum)
             self._page.obj["AA"] = merged
             if retired:
                 _core.object_free_unreferenced(document._core(), sorted(set(retired)))  # noqa: SLF001
@@ -2070,7 +2075,7 @@ def _replace_page_triggers(
             preserved[_PAGE_TRIGGER_KEYS[trig]] = act_dict
             minimum = max(minimum, req)
         if preserved:
-            _require_version(document, _catalog(document), minimum)
+            require_navigation_version(document, _catalog(document), minimum)
             page.obj["AA"] = preserved
         elif "AA" in page.obj:
             del page.obj["AA"]
@@ -2337,7 +2342,7 @@ class ActionTriggers(MutableMapping[AnnotationTrigger, "Target"]):
                 staged_dicts[trig] = act_dict
                 trig_ver = (1, 5) if trig in _PDF_15_ANNOTATION_TRIGGERS else self._base_version
                 minimum = max(minimum, req, trig_ver)
-            _require_version(self._document, _catalog(self._document), minimum)
+            require_navigation_version(self._document, _catalog(self._document), minimum)
             retired = _apply_annot_trigger_writes(
                 holder,
                 self._allowed,
@@ -2386,7 +2391,7 @@ class ActionTriggers(MutableMapping[AnnotationTrigger, "Target"]):
                 trig_ver = (1, 5) if trig in _PDF_15_ANNOTATION_TRIGGERS else self._base_version
                 minimum = max(minimum, req, trig_ver)
             if staged_dicts:
-                _require_version(self._document, _catalog(self._document), minimum)
+                require_navigation_version(self._document, _catalog(self._document), minimum)
             retired = _apply_annot_trigger_writes(
                 holder,
                 self._allowed,
@@ -2429,7 +2434,7 @@ def _write_screen_action(document: Document, get_holder: Callable[[], Dictionary
             raise ValueError(msg)
         act_dict, req = _target_action_dict(document, target)
         retired = _collect_action_xrefs(holder.get("A"))
-        _require_version(document, _catalog(document), max((1, 5), req))
+        require_navigation_version(document, _catalog(document), max((1, 5), req))
         holder["A"] = act_dict
         if retired:
             _core.object_free_unreferenced(document._core(), sorted(set(retired)))  # noqa: SLF001

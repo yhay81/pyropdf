@@ -16,9 +16,9 @@ from pyropdf._actions import (
 )
 from pyropdf._content import Color
 from pyropdf._errors import LimitError, StaleObjectError
-from pyropdf._metadata import _require_version
 from pyropdf._objects import Dictionary, _catalog
 from pyropdf._targets import Destination, Target, _target_from_core, _target_to_core
+from pyropdf._viewer_actions import require_navigation_version
 
 if TYPE_CHECKING:
     from pyropdf._core import _Document, _OutlineItem, _Target
@@ -204,7 +204,7 @@ class OutlineItem:
             action_dict, minimum = _custom_target_action_dict(document, target)
             with document.transaction("outline target"):
                 _core.outline_set_target(core, self._id, ("none", None, None, None, None, None))
-                _require_version(document, _catalog(document), minimum)
+                require_navigation_version(document, _catalog(document), minimum)
                 Dictionary(document, self._id)["A"] = action_dict
             return
         core = self._core()
@@ -425,7 +425,7 @@ def _write_outline(document: Document, entries: Iterable[OutlineEntry]) -> None:
         return
     with document.transaction("outline"):
         _core.outline_write(core, specs)
-        _require_version(document, _catalog(document), min_version)
+        require_navigation_version(document, _catalog(document), min_version)
         written = _core.outline_entries(core)
         for index, action_dict in custom_actions:
             item_id = written[index][0]
