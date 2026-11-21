@@ -460,6 +460,8 @@ class Stream(Dictionary):
         ``EarlyChange``; Flate and LZW accept TIFF and PNG predictor parameters.
         Predictors currently support up to 255 bits per pixel. TIFF predictor
         rows must fill whole bytes so every row can be read back.
+        A leading ``/Crypt`` and its decode parameters retain the stream’s
+        original recipient selection when data filters change.
         """
         options = _stream_options(self._document, filter, decode_parms)
         _core.stream_write(self._core(), self._stream_root(), bytes(data), options)
@@ -600,6 +602,7 @@ class Objects(Mapping[int, Any]):
         ``dictionary`` supplies further stream entries. The stream length and
         filter entries are derived from the data, ``filter`` and ``decode_parms``
         as in :meth:`Stream.write`.
+        An explicit leading ``/Crypt`` in ``dictionary`` retains its security parameters.
         """
         core = self._core()
         options = _stream_options(self._document, filter, decode_parms)

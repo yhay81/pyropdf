@@ -321,7 +321,7 @@ objects = ["FilterCrypt"]
 read = { status = "partial", missing = "Direct crypt-filter choices are resolved. An indirect Filter array, filter name or DecodeParms dictionary needs revision-aware resolution (#1056).", milestone = "Phase 4: Specification" }
 create = { status = "partial", missing = "Creating encrypted output with an indirect stream filter or parameter requires selecting its resolved value (#1056).", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Saving streams whose security filter or parameters are stored indirectly must preserve their shared references across revisions (#1056).", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Stream dictionary edits and full and incremental saves preserve or change the explicit selector. Replacing the decoded payload through Stream.write still drops the selector (#992).", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Replacing data or compression retains direct crypt selectors. Indirect selector and parameter edits must resolve against the working version (#1056).", milestone = "Phase 4: Specification" }
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
 
 [features.file-header]
@@ -375,7 +375,7 @@ read = { status = "partial", missing = "Direct crypt-filter choices are resolved
 create = { status = "partial", missing = "Creating encrypted output with an indirect stream filter or parameter requires selecting its resolved value (#1056).", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Saving streams whose security filter or parameters are stored indirectly must preserve their shared references across revisions (#1056).", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The store interprets explicit filters and EFF, including independent recipient keys. Direct rendering of explicit legacy filters and a second recipient page key requires the authenticated store source (#993).", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Both save modes rewrite inherited attachments when EFF changes and preserve untouched ciphertext. Stream.write and Attachment.write must retain an existing private selector while replacing encoded data (#992).", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Replacing data or compression retains direct crypt selectors. Indirect selector and parameter edits must resolve against the working version (#1056).", milestone = "Phase 4: Specification" }
 
 [features.document-catalog]
 clause = "7.7.2"

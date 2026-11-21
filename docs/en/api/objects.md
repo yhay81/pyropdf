@@ -319,6 +319,7 @@ Add a stream of decoded `data`, in one transaction, and return its object number
 `dictionary` supplies further stream entries. The stream length and
 filter entries are derived from the data, `filter` and `decode_parms`
 as in `Stream.write`.
+An explicit leading `/Crypt` in `dictionary` retains its security parameters.
 
 ## `Real`
 
@@ -513,6 +514,8 @@ for a name or one mapping or `None` per filter in a chain. LZW accepts
 `EarlyChange`; Flate and LZW accept TIFF and PNG predictor parameters.
 Predictors currently support up to 255 bits per pixel. TIFF predictor
 rows must fill whole bytes so every row can be read back.
+A leading `/Crypt` and its decode parameters retain the stream’s
+original recipient selection when data filters change.
 
 ## `String`
 
