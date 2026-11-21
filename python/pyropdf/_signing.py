@@ -405,10 +405,10 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
             "M": pdf_date(datetime.now(UTC)),
             **optional_entries,
         }
-        if effective_mdp is not None or effective_lock is not None:
-            ensure_pades_version(document)
-            entries["Reference"] = build_reference_entries(document, effective_mdp, effective_lock)
         _declare_signature_extensions(document, *signer._core.extensions)  # noqa: SLF001
+        ensure_pades_version(document)
+        if effective_mdp is not None or effective_lock is not None:
+            entries["Reference"] = build_reference_entries(document, effective_mdp, effective_lock)
         signature = document.objects[document.objects.add(entries)]
         _signature_field(document, field, signature)
         if effective_mdp is not None:
