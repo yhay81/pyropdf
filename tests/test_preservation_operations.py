@@ -210,6 +210,46 @@ def edit_annotation(doc: pyropdf.Document) -> set[int]:
     return touched
 
 
+def prepare_interaction(doc: pyropdf.Document) -> None:
+    """Save the original annotation, pushbutton and mark before exercising their editors."""
+    page = doc.pages[0]
+    line = page.annotations.add(pyropdf.LineAnnotation((16, 20), (80, 20), contents="Measured"))
+    line.name = MARKER + "-dimension"
+    mark = page.annotations.add(pyropdf.RedactionMark(pyropdf.Rect(16, 24, 80, 42)))
+    mark.name = MARKER + "-mark"
+    page.widgets.add(pyropdf.PushButton(MARKER + "-button", (16, 46, 80, 65), caption="Review"))
+
+
+def edit_interaction(doc: pyropdf.Document) -> set[int]:
+    """Edit existing markup and its pushbutton using explicit, independently allocated Forms."""
+    page = doc.pages[0]
+    line = next(item for item in page.annotations if item.name == MARKER + "-dimension")
+    mark = next(item for item in page.annotations if item.name == MARKER + "-mark")
+    widget = doc.form[MARKER + "-button"].widgets[0]
+    touched = {line.xref, mark.xref, widget.xref}
+    with doc.transaction():
+        icon = line.set_appearance("down", b"0 1 0 rg 0 0 10 10 re f", bbox=(0, 0, 10, 10))
+        line.line_details = pyropdf.LineDetails(leader_length=4, leader_extension=2, caption=True)
+        mark.redaction = pyropdf.RedactionMark(mark.rect, quads=(mark.rect.quad,), overlay=icon)
+        widget.set_icon("normal", icon)
+        widget.icon_fit = pyropdf.IconFit(when="never", anchor=(0, 1))
+        widget.set_appearance("rollover", icon)
+    return touched
+
+
+def check_interaction(doc: pyropdf.Document) -> None:
+    page = doc.pages[0]
+    line = next(item for item in page.annotations if item.name == MARKER + "-dimension")
+    mark = next(item for item in page.annotations if item.name == MARKER + "-mark")
+    widget = doc.form[MARKER + "-button"].widgets[0]
+    assert line.line_details == pyropdf.LineDetails(leader_length=4, leader_extension=2, caption=True)
+    assert line.appearance_stream("down") == widget.icon()
+    assert widget.appearance_stream("rollover") == widget.icon()
+    assert widget.icon_fit == pyropdf.IconFit(when="never", anchor=(0, 1))
+    assert mark.redaction is not None
+    assert mark.redaction.overlay == widget.icon()
+
+
 def delete_annotation(doc: pyropdf.Document) -> set[int]:
     page = doc.pages[0]
     item = annotation(doc)
@@ -578,6 +618,7 @@ NEW_EDITS = {
     "canvas_image": Edit(apply=canvas_image, check=check_image),
     "add_screen": Edit(apply=add_screen, check=check_screen),
     "add_annotation": Edit(apply=add_annotation, check=check_annotation),
+    "edit_interaction": Edit(prepare=prepare_interaction, apply=edit_interaction, check=check_interaction),
     "edit_annotation": Edit(prepare=prepare_annotation, apply=edit_annotation, check=check_edited_annotation),
     "delete_annotation": Edit(prepare=prepare_annotation, apply=delete_annotation, check=check_removed_annotation),
     "flatten_annotations": Edit(

@@ -59,23 +59,13 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Exercise non-isolated and knockout groups, group masks, blending colour spaces, alpha composition and Annex Q resource traversal. Verify isolated and nested results with independent rendered references."
 
-[families.annotation-appearances]
+[families.rich-line-captions]
 tracker = 249
-issue = 903
-title = "Write rollover/down and widget icon appearances and line or popup annotation details"
-features = [
-    "appearance-streams", "line-annotations", "popup-annotations", "widget-annotations",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Implement rollover/down streams, widget MK icons and IF fitting, line captions and leaders, and popup parent semantics. Check independent rendering and relationships after edit/reopen."
-
-[families.redaction-marks]
-tracker = 249
-issue = 903
-title = "Write rollover/down and widget icon appearances and line or popup annotation details"
-features = ["redaction-annotations"]
-dimensions = ["read", "create", "edit", "preserve"]
-behavior = "Inspect and edit stored redaction marks, overlay text and appearance streams. Preserve the marks through reopening before destructive application."
+issue = 1025
+title = "Shape rich and Unicode captions in line annotation appearances"
+features = ["line-annotations"]
+dimensions = ["read", "interpret", "create", "edit"]
+behavior = "Resolve and shape RC or multilingual captions, including embedded fonts, along the measured line after authoring and editing."
 
 [families.font-programs]
 tracker = 249
