@@ -26,6 +26,7 @@ import tempfile
 from pathlib import Path
 
 import pyropdf
+from pyropdf._objects import _direct_value
 
 ROOT = Path(__file__).resolve().parent.parent
 # The preservation harness imports its sibling test modules.
@@ -536,19 +537,30 @@ def alternate_saves(source: Path, flavour: str, directory: Path) -> dict[Path, s
     return files
 
 
+def declares_pades(extensions: object) -> bool:
+    """Recognize the PDF 1.7 declarations registered for PAdES signatures."""
+    if not isinstance(extensions, pyropdf.Dictionary) or extensions.is_indirect:
+        return False
+    for prefix, required in (("ESIC", PADES_LEVEL), ("ADBE", 8)):
+        entry = extensions.get(prefix)
+        if (
+            isinstance(entry, pyropdf.Dictionary)
+            and not entry.is_indirect
+            and _direct_value(entry, "BaseVersion") == "1.7"
+        ):
+            level = _direct_value(entry, "ExtensionLevel")
+            if type(level) is int and level >= required:
+                return True
+    return False
+
+
 def arlington(path: Path, flavour: str) -> str:
     """Validate the effective version, including a catalog promotion in a later revision."""
     with path.open("rb") as source:
         header = source.read(8)[5:8].decode("ascii")
     with pyropdf.open(path) as doc:
         declared = doc.catalog.get("Version")
-        extensions = doc.catalog.get("Extensions")
-        pades = extensions.get("ETSI_PAdES") if isinstance(extensions, pyropdf.Dictionary) else None
-        declares_pades = (
-            isinstance(pades, pyropdf.Dictionary)
-            and pades.get("BaseVersion") == pyropdf.Name("1.7")
-            and pades.get("ExtensionLevel") == PADES_LEVEL
-        )
+        pades = declares_pades(doc.catalog.get("Extensions"))
     # Valid PDF version names are ordered by their one-digit components.
     effective = (
         max(header, str(declared))
@@ -557,7 +569,7 @@ def arlington(path: Path, flavour: str) -> str:
     )
     version = "arlington" + effective
     names = [EXTENSIONS[flavour]] if flavour in EXTENSIONS else []
-    if declares_pades:
+    if pades:
         names.append("ETSI_PAdES")
     return f"{version}+{','.join(names)}" if names else version
 

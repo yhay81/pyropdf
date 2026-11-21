@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 39 | 32 | 760 |
-| interpret | 9 | 19 | 0 | 20 | 40 | 743 |
-| create | 0 | 0 | 21 | 22 | 58 | 730 |
-| edit | 0 | 0 | 0 | 31 | 48 | 752 |
-| preserve | 0 | 0 | 0 | 11 | 37 | 783 |
+| read | 0 | 0 | 0 | 40 | 30 | 761 |
+| interpret | 9 | 19 | 0 | 21 | 39 | 743 |
+| create | 0 | 0 | 21 | 23 | 51 | 736 |
+| edit | 0 | 0 | 0 | 30 | 43 | 758 |
+| preserve | 0 | 0 | 0 | 11 | 34 | 786 |
 
 ## Clauses
 
@@ -42,14 +42,14 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 7.2 | Lexical conventions | `lexical-conventions` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.3 | Objects | `basic-objects` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
-| 7.4.2 | ASCIIHexDecode filter | `asciihex-filter` | 1 done | 1 n/a | 1 planned | 1 partial | 1 done |
-| 7.4.3 | ASCII85Decode filter | `ascii85-filter` | 1 done | 1 n/a | 1 planned | 1 planned | 1 planned |
-| 7.4.4 | LZWDecode and FlateDecode filters | `flate-filter`, `lzw-filter` | 1 done, 1 planned | 1 n/a, 1 planned | 1 done, 1 planned | 2 planned | 1 done, 1 planned |
-| 7.4.5 | RunLengthDecode filter | `run-length-filter` | 1 planned | 1 n/a | 1 planned | 1 planned | 1 planned |
-| 7.4.6 | CCITTFaxDecode filter | `ccitt-fax-filter` | 1 done | 1 n/a | 1 planned | 1 partial | 1 done |
-| 7.4.7 | JBIG2Decode filter | `jbig2-filter` | 1 done | 1 n/a | 1 planned | 1 planned | 1 done |
+| 7.4.2 | ASCIIHexDecode filter | `asciihex-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.3 | ASCII85Decode filter | `ascii85-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.4 | LZWDecode and FlateDecode filters | `flate-filter`, `lzw-filter` | 1 done, 1 partial | 1 n/a, 1 partial | 1 done, 1 partial | 2 partial | 2 done |
+| 7.4.5 | RunLengthDecode filter | `run-length-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.6 | CCITTFaxDecode filter | `ccitt-fax-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.7 | JBIG2Decode filter | `jbig2-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.4.8 | DCTDecode filter | `dct-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
-| 7.4.9 | JPXDecode filter | `jpx-filter` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
+| 7.4.9 | JPXDecode filter | `jpx-filter` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.4.10 | Crypt filter | `crypt-filter` | 1 partial | 1 n/a | 1 partial | 1 partial | 1 partial |
 | 7.5.2 | File header | `file-header` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.4 | Cross-reference table | `xref-table` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-347 unfinished cells in 831 features: 9 engine, 123 partial, 215 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+331 unfinished cells in 831 features: 9 engine, 125 partial, 197 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -350,12 +350,9 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - create, edit — `signature-fields`, `digital-signatures`.
 - [#993](https://github.com/yhay81/pyropdf/issues/993) Render explicit legacy crypt filters and independently keyed recipient streams from the store. Interpret explicit legacy password filters and an independently keyed page stream through the authenticated version, including correct refusal for an unauthorized page.
     - interpret — `crypt-filters`.
-- [#891](https://github.com/yhay81/pyropdf/issues/891) Complete stream filter read, rewrite and preservation cases. Round-trip encoded and decoded streams across the listed filter chains and parameters. Cover ASCIIHex re-encoding, Group 3 fax and JPX output gaps, and retain untouched encoded data. Account for unsupported encoder paths explicitly.
-    - read — `lzw-filter`, `run-length-filter`.
-    - interpret — `lzw-filter`.
-    - create — `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
-    - edit — `flate-filter`, `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
-    - preserve — `ascii85-filter`, `lzw-filter`, `run-length-filter`.
+- [#982](https://github.com/yhay81/pyropdf/issues/982) Round-trip packed and wide predictor rows after adopting the hayro fix. Adopt the released row-local decoder through #603, then verify partially filled TIFF rows, externally filtered partial PNG pixel strides and predictor pixels wider than 255 bits in independent save and render controls.
+    - read, interpret, create — `lzw-filter`.
+    - edit — `flate-filter`, `lzw-filter`.
 
 ### 253 Understanding
 
