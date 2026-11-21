@@ -25,16 +25,26 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Exercise sampled/calculator functions, function edits, tiling and uncolored patterns and shading types 1–7. Create and edit resources through the store, verify mesh and function evaluation independently and round-trip untouched data."
 
-[families.device-rendering]
+[families.print-device-engine]
 tracker = 248
-issue = 898
-title = "Verify device-dependent colour and halftone rendering against independent samples"
+issue = 1001
+kind = "upstream"
+title = "hayro: apply output-device parameters when proofing print and screened output"
 features = [
-    "overprint", "color-conversion", "device-color-conversion", "transfer-functions", "halftones",
-    "scan-conversion", "rendering-intents", "separation-rendering",
+    "overprint", "color-conversion", "transfer-functions", "halftones", "scan-conversion",
+    "rendering-intents", "separation-rendering",
 ]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read, write and retain the corresponding output-device parameters. Independently compare separation, overprint, rendering intents, transfer, BG2/UCR2, halftone and scan-conversion output and route confirmed interpreter gaps through the upstream workflow."
+dimensions = ["interpret"]
+behavior = "Apply per-object ICC intent, four-channel transfer, process and named spot plate overprint, selected halftones and scan parameters on suitable devices. RGB alternate, calibrated and transfer samples are verified."
+
+[families.recolour-black-generation]
+tracker = 248
+parent = 250
+issue = 1002
+title = "Apply active black generation and undercolor removal when rewriting CMYK colours"
+features = ["device-color-conversion"]
+dimensions = ["edit"]
+behavior = "Evaluate the active BG2/UCR2 functions when converting paint and image samples to DeviceCMYK in Page.recolor and Document.recolor."
 
 [families.optional-content-engine]
 tracker = 248
