@@ -19,7 +19,7 @@ _END = "</x:xdp>"
 _NEW = '<a:datasets id="one">updated</a:datasets>'
 
 
-def _source(*, array: bool, encoding: str = "utf-8") -> tuple[bytes, list[bytes]]:
+def _source(*, array: bool, encoding: str = "utf-8", version: str = "1.7") -> tuple[bytes, list[bytes]]:
     pieces = [part.encode(encoding) for part in (_OPEN, _TEMPLATE, _DATA, _SECOND, _END)]
     with pikepdf.new() as pdf:
         pdf.add_blank_page(page_size=(200, 200))
@@ -38,7 +38,7 @@ def _source(*, array: bool, encoding: str = "utf-8") -> tuple[bytes, list[bytes]
         pdf.Root.AcroForm = pdf.make_indirect(pikepdf.Dictionary(Fields=pikepdf.Array(), XFA=resource))
         pdf.Root.AcroForm.Other = pikepdf.String("keep form entries")
         buffer = io.BytesIO()
-        pdf.save(buffer)
+        pdf.save(buffer, min_version=version)
     return buffer.getvalue(), pieces
 
 
@@ -178,3 +178,15 @@ def test_irs_form_1040_preserves_ten_other_xfa_packets(*, incremental: bool) -> 
         assert ET.fromstring(b"".join(stream.read_bytes() for stream in list(array)[1::2])).tag == (  # noqa: S314
             "{http://ns.adobe.com/xdp/}xdp"
         )
+
+
+@pytest.mark.spec("xfa", "read", "edit", "preserve")
+def test_pdf20_can_remove_its_existing_deprecated_xfa_resource() -> None:
+    data, _ = _source(array=True, version="2.0")
+    assert data.startswith(b"%PDF-2.0")
+    with pyropdf.open(data) as doc:
+        assert "datasets" in doc.form.xfa_packet_names
+        assert doc.form.remove_xfa()
+        with pikepdf.open(io.BytesIO(doc.to_bytes(incremental=True))) as pdf:
+            assert "/XFA" not in pdf.Root.AcroForm
+            assert pdf.Root.SharedPacket.read_bytes() == _DATA.encode()
