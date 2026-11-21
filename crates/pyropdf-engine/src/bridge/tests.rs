@@ -700,7 +700,7 @@ fn an_edit_then_a_page_read_parses_and_serializes_only_what_it_wrote() {
     let edited = transaction.commit(&budget).unwrap();
 
     let edited_pages = page_index(&edited);
-    let (bytes, update) = update(&edited, &[], None, &budget).unwrap();
+    let (bytes, update) = update(&edited, &[], None, None, &budget).unwrap();
     let bridged = Bridged::new(&edited, &edited_pages, &budget).unwrap();
     let reads = base.reads.lock().unwrap().clone();
     // The store reads no object of the file again, the page tree's nodes

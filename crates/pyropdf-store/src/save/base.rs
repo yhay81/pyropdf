@@ -42,6 +42,24 @@ impl FileBase {
         Self::new(index, budget)
     }
 
+    /// Opens the index using a provider that unwraps only the CMS envelopes
+    /// addressed to its credential. No key or partial document is published
+    /// until the store validates the complete filter.
+    pub fn open_with_recipient(
+        bytes: Bytes,
+        decrypt: impl FnMut(&[u8]) -> Result<Option<[u8; 24]>>,
+        budget: &Budget,
+    ) -> Result<Self> {
+        let mut index = Index::open(bytes, budget)?;
+        if !index.is_encrypted() {
+            return Self::new(index, budget);
+        }
+        let dict = encryption_dict(&index, budget)?.ok_or(Password::Recipient)?;
+        let handler = Handler::open_recipient(&dict, decrypt, budget)?;
+        index.unlock(handler, budget)?;
+        Self::new(index, budget)
+    }
+
     /// Connects an already-open index to versions. The high-water mark
     /// includes free entries and `/Size`, so allocation cannot reuse an
     /// object number that the original file reserved.
@@ -86,10 +104,21 @@ impl FileBase {
         let Some(mut rev_index) = index.revision(revision, budget)? else {
             return Ok(None);
         };
+        if let Some(handler) = index.security().filter(|h| h.is_recipient()) {
+            if encryption_dict(index, budget)? == encryption_dict(&rev_index, budget)? {
+                rev_index.unlock(handler.clone(), budget)?;
+            } else {
+                unlock(&mut rev_index, None, budget)?;
+            }
+            return Self::new(rev_index, budget).map(Some);
+        }
         let password = index.security().map(Handler::password);
         if let Err(error) = unlock(&mut rev_index, password, budget) {
             if password.is_some()
-                && error.kind() == &crate::ErrorKind::Password(Password::Incorrect)
+                && matches!(
+                    error.kind(),
+                    crate::ErrorKind::Password(Password::Incorrect | Password::Recipient)
+                )
             {
                 unlock(&mut rev_index, None, budget)?;
             } else {
@@ -216,17 +245,10 @@ fn unlock(index: &mut Index, password: Option<&[u8]>, budget: &Budget) -> Result
     if !index.is_encrypted() {
         return Ok(());
     }
-    let encrypt = match index.trailer().get("Encrypt") {
-        Some(Value::Dict(dict)) => Some(dict.clone()),
-        Some(&Value::Reference(reference)) => match index.object(reference, budget)? {
-            Some(bytes) => match Value::parse(&bytes, budget)? {
-                Value::Dict(dict) => Some(dict),
-                _ => None,
-            },
-            None => None,
-        },
-        _ => None,
-    };
+    let encrypt = encryption_dict(index, budget)?;
+    if password.is_some() && encrypt.as_ref().is_some_and(|dict| matches!(dict.get("Filter"), Some(Value::Name(n)) if n.as_bytes() == b"Adobe.PubSec")) {
+        return Err(Password::Recipient.into());
+    }
     let id = match index.trailer().get("ID") {
         Some(Value::Array(id)) => match id.get(0) {
             Some(Value::String(first)) => first.as_bytes(),
@@ -252,4 +274,18 @@ fn unlock(index: &mut Index, password: Option<&[u8]>, budget: &Budget) -> Result
         index.unlock(handler, budget)?;
     }
     Ok(())
+}
+
+fn encryption_dict(index: &Index, budget: &Budget) -> Result<Option<Dict>> {
+    Ok(match index.trailer().get("Encrypt") {
+        Some(Value::Dict(dict)) => Some(dict.clone()),
+        Some(&Value::Reference(reference)) => match index.object(reference, budget)? {
+            Some(bytes) => match Value::parse(&bytes, budget)? {
+                Value::Dict(dict) => Some(dict),
+                _ => None,
+            },
+            None => None,
+        },
+        _ => None,
+    })
 }

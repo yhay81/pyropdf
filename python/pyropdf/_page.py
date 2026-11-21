@@ -934,8 +934,12 @@ class Page:
         _validate_optional_positive_int("max_elements", max_elements)
         clip_box = None if clip is None else _clip_box(clip)
         try:
+            reader = self._reader()
+            snapshot = None
+            if text_runs:
+                snapshot = reader if isinstance(reader, _core._PageSnapshot) else _core.snapshot_pages(reader)  # noqa: SLF001
             raw = _core.page_content(
-                self._reader(),
+                snapshot if snapshot is not None else reader,
                 self._number,
                 self._generation,
                 (text_runs, paths, images),
@@ -945,7 +949,7 @@ class Page:
             )
         except StaleObjectError as error:
             raise self._stale() from error
-        return _content_from_core(raw, self._document)
+        return _content_from_core(raw, self._document, snapshot)
 
     def paths(
         self,
