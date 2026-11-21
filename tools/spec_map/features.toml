@@ -690,7 +690,7 @@ interpret = { status = "engine", upstream = 1001 }
 clause = "10.4"
 description = "Conversions among device color spaces, black generation, and undercolor removal."
 objects = []
-edit = { status = "partial", missing = "The output-device resources retain custom BG2 and UCR2 functions. Page and document recolouring still use full black generation and undercolor removal when rewriting RGB to CMYK.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The active black-generation and undercolor-removal functions apply to RGB paint, Forms and images. Filtered, nested and larger functions outside the bounded evaluator retain source color and are reported; #1007 tracks the remaining interpreter support.", milestone = "Phase 4: Specification" }
 
 [features.transfer-functions]
 clause = "10.5"
