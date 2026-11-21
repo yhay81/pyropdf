@@ -1466,6 +1466,7 @@ ocr = [
     { name = "pylopdf-ocr-models" },
 ]
 recipients = [
+    { name = "asn1crypto" },
     { name = "cryptography" },
 ]
 zh-cn = [
@@ -1498,6 +1499,7 @@ oracles = [
 
 [package.metadata]
 requires-dist = [
+    { name = "asn1crypto", marker = "extra == 'recipients'", specifier = ">=1.5.1" },
     { name = "cryptography", marker = "extra == 'recipients'", specifier = ">=44" },
     { name = "pylopdf-fonts-jp", marker = "extra == 'jp'", specifier = ">=0.1.1,<0.2" },
     { name = "pylopdf-fonts-ko", marker = "extra == 'ko'", specifier = ">=0.1.1,<0.2" },
