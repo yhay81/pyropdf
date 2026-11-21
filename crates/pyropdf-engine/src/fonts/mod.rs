@@ -21,6 +21,7 @@ pub mod shape;
 mod tests;
 pub mod type1;
 pub mod type3;
+pub(crate) mod validity;
 
 /// A subset font program.
 #[derive(Debug, Clone, PartialEq, Eq)]

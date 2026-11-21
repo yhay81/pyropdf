@@ -88,3 +88,26 @@ existing font stream contains a usable program is tracked separately in
 [#1041](https://github.com/yhay81/pyropdf/issues/1041).
 
 Reproduce with `uv run python tools/verapdf.py --jar /path/to/greenfield-apps-1.28.2.jar --arlington /path/to/arlington.jar`.
+
+### Damaged embedded programs
+
+The `program-page-{empty,invalid}` and
+`program-appearance-{empty,invalid}` cases keep the descriptor's
+`/FontFile2` reference and replace the referenced Noto Sans Hebrew program.
+The page case uses an invoked nested Form. The appearance case uses one
+normal state of a tagged checkbox. The changed program is object 7 in
+the PDF/A-2b input and object 12 in the dual PDF/UA-2 and PDF/A-4 input.
+
+The two pinned veraPDF 1.28.2 jars give 84 forced-profile results across
+the prepared inputs, full and incremental edits, and controls. All 36
+input and valid-control results pass. The 48 edited or reopened-invalid
+results fail exactly 6.2.11.4.1-1 (PDF/A-2b), 6.2.10.4.1-1 (PDF/A-4),
+or 8.4.5.5.1-1 (PDF/UA-2). All 28 Arlington appearance controls pass.
+The pre-save report attributes the new failure to the program's object
+and stays empty after a subsequent rotation of the reopened invalid file.
+
+Additional controls use real embedded Type 1 and name-keyed CFF programs,
+CID-keyed CFF, and OpenType CFF and TrueType faces. A CIDFontType0 may use
+a CFF program without CIDFont operators. Its CIDs then address glyphs by
+index. See clauses 9.7.4.2 and 9.9 in the
+[PDF standard](https://opensource.adobe.com/dc-acrobat-sdk-docs/standards/pdfstandards/pdf/PDF32000_2008.pdf).

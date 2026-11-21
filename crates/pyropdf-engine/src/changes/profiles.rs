@@ -281,6 +281,7 @@ pub(super) struct PathReads<'a> {
     pub(super) font_owners: BudgetVec<'a, u32>,
     pub(super) appearance_fonts: BudgetVec<'a, FontUse>,
     pub(super) changed_programs: BudgetVec<'a, u32>,
+    pub(super) embedded_fonts: BudgetVec<'a, programs::Pair>,
 }
 impl<'a> PathReads<'a> {
     pub(super) fn new(version: &'a Version, budget: &'a Budget) -> Self {
@@ -291,6 +292,7 @@ impl<'a> PathReads<'a> {
             font_owners: BudgetVec::new(budget),
             appearance_fonts: BudgetVec::new(budget),
             changed_programs: BudgetVec::new(budget),
+            embedded_fonts: BudgetVec::new(budget),
         }
     }
     pub(super) fn resolve<'v>(&mut self, value: Option<&'v Value>) -> Result<Option<Resolved<'v>>> {
