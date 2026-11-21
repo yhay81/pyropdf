@@ -764,6 +764,25 @@ def signature_widget_controls(jar: Path, directory: Path) -> list[tuple[str, Pat
     return run(jar, files, outcomes=outcomes)
 
 
+def artifact_widget_label_controls(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Verify the actual label in a signature widget's reciprocal structure relationships."""
+    fixtures = runpy.run_path(str(ROOT / "tests/test_changes.py"))
+    files = {}
+    outcomes = {}
+    for label, has_label in fixtures["WIDGET_LABELS"].items():
+        original = fixtures["tagged_signature_widget"](label)
+        with pyropdf.open(original) as doc:
+            del doc.form["Review"].obj["Contents"]
+            saves = {"original": original, "full": doc.to_bytes(), "incremental": doc.to_bytes(incremental=True)}
+        for mode, data in saves.items():
+            path = directory / f"artifact-widget-{label}-{mode}.pdf"
+            path.write_bytes(data)
+            files[path] = "ua2"
+            if mode != "original" and not has_label:
+                outcomes[f"ua2 {path.name}"] = ("#1094", {"8.10.2.3-1"})
+    return run(jar, files, outcomes=outcomes)
+
+
 def negative_control(source: Path, flavour: str) -> tuple[bytes, str]:
     """Break one requirement, leaving the XMP claim, xref offsets and stream lengths intact."""
     if flavour.startswith("ua"):
@@ -860,6 +879,7 @@ def main() -> int:
         failures += run(args.jar.resolve(), dual_archival(media))
         failures += controls(args.jar.resolve(), Path(directory))
         failures += signature_widget_controls(args.jar.resolve(), Path(directory))
+        failures += artifact_widget_label_controls(args.jar.resolve(), Path(directory))
         if args.arlington:
             models = {path: arlington(path, flavour) for path, flavour in files.items()}
             models.update(rich_media_saves(Path(directory)))

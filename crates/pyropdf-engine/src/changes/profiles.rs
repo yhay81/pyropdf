@@ -1,6 +1,8 @@
 //! Profile effects that depend on a catalog relationship, changed page content,
 //! or the previous value of a written object.
 
+mod widgets;
+
 use super::*;
 use crate::content::PageContent;
 use pyropdf_store::memo::Reads;
@@ -86,24 +88,6 @@ fn archival_annotation_flags(
         .then_some("the annotation flags disable printing or hide the annotation"))
 }
 
-/// ISO 14289-2 §8.9.2.4.13 treats a widget of zero width and height as an artifact.
-#[expect(
-    clippy::float_cmp,
-    reason = "the rule requires exactly equal opposite edges"
-)]
-fn zero_size_widget(version: &Version, dict: &Dict, budget: &Budget) -> Result<bool> {
-    let Some(rect) = dict
-        .get("Rect")
-        .filter(|_| named(dict, "Subtype", b"Widget"))
-    else {
-        return Ok(false);
-    };
-    let reader = crate::annotations::Reader::new(version, budget);
-    Ok(reader
-        .numbers_of(rect, 4)?
-        .is_some_and(|coords| matches!(&coords[..], [x0, y0, x1, y1] if x0 == x1 && y0 == y1)))
-}
-
 fn local_rules(
     claim: Claim,
     version: &Version,
@@ -166,7 +150,7 @@ fn local_rules(
     }
     if matches!(claim, Claim::Ua(_))
         && is_untagged_annotation(dict)
-        && !(claim == Claim::Ua(2) && zero_size_widget(version, dict, budget)?)
+        && !(claim == Claim::Ua(2) && widgets::zero_size(version, dict, budget)?)
     {
         reasons[2] = Some("the edits add an annotation that is not in the structure tree");
     }
@@ -590,7 +574,7 @@ pub(super) fn dependencies<'b>(
     budget: &'b Budget,
 ) -> Result<()> {
     if claim == Claim::Ua(2) {
-        invisible_widget_changes(opened, version, written, found, budget)?;
+        widgets::changes(opened, version, written, found, budget)?;
         let old = undescribed_files(opened, budget)?;
         for &(spec, holder) in undescribed_files(version, budget)?.iter() {
             if old
@@ -648,116 +632,6 @@ pub(super) fn dependencies<'b>(
         }
     }
     Ok(())
-}
-
-const WIDGET_DESCRIPTION: &str = "the invisible widget lacks a description in Contents";
-const PAGE_TABS: &str = "the page containing a widget lacks a valid tab order";
-
-struct WidgetRule {
-    reason: &'static str,
-    subject: u32,
-    cause: u32,
-    has_invisible_widget: bool,
-}
-
-fn invisible_widget_changes<'b>(
-    opened: &Version,
-    current: &Version,
-    written: &[u32],
-    found: &mut Reasons<'b>,
-    budget: &'b Budget,
-) -> Result<()> {
-    let current = widget_rules(current, written, budget)?;
-    if !current.iter().any(|rule| rule.has_invisible_widget) {
-        return Ok(());
-    }
-    let previous = widget_rules(opened, written, budget)?;
-    for rule in current.iter() {
-        if rule.has_invisible_widget
-            && previous
-                .binary_search_by_key(&(rule.reason, rule.subject), |r| (r.reason, r.subject))
-                .is_err()
-        {
-            record(found, rule.reason, Some(rule.cause), budget)?;
-        }
-    }
-    Ok(())
-}
-
-/// The before and after sets distinguish a newly broken rule from a page or widget
-/// which already failed it. A page with annotations already required Tabs, and
-/// an undescribed widget already lacked Contents before it was resized to zero.
-fn widget_rules<'b>(
-    version: &Version,
-    written: &[u32],
-    budget: &'b Budget,
-) -> Result<BudgetVec<'b, WidgetRule>> {
-    let mut out = BudgetVec::new(budget);
-    let reader = crate::annotations::Reader::new(version, budget);
-    let mut reads = Reads::new(version, budget);
-    let pages = PageIndex::build(&mut reads)?;
-    let changed =
-        |v: Option<&Value>| reference_number(v).filter(|n| written.binary_search(n).is_ok());
-    for page in pages.pages() {
-        budget.poll()?;
-        let Some(page_number) = page.object().map(|r| r.number()) else {
-            continue;
-        };
-        let dict = page.dict();
-        let annots = reader.entry(dict, "Annots")?;
-        let Some(Value::Array(items)) = annots.as_deref() else {
-            continue;
-        };
-        let holder = changed(dict.get("Annots")).unwrap_or(page_number);
-        let mut has_annotation = false;
-        let mut has_invisible_widget = false;
-        for item in items.iter() {
-            budget.poll()?;
-            let annot = reader.resolve(item)?;
-            let Some(widget) = value_dict(&annot) else {
-                continue;
-            };
-            has_annotation = true;
-            if !named(widget, "Subtype", b"Widget") {
-                continue;
-            }
-            let invisible = zero_size_widget(version, widget, budget)?;
-            has_invisible_widget |= invisible;
-            // An untagged artifact has no Lbl structure element. The field's T
-            // identifies the field and is not an accessible widget description.
-            if widget.get("StructParent").is_none()
-                && !matches!(
-                    reader.entry(widget, "Contents")?.as_deref(),
-                    Some(Value::String(_))
-                )
-            {
-                let cause = changed(Some(item))
-                    .or_else(|| changed(widget.get("Contents")))
-                    .or_else(|| changed(widget.get("Rect")))
-                    .unwrap_or(holder);
-                out.try_push(WidgetRule {
-                    reason: WIDGET_DESCRIPTION,
-                    subject: reference_number(Some(item)).unwrap_or(holder),
-                    cause,
-                    has_invisible_widget: invisible,
-                })?;
-            }
-        }
-        if has_annotation
-            && !matches!(reader.entry(dict, "Tabs")?.as_deref(),
-            Some(Value::Name(name)) if matches!(name.as_bytes(), b"A" | b"W" | b"S"))
-        {
-            out.try_push(WidgetRule {
-                reason: PAGE_TABS,
-                subject: page_number,
-                cause: changed(dict.get("Tabs")).unwrap_or(holder),
-                has_invisible_widget,
-            })?;
-        }
-    }
-    out.as_mut_slice()
-        .sort_unstable_by_key(|rule| (rule.reason, rule.subject));
-    Ok(out)
 }
 
 /// FileAttachment annotations and associated files have other descriptions.

@@ -296,6 +296,102 @@ def test_a_closed_document_refuses_a_report() -> None:
         doc.changes(incremental=True)
 
 
+# The independent machine rule requires a nonempty label in the widget's structure
+# parent or a Contents entry. A bare Artifact association supplies neither.
+WIDGET_LABELS = {"none": False, "empty": False, "label": True, "legacy": True, "namespace": True, "other": False}
+
+
+def tagged_signature_widget(label: str) -> bytes:
+    """Attach the invisible signature widget to an Artifact through a real OBJR and ParentTree entry."""
+    with pyropdf.open(ASSETS.parent / "profile-sources/ua2-pass.pdf") as doc:
+        widget = doc.objects[doc.prepare_signature("Review")]
+        widget["Contents"] = "Approval by the reviewer"
+        root = doc.catalog["StructTreeRoot"]
+        parent = root["K"]
+        page = doc.pages[0].obj
+        key = root["ParentTreeNextKey"]
+        widget["StructParent"] = key
+        objr = {"Type": Name("OBJR"), "Pg": page, "Obj": widget}
+        artifact = doc.objects[
+            doc.objects.add(
+                {
+                    "Type": Name("StructElem"),
+                    "S": Name("Artifact"),
+                    "P": parent,
+                    "NS": parent["NS"],
+                    "Pg": page,
+                    "K": objr,
+                }
+            )
+        ]
+        parent["K"] = [parent["K"], artifact]
+        root["ParentTree"]["Nums"].extend([key, artifact])
+        root["ParentTreeNextKey"] = key + 1
+        if label != "none":
+            child = doc.objects[
+                doc.objects.add(
+                    {"Type": Name("StructElem"), "S": Name("Lbl"), "P": artifact, "NS": parent["NS"], "Pg": page}
+                )
+            ]
+            artifact["K"] = [objr, child]
+            if label != "empty":
+                child["K"] = 1
+                root["ParentTree"]["Nums"][1].append(child)
+                stream = doc.objects.add_stream(b"/Lbl <</MCID 1>> BDC BT /TT0 10 Tf 72 650 Td (test) Tj ET EMC")
+                page["Contents"] = [page["Contents"], doc.objects[stream]]
+            if label == "other":
+                child["S"] = Name("Span")
+            if label in {"legacy", "namespace"}:
+                child["S"] = Name("ReviewLabel")
+                if label == "legacy":
+                    del child["NS"]
+                    root["RoleMap"] = {"ReviewLabel": Name("Lbl")}
+                else:
+                    ns = doc.objects[
+                        doc.objects.add(
+                            {
+                                "Type": Name("Namespace"),
+                                "NS": "https://example.org/review-tags",
+                                "RoleMapNS": {"ReviewLabel": [Name("Lbl"), parent["NS"]]},
+                            }
+                        )
+                    ]
+                    root["Namespaces"].append(ns)
+                    child["NS"] = ns
+        return doc.to_bytes()
+
+
+@pytest.mark.parametrize(("label", "has_label"), WIDGET_LABELS.items())
+def test_an_artifact_parent_supplies_a_widget_label_only_through_its_labeled_content(
+    label: str, *, has_label: bool
+) -> None:
+    with pyropdf.open(tagged_signature_widget(label)) as doc:
+        widget = doc.form["Review"].obj
+        del widget["Contents"]
+        for incremental in (False, True):
+            losses = doc.changes(incremental=incremental).claims
+            if has_label:
+                assert losses == ()
+            else:
+                (loss,) = losses
+                assert loss.claim == "PDF/UA-2"
+                assert loss.objects == (widget.xref,)
+                assert "description" in loss.reason
+
+
+def test_changing_the_label_role_names_the_changed_structure_element() -> None:
+    with pyropdf.open(tagged_signature_widget("label")) as original:
+        del original.form["Review"].obj["Contents"]
+        baseline = original.to_bytes()
+    with pyropdf.open(baseline) as doc:
+        label = doc.catalog["StructTreeRoot"]["K"]["K"][1]["K"][1]
+        label["S"] = Name("Span")
+        for incremental in (False, True):
+            (loss,) = doc.changes(incremental=incremental).claims
+            assert loss.objects == (label.xref,)
+            assert "description" in loss.reason
+
+
 @pytest.mark.parametrize("incremental", [False, True])
 @pytest.mark.parametrize("tabs", [False, True])
 @pytest.mark.parametrize("described", [False, True])
