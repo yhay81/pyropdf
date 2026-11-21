@@ -133,7 +133,10 @@ waiting on an explicit owner decision or release gate should say so and
 link its issue. A ready PR does not wait for separate merge permission.
 
 Before merge, check the **current head's** CI, acceptance criteria, unresolved
-reviews, and any explicit hold or release gate. After merge, verify the issue
+reviews, and any explicit hold or release gate. If the base moved after CI, fetch it
+and run `python3 tools/spec_map/check_merge.py origin/main HEAD` to check the
+prospective merge. Add `--api` when the changes affect public classes or their
+inherited members. After merge, verify the issue
 closed, remove its `in-progress` label, and inspect the main CI and newly
 unblocked work with the report. A failed main check gets an issue or an
 explicit handoff. Close a phase tracker only after verifying its exit
