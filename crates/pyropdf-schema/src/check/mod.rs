@@ -488,7 +488,7 @@ impl<'g, G: Graph> Walk<'g, G> {
             if at >= items.len()
                 && key.required == Condition::Always
                 && !key.deprecated.is_some_and(|dep| self.version >= dep)
-                && self.introduced(array, key)? == Some(true)
+                && self.introduced(array, described, key)? == Some(true)
             {
                 let message = format!("element {at} is required");
                 self.defect(object, path, described, key, DefectKind::Required, message);
@@ -508,21 +508,17 @@ impl<'g, G: Graph> Walk<'g, G> {
     }
 
     /// Whether the file's version and declared extensions introduce `key`.
-    fn introduced(&mut self, holder: &G::Value, key: &Key) -> Result<Option<bool>, G::Error> {
-        match key.since {
-            Since::Version(since) => Ok(Some(since <= self.version)),
-            Since::When(predicate) => {
-                let scope = self.scope(holder, None);
-                let decided = match parse(predicate) {
-                    Some(expr) => scope.eval_since(&expr)?.truth(),
-                    None => None,
-                };
-                if decided.is_none() {
-                    self.report.unchecked += 1;
-                }
-                Ok(decided)
-            }
+    fn introduced(
+        &mut self,
+        holder: &G::Value,
+        described: &Object,
+        key: &Key,
+    ) -> Result<Option<bool>, G::Error> {
+        let decided = self.scope(holder, None).introduced(described, key)?;
+        if decided.is_none() {
+            self.report.unchecked += 1;
         }
+        Ok(decided)
     }
 
     fn required(
@@ -536,7 +532,7 @@ impl<'g, G: Graph> Walk<'g, G> {
         if key.deprecated.is_some_and(|dep| self.version >= dep) {
             return Ok(());
         }
-        if self.introduced(dict, key)? != Some(true) {
+        if self.introduced(dict, described, key)? != Some(true) {
             return Ok(());
         }
         let required = match key.required {
@@ -657,7 +653,7 @@ impl<'g, G: Graph> Walk<'g, G> {
         if view == View::Null {
             return Ok(());
         }
-        if self.introduced(holder, key)? == Some(false) {
+        if self.introduced(holder, described, key)? == Some(false) {
             let needed = match key.since {
                 Since::Version(since) => format!("PDF {since}"),
                 Since::When(predicate) => predicate.to_owned(),
@@ -714,7 +710,7 @@ impl<'g, G: Graph> Walk<'g, G> {
         };
         if self.authoring
             && let Interpretation::Refused(reason) =
-                interpret(self.graph, holder, key, Some(value))?
+                interpret(self.graph, holder, described, key, Some(value))?
         {
             self.defect(
                 object,
@@ -916,13 +912,7 @@ impl<'g, G: Graph> Walk<'g, G> {
             {
                 continue;
             }
-            let active = match key.since {
-                Since::Version(since) => since <= self.version,
-                Since::When(predicate) => match parse(predicate) {
-                    Some(expr) => scope.eval_since(&expr)?.truth() == Some(true),
-                    None => false,
-                },
-            };
+            let active = scope.introduced(described, key)? == Some(true);
             missing += usize::from(active);
         }
         Ok(missing)

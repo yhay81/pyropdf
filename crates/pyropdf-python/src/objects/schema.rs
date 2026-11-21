@@ -105,7 +105,9 @@ pub fn schema_entry<'py>(
                 }
             }
             let inherited = parent.as_ref().map(|(r, _)| (r.number(), r.generation()));
-            let tag = match interpret(&graph, holder, key, value).map_err(|e| store_error(&e))? {
+            let tag = match interpret(&graph, holder, model, key, value)
+                .map_err(|e| store_error(&e))?
+            {
                 Interpretation::Absent => ("", None, None, py.None().into_bound(py), None, None),
                 Interpretation::Default(_, literal) if literal.starts_with('@') => {
                     let source = &literal[1..];

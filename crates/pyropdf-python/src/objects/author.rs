@@ -99,10 +99,10 @@ fn incoming(
                 (proposed, holder, found.role)
                 && number != root.0
                 && !link.element
-                && let Some(key) =
-                    pyropdf_schema::object(link.holder).and_then(|obj| obj.key(link.key))
+                && let Some(model) = pyropdf_schema::object(link.holder)
+                && let Some(key) = model.key(link.key)
                 && let Some(owner) = graph.resolve(number).map_err(|e| store_error(&e))?
-                && matches!(interpret(&graph, &owner, key, Some(value)).map_err(|e| store_error(&e))?,
+                && matches!(interpret(&graph, &owner, model, key, Some(value)).map_err(|e| store_error(&e))?,
                     Interpretation::Value(_, Some(target)) if target == name)
             {
                 continue;
