@@ -7,11 +7,15 @@ tools/arlington/generate.py writes their stub, python/pyropdf/typed.pyi.
 
 from __future__ import annotations
 
+import csv
+import io
 import re
 from pathlib import Path
 from typing import Any, cast
 
+import pikepdf
 import pytest
+from assets.broken.generate import pdf
 from corpus import ASSETS
 
 import pyropdf
@@ -297,3 +301,287 @@ def test_every_key_of_every_object_type_round_trips(name: str) -> None:
         if isinstance(obj, Dictionary) and not (isinstance(obj, Stream) and key == "Length"):
             del view[step]
             assert step not in obj
+
+
+# Each row fixes an expected result independently of the runtime descriptors.
+# Every probe keeps the valid or malformed value in object 4; replacing that
+# object exercises the versioned handle without reconstructing the typed view.
+with (Path(__file__).parent / "fixtures" / "arlington-values.tsv").open(encoding="utf-8", newline="") as _file:
+    _INTERPRET = {row["Object"]: row for row in csv.DictReader(_file, delimiter="\t")}
+
+_PRIMITIVE_ONLY = {
+    "ArrayOfBooleansGeneral",
+    "ArrayOfIntegersGeneral",
+    "ArrayOfNamesGeneral",
+    "ArrayOfNumbersGeneral",
+    "_UniversalArray",
+    "_UniversalDictionary",
+}
+
+
+def test_standalone_interpretation_inventory_is_exhaustive() -> None:
+    assert set(_INTERPRET).isdisjoint(_PRIMITIVE_ONLY)
+    assert set(_INTERPRET) | _PRIMITIVE_ONLY == set(typed.TYPES)
+
+
+def _probe(name: str, key: str, raw: bytes, reference: bytes = b"4 0 R") -> tuple[Any, str | int]:
+    """Build a standalone holder independently of pyropdf's model and writer."""
+    cls = getattr(typed, _class_name(name))
+    step: str | int
+    if issubclass(cls, typed.ArrayView):
+        step = int(key.rstrip("*") or "0")
+        suffix = b" 2 -100 100" if name == "LabRangeArray" else b""
+        holder = b"[" + b"null " * step + reference + suffix + b"]"
+    else:
+        step = "Probe" if key == "*" else key
+        extra = b" /max 2" if name == "OptContentZoom" else b""
+        holder = b"<< /" + step.encode() + b" " + reference + extra + b" >>"
+        if issubclass(cls, typed.StreamView):
+            holder = holder[:-2] + b" /Length 0 >>\nstream\n\nendstream"
+    catalog = (
+        b"<< /Type /Catalog /Pages 2 0 R /Extensions << /AAPL << >> /OpenOffice << >> "
+        b"/GTSm [<< /BaseVersion /2.0 /ExtensionLevel 1 >>] >> >>"
+    )
+    data = pdf([catalog, b"<< /Type /Pages /Kids [] /Count 0 >>", holder, raw], "2.0")
+    doc = pyropdf.open(data)
+    return cls(doc.objects[3]), step
+
+
+@pytest.mark.spec("arlington-values", "interpret")
+@pytest.mark.parametrize("name", _INTERPRET)
+def test_standalone_entry_interprets_the_current_store_value(name: str) -> None:
+    row = _INTERPRET[name]
+    view, step = _probe(name, row["Key"], row["Value"].replace(r"\n", "\n").encode())
+    value = view.interpret(step)
+    expected = row["Expected"]
+    if expected in typed.TYPES and row["Kind"] in {"dictionary", "stream", "array"}:
+        assert isinstance(value, getattr(typed, _class_name(expected)))
+        assert value.obj.xref == 4
+    elif row["Kind"] in {"array", "dictionary", "stream", "name-tree", "number-tree"}:
+        handles = {"array": Array, "dictionary": Dictionary, "stream": Stream}
+        assert isinstance(value, handles[expected])
+        assert value.xref == 4
+    elif row["Kind"] in {"matrix", "rectangle"}:
+        assert tuple(value) == tuple(map(float, expected.split()))
+    elif row["Kind"] in {"integer", "number", "bitmask"}:
+        assert type(value) in {int, pyropdf.Real}
+        assert value == float(expected)
+    elif row["Kind"] == "null":
+        assert value is None
+    elif row["Kind"] == "boolean":
+        assert value is (expected == "true")
+    elif row["Kind"] in {"string", "string-byte"}:
+        assert isinstance(value, pyropdf.String)
+        assert bytes(value) == expected.encode()
+    else:
+        assert value == expected
+        assert isinstance(value, Name) == (row["Kind"] == "name")
+    broken, address = _probe(name, row["Key"], row["Value"].replace(r"\n", "\n").encode(), b"4 1 R")
+    with pytest.raises(pyropdf.MalformedPdfError, match="unresolved reference"):
+        broken.interpret(address)
+    invalid = {"false": False, "-9": -9, "/Bogus": Name("Bogus")}
+    view.obj[step] = invalid[row["Invalid"]]
+    with pytest.raises(pyropdf.PdfError):
+        view.interpret(step)
+
+
+def test_ambiguous_dictionary_and_array_links_do_not_guess_a_type() -> None:
+    doc = pyropdf.Document()
+    table = typed.ColorSpaceMap(doc.objects[doc.objects.add({"Paint": [Name("Lab"), {"WhitePoint": [1, 1, 1]}]})])
+    assert isinstance(table.interpret("Paint"), typed.LabColorSpace)
+    assert isinstance(table["Paint"], typed.LabColorSpace)
+    table.obj["Paint"][0] = Name("CalGray")
+    assert isinstance(table.interpret("Paint"), typed.CalGrayColorSpace)
+    table.obj["Paint"][0] = Name("Bogus")
+    with pytest.raises(pyropdf.PdfError, match="no unique linked object"):
+        table.interpret("Paint")
+    doc.history.undo()
+    assert isinstance(table.interpret("Paint"), typed.CalGrayColorSpace)
+
+    params = typed.ArrayOfDecodeParams(doc.objects[doc.objects.add([{}])])
+    with pytest.raises(pyropdf.PdfError, match="no unique linked object"):
+        params.interpret(0)
+    params.obj[0] = {"Type": Name("CryptFilterDecodeParms")}
+    assert isinstance(params.interpret(-1), typed.FilterCrypt)
+
+
+@pytest.mark.parametrize(
+    ("flags", "target"), [(0, typed.FieldBtnCheckbox), (1 << 15, typed.FieldBtnRadio), (1 << 16, typed.FieldBtnPush)]
+)
+def test_ambiguous_button_subtypes_use_inherited_field_flags(flags: int, target: type) -> None:
+    doc = pyropdf.Document()
+    parent = doc.objects[doc.objects.add({"FT": Name("Btn"), "Ff": flags})]
+    child = doc.objects[doc.objects.add({"T": "Example", "Parent": parent})]
+    fields = typed.ArrayOfFields(doc.objects[doc.objects.add([child])])
+    assert isinstance(fields.interpret(0), target)
+
+
+@pytest.mark.parametrize("ref", [b"60 0 R", b"4 1 R", b"4 0 R"])
+def test_invalid_and_cyclic_indirect_targets_are_refused(ref: bytes) -> None:
+    view, step = _probe("PageTreeNode", "Kids", b"4 0 R", ref)
+    with pytest.raises(pyropdf.MalformedPdfError, match=r"unresolved reference|reference chain"):
+        view.interpret(step)
+
+
+def test_possible_values_and_types_follow_the_documents_effective_version() -> None:
+    data = pdf(
+        [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [] /Count 0 >>", b"[/FlateDecode]"], "1.1"
+    )
+    doc = pyropdf.open(data)
+    filters = typed.ArrayOfFilterNames(doc.objects[3])
+    with pytest.raises(pyropdf.PdfError, match="admitted types or values"):
+        filters.interpret(0)
+    doc.catalog["Version"] = Name("1.2")
+    assert filters.interpret(0) == Name("FlateDecode")
+
+
+def test_conditional_defaults_and_required_keys_use_the_current_holder() -> None:
+    doc = pyropdf.Document()
+    obj = doc.objects[doc.objects.add({"StateModel": "Review"})]
+    note = typed.AnnotText(obj)
+    assert note.interpret("State") == "None"
+    obj["StateModel"] = "Marked"
+    assert note.interpret("State") == "Unmarked"
+    del obj["StateModel"]
+    assert note.interpret("State") is None
+    zoom = typed.OptContentZoom(doc.objects[doc.objects.add({"min": 2, "max": 1})])
+    with pytest.raises(pyropdf.PdfError, match="admitted types or values"):
+        zoom.interpret("max")
+    zoom.obj["max"] = 3
+    assert zoom.interpret("max") == 3
+
+    annotation = typed.AnnotText(doc.objects[doc.objects.add({"Rect": [0, 0, 5, 5]})])
+    doc.catalog["Version"] = Name("2.0")
+    with pytest.raises(pyropdf.PdfError, match="required value is absent"):
+        annotation.interpret("AP")
+
+
+def test_repeating_predicates_use_the_actual_position_and_inheritance_has_a_budget() -> None:
+    doc = pyropdf.Document()
+    values = typed.ArrayOfIntegersGreaterThanZero(doc.objects[doc.objects.add([3, 2, -1])])
+    assert values.interpret(1) == 2
+    with pytest.raises(pyropdf.PdfError, match="admitted types or values"):
+        values.interpret(2)
+    obj = doc.objects[doc.objects.add({})]
+    obj["Parent"] = obj
+    with pytest.raises(pyropdf.LimitError) as caught:
+        typed.PageObject(obj).interpret("Rotate")
+    assert caught.value.code == "object_depth"
+
+
+def test_typed_tree_lookup_resolves_multilevel_and_direct_leaf_handles() -> None:
+    doc = pyropdf.Document()
+    pages = doc.pages.new((100, 100))
+    values = doc.objects[
+        doc.objects.add([b"chart", [pages.obj, Name("Fit")], b"photo", [pages.obj, Name("XYZ"), None, None, 2]])
+    ]
+    child = doc.objects[doc.objects.add({"Limits": [b"chart", b"photo"], "Names": values})]
+    names = typed.Name(doc.objects[doc.objects.add({"Dests": {"Kids": [child]}})])
+    tree = names.interpret("Dests")
+    assert isinstance(tree, typed.LinkedTree)
+    assert isinstance(tree.lookup(b"chart"), typed.Dest0Array)
+    result = tree.lookup(b"photo")
+    assert isinstance(result, typed.DestXYZArray)
+    assert result.interpret(4) == 2
+    values[3] = [pages.obj, Name("FitH"), 15]
+    updated = tree.lookup(b"photo")
+    assert isinstance(updated, typed.Dest1Array)
+    assert updated.interpret(2) == 15
+    with pytest.raises(KeyError):
+        tree.lookup(b"missing")
+    with pytest.raises(TypeError):
+        tree.lookup(0)
+    values[1] = [pages.obj, Name("Unknown")]
+    with pytest.raises(pyropdf.PdfError, match="no unique linked tree value"):
+        tree.lookup(b"chart")
+
+    doc.catalog["PageLabels"] = {"Nums": [0, {"S": Name("r")}, 1, {"S": Name("D")}]}
+    labels = typed.Catalog(doc.catalog).interpret("PageLabels")
+    label = labels.lookup(1)
+    assert isinstance(label, typed.PageLabel)
+    assert label.interpret("S") == Name("D")
+    doc.catalog["PageLabels"]["Nums"][3]["S"] = Name("R")
+    assert label.interpret("S") == Name("R")
+    with pytest.raises(KeyError):
+        labels.lookup(-1)
+    with pytest.raises(TypeError):
+        labels.lookup(b"0")
+    doc.catalog["PageLabels"]["Nums"] = [0]
+    with pytest.raises(pyropdf.PdfError, match="unpaired key"):
+        labels.lookup(0)
+
+
+def test_indirect_discriminators_and_defaults_agree_with_qpdf_after_reopening() -> None:
+    # File bytes encode an indirect /ShadingType, an indirect /ColorSpace,
+    # and a crop box default that ultimately inherits the page's media box.
+    data = pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Count 1 /Kids [3 0 R] /MediaBox [0 0 100 200] >>",
+            b"<< /Type /Page /Parent 2 0 R /Resources << /Shading << /Paint 4 0 R >> >> >>",
+            b"<< /ShadingType 5 0 R /ColorSpace 6 0 R /Coords [0 0 1 1] /Function << /FunctionType 2 >> >>",
+            b"2",
+            b"/DeviceRGB",
+        ],
+        "2.0",
+    )
+    doc = pyropdf.open(data)
+    page = typed.PageObject(doc.pages[0].obj)
+    shadings = page.interpret("Resources").interpret("Shading")
+    assert isinstance(shadings.interpret("Paint"), typed.ShadingType2)
+    assert page.interpret("TrimBox") == (0, 0, 100, 200)
+    doc.pages[0].obj["CropBox"] = [1, 2, 50, 60]
+    saved = doc.to_bytes(incremental=True)
+    reopened = pyropdf.open(saved)
+    reread = typed.PageObject(reopened.pages[0].obj)
+    with pikepdf.open(io.BytesIO(saved)) as oracle:
+        paint = oracle.pages[0].Resources.Shading.Paint
+        assert paint.objgen == (shadings.interpret("Paint").obj.xref, 0)
+        assert int(paint.ShadingType) == reread.interpret("Resources").interpret("Shading").interpret(
+            "Paint"
+        ).interpret("ShadingType")
+        assert str(paint.ColorSpace) == "/DeviceRGB"
+        assert tuple(oracle.pages[0].CropBox) == reread.interpret("TrimBox")
+
+
+def test_an_invalid_indirect_discriminator_cannot_select_a_link() -> None:
+    data = pdf(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Count 0 /Kids [] >>",
+            b"<< /Paint [5 1 R << /WhitePoint [1 1 1] >>] >>",
+            b"null",
+            b"/Lab",
+        ],
+        "2.0",
+    )
+    colors = typed.ColorSpaceMap(pyropdf.open(data).objects[3])
+    with pytest.raises(pyropdf.PdfError, match="no unique linked object"):
+        colors.interpret("Paint")
+
+
+def test_required_value_overrides_otherwise_admitted_alternatives() -> None:
+    doc = pyropdf.Document()
+    params = typed.CryptFilter(doc.objects[doc.objects.add({"CFM": Name("AESV3"), "Length": 16})])
+    with pytest.raises(pyropdf.PdfError, match="admitted types or values"):
+        params.interpret("Length")
+    params.obj["Length"] = 32
+    assert params.interpret("Length") == 32
+    params.obj["CFM"] = Name("AESV2")
+    with pytest.raises(pyropdf.PdfError, match="admitted types or values"):
+        params.interpret("Length")
+
+
+def test_a_single_link_still_requires_its_own_discriminator() -> None:
+    doc = pyropdf.Document()
+    obj = doc.objects[doc.objects.add({"Pages": {"Type": Name("Font"), "Count": 0, "Kids": []}})]
+    with pytest.raises(pyropdf.PdfError, match="no unique linked object type"):
+        typed.Catalog(obj).interpret("Pages")
+
+
+def test_a_later_required_value_allows_an_earlier_declared_extension() -> None:
+    path = Path(__file__).parent / "assets/encrypted/user-aes-256-object-streams.pdf"
+    doc = pyropdf.open(path)
+    doc.unlock("userpw")
+    assert doc.catalog["Extensions"]["ADBE"]["ExtensionLevel"] == 8
+    assert typed.EncryptionStandard(doc.trailer["Encrypt"]).interpret("R") == 6

@@ -25,16 +25,6 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Exercise sampled/calculator functions, function edits, tiling and uncolored patterns and shading types 1–7. Create and edit resources through the store, verify mesh and function evaluation independently and round-trip untouched data."
 
-[families.arlington-interpretation]
-tracker = 247
-issue = 888
-title = "Interpret the linked objects and values of standalone Arlington types"
-features = [
-    "@arlington",
-]
-dimensions = ["interpret"]
-behavior = "Resolve linked object types, arrays and conditional values through the versioned store. Exercise ambiguous links and invalid references with bounded, per-type fixtures. Record clause-backed exceptions for types with no distinct interpretation."
-
 [families.device-rendering]
 tracker = 248
 issue = 898
