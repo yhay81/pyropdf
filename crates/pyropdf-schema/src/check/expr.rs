@@ -5,7 +5,7 @@
 //! document, so parsing them may recurse.
 
 use super::{Graph, View};
-use crate::Version;
+use crate::{Key, Object, Since, Version};
 
 /// The value of an expression. `Unknown` stands for what the check cannot
 /// decide: a predicate it does not implement, or a path it cannot follow.
@@ -290,24 +290,54 @@ pub(super) fn scalar(view: &View<'_>) -> Val {
 const MAX_EXTENSION_ENTRIES: usize = 64;
 
 impl<G: Graph> Scope<'_, '_, G> {
+    /// Whether the model admits this key at the document's effective version.
+    pub(super) fn introduced(
+        &self,
+        described: &Object,
+        key: &Key,
+    ) -> Result<Option<bool>, G::Error> {
+        match key.since {
+            Since::Version(since) => Ok(Some(self.version >= since)),
+            Since::When(predicate) => match parse(predicate) {
+                Some(expr) => Ok(self
+                    .eval_since(&expr, described.name == "MeasureGEO")?
+                    .truth()),
+                None => Ok(None),
+            },
+        }
+    }
+
     /// Evaluates a `SinceVersion` expression, where bare version words such as
     /// `2.0` test `self.version >= 2.0`.
-    pub(super) fn eval_since(&self, expr: &Expr<'_>) -> Result<Val, G::Error> {
+    fn eval_since(&self, expr: &Expr<'_>, require_declaration: bool) -> Result<Val, G::Error> {
         Ok(match expr {
             Expr::Word(word) => match version(word) {
                 Some(gate) => Val::Bool(self.version >= gate),
                 None => self.eval(expr)?,
             },
-            Expr::Call("fn:Eval", args) if args.len() == 1 => self.eval_since(&args[0])?,
+            // A legacy GEO measure is valid only with the declared Adobe extension.
+            // The ordinary evaluator leaves undeclared extensions undecided.
+            Expr::Call("fn:Extension", args)
+                if require_declaration
+                    && args.first().and_then(Expr::text) == Some("ADBE_Extn3") =>
+            {
+                match self.eval(expr)? {
+                    Val::Unknown => Val::Bool(false),
+                    result => result,
+                }
+            }
+            Expr::Call("fn:Eval", args) if args.len() == 1 => {
+                self.eval_since(&args[0], require_declaration)?
+            }
             Expr::Binary(op @ (Op::Or | Op::And), left, right) => {
-                let left = self.eval_since(left)?;
+                let left = self.eval_since(left, require_declaration)?;
                 if *op == Op::And && left == Val::Bool(false) {
                     return Ok(left);
                 }
                 if *op == Op::Or && left == Val::Bool(true) {
                     return Ok(left);
                 }
-                let right = self.eval_since(right)?;
+                let right = self.eval_since(right, require_declaration)?;
                 match (left.truth(), right.truth()) {
                     (_, Some(value)) if value == (*op == Op::Or) => Val::Bool(value),
                     (Some(_), Some(value)) => Val::Bool(value),
