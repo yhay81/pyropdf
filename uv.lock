@@ -1488,6 +1488,7 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
+    { name = "zopflipy" },
 ]
 docs = [
     { name = "zensical" },
@@ -1495,6 +1496,9 @@ docs = [
 oracles = [
     { name = "pymupdf" },
     { name = "pypdfium2" },
+]
+wheel = [
+    { name = "zopflipy" },
 ]
 
 [package.metadata]
@@ -1521,12 +1525,14 @@ dev = [
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "ruff", specifier = ">=0.17.5" },
     { name = "ty", specifier = ">=0.0.107" },
+    { name = "zopflipy", specifier = "==1.14" },
 ]
 docs = [{ name = "zensical", specifier = ">=0.1.2,<0.2" }]
 oracles = [
     { name = "pymupdf", specifier = ">=1.28,<2" },
     { name = "pypdfium2", specifier = ">=5.15.2" },
 ]
+wheel = [{ name = "zopflipy", specifier = "==1.14" }]
 
 [[package]]
 name = "pytest"
@@ -1928,4 +1934,40 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/91/26/e41d79b1d1ccf46b2737d06c4104ecabfa3b8009395f3de475d5a0335e13/zensical_ui-0.0.42.tar.gz", hash = "sha256:db4f532b45d7f8200d08d5fb8e7945c69dd738eed49417008b847572a8e3ac8d", size = 4070756, upload-time = "2026-11-10T10:24:23.017Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ae/fa/5cdcf389236fb992da1c2f88be781d34484a3cc97244ee5daa748ec5bb4f/zensical_ui-0.0.42-py3-none-any.whl", hash = "sha256:eb824d9c971debc2031837e8d287adf81f5d9ce06304cfbd33fc88ff833abbf3", size = 10042030, upload-time = "2026-11-10T10:24:20.499Z" },
+]
+
+[[package]]
+name = "zopflipy"
+version = "1.14"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fc/86/f97349582132f47c8b424035d1b7b25a2d6abe964baae267ab500ff96e67/zopflipy-1.14.tar.gz", hash = "sha256:b49f2efc6c421650fd265feca599b006958ddf23ff41762c08de9fdb354e0015", size = 178592, upload-time = "2026-10-24T06:28:44.812Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/3f/06f71274924aba8adcaa91e33ded6d7da2d486764dc9bc47c138eeb9631b/zopflipy-1.14-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:1394e81e3ac8cb298c1c1ac7fc3969f30fda72beaf5dc22807907637bb511f09", size = 306955, upload-time = "2026-10-24T06:27:53.924Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/08/688281d04e1c5b8609ccb8201c7b374840a7c56919def44a40fc82c95183/zopflipy-1.14-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c661f5736d0b87283784143e615764a9226d70b0ee4489e2318d73f4708ed06a", size = 911213, upload-time = "2026-10-24T06:27:56.145Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/04/fd692384fc5e044402ab977fe5c295683e9858070d4ed3d1db71f8d4e522/zopflipy-1.14-cp311-cp311-win32.whl", hash = "sha256:d262001738fb5d88aabfdf01f68bc78dff2fa6e99dbd1374ca5a8e1a86f55415", size = 273686, upload-time = "2026-10-24T06:27:57.483Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/0a/ccbcfebe64fa99ce62635ae827bdcf0c99b20d9753bb4aac97bb9729418e/zopflipy-1.14-cp311-cp311-win_amd64.whl", hash = "sha256:a0db3f19f3b97e62c5324f8da19c1132bfe9d5122ce0004276f9d4c98b2fe43a", size = 288676, upload-time = "2026-10-24T06:27:59.205Z" },
+    { url = "https://files.pythonhosted.org/packages/db/27/d294c310604f35ad89c6b99f3f803b79aab6bb9afbd88dc2e966dae31147/zopflipy-1.14-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:9d67f1ade74872ebf2f0495b8f4c70e3e38e7871c0970ca1b86d45c17d3c30e2", size = 308327, upload-time = "2026-10-24T06:28:01.021Z" },
+    { url = "https://files.pythonhosted.org/packages/53/bc/2366cf4ee33214042e94727c33c3edff0d6ad6d12ef9948838a18f16ad99/zopflipy-1.14-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b64b0582fab8c2a3a8e86bff2dcfbd229544830a6deceef535506b9d0ee12c3d", size = 912842, upload-time = "2026-10-24T06:28:03.166Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/1d/bf344da0942f743ff9cb90588c35ec65b2e0a975d99852e924090bce8def/zopflipy-1.14-cp312-cp312-win32.whl", hash = "sha256:c5985742aa0dfcf76ebd73ea2fee5d4fde136a193f7de6d2e3faed8e495cc2fb", size = 273756, upload-time = "2026-10-24T06:28:04.96Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/11/23d793e32244c3a641bf3e62a1e75ee3568a2c4094589164bece7b7a8b4e/zopflipy-1.14-cp312-cp312-win_amd64.whl", hash = "sha256:3ded12686bf9e3517ea5a5faaa0fd3a82d093bb719cff3032ae775574d59a9ff", size = 288821, upload-time = "2026-10-24T06:28:06.392Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/e1/8b664618fb40a64d2eb41780234379ab5391d4feb641947155d456982abd/zopflipy-1.14-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:449e9a66a236cfc7a54d923874c0abe43b63845d0aee05d5e45c4e79700ed396", size = 308314, upload-time = "2026-10-24T06:28:08.179Z" },
+    { url = "https://files.pythonhosted.org/packages/48/9d/9179d219b9629e0da6f5f8ed700572466f55a4349b452f953e862dd67b9a/zopflipy-1.14-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e6e98ed8743313463976c749f8b49a456203332f0fd47857fb25743a3e921e44", size = 912926, upload-time = "2026-10-24T06:28:09.923Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/1d/e3aae669d905ff2edab585429ccde36d3963990bddde6ca8e57b2c4dd0fc/zopflipy-1.14-cp313-cp313-win32.whl", hash = "sha256:d1088dacd44377edbab1030a62fe5d1fdad8d9319de834d8dcbbf3734659ceea", size = 273752, upload-time = "2026-10-24T06:28:11.397Z" },
+    { url = "https://files.pythonhosted.org/packages/58/c7/2d823bba31da8adf7f5b11c35190f436ebc95d89714271ff0bdc42a2cd05/zopflipy-1.14-cp313-cp313-win_amd64.whl", hash = "sha256:da5ed7727911be42fa480e6e38bf06eb6072fb0811c0486f1457ce26650b34b7", size = 288814, upload-time = "2026-10-24T06:28:13.424Z" },
+    { url = "https://files.pythonhosted.org/packages/30/d5/8ceb7f5138a5f47fde337c3a8f42c331abf9b05d0d194169f1248e8bb4f0/zopflipy-1.14-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:49f151b70cc2a777ce4a1228046e879ffddd9aa049d4a07fc4c73aaf9fcbcb4e", size = 308395, upload-time = "2026-10-24T06:28:15.298Z" },
+    { url = "https://files.pythonhosted.org/packages/be/06/f8b5ae65dbae609d03787d8e2c0e68b868715aca1f2e39799697faf362ca/zopflipy-1.14-cp314-cp314-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:68469962fca977fe3028e3d3f66f6ba3933aa9c061a44e7fff3c42f8961da7ac", size = 912977, upload-time = "2026-10-24T06:28:17.164Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/0c/ca26fa861e945e9245354b4c037a963d5e89691e678ff6f2b88f7eba7194/zopflipy-1.14-cp314-cp314-win32.whl", hash = "sha256:17d62e6d5ec47d28235c645f0fe7b1f31868064da92c93107a19a3366530c22f", size = 281671, upload-time = "2026-10-24T06:28:18.904Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/2f/f8e43c64684a197ef5b093802e4cab4c5549b4b86acbe91db21b6f1e18b6/zopflipy-1.14-cp314-cp314-win_amd64.whl", hash = "sha256:de4b4829dc8fe34f7f7adb46bfe71bed1d59d36cd51b2eea3742c5426ed31119", size = 298329, upload-time = "2026-10-24T06:28:20.371Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/1b/018f4826bc7aed877de17db6fe991026d6778a0418f32520ec3815dde1fb/zopflipy-1.14-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:3123545ef43f09147302cf48e4186992faf119821be4c839a68de23cfbe737df", size = 309366, upload-time = "2026-10-24T06:28:21.954Z" },
+    { url = "https://files.pythonhosted.org/packages/38/f7/737253e8c323880eb07f3063992c496a1286de30f02d07fa5c2de51dddb5/zopflipy-1.14-cp314-cp314t-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f341bcbac27a948d006cf5b50d25eb57df264b111a9bd0d62c33043811877376", size = 919617, upload-time = "2026-10-24T06:28:24.054Z" },
+    { url = "https://files.pythonhosted.org/packages/06/6c/9351cf29316a3ba2801b15e7a97825c5b3b108a171c070aeb5b18ad65626/zopflipy-1.14-cp314-cp314t-win32.whl", hash = "sha256:6dadb79b3f728fd51533eeb21e6a3f76dfc0ce5c7eecce950a6ce7d36dcdce76", size = 282112, upload-time = "2026-10-24T06:28:25.719Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/11/b90a5cd26980f07f502b8098b4dda88d508b3197183803d759e137076010/zopflipy-1.14-cp314-cp314t-win_amd64.whl", hash = "sha256:6d5e9784ce13172a2d32966d47610e285a256ac18f27ae4dfb1d2df324b20d14", size = 298777, upload-time = "2026-10-24T06:28:27.391Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/01/2f4f6799113f536d6ebed708af3d7713dc0d940d89fe39671c39a77dae63/zopflipy-1.14-cp315-cp315-macosx_10_15_universal2.whl", hash = "sha256:12b6e258d02889c6db001dbbc7ae41506ddb50291fe56b5698abf341ff2dcea5", size = 308563, upload-time = "2026-10-24T06:28:29.35Z" },
+    { url = "https://files.pythonhosted.org/packages/47/ce/8d62a15fd4a796a2d5f00bd80285f3253502f8732dee185cf9e6d03eb68f/zopflipy-1.14-cp315-cp315-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3f3c3137c609a8fac82f0d7020582ae58b8da0b8aa71033ce597b650c36d3b1a", size = 916910, upload-time = "2026-10-24T06:28:31.684Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/d3/87a56504c05c25f630d4217543798b524a00a58052d48309020206624ed9/zopflipy-1.14-cp315-cp315-win32.whl", hash = "sha256:6b21a3a3e103a39e5ccbd8919b9f00db92bec44993c31616343e22b9e0baf7df", size = 281679, upload-time = "2026-10-24T06:28:33.647Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/2d/82162d9e6b7846e5eb987326e84c5ce9a64949df603d00340b9d4dfe00b9/zopflipy-1.14-cp315-cp315-win_amd64.whl", hash = "sha256:79ab1acdc7fa414d042608d079ceba3254054d6931ca7736c48852efe35aa066", size = 298328, upload-time = "2026-10-24T06:28:35.238Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/2b/cb8c45dbdf1d31841110eee2b8805205e448a6dde0255afc08908c4cf21c/zopflipy-1.14-cp315-cp315t-macosx_10_15_universal2.whl", hash = "sha256:55384b11662fca8d087c7a68119df9cec7f74768712eb558272833458221deb5", size = 309577, upload-time = "2026-10-24T06:28:37.5Z" },
+    { url = "https://files.pythonhosted.org/packages/55/a6/10436f8fb4c8c91c7621dc636037ec310ed6096b37d9514d3f710a11b389/zopflipy-1.14-cp315-cp315t-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:280cf167f6b63d205ab18a7a42dedb4eca80af8df37b20ee6127d9a4a16c4422", size = 923253, upload-time = "2026-10-24T06:28:40.251Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/2e/35090cf0182e455ed6b613ed63e10253253799e25d26499748f975168961/zopflipy-1.14-cp315-cp315t-win32.whl", hash = "sha256:ff4972a683bd416ac938fa981b6192dbad13cf28eec3d50174fea8a6fd482d6c", size = 282078, upload-time = "2026-10-24T06:28:41.891Z" },
+    { url = "https://files.pythonhosted.org/packages/40/cd/5d062a2794f73b3518a4369a9e485a41c5ab0e3b01cb1c0c2fedf029c950/zopflipy-1.14-cp315-cp315t-win_amd64.whl", hash = "sha256:c668558e36c6230abee79696c6b11e70881d9fc28ef59f5c7a68230bf45cc4eb", size = 298762, upload-time = "2026-10-24T06:28:43.459Z" },
 ]

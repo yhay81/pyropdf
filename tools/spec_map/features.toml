@@ -26,7 +26,7 @@ clause = "7.4.4"
 description = "The FlateDecode filter: zlib-compressed stream data."
 objects = []
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "planned", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The current decoder cannot round-trip TIFF Predictor 2 rows ending in a partial byte or predictor pixels wider than 255 bits.", milestone = "Phase 4: Specification" }
 
 [features.page-tree]
 clause = "7.7.3"
@@ -270,7 +270,6 @@ clause = "7.4.2"
 description = "The ASCIIHexDecode filter: stream data as hexadecimal digits."
 objects = []
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "partial", missing = "Decompressed saves remove ASCIIHexDecode, without re-encoding streams in hexadecimal.", milestone = "Phase 4: Specification" }
 
 [features.ascii85-filter]
 clause = "7.4.3"
@@ -282,6 +281,10 @@ interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a
 clause = "7.4.4"
 description = "The LZWDecode filter: LZW-compressed stream data, with its predictors."
 objects = ["FilterLZWDecode"]
+read = { status = "partial", missing = "The pinned reader misreads packed TIFF row boundaries, some externally filtered partial PNG pixel strides, and pixels wider than 255 bits.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Content with ordinary LZW data renders, but the pinned decoder cannot supply correct samples for the remaining packed or wide predictor layouts.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "The stream writer refuses TIFF Predictor 2 rows ending in a partial byte or predictor pixels wider than 255 bits until they round-trip in the pinned reader.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The stream editor refuses TIFF Predictor 2 rows ending in a partial byte or predictor pixels wider than 255 bits until they round-trip in the pinned reader.", milestone = "Phase 4: Specification" }
 
 [features.run-length-filter]
 clause = "7.4.5"
@@ -294,7 +297,6 @@ clause = "7.4.6"
 description = "The CCITTFaxDecode filter: Group 3 and Group 4 fax encoding of monochrome images."
 objects = ["FilterCCITTFaxDecode"]
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "partial", missing = "Image rewriting encodes monochrome images with Group 4 CCITTFaxDecode, without Group 3 encoding.", milestone = "Phase 4: Specification" }
 
 [features.jbig2-filter]
 clause = "7.4.7"
@@ -312,7 +314,6 @@ interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a
 clause = "7.4.9"
 description = "The JPXDecode filter: JPEG 2000 images, with their own color and transparency."
 objects = []
-edit = { status = "partial", missing = "Image rewriting transcodes JPEG 2000 images to JPEG or Flate, without encoding new JPX streams.", milestone = "Phase 4: Specification" }
 
 [features.crypt-filter]
 clause = "7.4.10"
@@ -1206,7 +1207,7 @@ objects = []
 clause = "14.7"
 description = "The structure tree, its elements, parent tree, attributes, and class map."
 objects = ["StructTreeRoot", "StructElem", "MarkedContentReference", "ObjectReference", "ClassMap", "RoleMap", "StructureAttributesDict", "UserProperty"]
-interpret = { status = "partial", missing = "Page import, copy, and deletion resolve MCIDs, object references, and role and class maps, without structure-driven text extraction.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Logical reading follows mixed child and cross-page references. Form-stream glyph origins still require #104.", milestone = "Phase 4: Specification" }
 create = { status = "partial", missing = "Structure trees, elements, parent trees, role maps, and list and table attributes are created, without creating `ClassMap`, `ObjectReference`, or `UserProperty`.", milestone = "Phase 4: Specification" }
 
 [features.structure-namespaces]
@@ -1218,14 +1219,13 @@ objects = ["Namespace", "RoleMapNS"]
 clause = "14.8"
 description = "Tagged PDF: the mark information and the standard structure types and attributes."
 objects = ["MarkInfo"]
-interpret = { status = "partial", missing = "Profile checks and page operations interpret `MarkInfo` and standard roles, without structure-driven text extraction.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Structure-driven extraction reads page content, element replacements and object references. Glyphs inside a referenced Form await stream provenance (#104).", milestone = "Phase 4: Specification" }
 create = { status = "partial", missing = "Canvas tags create `MarkInfo` and standard block, list, table, inline, figure, and artifact structures, without full standard attribute coverage.", milestone = "Phase 4: Specification" }
 
 [features.accessibility]
 clause = "14.9"
 description = "Natural language, alternate descriptions, replacement text, and abbreviations."
 objects = []
-interpret = { status = "partial", missing = "Text extraction and profile checks interpret `/ActualText` and `/Lang`, without `/E` abbreviation expansion.", milestone = "Phase 4: Specification" }
 
 [features.web-capture]
 clause = "14.10"
@@ -1520,6 +1520,7 @@ deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated features is excluded by the specification completion milestone." }
 
 [features.structure-children]
+interpret = { status = "partial", missing = "The July 2024 Annex L matrix, numerical bounds, caption placement and Ruby sequences are interpreted. Cross-namespace role mapping and semantic conditions such as grouping usage or Warichu still need contextual resolution.", milestone = "Phase 4: Specification" }
 clause = "Annex L"
 description = "Check parent and child standard roles and their allowed multiplicities in the PDF 2.0 namespace."
 objects = []

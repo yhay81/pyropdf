@@ -430,14 +430,16 @@ pub fn object_numbers(document: &_Document) -> PyResult<Vec<u32>> {
 
 /// Returns the tagged child at `step` of the container that `root` and
 /// `path` name, resolving a reference; `KeyError` or `IndexError` when it
-/// has none.
-#[pyfunction]
+/// has none. A direct-only lookup returns Python None for an absent or
+/// indirect child without following the reference.
+#[pyfunction(signature = (document, root, path, step, *, direct_only=false))]
 pub fn object_get<'py>(
     py: Python<'py>,
     document: &_Document,
     root: Root,
     path: Vec<Step>,
     step: Step,
+    direct_only: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     crate::errors::boundary(|| {
         let version = document.reading()?;
@@ -445,11 +447,17 @@ pub fn object_get<'py>(
         let value = root_value(&version, root, &path, &budget)?;
         let container = walk(&value, root, &path)?;
         let Some(found) = child(container, &step) else {
+            if direct_only {
+                return Ok(py.None().into_bound(py));
+            }
             return Err(match step {
                 Step::Key(key) => PyKeyError::new_err(String::from_utf8_lossy(&key).into_owned()),
                 Step::Index(index) => index_error(index),
             });
         };
+        if direct_only && matches!(found, Value::Reference(_)) {
+            return Ok(py.None().into_bound(py));
+        }
         tagged(py, &version, found, None, &budget)
     })?
 }
