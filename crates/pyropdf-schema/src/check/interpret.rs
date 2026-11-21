@@ -23,12 +23,13 @@ pub enum Interpretation {
 pub fn interpret<G: Graph>(
     graph: &G,
     holder: &G::Value,
+    described: &Object,
     key: &'static Key,
     value: Option<&G::Value>,
 ) -> Result<Interpretation, G::Error> {
     let mut walk = Walk::new(graph);
     let scope = walk.scope(holder, value);
-    let introduced = walk.introduced(holder, key)?;
+    let introduced = walk.introduced(holder, described, key)?;
     if introduced == Some(false) {
         return Ok(if value.is_some() {
             Interpretation::Refused("the key is newer than the document")
