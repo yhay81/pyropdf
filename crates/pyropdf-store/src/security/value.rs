@@ -1,9 +1,9 @@
 //! Decrypting and encrypting the strings and stream data of one object's
 //! value (ISO 32000-2 section 7.6.2).
 
-use super::{Handler, Kind};
+use super::{Handler, Kind, Method};
 use crate::budget::{Budget, BudgetVec};
-use crate::value::{Bytes, PdfString, Reference, Value};
+use crate::value::{Bytes, PdfString, Reference, StringForm, Value};
 use crate::{Error, Result, write};
 
 /// The deepest nesting that the walk follows. Parsed values are shallower:
@@ -60,9 +60,9 @@ fn transform(
     if let Value::Stream(stream) = value
         && matches!(stream.dict().get("Type"), Some(Value::Name(n)) if n.as_bytes() == b"XRef")
     {
-        return Ok(value.clone());
+        return crate::refs::copy_for_edit(value, budget);
     }
-    let mut out = value.clone();
+    let mut out = crate::refs::copy_for_edit(value, budget)?;
     walk(handler, reference, &mut out, budget, encrypt, 0)?;
     Ok(out)
 }
@@ -88,7 +88,17 @@ fn walk(
     match value {
         Value::String(string) => {
             let data = apply(Kind::String, string.as_bytes())?;
-            *string = PdfString::new(data, string.form());
+            // A linearized save measures objects before emitting them. A fresh
+            // random IV changes ciphertext between passes; hex has a fixed width.
+            let method = handler.method(Kind::String);
+            let random_ciphertext =
+                method == Method::AesGcm || (handler.is_recipient() && method != Method::Identity);
+            let form = if encrypt && random_ciphertext {
+                StringForm::Hexadecimal
+            } else {
+                string.form()
+            };
+            *string = PdfString::new(data, form);
         }
         Value::Array(array) => {
             for item in array.iter_mut() {

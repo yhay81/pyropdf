@@ -1235,6 +1235,7 @@ name = "pyropdf-store"
 version = "0.3.1"
 dependencies = [
  "aes",
+ "aes-gcm",
  "flate2",
  "getrandom",
  "hayro-syntax",

@@ -1465,7 +1465,7 @@ pub fn render_pages(
 pub fn bridge_error(error: &BridgeError) -> PyErr {
     match error {
         BridgeError::Store(error) => store_error(error),
-        BridgeError::EncryptionChanged | BridgeError::PasswordNotUtf8 => {
+        BridgeError::EncryptionChanged | BridgeError::PasswordNotUtf8 | BridgeError::AesGcm => {
             EncryptedDocumentError::new_err(error.to_string())
         }
         _ => PdfError::new_err(error.to_string()),

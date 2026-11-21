@@ -1310,7 +1310,7 @@ fn full_save_refuses_live_object_zero_before_output() {
         user: b"user".to_vec(),
         owner: b"owner".to_vec(),
         permissions: u32::MAX,
-        aes256: true,
+        method: crate::security::Method::Aes256,
         random: [7; 64],
     });
     for options in [
