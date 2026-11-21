@@ -1458,15 +1458,18 @@ class StructureTree(Sequence[StructureElement]):
             lambda budget: reading_order(self, budget, expand=expand_abbreviations),
         )
 
-    def child_rules(self) -> tuple[StructureChildRule, ...]:
+    def child_rules(self, *, grouping_usage: Mapping[int, bool] | None = None) -> tuple[StructureChildRule, ...]:
         """Read the observed parent/child multiplicities under the PDF 2.0 Annex L rules.
 
-        A conditional or cross-namespace relationship retains its own rule and an
-        indeterminate verdict where the namespace or role-specific specification is required.
+        Namespace mappings are followed to the standard role, and transparent
+        containers contribute to the enclosing role's counts. Supply a mapping
+        of element object numbers to intended grouping use when several uses
+        fit the stored children. An indeterminate result retains the condition
+        that requires more information. The rules apply to the PDF 2.0 namespace.
         """
         from pyropdf._structure_reading import child_rules  # noqa: PLC0415
 
-        return _core.read_operation(self._document._core(), lambda budget: child_rules(self, budget))  # noqa: SLF001
+        return _core.read_operation(self._document._core(), lambda budget: child_rules(self, budget, grouping_usage))  # noqa: SLF001
 
     def walk(self, *, max_elements: int | None = _DEFAULT_MAX_ELEMENTS) -> Iterator[StructureElement]:
         """Iterate over every :class:`StructureElement` in pre-order, bounded and without recursion.
