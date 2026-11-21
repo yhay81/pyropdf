@@ -81,6 +81,7 @@ pub type TextRunTuple = (
     Option<StrokeTuple>,
     BBox,
     ItemContextTuple,
+    super::redraw::Replay,
 );
 /// A path: segment kinds, coordinates, bbox, fill paint, even-odd fill rule,
 /// stroke, and item context.
@@ -204,7 +205,7 @@ fn reserve_exact<T>(values: &mut Vec<T>, capacity: usize, label: &str) -> Result
         .map_err(|error| Error::Allocation(format!("failed to allocate {label}: {error}")))
 }
 
-fn with_capacity<T>(capacity: usize, label: &str) -> Result<Vec<T>, Error> {
+pub(super) fn with_capacity<T>(capacity: usize, label: &str) -> Result<Vec<T>, Error> {
     let mut values = Vec::new();
     reserve_exact(&mut values, capacity, label)?;
     Ok(values)
@@ -1192,6 +1193,7 @@ impl ItemContext {
 }
 
 struct TextRunRecord {
+    replay: super::redraw::Replay,
     ids: Vec<Option<u32>>,
     texts: Vec<Option<String>>,
     matrices: Vec<f64>,
@@ -1269,6 +1271,7 @@ impl Record {
                     run.stroke.map(StrokeRecord::into_tuple),
                     bbox_tuple(run.bbox),
                     run.context.into_tuple(),
+                    run.replay,
                 )))
             }
             Self::Path(_) => ContentItem::Path(path_row),
@@ -1573,6 +1576,7 @@ pub(crate) struct ContentCollector<'a, 'b, S> {
     clip_boxes: Vec<Rect>,
     group_stack: Vec<u32>,
     mark_stack: Vec<u32>,
+    actual_text_level: Option<usize>,
     /// The interned state of the current stacks, or `None` after a change.
     state: Option<u32>,
     pending: Option<Pending>,
@@ -1622,6 +1626,7 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
             clip_boxes: Vec::new(),
             group_stack: Vec::new(),
             mark_stack: Vec::new(),
+            actual_text_level: None,
             state: None,
             pending: None,
             pending_matrices: Vec::new(),
@@ -2124,6 +2129,13 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
             return Ok(());
         };
         let record = TextRunRecord {
+            replay: super::redraw::capture(
+                run,
+                props.transform,
+                &self.stretches,
+                self.actual_text_level.is_some(),
+                self.budget,
+            )?,
             ids,
             texts,
             matrices,
@@ -2497,12 +2509,18 @@ impl<'a, S: ContentSink> Device<'a> for ContentCollector<'a, '_, S> {
         }
         let actual_text =
             properties.and_then(|properties| properties.get::<PdfString>(ACTUAL_TEXT));
+        if actual_text.is_some() && self.actual_text_level.is_none() {
+            self.actual_text_level = Some(self.mark_stack.len());
+        }
         self.sink
             .begin_marked_content(actual_text.as_ref().map(PdfString::as_bytes));
     }
 
     fn end_marked_content(&mut self) {
         self.pending = None;
+        if self.actual_text_level == Some(self.mark_stack.len()) {
+            self.actual_text_level = None;
+        }
         if self.mark_stack.pop().is_some() {
             self.state = None;
         }

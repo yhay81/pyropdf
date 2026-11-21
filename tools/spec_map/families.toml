@@ -213,28 +213,26 @@ behavior = "Verify and maintain integrity protection during encrypted saves and 
 
 [families.public-key-encryption]
 tracker = 252
-issue = 864
-title = "Read and write PDF public-key security handler recipients"
-features = [
-    "public-key-security-handler",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Handle recipient selection, public-key crypt filters and permissions across open, save, decryption and rendering."
+issue = 936
+title = "Extend CMS algorithm coverage for public-key PDF recipients"
+features = ["public-key-security-handler"]
+dimensions = ["read", "create", "edit", "preserve"]
+behavior = "Verify and extend additional CMS provider algorithms for recipient access, creation, editing and preservation."
 
-[families.public-key-filter-preservation]
+[families.public-key-legacy-interpretation]
 tracker = 252
-issue = 864
-title = "Read and write PDF public-key security handler recipients"
-features = ["crypt-filters"]
-dimensions = ["preserve"]
-behavior = "Keep the public-key filter dictionaries and encrypted data valid when saving a recipient-encrypted document."
+issue = 937
+title = "Render legacy recipient-encrypted PDFs through the authenticated store source"
+features = ["public-key-security-handler"]
+dimensions = ["interpret"]
+behavior = "Render authenticated pre-V5 recipient files through the engine object-source interface."
 
 [families.embedded-file-filter-selection]
 tracker = 252
 issue = 893
 title = "Resolve stream Crypt overrides and embedded-file filter selection"
 features = ["crypt-filters"]
-dimensions = ["read", "interpret", "create", "edit"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Resolve and update EFF and per-stream filter choices. Check selection for both standard and public-key recipients once the recipient handler in #864 is available."
 
 [families.signature-dictionaries]

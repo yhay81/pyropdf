@@ -57,6 +57,8 @@ pub enum Password {
     /// The password matches neither the user password nor the owner
     /// password.
     Incorrect,
+    /// The supplied certificate and private key match no usable recipient.
+    Recipient,
 }
 
 /// A refusal by a limit: its code, and the limit and the amount when they
@@ -160,6 +162,7 @@ impl fmt::Display for Password {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Required => "the document is encrypted and needs a password",
+            Self::Recipient => "the credential matches no usable public-key recipient",
             Self::Incorrect => "the password matches neither the user nor the owner password",
         })
     }

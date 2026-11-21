@@ -375,8 +375,8 @@ FontRef(
 
 The font that a text run uses, as hayro reads its font program.
 
-The font dictionary's object number, subtype, and embedding are not
-exposed yet. All Type 3 fonts share one reference.
+This describes the program. A text run separately retains the source
+PDF font dictionary and character codes that selected its glyphs.
 
 ## `Glyph`
 

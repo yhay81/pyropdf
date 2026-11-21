@@ -483,3 +483,203 @@ def test_declared_geospatial3d_uses_world_triples_and_keeps_shared_media(*, incr
         assert stream.objgen == shared["/3DD"]["/3DD"].objgen
         assert stream.VA[0].objgen == rich.RichMediaContent.Views[0].objgen
         assert stream.read_raw_bytes() == _U3D
+
+
+@pytest.mark.parametrize("operation", ["insert", "extend", "select"])
+@pytest.mark.parametrize("incremental", [False, True])
+def test_same_document_page_copy_retargets_screen_and_projection(operation: str, *, incremental: bool) -> None:
+    with pdf.open(media_pdf()) as doc:
+        if operation == "insert":
+            doc.pages.insert(1, doc.pages[0])
+        elif operation == "extend":
+            doc.pages.extend(doc.pages[0])
+        else:
+            doc.pages.select([0, 0])
+        saved = doc.to_bytes(incremental=incremental)
+    with pikepdf.open(io.BytesIO(saved)) as parsed:
+        first, second = parsed.pages
+        screen, scene, rich, projection, shared = first.Annots
+        copy_screen, copy_scene, copy_rich, copy_projection, copy_shared = second.Annots
+        assert copy_screen.objgen != screen.objgen
+        assert copy_projection.objgen != projection.objgen
+        assert screen.A.AN.objgen == screen.objgen
+        assert copy_screen.A.AN.objgen == copy_screen.objgen
+        assert projection.ExData.M3DREF.S.objgen == projection.objgen
+        assert copy_projection.ExData.M3DREF.S.objgen == copy_projection.objgen
+        assert copy_projection.ExData.M3DREF.objgen != projection.ExData.M3DREF.objgen
+        assert copy_screen.A.R.objgen == screen.A.R.objgen
+        assert copy_screen.AP.N.objgen == screen.AP.N.objgen
+        assert copy_rich.RichMediaContent.Assets.Names[1].EF.F.objgen == screen.A.R.C.D.EF.F.objgen
+        assert copy_scene["/3DD"].objgen != scene["/3DD"].objgen
+        for model, other, media, mark in (
+            (scene, shared, rich, projection),
+            (copy_scene, copy_shared, copy_rich, copy_projection),
+        ):
+            stream = model["/3DD"]
+            assert stream.read_raw_bytes() == _U3D
+            assert stream.objgen == other["/3DD"]["/3DD"].objgen
+            view = stream.VA[0]
+            assert view.objgen == media.RichMediaContent.Views[0].objgen
+            assert view.MA[0].objgen == mark.ExData.M3DREF.objgen
+            assert view.MA[0].S.objgen == mark.objgen
+        assert not parsed.check_pdf_syntax()
+
+
+def _add_shared_actions(doc: pdf.Document) -> None:
+    """Share one indirect chain between two annotations and the source page."""
+    page = doc.pages[0]
+    external = doc.pages.new((100, 100)).annotations.add(pdf.Note((10, 10), contents="outside"))
+    screen, scene, rich, _, _ = page.obj["Annots"]
+
+    def indirect(value: object) -> pdf.Array | pdf.Dictionary:
+        return doc.objects[doc.objects.add(value)]
+
+    appearance = {"N": screen["AP"]["N"]}
+    movie = indirect(
+        {
+            "Type": pdf.Name("Annot"),
+            "Subtype": pdf.Name("Movie"),
+            "Rect": [10, 40, 80, 85],
+            "AP": appearance,
+            "Movie": {"F": "clip.mov"},
+        }
+    )
+    second_screen = indirect(
+        {"Type": pdf.Name("Annot"), "Subtype": pdf.Name("Screen"), "Rect": [10, 40, 80, 85], "AP": appearance}
+    )
+    assert isinstance(movie, pdf.Dictionary)
+    assert isinstance(second_screen, pdf.Dictionary)
+    page.obj["Annots"].extend([movie, second_screen])
+    scene["3DD"].write(_U3D)
+    view = scene["3DD"]["VA"][0]
+    scene["3DV"] = view
+    rich["RichMediaSettings"] = {"Activation": {"View": view}}
+    outside = indirect({"S": pdf.Name("Hide"), "T": external.obj})
+    next_actions = indirect(
+        [
+            {"S": pdf.Name("GoTo3DView"), "TA": scene, "V": view},
+            {"S": pdf.Name("RichMediaExecute"), "TA": rich, "CMD": {"C": "pause"}},
+            {"S": pdf.Name("Movie"), "Annotation": movie},
+            outside,
+        ]
+    )
+    targets = indirect([screen, external.obj, "field.name"])
+    shared = indirect({"S": pdf.Name("Hide"), "T": targets, "Next": next_actions, "Private": screen})
+    actions = indirect({"U": shared})
+    screen["AA"] = actions
+    second_screen["AA"] = actions
+    # A Movie's /A is a playback dictionary. Its private /Next is opaque.
+    movie["A"] = {"Mode": pdf.Name("Once"), "Next": shared}
+    page.obj["AA"] = {"O": shared}
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_shared_actions_copy_only_paths_to_local_targets(*, incremental: bool) -> None:
+    doc = pdf.open(media_pdf())
+    _add_shared_actions(doc)
+    doc.pages.extend(doc.pages[0])
+    copied = doc.pages[2]
+    copied.obj["AA"]["O"]["H"] = False
+    copied.obj["Annots"][3]["Contents"] = "copied measurement"
+    with pikepdf.open(io.BytesIO(doc.to_bytes(incremental=incremental))) as parsed:
+        original, external_page, duplicate = parsed.pages
+        outside_id = external_page.Annots[0].objgen
+        assert "/H" not in original.AA.O
+        assert not duplicate.AA.O.H
+        assert "/Contents" not in original.Annots[3]
+        assert duplicate.Annots[3].Contents == "copied measurement"
+        for holder in (original, duplicate):
+            first, model, media, _, _, movie, second_screen = holder.Annots
+            action = holder.AA.O
+            assert action.objgen == first.AA.U.objgen == second_screen.AA.U.objgen
+            assert first.AA.objgen == second_screen.AA.objgen != (0, 0)
+            assert movie.A.Next.objgen == original.AA.O.objgen
+            assert model["/3DD"].Filter == pikepdf.Name.FlateDecode
+            assert model["/3DD"].read_raw_bytes() == original.Annots[1]["/3DD"].read_raw_bytes()
+            assert model["/3DD"].read_bytes() == _U3D
+            assert [action.T[0].objgen, action.T[1].objgen, str(action.T[2])] == [
+                first.objgen,
+                outside_id,
+                "field.name",
+            ]
+            assert action.Private.objgen == original.Annots[0].objgen
+            goto, execute, play, other = action.Next
+            assert goto.TA.objgen == model.objgen
+            assert goto.V.objgen == model["/3DD"].VA[0].objgen == model["/3DV"].objgen
+            assert goto.V.objgen == media.RichMediaSettings.Activation.View.objgen
+            assert execute.TA.objgen == media.objgen
+            assert play.Annotation.objgen == movie.objgen
+            assert other.T.objgen == outside_id
+        assert duplicate.AA.O.T.objgen != original.AA.O.T.objgen
+        assert duplicate.AA.O.Next.objgen != original.AA.O.Next.objgen
+        assert duplicate.AA.O.Next[3].objgen == original.AA.O.Next[3].objgen
+        assert not parsed.check_pdf_syntax()
+
+    del doc.pages[2]
+    with pikepdf.open(io.BytesIO(doc.to_bytes(incremental=incremental))) as parsed:
+        original, external_page = parsed.pages
+        assert original.AA.O.T[0].objgen == original.Annots[0].objgen
+        assert original.AA.O.T[1].objgen == external_page.Annots[0].objgen
+
+
+def test_unmodified_model_stream_stays_shared() -> None:
+    doc = pdf.open(media_pdf())
+    del doc.pages[0].obj["Annots"][1]["3DD"]["VA"]
+    doc.pages.extend(doc.pages[0])
+    with pikepdf.open(io.BytesIO(doc.to_bytes())) as parsed:
+        first, second = parsed.pages
+        model = first.Annots[1]["/3DD"]
+        assert second.Annots[1]["/3DD"].objgen == second.Annots[4]["/3DD"]["/3DD"].objgen == model.objgen
+        assert model.read_raw_bytes() == _U3D
+
+
+def test_page_copy_action_depth_limit_rolls_back_widget_changes() -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [4 0 R 5 0 R] >>",
+        4: "<< /Type /Annot /Subtype /Widget /Rect [2 2 4 4] /T (value) /FT /Tx >>",
+        5: "<< /Type /Annot /Subtype /Screen /Rect [2 2 4 4] /A 6 0 R >>",
+        **{n: f"<< /S /Named /N /Print /Next {n + 1} 0 R >>" for n in range(6, 20)},
+        20: "<< /S /Hide /T 4 0 R >>",
+    }
+    source = _build_raw_pdf(objects)
+    with pdf.open(source, limits=pdf.DocumentLimits(max_object_depth=8)) as doc:
+        with doc.transaction("Handle the rejected page copy"):
+            with pytest.raises(pdf.LimitError) as caught:
+                doc.pages.extend(doc.pages[0])
+            assert caught.value.code == "object_depth"
+        assert doc.history.position == 0
+        assert doc.to_bytes(incremental=True) == source
+    with pdf.open(source) as doc:
+        doc.pages.extend(doc.pages[0])
+        with pikepdf.open(io.BytesIO(doc.to_bytes())) as parsed:
+            for page in parsed.pages:
+                widget, screen = page.Annots
+                action = screen.A
+                for _ in range(14):
+                    action = action.Next
+                assert action.T.objgen == widget.objgen
+                assert widget.Parent.objgen == parsed.Root.AcroForm.Fields[0].objgen
+
+
+def test_forward_action_target_uses_the_new_widget() -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] >> >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [4 0 R 5 0 R] >>",
+        4: "<< /Type /Annot /Subtype /Screen /Rect [2 2 4 4] /A 6 0 R /AA 7 0 R >>",
+        5: "<< /Type /Annot /Subtype /Widget /Rect [2 2 4 4] /T (value) /FT /Tx /AA 7 0 R >>",
+        6: "<< /S /Hide /T 5 0 R >>",
+        7: "<< /U 6 0 R >>",
+    }
+    doc = pdf.open(_build_raw_pdf(objects))
+    doc.pages.select([0, 0, 0])
+    with pikepdf.open(io.BytesIO(doc.to_bytes())) as parsed:
+        field = parsed.Root.AcroForm.Fields[0]
+        assert len(field.Kids) == 3
+        for page, kid in zip(parsed.pages, field.Kids, strict=True):
+            screen, widget = page.Annots
+            assert widget.objgen == kid.objgen == screen.A.T.objgen == widget.AA.U.T.objgen
+            assert screen.AA.U.objgen == screen.A.objgen == widget.AA.U.objgen
+            assert widget.AA.objgen == screen.AA.objgen != (0, 0)
