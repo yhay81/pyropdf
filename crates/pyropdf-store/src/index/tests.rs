@@ -1419,3 +1419,40 @@ fn opening_earlier_revision_with_overwritten_damage_repairs_that_revision() {
     assert_eq!(recovered.get("Rotate"), None);
     assert!(rev0.revision(0, &budget).unwrap().is_none());
 }
+
+#[test]
+fn a_filter_scan_reads_the_dictionary_without_charging_the_large_payload_as_an_object() {
+    let mut pdf = Pdf::new();
+    pdf.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    pdf.object(2, "<< /Type /Pages /Count 0 /Kids [] >>");
+    pdf.object(
+        3,
+        &format!(
+            "<< /Filter 4 0 R /Length 8192 >>\nstream\n{}\nendstream",
+            "x".repeat(8192)
+        ),
+    );
+    pdf.object(4, "/FlateDecode");
+    pdf.table(&[], "<< /Root 1 0 R /Size 5 >>");
+    let index = open(pdf.bytes);
+    let r = Reference::new(3, 0);
+    let small = Budget::default().with_limit(LimitCode::ObjectParseSize, Some(128));
+    assert!(
+        index
+            .stream_dictionary(r, false, &small)
+            .unwrap()
+            .unwrap()
+            .get("Filter")
+            .is_some()
+    );
+    let too_small = Budget::default().with_limit(LimitCode::ObjectParseSize, Some(1));
+    assert_eq!(
+        index
+            .stream_dictionary(r, false, &too_small)
+            .unwrap_err()
+            .limit()
+            .unwrap()
+            .code(),
+        LimitCode::ObjectParseSize
+    );
+}

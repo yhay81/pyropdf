@@ -19,6 +19,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from test_attachments import build_raw_pdf
 
 import pyropdf
 from pyropdf import (
@@ -50,6 +51,74 @@ DOCUMENT = Path(__file__).parent / "assets" / "real_world" / "pdf20-simple.pdf"
 PEM = serialization.Encoding.PEM
 DER = serialization.Encoding.DER
 PKCS8 = serialization.PrivateFormat.PKCS8
+
+
+@pytest.mark.parametrize(
+    ("version", "extensions", "allowed"),
+    [
+        ("1.7", "/ESIC << /BaseVersion /1.7 /ExtensionLevel 2 >>", True),
+        ("1.7", "/ESIC << /BaseVersion /1.7 /ExtensionLevel 4 >>", True),
+        ("1.7", "/ADBE << /BaseVersion /1.7 /ExtensionLevel 8 >>", True),
+        ("1.7", "/ESIC << /BaseVersion /1.7 /ExtensionLevel 1 >>", False),
+        ("1.7", "/ADBE << /BaseVersion /1.7 /ExtensionLevel 7 >>", False),
+        ("1.7", "/ETSI_PAdES << /BaseVersion /1.7 /ExtensionLevel 2 >>", False),
+        ("1.7", "/ESIC << /BaseVersion /2.0 /ExtensionLevel 2 >>", False),
+        ("1.7", "/ESIC << /BaseVersion /1.7 /ExtensionLevel true >>", False),
+        ("1.7", "/ESIC << /BaseVersion /1.7 /ExtensionLevel 8 0 R >>", False),
+        ("1.7", "/ESIC 7 0 R", False),
+        ("1.7", "", False),
+        ("2.0", "", True),
+    ],
+)
+@pytest.mark.parametrize("combined", [False, True], ids=["field", "field-widget"])
+def test_check_recognizes_the_registered_cades_subfilter(
+    version: str, extensions: str, *, allowed: bool, combined: bool
+) -> None:
+    # The fixture exercises the structural subfilter rule independently of any signer.
+    annotations = "/Annots [5 0 R]" if combined else ""
+    widget = "/Type /Annot /Subtype /Widget /Rect [0 0 10 10] /F (mistyped)" if combined else ""
+    data = build_raw_pdf(
+        {
+            1: f"<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R /Extensions << {extensions} >> >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> {annotations} >>",
+            4: "<< /Fields [5 0 R] >>",
+            5: f"<< /FT /Sig /T (Approval) /V 6 0 R {widget} >>",
+            6: "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /ETSI.CAdES.detached /Contents <00> >>",
+            7: "<< /BaseVersion /1.7 /ExtensionLevel 2 >>",
+            8: "2",
+        }
+    ).replace(b"%PDF-1.7", f"%PDF-{version}".encode(), 1)
+    with pyropdf.open(data) as doc:
+        checked = doc.check().defects
+        defects = [item for item in checked if item.clause == "Signature/SubFilter"]
+        if combined:
+            assert any(item.xref == 5 and item.path == "F" for item in checked)
+    assert bool(defects) is not allowed
+    assert all(item.xref == 6 and item.path == "SubFilter" for item in defects)
+
+
+@pytest.mark.parametrize(("base", "level"), [("7 0 R", "2"), ("/1.7", "8 0 R")])
+def test_signing_refuses_an_indirect_pades_declaration_value(pki: LocalPki, base: str, level: str) -> None:
+    data = build_raw_pdf(
+        {
+            1: (
+                "<< /Type /Catalog /Pages 2 0 R /Extensions << /ESIC "
+                f"<< /BaseVersion {base} /ExtensionLevel {level} >> >> >>"
+            ),
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>",
+            7: "/1.7",
+            8: "2",
+        }
+    )
+    with pyropdf.open(data) as doc:
+        entry = doc.catalog["Extensions"]["ESIC"]
+        assert entry["BaseVersion"] == pyropdf.Name("1.7")
+        assert entry["ExtensionLevel"] == 2
+        with pytest.raises(pyropdf.PdfError, match="ESIC"):
+            doc.sign("Approval", pki.signer)
+        assert doc.to_bytes(incremental=True) == data
 
 
 def _pdf_with_version(version: str = "1.7") -> bytes:
