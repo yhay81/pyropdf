@@ -8,10 +8,10 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 44 | 42 | 745 |
-| interpret | 2 | 13 | 0 | 41 | 662 | 113 |
-| create | 0 | 0 | 9 | 645 | 77 | 100 |
-| edit | 0 | 0 | 0 | 671 | 65 | 95 |
+| read | 0 | 0 | 0 | 43 | 42 | 746 |
+| interpret | 2 | 13 | 0 | 40 | 662 | 114 |
+| create | 0 | 0 | 9 | 644 | 77 | 101 |
+| edit | 0 | 0 | 0 | 670 | 65 | 96 |
 | preserve | 0 | 0 | 0 | 29 | 662 | 140 |
 
 ## Clauses
@@ -185,7 +185,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 13.6 | 3D artwork | `3d-artwork` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 13.7 | Rich media | `rich-media` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 14.2 | Legacy resource procedure sets | `procedure-sets` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
-| 14.3.2 | Metadata streams | `xmp-metadata` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 14.3.2 | Metadata streams | `xmp-metadata` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.3.3 | Document information dictionary | `document-info` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.4 | File identifiers | `file-identifiers` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.5 | Page-piece dictionaries | `page-piece` | 1 planned | 1 planned | 1 planned | 1 partial | 1 planned |
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-2,940 unfinished cells in 831 features: 2 engine, 1,430 partial, 1,508 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,936 unfinished cells in 831 features: 2 engine, 1,426 partial, 1,508 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -304,8 +304,6 @@ Milestone [#251](https://github.com/yhay81/pyropdf/issues/251).
 
 - [#889](https://github.com/yhay81/pyropdf/issues/889) Settle required links and inbound roles when creating or editing typed objects. Generate a role inventory from the pinned descriptors. For each applicable role, construct the required references and settle or reject replacements and removals atomically. Exercise already-implemented page, form and structure rules before adding missing rules.
     - create, edit — all 613 standalone Arlington object rows.
-- [#906](https://github.com/yhay81/pyropdf/issues/906) Read and edit component XMP metadata through its owning PDF object. Identify, parse and update component Metadata streams without changing catalog metadata or sibling components. Verify save/reopen, removal and unrelated edits.
-    - read, interpret, create, edit — `xmp-metadata`.
 - [#895](https://github.com/yhay81/pyropdf/issues/895) Resolve catalog name trees, structure destinations and viewer action parameters. Follow named resources and structure destinations, resolve base URI/IsMap, Windows launch and remote/named targets as data, and round-trip fragment selection and navigation options. Expose unresolved targets without executing actions.
     - read — `destinations`, `launch-actions`, `uri-actions`, `fragment-identifiers`.
     - interpret — `name-dictionary`, `embedded-files`, `destinations`, `remote-goto-actions`, `launch-actions`, `uri-actions`, `named-actions`, `fragment-identifiers`.
