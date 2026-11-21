@@ -209,6 +209,40 @@ def test_changing_sources_updates_indexed_urls_in_existing_pdf_20(*, incremental
         assert bytes(other.Root.SpiderInfo.C[0].XXCommand) == b"keep"
 
 
+@pytest.mark.parametrize("incremental", [False, True])
+def test_an_empty_query_keeps_its_own_capture_set_through_source_edits(*, incremental: bool) -> None:
+    original = io.BytesIO()
+    with pikepdf.open(io.BytesIO(_pdf())) as reference:
+        names = reference.Root.Names
+        page, image = names.IDS.Names[1]
+        page.SI.AU = pikepdf.String(URL + "?")
+        names.URLS = reference.make_indirect(
+            pikepdf.Dictionary(Names=[pikepdf.String(URL), image, pikepdf.String(URL + "?"), page])
+        )
+        reference.save(original)
+
+    with pyropdf.open(original.getvalue()) as doc:
+        database = doc.web_capture
+        page, image = database.by_id(IDENTIFIER)
+        assert database.by_url(URL) == database.by_url(URL + "#fragment?") == (image,)
+        assert database.by_url(URL + "?") == database.by_url(URL + "?#fragment") == (page,)
+        source = typed.SourceInformation(doc.objects[doc.objects.add({"AU": "http://EXAMPLE.org:80/./source?#new"})])
+        database.set_sources(page, source)
+        saved = doc.to_bytes(incremental=incremental)
+
+    with pikepdf.open(io.BytesIO(saved)) as reference:
+        names = reference.Root.Names
+        page, image = names.IDS.Names[1]
+        plain_key, plain_set, query_key, query_set = names.URLS.Names
+        assert (str(plain_key), plain_set.objgen) == (URL, image.objgen)
+        assert (str(query_key), query_set.objgen) == (URL + "?", page.objgen)
+        assert str(page.SI.AU) == "http://EXAMPLE.org:80/./source?#new"
+    with pyropdf.open(saved) as reopened:
+        page, image = reopened.web_capture.by_id(IDENTIFIER)
+        assert reopened.web_capture.by_url(URL) == (image,)
+        assert reopened.web_capture.by_url(URL + "?#fragment") == (page,)
+
+
 def test_authoring_retains_a_large_url_index_and_its_page_and_image_sets() -> None:
     doc = pyropdf.open(_pdf())
     pages, image = doc.web_capture.by_id(IDENTIFIER)

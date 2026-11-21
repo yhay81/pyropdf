@@ -158,9 +158,11 @@ def _canonical(url: str) -> bytes:
         authority = ""
     elif parts.port is not None and parts.port == {"http": 80, "ftp": 21}.get(parts.scheme):
         authority = authority.rsplit(":", 1)[0]
-    return urlunsplit((parts.scheme, user + separator + authority, _url_path(parts.path), parts.query, "")).encode(
-        "ascii"
-    )
+    canonical = urlunsplit((parts.scheme, user + separator + authority, _url_path(parts.path), parts.query, ""))
+    # urlunsplit drops the delimiter of an empty query, which is significant in a URLS key.
+    if not parts.query and url.partition("#")[0].endswith("?"):
+        canonical += "?"
+    return canonical.encode("ascii")
 
 
 def _url_path(path: str) -> str:
