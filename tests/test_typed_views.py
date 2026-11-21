@@ -267,7 +267,7 @@ def _plain(value: object) -> object:
     return value
 
 
-@pytest.mark.spec("arlington", "read", "create", "edit")
+@pytest.mark.spec("arlington", "read", "edit")
 @pytest.mark.parametrize("name", typed.TYPES)
 def test_every_key_of_every_object_type_round_trips(name: str) -> None:
     doc = pyropdf.Document()

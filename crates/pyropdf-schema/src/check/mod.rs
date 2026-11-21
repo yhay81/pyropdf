@@ -8,10 +8,11 @@
 //! the operation's budget (F6). Predicates that the check does not decide
 //! are counted in [`Report::unchecked`] instead of being reported.
 
+mod author;
 mod expr;
 mod interpret;
 
-pub use interpret::{Interpretation, interpret, tree_target};
+pub use interpret::{Interpretation, interpret, interpret_reference, tree_target};
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -194,6 +195,25 @@ pub fn check<G: Graph>(graph: &G) -> Result<Report, G::Error> {
         _ => None,
     };
     finish(walk, size)
+}
+
+/// Whether the document's effective version and extensions admit creation
+/// of an object with this descriptor. Existing deprecated objects can still
+/// be checked and edited.
+///
+/// # Errors
+///
+/// Returns graph resolution and budget errors.
+pub fn authorable<G: Graph>(graph: &G, model: &Object, value: &G::Value) -> Result<bool, G::Error> {
+    let mut walk = Walk::new(graph);
+    for key in model.keys {
+        if !key.deprecated.is_some_and(|v| graph.version() >= v)
+            && walk.introduced(value, model, key)? == Some(true)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Check a standalone object and the graph reached through its declared links
@@ -414,6 +434,12 @@ impl<'g, G: Graph> Walk<'g, G> {
         path: &str,
         stack: &mut Vec<Frame<'v, G::Value>>,
     ) -> Result<(), G::Error> {
+        if self.authoring
+            && path.is_empty()
+            && let Some(number) = object
+        {
+            self.backlinks(number, dict, described.name)?;
+        }
         for key in described.keys {
             if key.name.ends_with('*') {
                 continue;
@@ -494,10 +520,16 @@ impl<'g, G: Graph> Walk<'g, G> {
                 self.defect(object, path, described, key, DefectKind::Required, message);
             }
         }
+        let repeat_start = repeating
+            .first()
+            .and_then(|key| key.name.trim_end_matches('*').parse::<usize>().ok());
         for (at, item) in items.iter().enumerate() {
             let named = described.key(&at.to_string());
             let key = named
-                .or_else(|| (!repeating.is_empty()).then(|| repeating[at % repeating.len()]))
+                .or_else(|| {
+                    let offset = at.checked_sub(repeat_start?)?;
+                    repeating.get(offset % repeating.len()).copied()
+                })
                 .or_else(|| described.key("*"));
             if let Some(key) = key {
                 let at = join(path, &at.to_string());
@@ -708,20 +740,29 @@ impl<'g, G: Graph> Walk<'g, G> {
             self.defect(object, path, described, key, DefectKind::Version, message);
             return Ok(());
         };
-        if self.authoring
-            && let Interpretation::Refused(reason) =
-                interpret(self.graph, holder, described, key, Some(value))?
-        {
-            self.defect(
-                object,
-                path,
-                described,
-                key,
-                DefectKind::Value,
-                reason.to_owned(),
-            );
-            return Ok(());
-        }
+        let authored = if self.authoring {
+            match interpret_reference(self.graph, holder, described, key, Some(value), reference)? {
+                Interpretation::Refused(reason) => {
+                    self.defect(
+                        object,
+                        path,
+                        described,
+                        key,
+                        DefectKind::Value,
+                        reason.to_owned(),
+                    );
+                    return Ok(());
+                }
+                Interpretation::Value(_, Some(name)) => typed
+                    .links
+                    .iter()
+                    .find(|link| link.target().name == name)
+                    .map(|link| link.object),
+                _ => None,
+            }
+        } else {
+            None
+        };
         self.indirect(
             object,
             holder,
@@ -735,6 +776,7 @@ impl<'g, G: Graph> Walk<'g, G> {
         let target = match typed.kind {
             Kind::NameTree | Kind::NumberTree => Some(Target::Tree(typed)),
             _ if typed.links.is_empty() => None,
+            _ if self.authoring => authored.map(Target::Object),
             _ => match self.choose(typed.links, value)? {
                 Some(at) => Some(Target::Object(at)),
                 None => {

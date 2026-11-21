@@ -79,6 +79,48 @@ typed.ArrayView.obj: pyropdf.Dictionary | pyropdf.Array
 
 The viewed handle.
 
+### `typed.ArrayView.create`
+
+```python
+typed.ArrayView.create(
+    document: Document,
+    values: Mapping[str, Any] | list[Any] | tuple[Any, ...] | pyropdf.Array,
+    /,
+    *,
+    data: bytes | None = None,
+    attach: Callable[[Self], None] | None = None,
+) -> Self
+```
+
+Create an indirect object from PDF values and check its required references.
+
+Supply dictionary keys, or an ordered sequence for an array, using
+indirect handles for required references. Stream descriptors accept
+decoded bytes as `data`. The new object and its validation form one
+undo step, including inside an existing transaction. An optional
+`attach(view)` callback can register the new object in its owner's
+collection and build reciprocal links before validation.
+
+### `typed.ArrayView.replace`
+
+```python
+typed.ArrayView.replace(value: object, /)
+```
+
+Replace this indirect object's value, preserving its number and generation.
+
+The replacement must satisfy this descriptor and every supported live
+incoming link. Coupled or unknown relationships require their owning
+operation. Accept PDF values, a container handle or a typed view.
+
+### `typed.ArrayView.remove`
+
+```python
+typed.ArrayView.remove()
+```
+
+Free this indirect object when it has no live incoming reference.
+
 ### `typed.ArrayView.interpret`
 
 ```python
@@ -163,6 +205,48 @@ typed.DictionaryView.obj: pyropdf.Dictionary | pyropdf.Array
 ```
 
 The viewed handle.
+
+### `typed.DictionaryView.create`
+
+```python
+typed.DictionaryView.create(
+    document: Document,
+    values: Mapping[str, Any] | list[Any] | tuple[Any, ...] | pyropdf.Array,
+    /,
+    *,
+    data: bytes | None = None,
+    attach: Callable[[Self], None] | None = None,
+) -> Self
+```
+
+Create an indirect object from PDF values and check its required references.
+
+Supply dictionary keys, or an ordered sequence for an array, using
+indirect handles for required references. Stream descriptors accept
+decoded bytes as `data`. The new object and its validation form one
+undo step, including inside an existing transaction. An optional
+`attach(view)` callback can register the new object in its owner's
+collection and build reciprocal links before validation.
+
+### `typed.DictionaryView.replace`
+
+```python
+typed.DictionaryView.replace(value: object, /)
+```
+
+Replace this indirect object's value, preserving its number and generation.
+
+The replacement must satisfy this descriptor and every supported live
+incoming link. Coupled or unknown relationships require their owning
+operation. Accept PDF values, a container handle or a typed view.
+
+### `typed.DictionaryView.remove`
+
+```python
+typed.DictionaryView.remove()
+```
+
+Free this indirect object when it has no live incoming reference.
 
 ### `typed.DictionaryView.interpret`
 
@@ -353,6 +437,48 @@ typed.StreamView.obj: pyropdf.Dictionary | pyropdf.Array
 
 The viewed handle.
 
+### `typed.StreamView.create`
+
+```python
+typed.StreamView.create(
+    document: Document,
+    values: Mapping[str, Any] | list[Any] | tuple[Any, ...] | pyropdf.Array,
+    /,
+    *,
+    data: bytes | None = None,
+    attach: Callable[[Self], None] | None = None,
+) -> Self
+```
+
+Create an indirect object from PDF values and check its required references.
+
+Supply dictionary keys, or an ordered sequence for an array, using
+indirect handles for required references. Stream descriptors accept
+decoded bytes as `data`. The new object and its validation form one
+undo step, including inside an existing transaction. An optional
+`attach(view)` callback can register the new object in its owner's
+collection and build reciprocal links before validation.
+
+### `typed.StreamView.replace`
+
+```python
+typed.StreamView.replace(value: object, /)
+```
+
+Replace this indirect object's value, preserving its number and generation.
+
+The replacement must satisfy this descriptor and every supported live
+incoming link. Coupled or unknown relationships require their owning
+operation. Accept PDF values, a container handle or a typed view.
+
+### `typed.StreamView.remove`
+
+```python
+typed.StreamView.remove()
+```
+
+Free this indirect object when it has no live incoming reference.
+
 ### `typed.StreamView.interpret`
 
 ```python
@@ -445,6 +571,48 @@ typed.View.obj: pyropdf.Dictionary | pyropdf.Array
 ```
 
 The viewed handle.
+
+### `typed.View.create`
+
+```python
+typed.View.create(
+    document: Document,
+    values: Mapping[str, Any] | list[Any] | tuple[Any, ...] | pyropdf.Array,
+    /,
+    *,
+    data: bytes | None = None,
+    attach: Callable[[Self], None] | None = None,
+) -> Self
+```
+
+Create an indirect object from PDF values and check its required references.
+
+Supply dictionary keys, or an ordered sequence for an array, using
+indirect handles for required references. Stream descriptors accept
+decoded bytes as `data`. The new object and its validation form one
+undo step, including inside an existing transaction. An optional
+`attach(view)` callback can register the new object in its owner's
+collection and build reciprocal links before validation.
+
+### `typed.View.replace`
+
+```python
+typed.View.replace(value: object, /)
+```
+
+Replace this indirect object's value, preserving its number and generation.
+
+The replacement must satisfy this descriptor and every supported live
+incoming link. Coupled or unknown relationships require their owning
+operation. Accept PDF values, a container handle or a typed view.
+
+### `typed.View.remove`
+
+```python
+typed.View.remove()
+```
+
+Free this indirect object when it has no live incoming reference.
 
 ### `typed.View.interpret`
 

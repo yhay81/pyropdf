@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use pyo3::exceptions::PyKeyError;
 use pyo3::prelude::*;
-use pyropdf_schema::check::{Graph, Interpretation, check_authored, interpret};
+use pyropdf_schema::check::{
+    Graph, Interpretation, authorable, check_authored, interpret_reference,
+};
 use pyropdf_store::budget::Budget;
 use pyropdf_store::memo::Reads;
 use pyropdf_store::refs::{self, Referrer, Role};
@@ -20,6 +22,7 @@ fn validate(
     number: u32,
     name: &str,
     value: &Value,
+    create: bool,
 ) -> PyResult<()> {
     let model = pyropdf_schema::object(name).ok_or_else(|| PyKeyError::new_err(name.to_owned()))?;
     let graph = crate::check::store_graph(version, budget).map_err(|e| store_error(&e))?;
@@ -33,6 +36,11 @@ fn validate(
         return Err(MalformedPdfError::new_err(format!(
             "{name} requires a {}",
             model.container().name()
+        )));
+    }
+    if create && !authorable(&graph, model, value).map_err(|e| store_error(&e))? {
+        return Err(MalformedPdfError::new_err(format!(
+            "{name} is unavailable or deprecated in this document version"
         )));
     }
     let report = check_authored(&graph, name, number, value)
@@ -54,7 +62,7 @@ pub fn schema_created(document: &_Document, root: (u32, u16), descriptor: &str) 
         let version = document.reading()?;
         let budget = document.budget();
         let value = root_value(&version, Some(root), &[], &budget)?;
-        validate(&version, &budget, root.0, descriptor, &value)
+        validate(&version, &budget, root.0, descriptor, &value, true)
     })?
 }
 
@@ -63,7 +71,8 @@ pub fn schema_created(document: &_Document, root: (u32, u16), descriptor: &str) 
 /// generic direct linking key can keep pointing to an admitted replacement.
 fn incoming(
     document: &_Document,
-    version: &Arc<Version>,
+    original: &Arc<Version>,
+    current: &Version,
     budget: &Budget,
     root: (u32, u16),
     name: &str,
@@ -71,10 +80,10 @@ fn incoming(
 ) -> PyResult<()> {
     let index = document
         .references
-        .get(version, budget)
+        .get(original, budget)
         .map_err(|e| store_error(&e))?;
-    let mut reads = Reads::new(version, budget);
-    let graph = crate::check::store_graph(version, budget).map_err(|e| store_error(&e))?;
+    let mut reads = Reads::new(original, budget);
+    let graph = crate::check::store_graph(current, budget).map_err(|e| store_error(&e))?;
     let holders = index
         .referrers(root.0)
         .iter()
@@ -102,7 +111,7 @@ fn incoming(
                 && let Some(model) = pyropdf_schema::object(link.holder)
                 && let Some(key) = model.key(link.key)
                 && let Some(owner) = graph.resolve(number).map_err(|e| store_error(&e))?
-                && matches!(interpret(&graph, &owner, model, key, Some(value)).map_err(|e| store_error(&e))?,
+                && matches!(interpret_reference(&graph, &owner, model, key, Some(value), Some(root.0)).map_err(|e| store_error(&e))?,
                     Interpretation::Value(_, Some(target)) if target == name)
             {
                 continue;
@@ -135,20 +144,25 @@ pub fn schema_change(
                 .map(|v| untagged(v, transaction.version(), 0, budget))
                 .transpose()?;
             let original = transaction.snapshot();
-            incoming(
-                document,
-                &original,
-                budget,
-                root,
-                descriptor,
-                proposed.as_ref(),
-            )?;
-            if let Some(value) = proposed {
+            if let Some(value) = proposed.as_ref() {
                 transaction
-                    .write(root.0, &value, budget)
+                    .write(root.0, value, budget)
                     .map_err(|e| store_error(&e))?;
-                validate(&transaction.snapshot(), budget, root.0, descriptor, &value)?;
+                let current = transaction.snapshot();
+                incoming(
+                    document,
+                    &original,
+                    &current,
+                    budget,
+                    root,
+                    descriptor,
+                    Some(value),
+                )?;
+                validate(&current, budget, root.0, descriptor, value, false)?;
             } else {
+                incoming(
+                    document, &original, &original, budget, root, descriptor, None,
+                )?;
                 transaction
                     .free(root.0, budget)
                     .map_err(|e| store_error(&e))?;

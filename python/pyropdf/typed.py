@@ -73,6 +73,8 @@ from pyropdf._objects import String as _String
 from pyropdf._objects import _decode, _encode, _key
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pyropdf._document import Document
 
 #: The object types of the model, sorted.
@@ -81,6 +83,25 @@ TYPES: tuple[str, ...] = tuple(_core.schema_names())
 #: The longest chain of ``/Parent`` links that inheritance follows: the default
 #: ``DocumentLimits.max_object_depth``, which bounds the page tree's nesting.
 _MAX_INHERITANCE = 64
+
+# The specification completion decision (#256) excludes authoring these
+# deprecated features. Their existing objects can still be edited or removed.
+_NO_CREATE = frozenset(
+    {
+        "ActionNOP",
+        "ActionSetState",
+        "ActionMovie",
+        "ActionSound",
+        "AnnotMovie",
+        "AnnotSound",
+        "ArrayOfNamesForProcSet",
+        "ArrayOfXFA",
+        "Movie",
+        "MovieActivation",
+        "SlideShow",
+        "SoundObject",
+    }
+)
 
 #: Wrappers around a possible name that only gate it by version or extension.
 _GATED = re.compile(r"(?:fn:(?:SinceVersion|BeforeVersion|Deprecated|IsPDFVersion|Extension)\([^,()]*,)*([^,()@]+)\)*")
@@ -189,6 +210,21 @@ def __dir__() -> list[str]:
 _ABSENT: Any = object()
 
 
+def _check_new_encryption(name: str, obj: Any) -> None:  # noqa: ANN401 - PDF container of the selected descriptor.
+    """Apply the recorded exclusion of new RC4 encryption dictionaries."""
+    if name in {"EncryptionStandard", "EncryptionPublicKey"}:
+        filters = obj.get("CF")
+        if obj.get("V") in {1, 2, 3} or (
+            isinstance(filters, _Dictionary)
+            and any(isinstance(cf, _Dictionary) and cf.get("CFM") == _Name("V2") for cf in filters.values())
+        ):
+            msg = "creation of deprecated RC4 encryption is excluded"
+            raise PdfError(msg)
+    if name in {"CryptFilter", "CryptFilterPublicKey"} and obj.get("CFM") == _Name("V2"):
+        msg = "creation of deprecated RC4 encryption is excluded"
+        raise PdfError(msg)
+
+
 class View:
     """A typed view of one object: the base of the views of every object type."""
 
@@ -214,18 +250,29 @@ class View:
 
     @classmethod
     def create(
-        cls, document: Document, values: Mapping[str, Any] | list[Any] | tuple[Any, ...] | _Array, /, *, data: bytes | None = None
+        cls,
+        document: Document,
+        values: Mapping[str, Any] | list[Any] | tuple[Any, ...] | _Array,
+        /,
+        *,
+        data: bytes | None = None,
+        attach: Callable[[Self], None] | None = None,
     ) -> Self:
         """Create an indirect object from PDF values and check its required references.
 
         Supply dictionary keys, or an ordered sequence for an array, using
         indirect handles for required references. Stream descriptors accept
         decoded bytes as ``data``. The new object and its validation form one
-        undo step, including inside an existing transaction.
+        undo step, including inside an existing transaction. An optional
+        ``attach(view)`` callback can register the new object in its owner's
+        collection and build reciprocal links before validation.
         """
         if not cls._type:
             msg = "choose a concrete Arlington object type"
             raise TypeError(msg)
+        if cls._type in _NO_CREATE:
+            msg = f"creation of deprecated {cls._type} objects is excluded"
+            raise PdfError(msg)
         with document.transaction(f"Create {cls._type}"):
             if isinstance(values, (_Dictionary, _Array)):
                 if data is not None:
@@ -247,6 +294,9 @@ class View:
                 msg = f"{cls._type} requires a {cls._handle.__name__}"
                 raise TypeError(msg)
             view = cls(obj)
+            if attach is not None:
+                attach(view)
+            _check_new_encryption(cls._type, obj)
             _core.schema_created(obj._core(), view._indirect(), cls._type)  # noqa: SLF001
             return view
 

@@ -246,6 +246,20 @@ def typed_delete(doc: pyropdf.Document) -> set[int]:
     return {number(doc.catalog)}
 
 
+def typed_author(doc: pyropdf.Document) -> set[int]:
+    """Create, replace and remove checked objects without leaving a dangling alias."""
+    view = typed.DocInfo.create(doc, {"Title": "draft"})
+    discarded = typed.DocInfo.create(doc, {"Title": "finished"})
+    view.replace(discarded)
+    discarded.remove()
+    doc.catalog["CheckedInfo"] = view.obj
+    return {number(doc.catalog)}
+
+
+def check_typed_author(doc: pyropdf.Document) -> None:
+    assert typed.DocInfo(doc.catalog["CheckedInfo"]).Title == "finished"
+
+
 def undo(doc: pyropdf.Document) -> set[int]:
     touched = catalog_entry(doc)
     doc.catalog["PageMode"] = Name("FullScreen")
@@ -369,6 +383,7 @@ EDITS = (
         "delete_attachment": Edit(prepare=prepare_attachment, apply=delete_attachment, check=check_attachment_deleted),
         "delete_entry": Edit(prepare=prepare_catalog, apply=delete_entry, check=check_entry_deleted),
         "array_insert_delete": Edit(apply=array_insert_delete, check=check_array),
+        "checked_typed_objects": Edit(apply=typed_author, check=check_typed_author),
         "typed_set": Edit(prepare=prepare_layout, apply=typed_set, check=check_layout),
         "typed_delete": Edit(prepare=prepare_layout, apply=typed_delete, check=check_layout_deleted),
         "undo": Edit(prepare=prepare_catalog, apply=undo, check=check_catalog),

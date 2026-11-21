@@ -133,7 +133,7 @@ def test_done_comes_only_from_a_marked_test(tmp_path: Path) -> None:
 
     features_path.write_text(features_text, encoding="utf-8")
     views = root / "tests/test_typed_views.py"
-    marker = '@pytest.mark.spec("arlington", "read", "create", "edit")\n'
+    marker = '@pytest.mark.spec("arlington", "read", "edit")\n'
     views.write_text(views.read_text(encoding="utf-8").replace(marker, ""), encoding="utf-8")
     result = generate(root, "--check")
     assert result.returncode == 1
@@ -297,10 +297,10 @@ OPEN_MILESTONES = frozenset(
 
 def test_planned_and_partial_statuses_name_open_milestones_and_valid_issues() -> None:
     by_name = features()
-    assert by_name["Catalog"]["create"]["issue"] == 889
-    assert by_name["Catalog"]["create"]["milestone"] == "Phase 4: Specification"
-    assert by_name["Catalog"]["edit"]["issue"] == 889
-    assert by_name["Catalog"]["edit"]["milestone"] == "Phase 4: Specification"
+    assert by_name["Catalog"]["create"]["status"] == "done"
+    assert by_name["Catalog"]["edit"]["status"] == "done"
+    assert by_name["Catalog"]["preserve"]["issue"] == 890
+    assert by_name["Catalog"]["preserve"]["milestone"] == "Phase 4: Specification"
     for name, feature in by_name.items():
         for dimension in DIMENSIONS:
             entry = feature[dimension]
