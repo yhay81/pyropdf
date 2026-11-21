@@ -26,6 +26,7 @@ import tempfile
 from pathlib import Path
 
 import pyropdf
+from pyropdf._objects import _direct_value
 
 ROOT = Path(__file__).resolve().parent.parent
 # The preservation harness imports its sibling test modules.
@@ -437,19 +438,30 @@ def profile_saves(directory: Path) -> dict[Path, str]:
     return files
 
 
+def declares_pades(extensions: object) -> bool:
+    """Recognize the PDF 1.7 declarations registered for PAdES signatures."""
+    if not isinstance(extensions, pyropdf.Dictionary) or extensions.is_indirect:
+        return False
+    for prefix, required in (("ESIC", PADES_LEVEL), ("ADBE", 8)):
+        entry = extensions.get(prefix)
+        if (
+            isinstance(entry, pyropdf.Dictionary)
+            and not entry.is_indirect
+            and _direct_value(entry, "BaseVersion") == "1.7"
+        ):
+            level = _direct_value(entry, "ExtensionLevel")
+            if type(level) is int and level >= required:
+                return True
+    return False
+
+
 def arlington(path: Path, flavour: str) -> str:
     """Validate the effective version, including a catalog promotion in a later revision."""
     with path.open("rb") as source:
         header = source.read(8)[5:8].decode("ascii")
     with pyropdf.open(path) as doc:
         declared = doc.catalog.get("Version")
-        extensions = doc.catalog.get("Extensions")
-        pades = extensions.get("ETSI_PAdES") if isinstance(extensions, pyropdf.Dictionary) else None
-        declares_pades = (
-            isinstance(pades, pyropdf.Dictionary)
-            and pades.get("BaseVersion") == pyropdf.Name("1.7")
-            and pades.get("ExtensionLevel") == PADES_LEVEL
-        )
+        pades = declares_pades(doc.catalog.get("Extensions"))
     # Valid PDF version names are ordered by their one-digit components.
     effective = (
         max(header, str(declared))
@@ -458,7 +470,7 @@ def arlington(path: Path, flavour: str) -> str:
     )
     version = "arlington" + effective
     names = [EXTENSIONS[flavour]] if flavour in EXTENSIONS else []
-    if declares_pades:
+    if pades:
         names.append("ETSI_PAdES")
     return f"{version}+{','.join(names)}" if names else version
 
@@ -541,16 +553,19 @@ def failed_rules(report: str) -> set[str]:
     return set(re.findall(r"^[ \t]+(?:FAIL|DEVIATION) ([^\r\n]+)$", report, re.MULTILINE))
 
 
-def run(jar: Path, files: dict[Path, str]) -> list[tuple[str, Path]]:
+def run(
+    jar: Path, files: dict[Path, str], *, outcomes: dict[str, tuple[str, set[str]]] | None = None
+) -> list[tuple[str, Path]]:
     """Verify the verdict and the complete failed-rule set under each flavour."""
     failures = []
+    outcomes = EXPECTED if outcomes is None else outcomes
     for flavour, paths in by_flavour(files).items():
         verdicts = validate(jar, flavour, paths)
         reports = detailed_reports(jar, flavour, [path for path in paths if not verdicts[path.name]])
         for path in paths:
             accepted = verdicts[path.name]
             key = f"{flavour} {path.name}"
-            expected = EXPECTED.get(key)
+            expected = outcomes.get(key)
             note = f" ({expected[0]})" if expected else ""
             sys.stdout.write(f"{'PASS' if accepted else 'FAIL'} {key}{note}\n")
             report = reports.get(path, "")
@@ -730,18 +745,84 @@ def controls(jar: Path, directory: Path) -> list[tuple[str, Path]]:
     return failures
 
 
+def source_matrix(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Validate independent sources, negative controls and newly authored files in both save modes."""
+    fixtures = runpy.run_path(str(ROOT / "tests/test_profile_sources.py"))
+    negative = {
+        "1a": "6.8.2.2-1",
+        "1b": "6.2.3.3-2",
+        "2a": "6.7.3.4-1",
+        "2b": "6.1.13-11",
+        "2u": "6.2.11.7.2-1",
+        "3a": "6.7.3.4-1",
+        "3b": "6.8-4",
+        "3u": "6.2.11.7.2-1",
+        "4": "6.2.4.3-2",
+        "4e": "6.7.3-3",
+        "4f": "6.9-5",
+        "ua1": "7.1-3",
+        "ua2": "8.4.5.7-2",
+    }
+    files = {}
+    outcomes = {}
+    for flavour, rule in negative.items():
+        inputs = {k: fixtures["source"](flavour, k).read_bytes() for k in ("pass", "fail")}
+        if flavour not in ("4", "ua2"):  # The dual PDF/A-4 and PDF/UA-2 authoring workflow belongs to #846.
+            profile = "pdfua-1" if flavour == "ua1" else f"pdfa-{flavour}"
+            with fixtures["authored"](profile) as doc:
+                inputs["authored"] = doc.to_bytes()
+        for kind, original in inputs.items():
+            with pyropdf.open(original) as doc:
+                doc.pages[0].rotation = 90
+                saves = {"original": original, "full": doc.to_bytes(), "incremental": doc.to_bytes(incremental=True)}
+            for mode, data in saves.items():
+                path = directory / f"independent-{flavour}-{kind}-{mode}.pdf"
+                path.write_bytes(data)
+                files[path] = flavour
+                if kind == "fail":
+                    outcomes[f"{flavour} {path.name}"] = ("source corpus negative control", {rule})
+    return run(jar, files, outcomes=outcomes)
+
+
+def archival_colour_controls(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Compare selected colours, actual painting, local defaults and transparency blending spaces."""
+    fixtures = runpy.run_path(str(ROOT / "tests/test_archival_output_intents.py"))
+    files = {}
+    outcomes = {}
+    for flavour, case, _device, rule in fixtures["CONTROLS"]:
+        with fixtures["control"](flavour, case) as doc:
+            original = doc.to_bytes()
+        with pyropdf.open(original) as doc:
+            doc.pages[0].rotation = 90
+            saves = {"original": original, "full": doc.to_bytes(), "incremental": doc.to_bytes(incremental=True)}
+        for mode, data in saves.items():
+            path = directory / f"archival-colour-{case}-{mode}.pdf"
+            path.write_bytes(data)
+            files[path] = flavour
+            if rule is not None:
+                outcomes[f"{flavour} {path.name}"] = ("device colour use", {rule})
+    return run(jar, files, outcomes=outcomes)
+
+
 def main() -> int:
     """Validate the corpus and its saves, and return the exit status."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--jar", type=Path, required=True, help="veraPDF's greenfield-apps jar")
     parser.add_argument("--arlington", type=Path, help="veraPDF's greenfield-apps-arlington jar")
+    parser.add_argument(
+        "--profile-sources-only", action="store_true", help="run the per-flavour source and authoring matrix"
+    )
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
+        source_failures = source_matrix(args.jar.resolve(), Path(directory))
+        if args.profile_sources_only:
+            return int(bool(source_failures))
         files = saves(Path(directory))
         files.update(language_saves(Path(directory)))
         files.update(remove_signature_saves(Path(directory) / "pdfa-2b-sign_revision-incremental.pdf", Path(directory)))
         targeted = profile_saves(Path(directory))
-        failures = run(args.jar.resolve(), targeted)
+        failures = source_failures + archival_colour_controls(args.jar.resolve(), Path(directory))
+        failures += run(args.jar.resolve(), targeted)
         failures += run(args.jar.resolve(), dual_archival(targeted))
         failures += run(args.jar.resolve(), files)
         failures += run(args.jar.resolve(), dual_archival(files))

@@ -539,7 +539,7 @@ pub fn incremental_with(
             rows.try_push(row)?;
         }
     }
-    for &number in mode.embedded() {
+    for &number in mode.changed_streams() {
         let mut affected = row(version, number);
         write_object(
             version,
@@ -590,7 +590,7 @@ enum Mode<'a> {
     /// encrypted bytes, and the rest are encrypted with its handler.
     Keep {
         handler: Cow<'a, Handler>,
-        embedded: Vec<u32>,
+        changed_streams: Vec<u32>,
         index: &'a Index,
         /// The object of the `/Encrypt` dictionary.
         encrypt: Option<u32>,
@@ -676,7 +676,7 @@ impl<'a> Mode<'a> {
                 } else {
                     (Cow::Borrowed(handler), false)
                 };
-                let embedded = if selector_changed
+                if selector_changed
                     || handler.distinguishes_embedded_files() && version.has_changes()
                 {
                     handler
@@ -686,20 +686,15 @@ impl<'a> Mode<'a> {
                             Some(version),
                             budget,
                         )?);
-                    inherited_attachments(
-                        version,
-                        index,
-                        original,
-                        &handler,
-                        selector_changed,
-                        budget,
-                    )?
+                }
+                let changed_streams = if version.has_changes() {
+                    handler.changed_streams(version, index, original, selector_changed, budget)?
                 } else {
                     Vec::new()
                 };
                 Ok(Self::Keep {
                     handler,
-                    embedded,
+                    changed_streams,
                     index,
                     encrypt: match encrypt {
                         Value::Reference(reference) => Some(reference.number()),
@@ -711,9 +706,15 @@ impl<'a> Mode<'a> {
         }
     }
 
-    fn embedded(&self) -> &[u32] {
+    fn removing_encryption(&self, version: &Version) -> bool {
+        matches!(self, Self::Plain) && version.base().file().is_some_and(Index::is_encrypted)
+    }
+
+    fn changed_streams(&self) -> &[u32] {
         match self {
-            Self::Keep { embedded, .. } => embedded,
+            Self::Keep {
+                changed_streams, ..
+            } => changed_streams,
             _ => &[],
         }
     }
@@ -743,41 +744,13 @@ impl<'a> Mode<'a> {
     }
 }
 
-/// Only untouched embedded streams inheriting /EFF change when that selector changes.
-fn inherited_attachments(
-    version: &Version,
-    index: &Index,
-    old: &Handler,
-    new: &Handler,
-    selector_changed: bool,
-    budget: &Budget,
-) -> Result<Vec<u32>> {
-    let mut numbers = BudgetVec::new(budget);
-    for (number, entry) in index.entries() {
-        budget.poll()?;
-        if version.slot(number).is_some() || !matches!(entry.location(), Location::Offset(_)) {
-            continue;
-        }
-        let reference = Reference::new(number, entry.generation());
-        let Some(bytes) = index.object(reference, budget)? else {
-            continue;
-        };
-        if let Value::Stream(stream) = Value::parse(&bytes, budget)?
-            && (old.embedded_stream(reference, stream.dict())
-                != new.embedded_stream(reference, stream.dict())
-                || selector_changed && new.embedded_stream(reference, stream.dict()))
-            && security::filters::explicit(stream.dict(), budget)?.is_none()
-        {
-            numbers.try_push(number)?;
-        }
-    }
-    numbers.sort_unstable();
-    Ok(numbers.into_vec())
-}
-
 fn plain_body(bytes: Bytes, version: &Version, budget: &Budget) -> Result<Bytes> {
     if version.base().file().is_some_and(Index::is_encrypted) {
-        return Ok(security::filters::plain(bytes, budget)?);
+        return Ok(security::filters::plain(
+            bytes,
+            &|r, b| version.filter_object(r, b),
+            budget,
+        )?);
     }
     Ok(bytes)
 }
@@ -821,14 +794,25 @@ fn write_object(
     if let Some(renumbering) = renumbering {
         let target = renumbering.number(row.number)?;
         let reference = Reference::new(row.number, row.generation);
-        let plain = renumbering.bytes(version, reference, streams, out.budget)?;
+        let plain = renumbering.bytes(
+            version,
+            reference,
+            streams,
+            mode.removing_encryption(version),
+            out.budget,
+        )?;
         // The keys of an encrypted object derive from its new reference.
         let bytes = match (mode, mode.handler()) {
             (Mode::Keep { encrypt, .. }, _) if Some(row.number) == *encrypt => plain,
-            (_, Some(handler)) => {
-                security::encrypt_bytes_as(handler, reference, target, &plain, out.budget)?
-            }
-            (_, None) => plain_body(plain, version, out.budget)?,
+            (_, Some(handler)) => security::encrypt_bytes_as(
+                handler,
+                reference,
+                target,
+                &plain,
+                &|r, b| renumbering.lookup(version, r, b),
+                out.budget,
+            )?,
+            (_, None) => plain,
         };
         row.offset = Some(out.offset()?);
         out.display(format_args!(
@@ -845,6 +829,7 @@ fn write_object(
         |e: StoreError| e.context(format!("saving object {} {}", row.number, row.generation));
     let bytes = match (version.slot(row.number), mode) {
         (Some(Slot::Written(object)), Mode::Plain) => {
+            version.check_stream_filters(&*object.value(budget)?, budget)?;
             plain_body(object.bytes().clone(), version, budget)?
         }
         (Some(Slot::Written(object)), Mode::Keep { encrypt, .. })
@@ -854,11 +839,19 @@ fn write_object(
         }
         (Some(Slot::Written(object)), _) => {
             let handler = mode.handler().expect("an encrypting mode has a handler");
-            security::encrypt_bytes(handler, reference, object.bytes(), budget).map_err(context)?
+            security::encrypt_bytes_as(
+                handler,
+                reference,
+                reference,
+                object.bytes(),
+                &|r, b| version.filter_object(r, b),
+                budget,
+            )
+            .map_err(context)?
         }
         (_, Mode::Keep { index, encrypt, .. })
             if Some(row.number) == *encrypt
-                || (mode.embedded().binary_search(&row.number).is_err()
+                || (mode.changed_streams().binary_search(&row.number).is_err()
                     && matches!(
                         index.get(row.number).map(|entry| entry.location()),
                         Some(Location::Offset(_))
@@ -874,7 +867,15 @@ fn write_object(
         (_, _) => {
             let handler = mode.handler().expect("an encrypting mode has a handler");
             let plain = raw::body(&**version.base(), reference, budget).map_err(context)?;
-            security::encrypt_bytes(handler, reference, &plain, budget).map_err(context)?
+            security::encrypt_bytes_as(
+                handler,
+                reference,
+                reference,
+                &plain,
+                &|r, b| version.filter_object(r, b),
+                budget,
+            )
+            .map_err(context)?
         }
     };
     let bytes = match recode(version, reference, streams, mode, budget).map_err(|error| {
@@ -909,14 +910,36 @@ fn recode(
         Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let Some(value) = recode::recoded(object.value(), streams, budget)? else {
+    let mut clear;
+    let value = if mode.removing_encryption(version)
+        && matches!(object.value().as_ref(), Value::Stream(_))
+    {
+        clear = crate::value::copy_for_edit(object.value(), budget)?;
+        security::filters::remove_explicit(
+            &mut clear,
+            &|r, b| version.filter_object(r, b),
+            budget,
+        )?;
+        &clear
+    } else {
+        object.value().as_ref()
+    };
+    let Some(value) = recode::recoded(value, streams, &|r, b| version.filter_object(r, b), budget)?
+    else {
         return Ok(None);
     };
     let mut plain = BudgetVec::new(budget);
     write::value(&mut plain, &value)?;
     let plain = Bytes::new(plain.into_vec());
     Ok(Some(match mode.handler() {
-        Some(handler) => security::encrypt_bytes(handler, reference, &plain, budget)?,
+        Some(handler) => security::encrypt_bytes_as(
+            handler,
+            reference,
+            reference,
+            &plain,
+            &|r, b| version.filter_object(r, b),
+            budget,
+        )?,
         None => plain,
     }))
 }

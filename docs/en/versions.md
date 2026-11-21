@@ -131,6 +131,33 @@ Selecting a new method requires a full save. Direct page rendering and text
 extraction from an AES-GCM file await the authenticated object source in
 hayro. [Engine integration #968](https://github.com/yhay81/pyropdf/issues/968)
 
+### Standard password encryption
+
+The table covers the standard password handler. `V` and `R` are the
+encryption dictionary's algorithm version and revision. Both passwords can
+open each listed format. Permissions reported for a user password come from
+the file. The owner password grants all permissions.
+
+| Existing handler | V / R | New password encryption on full save | Direct page rendering with |
+| --- | --- | --- | --- |
+| RC4, 40 bit | 1 / 2 | Unavailable | User password |
+| RC4, 128 bit | 2 / 3 | Unavailable | User password |
+| RC4, V2 crypt filter | 4 / 4 | Unavailable | User password |
+| AES-128, AESV2 | 4 / 4 | `method="aes-128"` | User password |
+| AES-256, AESV3 | 5 / 5 | Unavailable | User or owner password |
+| AES-256, AESV3 | 5 / 6 | `method="aes-256"` (default) | User or owner password |
+| AES-GCM, AESV4 | 6 / 7 | `method="aes-gcm"` | Awaiting [engine support](https://github.com/yhay81/pyropdf/issues/968) |
+
+Across these seven handlers, a full save with `Encryption.KEEP` copies
+untouched ciphertext and encrypts new strings and streams with the existing
+handler. An incremental save does the same by default and retains the
+original file as its prefix. With no edits it returns the original bytes.
+A full save with the default `encryption=None` removes encryption.
+
+For revisions 2 through 4, the store can read and edit with the owner
+password, but calling `page.pixmap()` with that password currently raises
+`PdfError`. [Owner-password rendering](https://github.com/yhay81/pyropdf/issues/974)
+
 ## Signing
 
 `Signer.from_pem` and `Signer.from_pkcs12` load ECDSA P-256 or P-384 keys with
