@@ -244,8 +244,11 @@ impl Handler {
     /// in place; unrelated documents cannot inherit the new authority.
     pub fn retain_recipient_access(&self, verified: &Self) {
         if let (Some(recipient), Some(other)) = (&self.recipient, &verified.recipient)
-            && (recipient.profile_id.is_some() && recipient.profile_id == other.profile_id
-                || !self.key.is_empty() && self.key == verified.key)
+            && match (recipient.profile_id, other.profile_id) {
+                (Some(current), Some(verified)) => current == verified,
+                (None, None) => !self.key.is_empty() && self.key == verified.key,
+                _ => false,
+            }
         {
             self.filters.retain_keys(&verified.filters);
             if verified.access() == Access::Owner {

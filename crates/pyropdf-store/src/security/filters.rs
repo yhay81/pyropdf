@@ -29,6 +29,7 @@ pub(super) enum Key {
 
 #[derive(Clone, Default)]
 pub(super) struct Filters {
+    pub(super) file_roles: Arc<[Reference]>,
     pub(super) named: Arc<[(Name, Method, Key)]>,
     pub(super) strings: Option<Name>,
     pub(super) streams: Option<Name>,
@@ -51,6 +52,7 @@ impl Filters {
             }
         }
         Ok(Self {
+            file_roles: Arc::default(),
             named: entries.into_vec().into(),
             strings: Some(strings.into()),
             streams: Some(streams.into()),
@@ -69,6 +71,14 @@ impl Filters {
                 let Value::Dict(filter) = filter else {
                     return Err(Error::malformed("a /CF entry must be a dictionary"));
                 };
+                if name.as_bytes() == IDENTITY {
+                    return Err(Error::malformed(
+                        "the built-in /Identity crypt filter cannot be redefined",
+                    ));
+                }
+                if selected(filter, "Type", b"CryptFilter")? != b"CryptFilter" {
+                    return Err(Error::malformed("invalid crypt-filter dictionary /Type"));
+                }
                 let method = match selected(filter, "CFM", b"None")? {
                     b"None" => Method::Identity,
                     b"V2" => Method::Rc4,
@@ -154,6 +164,7 @@ impl Handler {
         &'a self,
         kind: Kind,
         dict: Option<&Dict>,
+        source: Reference,
         budget: &Budget,
     ) -> Result<(Method, &'a [u8], bool)> {
         let override_name = dict
@@ -178,7 +189,9 @@ impl Handler {
         }
         let default = match (kind, type_name) {
             (Kind::String, _) => &self.filters.strings,
-            (_, Some(Value::Name(n))) if n.as_bytes() == b"EmbeddedFile" => &self.filters.embedded,
+            (_, _) if dict.is_some_and(|d| self.embedded_stream(source, d)) => {
+                &self.filters.embedded
+            }
             _ => &self.filters.streams,
         };
         let Some(name) = override_name.or_else(|| default.as_ref().map(Name::as_bytes)) else {
@@ -206,18 +219,26 @@ impl Handler {
         &self,
         kind: Kind,
         dict: Option<&Dict>,
-        reference: Reference,
+        references: (Reference, Reference),
         data: &[u8],
         budget: &Budget,
         encrypt: bool,
     ) -> Result<Vec<u8>> {
-        let (method, shared_key, explicit) = self.selection(kind, dict, budget)?;
+        let (source, reference) = references;
+        let (method, shared_key, explicit) = self.selection(kind, dict, source, budget)?;
         if method == Method::Identity {
             return copy(data, budget);
         }
         if encrypt && self.is_recipient() && method == Method::Rc4 {
             return Err(Error::malformed(
                 "pyropdf does not write RC4 recipient ciphertext; choose AES for a full save",
+            ));
+        }
+        if matches!((method,shared_key.len()),(Method::Aes128,n) if n != 16)
+            || matches!((method,shared_key.len()),(Method::Aes256,n) if n != 32)
+        {
+            return Err(Error::malformed(
+                "the selected crypt-filter key has the wrong AES length",
             ));
         }
         let local;
@@ -324,6 +345,10 @@ pub(crate) fn plain(bytes: crate::value::Bytes, budget: &Budget) -> Result<crate
 }
 
 impl Handler {
+    pub(crate) fn same_embedded_filter(&self, other: &Self) -> bool {
+        self.filters.embedded == other.filters.embedded
+    }
+
     /// Changes the embedded-file default while retaining authenticated keys.
     pub(crate) fn with_embedded_filter(&self, dict: &Dict) -> Result<Self> {
         if self.version < 4 {

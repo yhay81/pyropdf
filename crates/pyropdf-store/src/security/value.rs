@@ -20,7 +20,7 @@ pub fn decrypt_value(
     value: &Value,
     budget: &Budget,
 ) -> Result<Value> {
-    transform(handler, reference, value, budget, false)
+    transform(handler, (reference, reference), value, budget, false)
 }
 
 /// Returns `value`, of the object that `reference` names, with its strings
@@ -31,7 +31,7 @@ pub fn encrypt_value(
     value: &Value,
     budget: &Budget,
 ) -> Result<Value> {
-    transform(handler, reference, value, budget, true)
+    transform(handler, (reference, reference), value, budget, true)
 }
 
 /// Returns the bytes of a value, `bytes`, of the object that `reference`
@@ -43,8 +43,18 @@ pub fn encrypt_bytes(
     bytes: &Bytes,
     budget: &Budget,
 ) -> Result<Bytes> {
+    encrypt_bytes_as(handler, reference, reference, bytes, budget)
+}
+
+pub(crate) fn encrypt_bytes_as(
+    handler: &Handler,
+    source: Reference,
+    target: Reference,
+    bytes: &Bytes,
+    budget: &Budget,
+) -> Result<Bytes> {
     let value = Value::parse(bytes, budget)?;
-    let value = encrypt_value(handler, reference, &value, budget)?;
+    let value = transform(handler, (source, target), &value, budget, true)?;
     let mut out = BudgetVec::new(budget);
     write::value(&mut out, &value)?;
     Ok(Bytes::new(out.into_vec()))
@@ -52,7 +62,7 @@ pub fn encrypt_bytes(
 
 fn transform(
     handler: &Handler,
-    reference: Reference,
+    reference: (Reference, Reference),
     value: &Value,
     budget: &Budget,
     encrypt: bool,
@@ -69,7 +79,7 @@ fn transform(
 
 fn walk(
     handler: &Handler,
-    reference: Reference,
+    reference: (Reference, Reference),
     value: &mut Value,
     budget: &Budget,
     encrypt: bool,
@@ -80,9 +90,9 @@ fn walk(
     }
     let apply = |kind, data: &[u8]| {
         if encrypt {
-            handler.encrypt(kind, reference, data, budget)
+            handler.encrypt(kind, reference.1, data, budget)
         } else {
-            handler.decrypt(kind, reference, data, budget)
+            handler.decrypt(kind, reference.1, data, budget)
         }
     };
     match value {

@@ -627,7 +627,8 @@ impl<'a> Mode<'a> {
         let file = version.base().file();
         match file.and_then(|index| Some((index, index.security()?))) {
             Some((index, handler)) if version.base().trailer().get("Encrypt") == Some(encrypt) => {
-                let (handler, embedded) = if let Value::Reference(reference) = encrypt
+                let original = handler;
+                let (mut handler, selector_changed) = if let Value::Reference(reference) = encrypt
                     && let Some(Slot::Written(written)) = version.slot(reference.number())
                 {
                     let Some(raw) = index.object(*reference, budget)? else {
@@ -647,15 +648,35 @@ impl<'a> Mode<'a> {
                         return Err(Error::Refused(Refusal::Encryption));
                     }
                     if old_eff == new_eff {
-                        (Cow::Borrowed(handler), Vec::new())
+                        (Cow::Borrowed(handler), false)
                     } else {
-                        (
-                            Cow::Owned(handler.with_embedded_filter(new)?),
-                            inherited_attachments(version, index, budget)?,
-                        )
+                        let selected = handler.with_embedded_filter(new)?;
+                        let changed = !selected.same_embedded_filter(handler);
+                        (Cow::Owned(selected), changed)
                     }
                 } else {
-                    (Cow::Borrowed(handler), Vec::new())
+                    (Cow::Borrowed(handler), false)
+                };
+                let embedded = if selector_changed
+                    || handler.distinguishes_embedded_files() && version.has_changes()
+                {
+                    handler
+                        .to_mut()
+                        .remember_file_roles(security::embedded::discover(
+                            index,
+                            Some(version),
+                            budget,
+                        )?);
+                    inherited_attachments(
+                        version,
+                        index,
+                        original,
+                        &handler,
+                        selector_changed,
+                        budget,
+                    )?
+                } else {
+                    Vec::new()
                 };
                 Ok(Self::Keep {
                     handler,
@@ -688,7 +709,14 @@ impl<'a> Mode<'a> {
 }
 
 /// Only untouched embedded streams inheriting /EFF change when that selector changes.
-fn inherited_attachments(version: &Version, index: &Index, budget: &Budget) -> Result<Vec<u32>> {
+fn inherited_attachments(
+    version: &Version,
+    index: &Index,
+    old: &Handler,
+    new: &Handler,
+    selector_changed: bool,
+    budget: &Budget,
+) -> Result<Vec<u32>> {
     let mut numbers = BudgetVec::new(budget);
     for (number, entry) in index.entries() {
         budget.poll()?;
@@ -700,7 +728,9 @@ fn inherited_attachments(version: &Version, index: &Index, budget: &Budget) -> R
             continue;
         };
         if let Value::Stream(stream) = Value::parse(&bytes, budget)?
-            && matches!(stream.dict().get("Type"),Some(Value::Name(n)) if n.as_bytes() == b"EmbeddedFile")
+            && (old.embedded_stream(reference, stream.dict())
+                != new.embedded_stream(reference, stream.dict())
+                || selector_changed && new.embedded_stream(reference, stream.dict()))
             && security::filters::explicit(stream.dict(), budget)?.is_none()
         {
             numbers.try_push(number)?;
@@ -760,7 +790,9 @@ fn write_object(
         // The keys of an encrypted object derive from its new reference.
         let bytes = match (mode, mode.handler()) {
             (Mode::Keep { encrypt, .. }, _) if Some(row.number) == *encrypt => plain,
-            (_, Some(handler)) => security::encrypt_bytes(handler, target, &plain, out.budget)?,
+            (_, Some(handler)) => {
+                security::encrypt_bytes_as(handler, reference, target, &plain, out.budget)?
+            }
             (_, None) => plain_body(plain, version, out.budget)?,
         };
         row.offset = Some(out.offset()?);

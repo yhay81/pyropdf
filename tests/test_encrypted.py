@@ -712,6 +712,11 @@ def test_explicit_stream_crypt_and_embedded_defaults(
         assert doc.objects[private_ref].read() == private
         assert doc.attachments["file.bin"].read() == attachment
         assert doc.objects[ordinary_ref].read() == b"unrelated private stream"
+        if incremental:
+            with doc.revisions[0].open() as old:
+                assert old.attachments["file.bin"].read() == attachment
+                assert old.objects[private_ref].read() == private
+                assert "EFF" not in old.trailer["Encrypt"]
         plain = doc.to_bytes()
     with pyropdf.open(plain) as doc:
         assert doc.objects[private_ref].read() == private
@@ -949,3 +954,77 @@ def test_aes256_named_page_content_matches_the_clear_render(handler: str, select
             reopened = pyropdf.open(saved, credential=owner)
     with reopened:
         assert reopened.pages[0].pixmap(dpi=20).to_bytes() == expected
+
+
+@pytest.mark.parametrize("role", ["EF", "RF"])
+@pytest.mark.parametrize("incremental", [True, False])
+@pytest.mark.spec("crypt-filters", "read", "edit", "preserve")
+def test_untyped_file_streams_follow_their_current_file_specification(role: str, *, incremental: bool) -> None:
+    import io  # noqa: PLC0415
+
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
+
+    raw_a, raw_b = b"first untyped payload", b"second untyped payload"
+    with pyropdf.open(numbered(1)) as doc:
+        doc.attachments.add("file.bin", raw_a)
+        spec = doc.catalog["Names"]["EmbeddedFiles"]["Names"][1]
+        original = spec["EF"]["F"]
+        original.write(raw_a, filter=None)
+        del original["Type"]
+        other = doc.objects[doc.objects.add_stream(raw_b, filter=None)]
+        if role == "RF":
+            links = doc.objects[doc.objects.add([b"related.bin", original])]
+            spec["RF"] = doc.objects[doc.objects.add({"F": links})]
+            base = doc.objects[doc.objects.add_stream(b"primary file", filter=None)]
+            base["Type"] = pyropdf.Name("EmbeddedFile")
+            spec["EF"] = {"F": base}
+        else:
+            spec["EF"] = doc.objects[doc.objects.add({"F": original})]
+        first, second = original.xref, other.xref
+        protected = doc.to_bytes(
+            encryption=Encryption(user_password="user", owner_password="owner"), object_streams=True
+        )
+    with pyropdf.open(protected, password="owner") as doc:
+        doc.trailer["Encrypt"]["EFF"] = pyropdf.Name("Identity")
+        initial = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+    with pyropdf.open(initial, password="owner") as doc:
+        assert doc.objects[first].read() == raw_a
+        assert doc.objects[second].read() == raw_b
+        spec = doc.catalog["Names"]["EmbeddedFiles"]["Names"][1]
+        if role == "EF":
+            spec["EF"] = {"F": doc.objects[second]}
+        else:
+            spec["RF"] = {"F": [b"related.bin", doc.objects[second]]}
+        changed = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+    for data, clear_id, secret_id, clear_data, secret_data in (
+        (initial, first, second, raw_a, raw_b),
+        (changed, second, first, raw_b, raw_a),
+    ):
+        reader = PdfFileReader(io.BytesIO(data))
+        reader.decrypt("user")
+        # Inspect the actual active objects, including the last revision of
+        # an incremental edit, independently of any reader's type heuristic.
+        raw_clear = reader.get_object(generic.Reference(clear_id, 0, reader), never_decrypt=True).encoded_data
+        raw_secret = reader.get_object(generic.Reference(secret_id, 0, reader), never_decrypt=True).encoded_data
+        assert raw_clear == clear_data
+        assert raw_secret != secret_data
+        with pyropdf.open(data, password="user") as doc:
+            assert doc.objects[clear_id].read() == clear_data
+            assert doc.objects[secret_id].read() == secret_data
+
+
+@pytest.mark.spec("crypt-filters", "edit")
+def test_invalid_related_file_pairs_refuse_a_new_default_without_overwriting_the_original(tmp_path: Path) -> None:
+    with pyropdf.open(numbered(1)) as doc:
+        doc.attachments.add("file.bin", b"payload")
+        initial = doc.to_bytes(encryption=Encryption(owner_password="owner"))
+    with pyropdf.open(initial, password="owner") as doc:
+        spec = doc.catalog["Names"]["EmbeddedFiles"]["Names"][1]
+        spec["RF"] = {"F": [b"missing stream"]}
+        doc.trailer["Encrypt"]["EFF"] = pyropdf.Name("Identity")
+        path = tmp_path / "original.pdf"
+        path.write_bytes(initial)
+        with pytest.raises(pyropdf.MalformedPdfError, match="name and stream pairs"):
+            doc.save(path, incremental=True, encryption=Encryption.KEEP)
+        assert path.read_bytes() == initial

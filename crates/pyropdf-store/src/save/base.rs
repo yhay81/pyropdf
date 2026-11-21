@@ -105,8 +105,19 @@ impl FileBase {
             return Ok(None);
         };
         if let Some(handler) = index.security().filter(|h| h.is_recipient()) {
-            if encryption_dict(index, budget)? == encryption_dict(&rev_index, budget)? {
+            let active = encryption_dict(index, budget)?;
+            let previous = encryption_dict(&rev_index, budget)?;
+            if active == previous {
                 rev_index.unlock(handler.clone(), budget)?;
+            } else if let (Some(mut active), Some(previous)) = (active, previous) {
+                let mut same_keys = previous.clone();
+                active.remove("EFF");
+                same_keys.remove("EFF");
+                if active == same_keys {
+                    rev_index.unlock(handler.with_embedded_filter(&previous)?, budget)?;
+                } else {
+                    unlock(&mut rev_index, None, budget)?;
+                }
             } else {
                 unlock(&mut rev_index, None, budget)?;
             }

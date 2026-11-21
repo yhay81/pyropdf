@@ -11,6 +11,7 @@
 //! beyond ASCII.
 
 mod crypto;
+pub(crate) mod embedded;
 pub(crate) mod filters;
 mod recipient;
 pub use recipient::{RecipientEncryption, RecipientPayload};
@@ -22,6 +23,7 @@ use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::value::{Dict, Name, PdfString, Reference, StringForm, Value};
 use crate::{Error, Password, Result};
 
+pub(crate) use value::encrypt_bytes_as;
 pub use value::{decrypt_value, encrypt_bytes, encrypt_value};
 
 /// The 32 bytes that pad a password (ISO 32000-2 section 7.6.4.3.2).
@@ -239,6 +241,12 @@ impl Handler {
     pub fn description(&self) -> String {
         if let Some(recipient) = &self.recipient {
             let subfilter = recipient.subfilter;
+            if self.strings == Method::Identity && self.streams == Method::Identity {
+                return format!(
+                    "Adobe.PubSec {subfilter} V{} (Identity defaults)",
+                    self.version
+                );
+            }
             let cipher = if [self.streams, self.strings].contains(&Method::Rc4) {
                 "RC4"
             } else {
@@ -275,7 +283,7 @@ impl Handler {
         data: &[u8],
         budget: &Budget,
     ) -> Result<Vec<u8>> {
-        self.transform_data(kind, None, reference, data, budget, false)
+        self.transform_data(kind, None, (reference, reference), data, budget, false)
     }
 
     /// Encrypts `data`, a string or a stream's data of the object that
@@ -288,7 +296,7 @@ impl Handler {
         data: &[u8],
         budget: &Budget,
     ) -> Result<Vec<u8>> {
-        self.transform_data(kind, None, reference, data, budget, true)
+        self.transform_data(kind, None, (reference, reference), data, budget, true)
     }
 
     const fn method(&self, kind: Kind) -> Method {
