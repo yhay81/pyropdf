@@ -185,6 +185,12 @@ fn with_content<T: Send>(
                     clip,
                     &budget,
                 )
+                .and_then(|mut content| {
+                    if text_runs {
+                        content.align_redrawn_text(&bridged, at, page, &budget)?;
+                    }
+                    Ok(content)
+                })
                 .map_err(|e| match e {
                     Error::Limit(refusal) => limit_error(&refusal),
                     Error::NoPage(_) | Error::Allocation(_) => PdfError::new_err(e.to_string()),

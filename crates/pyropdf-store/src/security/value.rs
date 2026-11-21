@@ -108,6 +108,14 @@ fn walk(
                 stream.dict().get("Type"),
                 Some(Value::Name(n)) if n.as_bytes() == b"Metadata"
             );
+            if handler.is_recipient() {
+                super::recipient::stream_filter(
+                    stream.dict_mut(),
+                    metadata && !handler.encrypts_metadata(),
+                    encrypt,
+                    budget,
+                )?;
+            }
             if !(metadata && !handler.encrypts_metadata()) {
                 let data = apply(Kind::Stream, stream.data())?;
                 stream.set_data(Bytes::new(data));

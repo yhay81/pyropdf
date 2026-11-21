@@ -104,9 +104,11 @@ pub fn store_error(error: &Error) -> PyErr {
     match error.kind() {
         ErrorKind::Limit(refusal) => LimitError::new_err((refusal.code().as_str(), message)),
         ErrorKind::Malformed(_) => MalformedPdfError::new_err(message),
-        ErrorKind::Password(Password::Incorrect) => PasswordError::new_err(message),
+        ErrorKind::Password(Password::Incorrect | Password::Recipient) => {
+            PasswordError::new_err(message)
+        }
         ErrorKind::Password(_) => EncryptedDocumentError::new_err(format!(
-            "{message}; open it with password= or call unlock()"
+            "{message}; open it with password= or credential=, or call unlock()"
         )),
         ErrorKind::Stale(_) => StaleObjectError::new_err(message),
         _ => PdfError::new_err(message),

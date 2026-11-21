@@ -1,10 +1,10 @@
 """The Canvas round trip: redraw what ``Page.content()`` reads of the corpus.
 
-Ported from pylopdf ebb01d3c. Every path and image item of every page of
+Ported from pylopdf ebb01d3c. Every supported text, path, and image item of every page of
 the bundled corpus is drawn again with ``Canvas.draw`` on a blank page of
 the same size in another document, and the two renderings agree within
 ``ROUND_TRIP_TOLERANCE`` levels per channel at 72 dpi outside the boxes of
-the items that a canvas cannot draw yet: text runs; items under a soft
+the items that a canvas cannot draw yet: runs without a reusable font or paint, items under a soft
 mask, unsupported pattern paints, inline images, and image masks; and of annotations
 without an appearance stream, which the renderer draws but
 ``Page.content()`` does not report. Those items are
@@ -18,14 +18,21 @@ mesh shadings and tiling cells remain outside the round trip.
 from __future__ import annotations
 
 import dataclasses
+import io
 import math
 import operator
 import pickle
+import re
+import shutil
 import struct
+import subprocess
 import zlib
+from collections import Counter
 from pathlib import Path as FilePath
 
+import pikepdf
 import pytest
+from test_canvas_embedded import JAPANESE
 from test_content_model import page_with, stencil_page, stream_object
 
 import pyropdf
@@ -40,8 +47,6 @@ ROUND_TRIP_TOLERANCE = 16
 
 def _not_drawn(item: TextRun | Path | Image) -> str | None:
     """Return why a canvas cannot draw an item yet, or ``None``."""
-    if isinstance(item, TextRun):
-        return "text run"
     if item.soft_mask is not None or any(group.soft_mask is not None for group in item.context.groups):
         return "soft mask"
     if isinstance(item, Image):
@@ -79,8 +84,9 @@ def _largest_difference(original: pyropdf.Pixmap, redrawn: pyropdf.Pixmap, hidde
 
 
 @pytest.mark.parametrize("name", sorted(path.name for path in CORPUS.glob("*.pdf")))
-def test_canvas_redraws_the_paths_and_images_of_every_page(name: str) -> None:
+def test_canvas_redraws_the_supported_items_of_every_page(name: str) -> None:
     doc = pyropdf.open(CORPUS / name)
+    excluded: Counter[str] = Counter()
     for page in doc.pages:
         target = pyropdf.Document()
         copy = target.pages.new((page.rect.width, page.rect.height))
@@ -89,8 +95,17 @@ def test_canvas_redraws_the_paths_and_images_of_every_page(name: str) -> None:
         hidden = [annotation.rect for annotation in page.annotations if "AP" not in doc.objects[annotation.xref]]
         with copy.draw() as canvas:
             for item in page.content():
-                if isinstance(item, TextRun) or _not_drawn(item) is not None:
+                reason = _not_drawn(item)
+                if reason is not None:
+                    if isinstance(item, TextRun):
+                        excluded[reason] += 1
                     hidden.append(item.bbox)
+                elif isinstance(item, TextRun):
+                    try:
+                        canvas.draw(item)
+                    except ValueError as error:
+                        excluded[str(error)] += 1
+                        hidden.append(item.bbox)
                 else:
                     canvas.draw(item)
         original = page.pixmap(dpi=72)
@@ -98,6 +113,7 @@ def test_canvas_redraws_the_paths_and_images_of_every_page(name: str) -> None:
         assert (redrawn.width, redrawn.height) == (original.width, original.height)
         difference = _largest_difference(original, redrawn, hidden)
         assert difference <= ROUND_TRIP_TOLERANCE, (name, page.index, difference)
+    assert excluded == ({"the font is neither embedded nor a standard 14 font": 8} if name == "mhlw-doc.pdf" else {})
 
 
 def _png(width: int, height: int) -> bytes:
@@ -474,3 +490,174 @@ def test_draw_refuses_stencil_images_without_writing(*, inline: bool) -> None:
     with copy.draw() as canvas, pytest.raises(ValueError, match="stencil"):
         canvas.draw(image)
     assert (target.to_bytes(), target.history.steps) == before
+
+
+def _shared_font_document(*, vertical: bool = False) -> bytes:
+    """Two dictionaries select the same subset glyphs but encode distinct Unicode text."""
+    base = pyropdf.Document()
+    page = base.pages.new((220, 200))
+    with page.draw() as canvas:
+        canvas.text("AVA", (20, 80), font=pyropdf.Font.from_file(JAPANESE), size=17)
+    (subset,) = base.subset_fonts()
+    assert subset.kept < subset.glyphs
+    with pikepdf.open(io.BytesIO(base.to_bytes())) as pdf:
+        page_dict = pdf.pages[0]
+        first = next(iter(page_dict.Resources.Font.values()))
+        cmap = first.ToUnicode.read_bytes()
+        codes = {text: code for code, text in re.findall(rb"<([0-9A-Fa-f]{4})> <([0-9A-Fa-f]{4})>", cmap)}
+        a, v = codes[b"0041"], codes[b"0056"]
+        if vertical:
+            first.Encoding = pikepdf.Name("/Identity-V")
+        second = pdf.make_indirect(pikepdf.Dictionary(dict(first.items())))
+        second.ToUnicode = pdf.make_stream(cmap.replace(b"<0041>", b"<0058>"))
+        page_dict.Resources.Font = pikepdf.Dictionary(First=first, Second=second)
+        page_dict.Contents = pdf.make_stream(
+            b"q .12 .35 .64 rg BT /First 17 Tf 1 .1 -.05 1 45 140 Tm [<"
+            + a
+            + b"> 180 <"
+            + v
+            + a
+            + b">] TJ /Second 17 Tf .95 .2 -.10 1 118 131 Tm <"
+            + a
+            + b"> Tj ET Q"
+        )
+        pdf.add_blank_page(page_size=(220, 200))
+        output = io.BytesIO()
+        pdf.save(output)
+        return output.getvalue()
+
+
+def _poppler_page(path: FilePath, page: int) -> tuple[str, bytes]:
+    """Read one saved page's text and RGB pixels independently."""
+    select = ["-f", str(page), "-l", str(page)]
+    text = subprocess.run(  # noqa: S603 - fixed development oracle and a local fixture.
+        [shutil.which("pdftotext") or "pdftotext", *select, str(path), "-"], check=True, capture_output=True
+    ).stdout.decode()
+    ppm = subprocess.run(  # noqa: S603
+        [shutil.which("pdftoppm") or "pdftoppm", *select, "-r", "72", "-singlefile", str(path)],
+        check=True,
+        capture_output=True,
+    ).stdout
+    return "".join(text.split()), ppm.split(b"\n", 3)[3]
+
+
+@pytest.mark.spec("text-objects", "read", "interpret", "create", "preserve")
+@pytest.mark.spec("type0-fonts", "read", "interpret", "preserve")
+@pytest.mark.parametrize("same_document", [False, True])
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.parametrize("vertical", [False, True])
+@pytest.mark.skipif(not shutil.which("pdftoppm") or not shutil.which("pdftotext"), reason="Poppler is unavailable")
+def test_redraw_positioned_subset_runs_with_shared_program_and_distinct_mappings(
+    tmp_path: FilePath, *, same_document: bool, incremental: bool, vertical: bool
+) -> None:
+    original = _shared_font_document(vertical=vertical)
+    source = pyropdf.open(original)
+    target = source if same_document else pyropdf.open(original)
+    runs = source.pages[0].content().text_runs
+    assert [run.text for run in runs] == ["AVA", "X"]
+    assert len(runs[0].glyphs) == 3
+    with target.pages[1].draw() as canvas:
+        for run in runs:
+            canvas.draw(run)
+    output = target.to_bytes(incremental=incremental)
+    if incremental:
+        assert output.startswith(original)
+    reopened = pyropdf.open(output)
+    original_glyphs = [glyph for run in runs for glyph in run.glyphs]
+    copied_glyphs = [glyph for run in reopened.pages[1].content().text_runs for glyph in run.glyphs]
+    assert [(g.text, g.glyph_id) for g in copied_glyphs] == [(g.text, g.glyph_id) for g in original_glyphs]
+    for actual, expected in zip(copied_glyphs, original_glyphs, strict=True):
+        assert tuple(actual.matrix) == pytest.approx(tuple(expected.matrix), abs=0.0002)
+        assert actual.advance == pytest.approx(expected.advance, abs=0.0002)
+    source_path, result_path = tmp_path / "source.pdf", tmp_path / "result.pdf"
+    source_path.write_bytes(original)
+    result_path.write_bytes(output)
+    text, pixels = _poppler_page(source_path, 1)
+    assert "X" in text
+    assert min(pixels) < 220
+    assert _poppler_page(result_path, 1) == (text, pixels)
+    copied_text, copied_pixels = _poppler_page(result_path, 2)
+    assert copied_text == text
+    assert max(abs(a - b) for a, b in zip(pixels, copied_pixels, strict=True)) <= ROUND_TRIP_TOLERANCE
+    with pikepdf.open(result_path) as pdf:
+        fonts = list(pdf.pages[1].Resources.Font.values())
+        assert len(fonts) == 2
+        assert fonts[0].objgen != fonts[1].objgen
+        assert fonts[0].DescendantFonts[0].objgen == fonts[1].DescendantFonts[0].objgen
+        assert {font.ToUnicode.read_bytes() for font in fonts} == {
+            font.ToUnicode.read_bytes() for font in pdf.pages[0].Resources.Font.values()
+        }
+        assert all(str(font.Encoding) == ("/Identity-V" if vertical else "/Identity-H") for font in fonts)
+
+
+def test_a_redrawn_run_keeps_its_captured_font_after_a_descendant_changes() -> None:
+    source = pyropdf.open(_shared_font_document())
+    old = source.pages[0].content().text_runs[0]
+    to_unicode = source.pages[0].obj["Resources"]["Font"]["First"]["ToUnicode"]
+    to_unicode.write(to_unicode.read().replace(b"<0041>", b"<005a>"))
+    assert source.pages[0].content().text_runs[0].text == "ZVZ"
+    with source.pages[1].draw() as canvas:
+        canvas.draw(old)
+    assert pyropdf.open(source.to_bytes()).pages[1].text().replace(" ", "").strip() == "AVA"
+
+
+def test_redraw_refuses_unavailable_or_fallback_sources_without_an_edit() -> None:
+    page = page_with("BT /F1 17 Tf 12 42 Td (Font) Tj ET")
+    run = page.content().text_runs[0]
+    fallback = page_with("BT /Missing 17 Tf 12 42 Td (Font) Tj ET").content().text_runs[0]
+    target = pyropdf.Document()
+    blank = target.pages.new((200, 100))
+    before = target.to_bytes(), target.history.steps
+    with blank.draw() as canvas, pytest.raises(ValueError, match="fallback"):
+        canvas.draw(fallback)
+    with blank.draw() as canvas, pytest.raises(ValueError, match="source"):
+        canvas.draw(pickle.loads(pickle.dumps(run)))  # noqa: S301 - value created here.
+    page.document.close()
+    with blank.draw() as canvas, pytest.raises(pyropdf.DocumentClosedError):
+        canvas.draw(run)
+    assert (target.to_bytes(), target.history.steps) == before
+
+
+def test_redraw_charges_text_commands_to_the_target_canvas() -> None:
+    page = page_with("BT /F1 10 Tf 2 80 Td (" + "A" * 128 + ") Tj ET")
+    target = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=40_000))
+    blank = target.pages.new((200, 100))
+    before = target.to_bytes(), target.history.steps
+    with pytest.raises(pyropdf.LimitError) as refused, blank.draw() as canvas:
+        canvas.draw(page.content().text_runs[0])
+    assert refused.value.code == "memory_size"
+    assert (target.to_bytes(), target.history.steps) == before
+
+
+def test_copying_a_captured_font_observes_source_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    source = pyropdf.open(_shared_font_document(), limits=pyropdf.DocumentLimits(cancellation=token))
+    run = source.pages[0].content().text_runs[0]
+    target = pyropdf.Document()
+    blank = target.pages.new((220, 200))
+    before = target.to_bytes(), target.history.steps
+    with pytest.raises(pyropdf.LimitError) as refused, blank.draw() as canvas:  # noqa: PT012 - cancel before commit.
+        canvas.draw(run)
+        token.cancel()
+    assert refused.value.code == "cancelled"
+    assert (target.to_bytes(), target.history.steps) == before
+
+
+@pytest.mark.parametrize("mode", [0, 1, 2, 3])
+@pytest.mark.skipif(not shutil.which("pdftoppm") or not shutil.which("pdftotext"), reason="Poppler is unavailable")
+def test_redraw_preserves_text_paint_and_clipping(tmp_path: FilePath, mode: int) -> None:
+    page = page_with(
+        f"q 9 8 84 79 re W n 1 .1 0 1.3 0 -12 cm .1 .5 .75 rg .8 .2 .1 RG .7 w "
+        f"BT /F1 24 Tf {mode} Tr 1 .1 -.1 1 14 55 Tm [(Pa) 140 (int)] TJ ET Q"
+    )
+    target = pyropdf.Document()
+    blank = target.pages.new((page.rect.width, page.rect.height))
+    with blank.draw() as canvas:
+        canvas.draw(page.content().text_runs[0])
+    source_path, result_path = tmp_path / "paint.pdf", tmp_path / "redrawn.pdf"
+    source_path.write_bytes(page.document.to_bytes())
+    result_path.write_bytes(target.to_bytes())
+    text, pixels = _poppler_page(source_path, 1)
+    copied_text, copied_pixels = _poppler_page(result_path, 1)
+    assert copied_text == text == "Paint"
+    assert max(abs(a - b) for a, b in zip(pixels, copied_pixels, strict=True)) <= ROUND_TRIP_TOLERANCE

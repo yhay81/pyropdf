@@ -261,12 +261,13 @@ impl _Document {
 
     /// Opens the file at `path`, unlocking it with `password`.
     #[staticmethod]
-    #[pyo3(signature = (path, limits, password=None))]
+    #[pyo3(signature = (path, limits, password=None, recipient=None))]
     fn open_path(
         py: Python<'_>,
         path: PathBuf,
         limits: &Bound<'_, PyAny>,
         password: Option<Vec<u8>>,
+        recipient: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
         crate::errors::boundary(|| {
             let (limits, complete) = (document_limits(limits)?, complete_checks(limits)?);
@@ -276,6 +277,7 @@ impl _Document {
                 open(
                     bytes,
                     password.as_deref(),
+                    recipient.as_ref(),
                     limits.clone(),
                     complete,
                     &budget,
@@ -287,12 +289,13 @@ impl _Document {
     /// Opens the bytes of a buffer: `bytes` without a copy, other buffers
     /// with one.
     #[staticmethod]
-    #[pyo3(signature = (data, limits, password=None))]
+    #[pyo3(signature = (data, limits, password=None, recipient=None))]
     fn open_buffer(
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         limits: &Bound<'_, PyAny>,
         password: Option<Vec<u8>>,
+        recipient: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
         crate::errors::boundary(|| {
             let (limits, complete) = (document_limits(limits)?, complete_checks(limits)?);
@@ -301,6 +304,7 @@ impl _Document {
                 open(
                     bytes,
                     password.as_deref(),
+                    recipient.as_ref(),
                     limits.clone(),
                     complete,
                     &Budget::new(&limits),
@@ -500,11 +504,12 @@ impl _Document {
 fn open(
     bytes: Bytes,
     password: Option<&[u8]>,
+    recipient: Option<&Py<PyAny>>,
     limits: DocumentLimits,
     complete: bool,
     budget: &Budget,
 ) -> PyResult<_Document> {
-    let base = open_base(bytes, password, budget).map_err(|e| store_error(&e))?;
+    let base = credential_base(bytes, password, recipient, budget)?;
     // A locked document's objects cannot be read until it is unlocked.
     let locked = base.index().is_encrypted() && base.security().is_none();
     let document = Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT));
@@ -512,6 +517,18 @@ fn open(
         check_every_object(&document.current(), budget).map_err(|e| store_error(&e))?;
     }
     Ok(_Document::new(document, limits))
+}
+
+fn credential_base(
+    bytes: Bytes,
+    password: Option<&[u8]>,
+    recipient: Option<&Py<PyAny>>,
+    budget: &Budget,
+) -> PyResult<FileBase> {
+    match recipient {
+        Some(decrypt) => crate::security::recipient_base(bytes, decrypt, budget),
+        None => open_base(bytes, password, budget).map_err(|e| store_error(&e)),
+    }
 }
 
 /// Opens `bytes` with `password`. When `password` is rejected, falls back to
@@ -669,13 +686,14 @@ type Probe<'py> = (u64, String, bool, bool, Bound<'py, PyDict>);
 /// Reads the index of the file at `path` or of the buffer `data`, and the
 /// few objects that a probe needs.
 #[pyfunction]
-#[pyo3(signature = (path, data, max_file_size, password=None))]
+#[pyo3(signature = (path, data, max_file_size, password=None, recipient=None))]
 pub fn probe<'py>(
     py: Python<'py>,
     path: Option<PathBuf>,
     data: Option<&Bound<'py, PyAny>>,
     max_file_size: Option<u64>,
     password: Option<Vec<u8>>,
+    recipient: Option<Py<PyAny>>,
 ) -> PyResult<Probe<'py>> {
     crate::errors::boundary(|| {
         let limits = DocumentLimits {
@@ -689,7 +707,7 @@ pub fn probe<'py>(
             (None, None) => return Err(pyo3::exceptions::PyTypeError::new_err("no source")),
         };
         let (count, version, encrypted, repaired, metadata) =
-            py.detach(|| read_probe(bytes, password.as_deref(), &budget))?;
+            py.detach(|| read_probe(bytes, password.as_deref(), recipient.as_ref(), &budget))?;
         let dict = PyDict::new(py);
         for (key, value) in metadata {
             dict.set_item(key, value)?;
@@ -716,10 +734,15 @@ type ProbeData = (u64, String, bool, bool, Vec<(&'static str, String)>);
     clippy::disallowed_methods,
     reason = "PROBE_KEYS is fixed and returned text is capped at MAX_PROBE_METADATA_SIZE"
 )]
-fn read_probe(bytes: Bytes, password: Option<&[u8]>, budget: &Budget) -> PyResult<ProbeData> {
+fn read_probe(
+    bytes: Bytes,
+    password: Option<&[u8]>,
+    recipient: Option<&Py<PyAny>>,
+    budget: &Budget,
+) -> PyResult<ProbeData> {
     use pyropdf_store::version::Base as _;
     let store = |e: Error| store_error(&e);
-    let base = open_base(bytes, password, budget).map_err(store)?;
+    let base = credential_base(bytes, password, recipient, budget)?;
     let index = base.index();
     let header = header_version(&index.bytes()[index.origin()..])
         .ok_or_else(|| MalformedPdfError::new_err("the file has no %PDF- header"))?;

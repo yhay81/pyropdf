@@ -348,16 +348,21 @@ objects = []
 clause = "7.6.5"
 description = "Public-key security: recipients, their certificates, and their permissions."
 objects = ["EncryptionPublicKey"]
+read = { status = "partial", missing = "RSA PKCS#1 v1.5 with CMS AES-CBC opens s3, s4 and s5, including RC4, AESV2 and AESV3 file data. Additional CMS algorithms remain unverified.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "AESV3 renders from the authenticated store version. Pre-V5 file keys require the engine object source for direct interpretation.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Writes RSA recipient groups with AESV2 or AESV3 file encryption and CMS AES-256-CBC. Additional interoperable CMS algorithms remain unverified.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Edits and reopens AESV2 and AESV3 recipients. Envelopes using other CMS key transport or content ciphers remain unverified.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Both save modes preserve the tested recipient envelopes and untouched AES ciphertext. Preservation with additional CMS algorithms remains unverified.", milestone = "Phase 4: Specification" }
 
 [features.crypt-filters]
 clause = "7.6.6"
 description = "Named crypt filters and their methods: RC4, AES-128, and AES-256."
 objects = ["CryptFilter", "CryptFilterMap", "CryptFilterPublicKey", "CryptFilterPublicKeyMap"]
-read = { status = "partial", missing = "Standard security `/CF` filters for `/StmF` and `/StrF` are read, without public-key crypt filters or `/EFF`.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Standard security `/CF` filters decrypt and render streams and strings, without public-key crypt filters or `/EFF`.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Encrypted saves write standard security `/CF` dictionaries for AES-128 and AES-256, without public-key crypt filters or `/EFF`.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Saves replace or remove standard security `/CF` dictionaries, without public-key crypt filters or `/EFF`.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "`Encryption.KEEP` and incremental saves preserve standard security `/CF` filters, without public-key crypt filters.", milestone = "Phase 4: Specification" }
+read = { status = "partial", missing = "Standard and recipient default string/stream filters are read. Distinct EFF and per-stream named selection remain unfinished.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Standard filters and AESV3 recipient defaults render. Distinct EFF and named per-stream selection remain unfinished.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Saves write AES defaults for password and recipient handlers. Separate embedded-file and per-stream filters remain unfinished.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Encrypted saves replace or remove standard and recipient defaults. Separate embedded-file and per-stream filters remain unfinished.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "KEEP and incremental saves preserve standard and recipient defaults. Separate embedded-file and per-stream recipient filters remain unsupported.", milestone = "Phase 4: Specification" }
 
 [features.document-catalog]
 clause = "7.7.2"
