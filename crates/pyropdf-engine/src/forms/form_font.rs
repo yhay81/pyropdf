@@ -281,14 +281,9 @@ fn parse_pdf_version(bytes: &[u8]) -> Option<(u8, u8)> {
 pub(crate) fn is_pdf_2_0(version: &Version, budget: &Budget) -> Result<bool> {
     let mut effective = version
         .base()
-        .file()
-        .and_then(|index| {
-            index
-                .bytes()
-                .get(index.origin()..)?
-                .strip_prefix(b"%PDF-")
-                .and_then(parse_pdf_version)
-        })
+        .header_bytes()
+        .and_then(|bytes| bytes.strip_prefix(b"%PDF-"))
+        .and_then(parse_pdf_version)
         .unwrap_or((1, 7));
     let reader = Reader::new(version, budget);
     if let Some(root) = version.trailer().get("Root")
