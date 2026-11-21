@@ -17,6 +17,8 @@ published in LaurenzV/hayro.
 
 The corpus is `tests/assets/real_world` (15 files, 156 pages).
 
+The [browser selection probe](browser/README.md) measures search, selection geometry and rendered pixels on the later upstream proposal.
+
 ## Current capability
 
 ### hayro-svg 0.8.0 (the version that pyropdf pins)

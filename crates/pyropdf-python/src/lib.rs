@@ -110,10 +110,10 @@ mod _core {
     use super::items::{page_content, page_paths};
     #[pymodule_export]
     use super::objects::{
-        decode_text_string, object_add, object_add_stream, object_delete, object_free_unreferenced,
-        object_get, object_insert, object_keys, object_len, object_lookup, object_numbers,
-        object_replace, object_set, schema_change, schema_created, schema_entry, schema_leaf,
-        stream_read, stream_write,
+        decode_text_string, object_add, object_add_stream, object_delete, object_free_nominated,
+        object_free_unreferenced, object_get, object_insert, object_keys, object_len,
+        object_lookup, object_numbers, object_replace, object_set, schema_change, schema_created,
+        schema_entry, schema_leaf, stream_read, stream_write,
     };
     #[pymodule_export]
     use super::ocr::{_OcrEngine, insert_ocr_layer};
