@@ -140,16 +140,6 @@ features = [
 dimensions = ["create", "edit"]
 behavior = "Generate a role inventory from the pinned descriptors. For each applicable role, construct the required references and settle or reject replacements and removals atomically. Exercise already-implemented page, form and structure rules before adding missing rules."
 
-[families.component-metadata]
-tracker = 251
-issue = 906
-title = "Read and edit component XMP metadata through its owning PDF object"
-features = [
-    "xmp-metadata",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Identify, parse and update component Metadata streams without changing catalog metadata or sibling components. Verify save/reopen, removal and unrelated edits."
-
 [families.name-tree-navigation]
 tracker = 251
 issue = 895
