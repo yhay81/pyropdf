@@ -43,7 +43,7 @@ type Entries = [Option<Arc<Value>>; 5];
 
 /// How a field's value is laid out.
 #[derive(Clone, Copy)]
-enum TextLayout {
+pub(super) enum TextLayout {
     SingleLine,
     Multiline,
     /// A comb of this many cells.
@@ -125,6 +125,12 @@ fn draw(
                 Some(Value::Dict(form)) => Some(form),
                 _ => None,
             };
+            if name.as_bytes() == b"Btn"
+                && let Some(Value::Dict(mark)) = reader.entry(widget, "MK")?.as_deref()
+                && ["I", "RI", "IX"].iter().any(|key| mark.get(*key).is_some())
+            {
+                return super::icons::appearances(reader, widget, mark, form, &style).map(Some);
+            }
             return drawn(
                 reader,
                 widget,
@@ -206,7 +212,7 @@ fn draw(
     clippy::too_many_arguments,
     reason = "the parts of an appearance that `draw` reads"
 )]
-fn drawn(
+pub(super) fn drawn(
     reader: &Reader<'_>,
     widget: &Dict,
     form: Option<&Dict>,
@@ -275,6 +281,7 @@ fn drawn(
         content: content.into_vec(),
         size: (style.width, style.height),
         matrix: style.matrix,
+        icon: None,
         font,
     }))
 }
@@ -325,6 +332,7 @@ fn button_states(
                 content,
                 size: (style.width, style.height),
                 matrix: style.matrix,
+                icon: None,
                 font: None,
             },
         ))?;
@@ -371,7 +379,7 @@ fn entries(reader: &Reader<'_>, widget: &Dict) -> Result<Entries> {
 /// Returns a field value as text: a text string, a name, or the text
 /// strings of an array joined by commas, as `Field.value` reads it; else
 /// empty. Charges the text to the budget's memory.
-fn value_text(reader: &Reader<'_>, value: Option<&Value>) -> Result<String> {
+pub(super) fn value_text(reader: &Reader<'_>, value: Option<&Value>) -> Result<String> {
     let mut text = BudgetVec::new(reader.budget);
     match value {
         Some(Value::String(encoded)) => text::append_text(&mut text, encoded.as_bytes())?,

@@ -23,6 +23,48 @@ its position. A handle raises `StaleObjectError` while the
 annotation is not on its page, and `StalePageError` while the
 page is gone; it works again if undo restores them.
 
+### `Annotation.obj`
+
+```python
+Annotation.obj: Dictionary
+```
+
+The annotation dictionary as a live low-level handle.
+
+### `Annotation.appearance_stream`
+
+```python
+Annotation.appearance_stream(
+    mode: Mode = 'normal',
+    *,
+    state: str | None = None,
+) -> Stream | None
+```
+
+Return the displayed Form for a normal, rollover or down appearance.
+
+A missing interaction appearance falls back to normal. An appearance
+dictionary selects the named state or the annotation's current /AS.
+
+### `Annotation.set_appearance`
+
+```python
+Annotation.set_appearance(
+    mode: Mode,
+    source: Stream | bytes,
+    *,
+    state: str | None = None,
+    bbox: Sequence[float] | None = None,
+    resources: Mapping[str, object] | None = None,
+) -> Stream
+```
+
+Attach a Form or build it from PDF drawing commands in the given local bounding box.
+
+Byte sources use the owner's rectangle size when bbox is omitted. A named
+state updates one member of a state dictionary. Other interaction modes,
+state names and shared appearance objects retain their values.
+
 ### `Annotation.page`
 
 ```python
@@ -38,14 +80,6 @@ Annotation.xref: int
 ```
 
 The annotation's object number, or 0 for a dictionary stored in `/Annots` itself.
-
-### `Annotation.obj`
-
-```python
-Annotation.obj: Dictionary
-```
-
-The annotation dictionary as a live low-level handle.
 
 ### `Annotation.type`
 
@@ -293,6 +327,37 @@ Non-`Screen` annotations return an empty mapping and refuse mutations
 with `ValueError`. `del annotation.triggers` removes `/AA`.
 
 Settable.
+
+### `Annotation.line_details`
+
+```python
+Annotation.line_details: LineDetails | None
+```
+
+Or replace a line's leader lengths and caption placement.
+
+Settable.
+
+### `Annotation.redaction`
+
+```python
+Annotation.redaction: RedactionMark | None
+```
+
+Or replace the regions and replacement instructions of a redaction mark.
+
+Settable.
+
+### `Annotation.popup_info`
+
+```python
+Annotation.popup_info: PopupInfo | None
+```
+
+Read a popup's window and effective Contents, T, M and C (ISO 32000-2 §12.5.6.14).
+
+A reciprocal Parent supplies the markup entries. A popup without a
+Parent uses its own entries. A conflicting Parent is malformed.
 
 ### `Annotation.popup_rect`
 
@@ -698,6 +763,7 @@ AnnotationSpecification: TypeAlias = (
     | FreeText
     | Stamp
     | MediaSpecification
+    | RedactionMark
 )
 ```
 
@@ -895,6 +961,7 @@ LineAnnotation(
     start: Point | Sequence[float],
     end: Point | Sequence[float],
     *,
+    details: LineDetails | None = None,
     color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
     interior_color: Color | None = None,
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
@@ -911,6 +978,26 @@ A straight line between two display points, as `page.annotations.add` takes it.
 `line_endings` gives the shapes at its start and end, whose closed
 shapes `interior_color` fills. The annotation's rectangle is the line's
 bounds, widened for the stroke and the endings.
+
+## `LineDetails`
+
+```python
+LineDetails(
+    *,
+    leader_length: float = 0.0,
+    leader_extension: float = 0.0,
+    leader_offset: float = 0.0,
+    caption: bool = False,
+    position: Literal['Inline', 'Top'] = 'Inline',
+    caption_offset: tuple[float, float] = (0.0, 0.0),
+)
+```
+
+Leader lengths in default user space and the caption placement of a line.
+
+A positive leader extends clockwise from the drawn line to its endpoint.
+The caption comes from the annotation's contents. Its offset is along and
+perpendicular to the line, with positive values toward the end and above.
 
 ## `LineEnding`
 
@@ -1028,6 +1115,22 @@ An open line through two or more display points, as `page.annotations.add` takes
 The fields are those of `LineAnnotation`, with `line_endings` at
 the first and last points; one annotation holds at most 65,536 points.
 
+## `PopupInfo`
+
+```python
+PopupInfo(
+    *,
+    rect: Rect,
+    is_open: bool,
+    contents: str | None,
+    author: str | None,
+    modified: str | None,
+    color: Color | None,
+)
+```
+
+Effective markup shown in a pop-up window and its initial display state.
+
 ## `ProjectionAnnotation`
 
 ```python
@@ -1035,6 +1138,31 @@ ProjectionAnnotation(*, rect: Rect, measurement: Measure)
 ```
 
 A projection annotation that links back to a 3D measurement.
+
+## `RedactionMark`
+
+```python
+RedactionMark(
+    rect: Rect,
+    *,
+    quads: tuple[Quad, ...] = (),
+    overlay_text: str | None = None,
+    default_appearance: bytes | None = None,
+    repeat: bool = False,
+    alignment: int = 0,
+    interior_color: Color | None = None,
+    overlay: Stream | None = None,
+)
+```
+
+Mark a rectangle or quadrilaterals for later redaction.
+
+Coordinates are in display space. Each optional quad lies inside the rectangle.
+The normal appearance outlines the proposed regions. Page content remains
+recoverable after either save mode. Applying a redaction is a separate operation.
+
+An overlay Form takes precedence over the replacement color and text. Text
+requires a PDF default appearance string whose font the document provides.
 
 ## `RichMedia`
 
