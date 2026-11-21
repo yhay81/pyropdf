@@ -25,16 +25,6 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Exercise sampled/calculator functions, function edits, tiling and uncolored patterns and shading types 1–7. Create and edit resources through the store, verify mesh and function evaluation independently and round-trip untouched data."
 
-[families.arlington-interpretation]
-tracker = 247
-issue = 888
-title = "Interpret the linked objects and values of standalone Arlington types"
-features = [
-    "@arlington",
-]
-dimensions = ["interpret"]
-behavior = "Resolve linked object types, arrays and conditional values through the versioned store. Exercise ambiguous links and invalid references with bounded, per-type fixtures. Record clause-backed exceptions for types with no distinct interpretation."
-
 [families.device-rendering]
 tracker = 248
 issue = 898
@@ -291,14 +281,6 @@ features = [
 ]
 dimensions = ["preserve"]
 behavior = "Build or reuse a reachable valid example for each descriptor and compare its keys, reference targets and stream bytes after an unrelated edit in both save modes. Reuse equivalent cases with explicit type-to-fixture coverage."
-
-[families.geospatial-registrations]
-tracker = 256
-issue = 930
-title = "Verify geographic and projected registration control points on their PDF owners"
-features = ["geospatial"]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Verify required 2D and 3D controls, projected matrix precedence, geographic fallback, and the image, form and Geospatial3D owners beyond ordinary page viewports."
 
 [families.display-space]
 tracker = 254

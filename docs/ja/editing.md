@@ -600,6 +600,18 @@ with pyropdf.Document() as doc:
 `Catalog["Requirements"]`（`DocumentRequirement`、`RequirementType`、`RequirementHandler`）を管理し、
 `del page.viewports` や `del doc.requirements` は 1 つのトランザクションで項目を取り除いて未参照オブジェクトを解放します。
 
+ビューポート辞書、画像・フォーム XObject のストリーム、3D・RichMedia 注釈の
+`obj` では、`owner.geospatial_measure` で地理空間情報を読み書きできます。
+2D では、単位正方形内の各点に対応する地上座標を指定します。3D 注釈では
+`RequirementType.GEOSPATIAL_3D` を宣言し、`dimensions=3` でワールド座標と標高を指定します。
+`owner.geospatial_point(index)` は、所有オブジェクトの PDF 座標と対応する地上座標を返します。
+地理座標の順序は緯度・経度、投影座標の順序は東距・北距です。投影座標では
+投影変換行列が地上座標配列に優先します。PDF 1.7 で Adobe 拡張レベル 3 以上を宣言していれば、
+2D の地理座標をその版のまま書けます。PDF 2.0 への昇格で既存オブジェクトに構造上の問題が
+生じる場合は、編集前の状態を保ちます。形式の合わない登録も PDF 辞書から直接確認できます。
+指定した Decimal 値は全桁を保存します。既存 PDF の数値を読むときの精度は
+パーサーに依存します。[パーサーの対応状況](https://github.com/yhay81/pyropdf/issues/16)
+
 ```python
 from decimal import Decimal
 import pyropdf
@@ -645,6 +657,7 @@ with pyropdf.Document() as doc:
             measure=GeospatialMeasure(
                 CoordinateSystem(epsg=4326),
                 (lat, lon, lat, lon),
+                lpts=(0, 0, 1, 1),
                 pdu=("M", "SQM", "DEG"),
             ),
             point_data=PointData(("LAT", "LON", "ALT"), ((lat, lon, Decimal("42.5")),)),
