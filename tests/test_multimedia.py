@@ -437,6 +437,54 @@ def test_imported_prc_requires_its_base_version_or_developer_extension() -> None
             assert annot["3DD"].obj.read() == b"opaque PRC payload"
 
 
+@pytest.mark.spec("geospatial", "read", "interpret", "create", "edit", "preserve")
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_declared_geospatial3d_uses_world_triples_and_keeps_shared_media(*, incremental: bool) -> None:
+    source = media_pdf()
+    matrix = (2, 3, 4, 5, 7, 11, 13, 17, 19, 100, 200, 300)
+    with pdf.open(source) as doc:
+        _, model, rich, _, _ = doc.pages[0].annotations
+        projected = pdf.GeospatialMeasure(
+            pdf.CoordinateSystem("projected", epsg=32611),
+            (400001, 4800002, 234),
+            lpts=(-2, 3, 5),
+            dimensions=3,
+            pcsm=matrix,
+        )
+        assert model.obj.geospatial_measure is None
+        with pytest.raises(ValueError, match="Geospatial3D"):
+            model.obj.geospatial_measure = projected
+        assert doc.history.position == 0
+        assert doc.to_bytes(incremental=True) == source
+        doc.requirements = [pdf.DocumentRequirement(pdf.RequirementType.GEOSPATIAL_3D)]
+        model.obj.geospatial_measure = projected
+        rich.obj.geospatial_measure = pdf.GeospatialMeasure(
+            pdf.CoordinateSystem(epsg=4326),
+            ("35.25", "-117.5", "243.125"),
+            lpts=(13, -5, 7),
+            dimensions=3,
+            pcsm=matrix,
+        )
+        assert model.obj.geospatial_measure == projected
+        assert model.obj.geospatial_point(0) == ((-2, 3, 5), (176, 300, 420))
+        assert rich.obj.geospatial_point(0) == ((13, -5, 7), (35.25, -117.5, 243.125))
+        saved = doc.to_bytes(incremental=incremental)
+    if incremental:
+        assert saved.startswith(source)
+    with pikepdf.open(io.BytesIO(saved)) as independent:
+        _, model, rich, _, shared = independent.pages[0].Annots
+        assert independent.Root.Requirements[0].S == "/Geospatial3D"
+        assert list(model.GEO.GPTS) == [400001, 4800002, 234]
+        assert list(model.GEO.LPTS) == [-2, 3, 5]
+        assert list(model.GEO.PCSM) == list(matrix)
+        assert list(rich.GEO.GPTS) == [35.25, -117.5, 243.125]
+        assert list(rich.GEO.LPTS) == [13, -5, 7]
+        stream = model["/3DD"]
+        assert stream.objgen == shared["/3DD"]["/3DD"].objgen
+        assert stream.VA[0].objgen == rich.RichMediaContent.Views[0].objgen
+        assert stream.read_raw_bytes() == _U3D
+
+
 @pytest.mark.parametrize("operation", ["insert", "extend", "select"])
 @pytest.mark.parametrize("incremental", [False, True])
 def test_same_document_page_copy_retargets_screen_and_projection(operation: str, *, incremental: bool) -> None:
