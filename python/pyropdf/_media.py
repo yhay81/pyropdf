@@ -331,21 +331,9 @@ def _base_or_extension(doc: Document, level: int) -> tuple[int, int]:
 
 
 def _require_media_version(doc: Document, minimum: tuple[int, int]) -> None:
-    from pyropdf._annotations import _version  # noqa: PLC0415
     from pyropdf._measurement import _require_measurement_version  # noqa: PLC0415
 
-    before = doc.check() if _version(doc) < (2, 0) <= minimum else None
     _require_measurement_version(doc, doc.catalog, minimum)
-    if before is not None:
-        after = doc.check()
-        if before.truncated or after.truncated:
-            msg = "cannot verify PDF 2.0 promotion with a truncated structural report"
-            raise PdfError(msg)
-        existing = set(before.defects)
-        for defect in after.defects:
-            if defect not in existing:
-                msg = f"PDF 2.0 promotion would introduce a structural defect: {defect.clause}"
-                raise PdfError(msg)
 
 
 def finish_media_import(doc: Document, major: int, minor: int, first: int, *, contains_prc: bool) -> None:

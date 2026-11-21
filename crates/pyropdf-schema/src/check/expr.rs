@@ -5,7 +5,7 @@
 //! document, so parsing them may recurse.
 
 use super::{Graph, View};
-use crate::Version;
+use crate::{Key, Object, Since, Version};
 
 /// The value of an expression. `Unknown` stands for what the check cannot
 /// decide: a predicate it does not implement, or a path it cannot follow.
@@ -110,6 +110,13 @@ fn tokens(source: &str) -> Option<Vec<Token<'_>>> {
                     let joins = next == b'-'
                         && bytes[at].is_ascii_alphabetic()
                         && bytes.get(end + 1).is_some_and(u8::is_ascii_alphabetic);
+                    if next == b'*'
+                        && bytes[at] == b'@'
+                        && bytes[at + 1..end].iter().all(u8::is_ascii_digit)
+                    {
+                        end += 1;
+                        break;
+                    }
                     if !is_word(next) && !joins {
                         break;
                     }
@@ -290,24 +297,54 @@ pub(super) fn scalar(view: &View<'_>) -> Val {
 const MAX_EXTENSION_ENTRIES: usize = 64;
 
 impl<G: Graph> Scope<'_, '_, G> {
+    /// Whether the model admits this key at the document's effective version.
+    pub(super) fn introduced(
+        &self,
+        described: &Object,
+        key: &Key,
+    ) -> Result<Option<bool>, G::Error> {
+        match key.since {
+            Since::Version(since) => Ok(Some(self.version >= since)),
+            Since::When(predicate) => match parse(predicate) {
+                Some(expr) => Ok(self
+                    .eval_since(&expr, described.name == "MeasureGEO")?
+                    .truth()),
+                None => Ok(None),
+            },
+        }
+    }
+
     /// Evaluates a `SinceVersion` expression, where bare version words such as
     /// `2.0` test `self.version >= 2.0`.
-    pub(super) fn eval_since(&self, expr: &Expr<'_>) -> Result<Val, G::Error> {
+    fn eval_since(&self, expr: &Expr<'_>, require_declaration: bool) -> Result<Val, G::Error> {
         Ok(match expr {
             Expr::Word(word) => match version(word) {
                 Some(gate) => Val::Bool(self.version >= gate),
                 None => self.eval(expr)?,
             },
-            Expr::Call("fn:Eval", args) if args.len() == 1 => self.eval_since(&args[0])?,
+            // A legacy GEO measure is valid only with the declared Adobe extension.
+            // The ordinary evaluator leaves undeclared extensions undecided.
+            Expr::Call("fn:Extension", args)
+                if require_declaration
+                    && args.first().and_then(Expr::text) == Some("ADBE_Extn3") =>
+            {
+                match self.eval(expr)? {
+                    Val::Unknown => Val::Bool(false),
+                    result => result,
+                }
+            }
+            Expr::Call("fn:Eval", args) if args.len() == 1 => {
+                self.eval_since(&args[0], require_declaration)?
+            }
             Expr::Binary(op @ (Op::Or | Op::And), left, right) => {
-                let left = self.eval_since(left)?;
+                let left = self.eval_since(left, require_declaration)?;
                 if *op == Op::And && left == Val::Bool(false) {
                     return Ok(left);
                 }
                 if *op == Op::Or && left == Val::Bool(true) {
                     return Ok(left);
                 }
-                let right = self.eval_since(right)?;
+                let right = self.eval_since(right, require_declaration)?;
                 match (left.truth(), right.truth()) {
                     (_, Some(value)) if value == (*op == Op::Or) => Val::Bool(value),
                     (Some(_), Some(value)) => Val::Bool(value),
@@ -326,9 +363,10 @@ impl<G: Graph> Scope<'_, '_, G> {
                 clippy::disallowed_methods,
                 reason = "copies one word of a predicate of the generated model"
             )]
-            Expr::Word(word) => word
-                .parse::<f64>()
-                .map_or_else(|_| Val::Name(word.as_bytes().to_vec()), Val::Num),
+            Expr::Word(word) => word.parse::<f64>().map_or_else(
+                |_| Val::Name(word.trim_matches('\'').as_bytes().to_vec()),
+                Val::Num,
+            ),
             Expr::Path(path) => self.path(path, |value| {
                 value.map_or(Val::Absent, |value| scalar(&self.graph.view(value)))
             })?,
@@ -563,6 +601,13 @@ impl<G: Graph> Scope<'_, '_, G> {
             reason = "the segments of one path in a predicate of the generated model"
         )]
         let mut segments: Vec<&str> = path.split("::").collect();
+        if let [subject] = segments.as_slice()
+            && subject.starts_with('@')
+            && subject.ends_with('*')
+            && let Some(value) = self.subject
+        {
+            return Ok(then(Some(value)));
+        }
         let start = match segments.first() {
             Some(&"trailer") => {
                 segments.remove(0);
@@ -604,8 +649,8 @@ impl<G: Graph> Scope<'_, '_, G> {
         let Some(child) = child else {
             return Ok(then(None));
         };
-        if let View::Reference(number) = self.graph.view(child) {
-            let resolved = self.graph.resolve(number)?;
+        if let View::Reference(_) = self.graph.view(child) {
+            let resolved = self.graph.target(child)?;
             return match (&resolved, rest.is_empty()) {
                 (Some(resolved), false) => self.walk(resolved, rest, then),
                 (resolved, _) => Ok(then(resolved.as_deref())),
@@ -683,8 +728,8 @@ impl<G: Graph> Scope<'_, '_, G> {
         raw: &'a G::Value,
         slot: &'a mut Option<G::Owned>,
     ) -> Result<Option<&'a G::Value>, G::Error> {
-        if let View::Reference(number) = self.graph.view(raw) {
-            *slot = self.graph.resolve(number)?;
+        if let View::Reference(_) = self.graph.view(raw) {
+            *slot = self.graph.target(raw)?;
             Ok(slot.as_deref())
         } else {
             Ok(Some(raw))
