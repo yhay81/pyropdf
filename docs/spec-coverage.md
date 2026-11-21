@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 40 | 42 | 749 |
-| interpret | 1 | 19 | 0 | 36 | 49 | 726 |
-| create | 0 | 0 | 9 | 641 | 78 | 103 |
-| edit | 0 | 0 | 0 | 667 | 65 | 99 |
-| preserve | 0 | 0 | 0 | 25 | 662 | 144 |
+| read | 0 | 0 | 0 | 40 | 35 | 756 |
+| interpret | 8 | 19 | 0 | 36 | 42 | 726 |
+| create | 0 | 0 | 9 | 641 | 70 | 111 |
+| edit | 0 | 0 | 0 | 667 | 58 | 106 |
+| preserve | 0 | 0 | 0 | 25 | 654 | 152 |
 
 ## Clauses
 
@@ -86,12 +86,12 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 8.6.5.3 | CalRGB colour spaces | `calrgb-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
 | 8.6.5.4 | Lab colour spaces | `lab-color-space` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
 | 8.6.5.5 | ICCBased colour spaces | `icc-based-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 8.6.5.8 | Rendering intent selection | `rendering-intents` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.6.5.8 | Rendering intent selection | `rendering-intents` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 8.6.6.2 | Pattern colour spaces | `pattern-color-space` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
 | 8.6.6.3 | Indexed colour spaces | `indexed-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
 | 8.6.6.4 | Separation colour spaces | `separation-color-space` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
 | 8.6.6.5 | DeviceN colour spaces | `devicen-color-space` | 1 partial | 1 partial | 1 planned | 1 planned | 1 done |
-| 8.6.7 | Overprint control | `overprint` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.6.7 | Overprint control | `overprint` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 8.6.8 | Colour-setting operators | `colour-operators` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.7.3 | Tiling patterns | `tiling-patterns` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
 | 8.7.4 | Shading patterns | `shading-patterns` | 1 done | 1 done | 1 done | 1 planned | 1 done |
@@ -121,12 +121,12 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 9.8 | Font descriptors | `font-descriptors` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.9 | Embedded font programs | `embedded-fonts` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
 | 9.10 | Extraction of text content | `text-extraction` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 10.3 | CIE-based colour to device colour | `color-conversion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 10.4 | Conversions among device colour spaces | `device-color-conversion` | 1 done | 1 done | 1 planned | 1 partial | 1 planned |
-| 10.5 | Transfer functions | `transfer-functions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 10.6 | Halftones | `halftones` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 10.7 | Scan conversion details | `scan-conversion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 10.8 | Rendering of colour separations | `separation-rendering` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 10.3 | CIE-based colour to device colour | `color-conversion` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 10.4 | Conversions among device colour spaces | `device-color-conversion` | 1 done | 1 done | 1 done | 1 partial | 1 done |
+| 10.5 | Transfer functions | `transfer-functions` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 10.6 | Halftones | `halftones` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 10.7 | Scan conversion details | `scan-conversion` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 10.8 | Rendering of colour separations | `separation-rendering` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 11.3 | Alpha compositing | `alpha-compositing` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 11.3.5 | Blend mode | `blend-modes` | 1 done | 1 done | 1 done | 1 planned | 1 done |
 | 11.5 | Soft masks | `soft-masks` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,306 unfinished cells in 831 features: 1 engine, 1,409 partial, 896 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,276 unfinished cells in 831 features: 8 engine, 1,409 partial, 859 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -277,9 +277,10 @@ No unfinished specification-map cells assigned.
 
 Milestone [#248](https://github.com/yhay81/pyropdf/issues/248).
 
-- [#898](https://github.com/yhay81/pyropdf/issues/898) Verify device-dependent colour and halftone rendering against independent samples. Read, write and retain the corresponding output-device parameters. Independently compare separation, overprint, rendering intents, transfer, BG2/UCR2, halftone and scan-conversion output and route confirmed interpreter gaps through the upstream workflow.
-    - read, interpret — `overprint`, `color-conversion`, `transfer-functions`, `halftones`, `scan-conversion`, `rendering-intents`, `separation-rendering`.
-    - create, edit, preserve — `overprint`, `color-conversion`, `device-color-conversion`, `transfer-functions`, `halftones`, `scan-conversion`, `rendering-intents`, `separation-rendering`.
+- [#1001](https://github.com/yhay81/pyropdf/issues/1001) hayro: apply output-device parameters when proofing print and screened output. Apply per-object ICC intent, four-channel transfer, process and named spot plate overprint, selected halftones and scan parameters on suitable devices. RGB alternate, calibrated and transfer samples are verified.
+    - interpret — `overprint`, `color-conversion`, `transfer-functions`, `halftones`, `scan-conversion`, `rendering-intents`, `separation-rendering`.
+- [#1002](https://github.com/yhay81/pyropdf/issues/1002) Apply active black generation and undercolor removal when rewriting CMYK colours. Evaluate the active BG2/UCR2 functions when converting paint and image samples to DeviceCMYK in Page.recolor and Document.recolor.
+    - edit — `device-color-conversion`.
 - [#372](https://github.com/yhay81/pyropdf/issues/372) hayro: evaluate optional content visibility expressions and annotation /OC. Adopt engine evaluation of visibility expressions and annotation OC. Track the upstream issue directly. #373 owns local adoption.
     - interpret — `optional-content`.
 - [#899](https://github.com/yhay81/pyropdf/issues/899) Complete transparency group, soft-mask and compositing coverage. Exercise non-isolated and knockout groups, group masks, blending colour spaces, alpha composition and Annex Q resource traversal. Verify isolated and nested results with independent rendered references.
