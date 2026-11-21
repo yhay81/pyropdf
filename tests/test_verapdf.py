@@ -164,6 +164,98 @@ def test_archival_appearance_reports_only_the_annotation_with_an_alternate(level
 
 
 @pytest.mark.parametrize("incremental", [False, True])
+def test_a_normal_line_caption_breaks_archival_font_embedding_on_its_annotation(*, incremental: bool) -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as original:
+        line = original.pages[0].annotations.add(pyropdf.LineAnnotation((16, 20), (80, 20), contents="Measured"))
+        line.line_details = pyropdf.LineDetails(caption=False)
+        baseline = original.to_bytes()
+    with pyropdf.open(baseline) as doc:
+        line = doc.pages[0].annotations[0]
+        assert doc.changes(incremental=incremental).claims == ()
+        line.line_details = pyropdf.LineDetails(caption=True)
+        (change,) = doc.changes(incremental=incremental).claims
+        assert change.claim == "PDF/A-2B"
+        assert change.objects == (line.xref,)
+        assert "font without an embedded program" in change.reason
+        saved = doc.to_bytes(incremental=incremental)
+    with pyropdf.open(saved) as reopened:
+        reopened.pages[0].rotation = 90
+        assert reopened.changes(incremental=incremental).claims == ()
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        (b"BT /F 10 Tf /Other 10 Tf ( ) Tj ET", {"Other"}),
+        (b"BT /F 10 Tf ( ) Tj /Other 10 Tf ( ) Tj ET", {"F", "Other"}),
+        (b"BT /F 10 Tf q /Other 10 Tf Q ( ) Tj ET", {"F"}),
+    ],
+)
+def test_appearance_names_only_embedded_programs_actually_used(content: bytes, expected: set[str]) -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as source:
+        data = VERAPDF.ALTERNATES["prepare"](source, "appearance-selected")
+    with pyropdf.open(data) as doc:
+        widget = doc.pages[0].obj["Annots"][0]
+        del widget["Type"]  # An annotation's Type entry is optional.
+        ink = widget["AP"]["N"]["Yes"]
+        ink["Resources"]["Font"]["Other"] = VERAPDF.ALTERNATES["simple"](doc)
+        ink.write(content)
+        data = doc.to_bytes()
+    with pyropdf.open(data) as doc:
+        widget = doc.pages[0].obj["Annots"][0]
+        fonts = widget["AP"]["N"]["Yes"]["Resources"]["Font"]
+        responsible = {fonts[name]["FontDescriptor"].xref for name in expected}
+        for name in ("F", "Other"):
+            del fonts[name]["FontDescriptor"]["FontFile2"]
+        widget["Contents"] = pyropdf.String(b"Changed label")
+        ink = widget["AP"]["N"]["Yes"]
+        ink["PrivateNote"] = pyropdf.String(b"Unrelated change")
+        ink.write(b"q 0 0 3 3 re f Q " + ink.read())
+        for incremental in (False, True):
+            (change,) = doc.changes(incremental=incremental).claims
+            assert change.claim == "PDF/A-2B"
+            assert set(change.objects) == responsible
+
+
+def test_an_existing_unembedded_font_does_not_hide_a_second_descriptor_loss() -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as source:
+        data = VERAPDF.ALTERNATES["prepare"](source, "appearance-selected")
+    with pyropdf.open(data) as doc:
+        page = doc.pages[0].obj
+        ink = page["Annots"][0]["AP"]["N"]["Yes"]
+        fonts = ink["Resources"]["Font"]
+        fonts["Other"] = VERAPDF.ALTERNATES["simple"](doc)
+        del fonts["F"]["FontDescriptor"]["FontFile2"]
+        page["Resources"]["Font"] = fonts
+        del ink["Resources"]  # The Form inherits these fonts from its page.
+        ink.write(b"BT /F 10 Tf ( ) Tj /Other 10 Tf ( ) Tj ET")
+        data = doc.to_bytes()
+    with pyropdf.open(data) as doc:
+        desc = doc.pages[0].obj["Resources"]["Font"]["Other"]["FontDescriptor"]
+        del desc["FontFile2"]
+        for incremental in (False, True):
+            (change,) = doc.changes(incremental=incremental).claims
+            assert change.objects == (desc.xref,)
+
+
+def test_unrelated_widget_edit_avoids_decoding_an_oversized_appearance() -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as source:
+        data = VERAPDF.ALTERNATES["prepare"](source, "appearance-selected")
+    with pyropdf.open(data) as doc:
+        ink = doc.pages[0].obj["Annots"][0]["AP"]["N"]["Yes"]
+        ink.write(ink.read() + b" " * 5_000)
+        data = doc.to_bytes()
+    with pyropdf.open(data, limits=pyropdf.DocumentLimits(max_page_content_size=2_048)) as doc:
+        widget = doc.pages[0].obj["Annots"][0]
+        widget["Contents"] = pyropdf.String(b"Updated description")
+        assert doc.changes(incremental=True).claims == ()
+        del widget["AP"]["N"]["Yes"]["Resources"]["Font"]["F"]["FontDescriptor"]["FontFile2"]
+        with pytest.raises(pyropdf.LimitError) as refusal:
+            doc.changes(incremental=True)
+        assert refusal.value.code == "page_content_size"
+
+
+@pytest.mark.parametrize("incremental", [False, True])
 def test_dual_claim_screen_has_distinct_accessibility_and_archival_rules(*, incremental: bool) -> None:
     mode = "incremental" if incremental else "full"
     name = f"pdfua-2-pdfa-4-add_screen-{mode}.pdf"
@@ -297,6 +389,9 @@ def test_dual_alternate_resources_report_only_the_claim_that_newly_fails(tmp_pat
             "parent-tree-slot": {"ua2"},
             "nested-composite-font": {"4", "ua2"},
             "nested-default-rgb": set(),
+            "appearance-unselected": {"4", "ua2"},
+            "appearance-unused": set(),
+            "appearance-invisible": set(),
         }.items():
             name = f"{source.stem}-{case}-edit-{mode}.pdf"
             assert {f for f in ("ua2", "4") if f"{f} {name}" in VERAPDF.EXPECTED} == profiles

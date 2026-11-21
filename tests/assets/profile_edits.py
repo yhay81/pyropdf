@@ -25,6 +25,18 @@ def cases(flavour: str, *, dual: bool) -> list[str]:
         "type3-charproc",
         "type3-unused-charproc",
     ]
+    if dual or flavour in {"2b", "ua1"}:
+        result += [
+            "appearance-selected",
+            "appearance-unselected",
+            "appearance-unused",
+            "appearance-nested",
+            "appearance-invisible",
+            "appearance-select-only",
+            "appearance-empty",
+            "appearance-uncalled",
+            "appearance-graphics-state",
+        ]
     if archival:
         result += ["nested-rgb", "nested-default-rgb", "inherited-default-rgb", "nested-gray", "nested-cmyk"]
     if dual or flavour.startswith("4"):
@@ -127,6 +139,69 @@ def type3(doc: pyropdf.Document) -> pyropdf.Dictionary:
     )
 
 
+def prepare_appearance(doc: pyropdf.Document, case: str) -> None:
+    """Add a tagged checkbox with a font confined to one normal appearance."""
+    page = doc.pages[0].obj
+    font = simple(doc)
+    code = {
+        "appearance-unused": b"q Q",
+        "appearance-empty": b"BT /F 10 Tf () Tj ET",
+        "appearance-graphics-state": b"BT /G gs ( ) Tj ET",
+        "appearance-invisible": b"BT /F 10 Tf 3 Tr ( ) Tj ET",
+        "appearance-select-only": b"BT /F 10 Tf ET",
+    }.get(case, b"BT /F 10 Tf ( ) Tj ET")
+    resources = {"Font": {"F": font}}
+    if case == "appearance-graphics-state":
+        resources["ExtGState"] = {"G": indirect(doc, {"Type": Name("ExtGState"), "Font": [font, 10]})}
+    ink = form(doc, code, resources)
+    if case in {"appearance-nested", "appearance-uncalled"}:
+        ink = form(doc, b"/Inner Do" if case == "appearance-nested" else b"q Q", {"XObject": {"Inner": ink}})
+    state = Name("Off" if case == "appearance-unselected" else "Yes")
+    widget = indirect(
+        doc,
+        {
+            "Type": Name("Annot"),
+            "Subtype": Name("Widget"),
+            "FT": Name("Btn"),
+            "F": 4,
+            "T": pyropdf.String(b"Choice"),
+            "TU": pyropdf.String(b"Select this item"),
+            "Contents": pyropdf.String(b"Include this item"),
+            "DA": pyropdf.String(b"/F 10 Tf 0 g"),
+            "Rect": [5, 5, 25, 25],
+            "P": page,
+            "AS": state,
+            "V": state,
+            "AP": {"N": {"Off": form(doc, b"q Q", {}), "Yes": ink}},
+        },
+    )
+    page["Annots"] = [widget]
+    doc.catalog["AcroForm"] = indirect(
+        doc, {"Fields": [widget], "DA": pyropdf.String(b"/F 10 Tf 0 g"), "DR": {"Font": {"F": font}}}
+    )
+    tree = doc.catalog.get("StructTreeRoot")
+    if tree is not None:
+        page["Tabs"] = Name("S")
+        parent = tree["K"][0]
+        holder = indirect(
+            doc,
+            {
+                "Type": Name("StructElem"),
+                "S": Name("Form"),
+                "P": parent,
+                "Pg": page,
+                "K": {"Type": Name("OBJR"), "Obj": widget, "Pg": page},
+            },
+        )
+        if "NS" in parent:
+            holder["NS"] = parent["NS"]
+        parent["K"].append(holder)
+        key = tree["ParentTreeNextKey"]
+        widget["StructParent"] = key
+        tree["ParentTree"]["Nums"].extend([key, holder])
+        tree["ParentTreeNextKey"] = key + 1
+
+
 def prepare_colour(doc: pyropdf.Document, case: str) -> None:
     page = doc.pages[0].obj
     cat = doc.catalog
@@ -145,7 +220,9 @@ def prepare_colour(doc: pyropdf.Document, case: str) -> None:
 def prepare(doc: pyropdf.Document, case: str) -> bytes:
     page = doc.pages[0].obj
     cat = doc.catalog
-    if case in {"nested-rgb", "nested-default-rgb", "inherited-default-rgb", "nested-gray", "nested-cmyk"}:
+    if case.startswith("appearance-"):
+        prepare_appearance(doc, case)
+    elif case in {"nested-rgb", "nested-default-rgb", "inherited-default-rgb", "nested-gray", "nested-cmyk"}:
         prepare_colour(doc, case)
     elif case.startswith("page-intent"):
         page["OutputIntents"] = list(cat["OutputIntents"])
@@ -205,8 +282,27 @@ def nested_composite(doc: pyropdf.Document) -> bytes:
     return doc.to_bytes()
 
 
+def nested_font_entry(page: pyropdf.Dictionary, case: str) -> tuple[pyropdf.Dictionary, str]:
+    """Locate the embedded program or Type 3 procedure exercised by a nested Form."""
+    fonts = page["Resources"]["XObject"]["Outer"]["Resources"]["XObject"]["Inner"]["Resources"]["Font"]
+    font = fonts[next(iter(fonts))]
+    if case.startswith("type3-"):
+        return font["CharProcs"], "A" if case == "type3-charproc" else "B"
+    if case == "nested-composite-font":
+        font = font["DescendantFonts"][0]
+    owner = font["FontDescriptor"]
+    return owner, next(k for k in ("FontFile2", "FontFile3") if k in owner)
+
+
 def edit(doc: pyropdf.Document, case: str) -> int | None:
     page = doc.pages[0].obj
+    if case.startswith("appearance-"):
+        ink = page["Annots"][0]["AP"]["N"]["Yes"]
+        if case in {"appearance-nested", "appearance-uncalled"}:
+            ink = ink["Resources"]["XObject"]["Inner"]
+        descriptor = ink["Resources"]["Font"]["F"]["FontDescriptor"]
+        del descriptor["FontFile2"]
+        return descriptor.xref
     if case == "nested-cmyk":
         inner = page["Resources"]["XObject"]["Outer"]["Resources"]["XObject"]["Inner"]
         inner.write(b"0 1 0 0 k 10 10 30 40 re f")
@@ -225,15 +321,7 @@ def edit(doc: pyropdf.Document, case: str) -> int | None:
         "type3-charproc",
         "type3-unused-charproc",
     }:
-        fonts = page["Resources"]["XObject"]["Outer"]["Resources"]["XObject"]["Inner"]["Resources"]["Font"]
-        font = fonts[next(iter(fonts))]
-        if case.startswith("type3-"):
-            owner, key = font["CharProcs"], "A" if case == "type3-charproc" else "B"
-        else:
-            if case == "nested-composite-font":
-                font = font["DescendantFonts"][0]
-            owner = font["FontDescriptor"]
-            key = next(k for k in ("FontFile2", "FontFile3") if k in owner)
+        owner, key = nested_font_entry(page, case)
     elif case == "named-properties":
         owner, key = page["Resources"]["Properties"]["FigureProps"], "MCID"
     elif case.startswith("parent-tree-"):
@@ -251,7 +339,16 @@ def edit(doc: pyropdf.Document, case: str) -> int | None:
 def failed_rules(flavour: str, case: str) -> set[str]:
     """Pinned veraPDF 1.28.2 results for the destructive edit. Every prepared input passes."""
     group = flavour if flavour.startswith("ua") else flavour[0]
-    if case in {"nested-simple-font", "nested-empty-show", "nested-composite-font"}:
+    if case in {
+        "nested-simple-font",
+        "nested-empty-show",
+        "nested-composite-font",
+        "appearance-selected",
+        "appearance-unselected",
+        "appearance-nested",
+        "appearance-empty",
+        "appearance-graphics-state",
+    }:
         rule = {
             "1": "6.3.4-1",
             "2": "6.2.11.4.1-1",
