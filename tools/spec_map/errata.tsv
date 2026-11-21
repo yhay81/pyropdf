@@ -149,7 +149,7 @@ issue	locations	features	dimensions	work	summary
 226	32000-2-2020/clause14.html#H14.7.6.1 32000-2-2020/clause14.html#H14.8.5 32000-2-2020/clause14.html#H14.8.5.2 32000-2-2020/clause14.html#H14.8.5.4.1 32000-2-2020/clause14.html#H14.8.5.4.3 32000-2-2020/clause14.html#H14.8.5.8	logical-structure tagged-pdf	read interpret create edit preserve		Syntax of structure attribute objects
 228	32000-2-2020/clause08.html#H8.6.5.5	icc-based-color-space	read interpret create edit preserve		Embedding newer ICC profiles within legacy profiles
 229	32000-2-2020/clauseAnnexE.html#HF.3	private-names	read interpret create edit preserve		Registered names and dictionary-specific exceptions
-236	32001-2022/clause05.html#H5.1.3	digital-signatures sha3-hashes	read interpret create edit preserve	867	Removal of the SHA-3 change to signature-reference DigestMethod values
+236	32001-2022/clause05.html#H5.1.3	digital-signatures sha3-hashes	read interpret create edit preserve		Removal of the SHA-3 change to signature-reference DigestMethod values
 239	32000-2-2020/clause07.html#H7.12.5	developer-extensions	read interpret create edit preserve		Meaning of a declared extension level
 242	32000-2-2020/clause07.html#H7.7.2	document-catalog	read interpret create edit preserve		Direct storage of the extension dictionary
 246	32000-2-2020/clause07.html#H7.5.8.2	xref-streams	read interpret create edit preserve		Direct length in cross-reference streams
@@ -257,7 +257,7 @@ issue	locations	features	dimensions	work	summary
 399	32000-2-2020/clause07.html#H7.12.4 32000-2-2020/clause07.html#H7.5.6	developer-extensions incremental-update	read interpret create edit preserve		Applicability of an extension's base PDF version
 402	32000-2-2020/clauseAnnexH.html#HH.2 32000-2-2020/clauseAnnexH.html#HH.7.5	annotations basic-objects xmp-metadata	read interpret create edit preserve		Metadata and trailer document identifiers
 403	32000-2-2020/clause07.html#H7.12.1 32000-2-2020/clause07.html#H7.5.8.2 32000-2-2020/clause12.html#H12.8.1 32000-2-2020/clauseAnnexF.html#HF.3.3 32000-2-2020/clauseAnnexF.html#HF.3.6	associated-files developer-extensions digital-signatures linearization xref-streams	read interpret create edit preserve		Metadata and file-association exceptions by object type
-404	32001-2022/clause05.html#H5.1.4 32002-2022/clause05.html#H5.1.2 32002-2022/clause05.html#H5.1.3	ecc-signatures sha3-hashes	read interpret create edit preserve	867	Digest identifiers for SHAKE256 and the EdDSA signature profiles
+404	32001-2022/clause05.html#H5.1.4 32002-2022/clause05.html#H5.1.2 32002-2022/clause05.html#H5.1.3	ecc-signatures sha3-hashes	read interpret create edit preserve		Digest identifiers for SHAKE256 and the EdDSA signature profiles
 410	32000-2-2020/clause12.html#H12.7.5.5	signature-fields			Typesetting in the seed certificate table
 414	32000-2-2020/clause13.html#H13.2.4.2	renditions	read interpret create edit preserve		Temporary-file policy for media clips
 415	32000-2-2020/clauseAnnexH.html 32000-2-2020/clauseAnnexH.html#HH.8.2	tagged-pdf			Name syntax versus operators in tagging examples

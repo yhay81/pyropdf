@@ -181,16 +181,6 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Read and write authenticated AES-GCM objects with independent positive and negative cases."
 
-[families.hash-signature-extensions]
-tracker = 252
-issue = 867
-title = "Complete the PDF hash and signature algorithm coverage for ISO/TS 32001 and 32002"
-features = [
-    "sha3-hashes", "ecc-signatures",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Verify and create each specified hash/signature algorithm against independent vectors, including Ed25519 and Ed448."
-
 [families.integrity-protection]
 tracker = 252
 issue = 866

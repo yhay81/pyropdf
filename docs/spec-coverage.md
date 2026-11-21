@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 44 | 43 | 744 |
-| interpret | 1 | 13 | 0 | 40 | 663 | 114 |
-| create | 0 | 0 | 9 | 645 | 79 | 98 |
-| edit | 0 | 0 | 0 | 671 | 66 | 94 |
-| preserve | 0 | 0 | 0 | 29 | 663 | 139 |
+| read | 0 | 0 | 0 | 43 | 42 | 746 |
+| interpret | 1 | 13 | 0 | 39 | 662 | 116 |
+| create | 0 | 0 | 9 | 644 | 78 | 100 |
+| edit | 0 | 0 | 0 | 670 | 65 | 96 |
+| preserve | 0 | 0 | 0 | 29 | 662 | 140 |
 
 ## Clauses
 
@@ -215,8 +215,8 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 partial | 12 partial | 12 planned | 12 partial | 12 partial |
 | ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-2,944 unfinished cells in 831 features: 1 engine, 1,429 partial, 1,514 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,935 unfinished cells in 831 features: 1 engine, 1,425 partial, 1,509 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -321,9 +321,6 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 
 - [#865](https://github.com/yhay81/pyropdf/issues/865) Read and write AES-GCM encrypted PDFs under ISO/TS 32003. Read and write authenticated AES-GCM objects with independent positive and negative cases.
     - read, interpret, create, edit, preserve — `aes-gcm`.
-- [#867](https://github.com/yhay81/pyropdf/issues/867) Complete the PDF hash and signature algorithm coverage for ISO/TS 32001 and 32002. Verify and create each specified hash/signature algorithm against independent vectors, including Ed25519 and Ed448.
-    - read, interpret, create, edit — `sha3-hashes`, `ecc-signatures`.
-    - preserve — `sha3-hashes`.
 - [#866](https://github.com/yhay81/pyropdf/issues/866) Verify and maintain document integrity protection for encrypted PDFs under ISO/TS 32004. Verify and maintain integrity protection during encrypted saves and refuse tampered data.
     - read, interpret, create, edit, preserve — `integrity-protection`.
 - [#936](https://github.com/yhay81/pyropdf/issues/936) Extend CMS algorithm coverage for public-key PDF recipients. Verify and extend additional CMS provider algorithms for recipient access, creation, editing and preservation.
@@ -563,7 +560,7 @@ Within one month of publication, compare the official catalogues and the PDF Ass
 | Annex Q | normative annex | `page-transparency`, `transparency-groups` | Determine whether page painting requires compositing. |
 | Bibliography | references | — | Background references introduce no independent behavior. |
 | ISO/TS 24064:2023 | extension | `step-rich-media` | Connect the STEP AP242 payload, configuration and view to its RichMedia annotation. |
-| ISO/TS 32001:2022 | extension | `sha3-hashes` | SHA-3 and SHA-512 hash algorithms in PDF. |
+| ISO/TS 32001:2022 | extension | `sha3-hashes` | SHA-3 and SHAKE256 hash algorithms in PDF. |
 | ISO/TS 32002:2022 | extension | `ecc-signatures` | ECDSA and EdDSA signature algorithms in PDF. |
 | ISO/TS 32003:2023 | extension | `aes-gcm` | AES-GCM encryption in PDF. |
 | ISO/TS 32004:2024 | extension | `integrity-protection` | Integrity protection of encrypted documents with a message authentication code. |
@@ -743,7 +740,7 @@ before a test can be cited for that specific correction. The register gives no a
 | [226](https://github.com/pdf-association/pdf-issues/issues/226) | [Syntax of structure attribute objects](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.6.1) | `logical-structure`, `tagged-pdf` | read, interpret, create, edit, preserve | — |
 | [228](https://github.com/pdf-association/pdf-issues/issues/228) | [Embedding newer ICC profiles within legacy profiles](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.6.5.5) | `icc-based-color-space` | read, interpret, create, edit, preserve | — |
 | [229](https://github.com/pdf-association/pdf-issues/issues/229) | [Registered names and dictionary-specific exceptions](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexE.html#HF.3) | `private-names` | read, interpret, create, edit, preserve | — |
-| [236](https://github.com/pdf-association/pdf-issues/issues/236) | [Removal of the SHA-3 change to signature-reference DigestMethod values](https://pdf-issues.pdfa.org/32001-2022/clause05.html#H5.1.3) | `digital-signatures`, `sha3-hashes` | read, interpret, create, edit, preserve | [#867](https://github.com/yhay81/pyropdf/issues/867) |
+| [236](https://github.com/pdf-association/pdf-issues/issues/236) | [Removal of the SHA-3 change to signature-reference DigestMethod values](https://pdf-issues.pdfa.org/32001-2022/clause05.html#H5.1.3) | `digital-signatures`, `sha3-hashes` | read, interpret, create, edit, preserve | — |
 | [239](https://github.com/pdf-association/pdf-issues/issues/239) | [Meaning of a declared extension level](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.5) | `developer-extensions` | read, interpret, create, edit, preserve | — |
 | [242](https://github.com/pdf-association/pdf-issues/issues/242) | [Direct storage of the extension dictionary](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.2) | `document-catalog` | read, interpret, create, edit, preserve | — |
 | [246](https://github.com/pdf-association/pdf-issues/issues/246) | [Direct length in cross-reference streams](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.8.2) | `xref-streams` | read, interpret, create, edit, preserve | — |
@@ -851,7 +848,7 @@ before a test can be cited for that specific correction. The register gives no a
 | [399](https://github.com/pdf-association/pdf-issues/issues/399) | [Applicability of an extension's base PDF version](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.4) | `developer-extensions`, `incremental-update` | read, interpret, create, edit, preserve | — |
 | [402](https://github.com/pdf-association/pdf-issues/issues/402) | [Metadata and trailer document identifiers](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexH.html#HH.2) | `annotations`, `basic-objects`, `xmp-metadata` | read, interpret, create, edit, preserve | — |
 | [403](https://github.com/pdf-association/pdf-issues/issues/403) | [Metadata and file-association exceptions by object type](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.1) | `associated-files`, `developer-extensions`, `digital-signatures`, `linearization`, `xref-streams` | read, interpret, create, edit, preserve | — |
-| [404](https://github.com/pdf-association/pdf-issues/issues/404) | [Digest identifiers for SHAKE256 and the EdDSA signature profiles](https://pdf-issues.pdfa.org/32001-2022/clause05.html#H5.1.4) | `ecc-signatures`, `sha3-hashes` | read, interpret, create, edit, preserve | [#867](https://github.com/yhay81/pyropdf/issues/867) |
+| [404](https://github.com/pdf-association/pdf-issues/issues/404) | [Digest identifiers for SHAKE256 and the EdDSA signature profiles](https://pdf-issues.pdfa.org/32001-2022/clause05.html#H5.1.4) | `ecc-signatures`, `sha3-hashes` | read, interpret, create, edit, preserve | — |
 | [410](https://github.com/pdf-association/pdf-issues/issues/410) | [Typesetting in the seed certificate table](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.5) | `signature-fields` | Editorial | — |
 | [414](https://github.com/pdf-association/pdf-issues/issues/414) | [Temporary-file policy for media clips](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.2.4.2) | `renditions` | read, interpret, create, edit, preserve | — |
 | [415](https://github.com/pdf-association/pdf-issues/issues/415) | [Name syntax versus operators in tagging examples](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexH.html) | `tagged-pdf` | Editorial | — |
