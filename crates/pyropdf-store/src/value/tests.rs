@@ -211,13 +211,97 @@ fn keys_written_with_escapes_keep_their_place() {
 
 #[test]
 fn a_repeated_key_keeps_its_first_place_and_its_last_value() {
-    for source in [&b"<< /A 1 /B 2 /A 3 >>"[..], b"<< /A#20 1 /B 2 /A#20 3 >>"] {
+    for source in [
+        &b"<< /A 1 /B 2 /A 3 >>"[..],
+        b"<< /A#20 1 /B 2 /A#20 3 >>",
+        b"<< /#41 1 /B 2 /A 3 >>",
+        b"<< /A 1 /B 2 /#41 3 >>",
+    ] {
         let value = parse(source);
         let first = &dict(&value).entries()[0];
         assert_eq!(dict(&value).len(), 2, "{}", source.escape_ascii());
         assert_eq!(first.1, Value::Integer(3), "{}", source.escape_ascii());
         assert_eq!(dict(&value).get("B"), Some(&Value::Integer(2)));
+        assert_eq!(lexeme(&value), Some(source));
     }
+}
+
+#[test]
+fn inline_image_dictionary_keys_keep_their_order_and_last_values() {
+    use hayro_syntax::content::UntypedIter;
+    use hayro_syntax::object::Object;
+
+    let source = Bytes::from(
+        b"BI /#57 4 /H 1 /BPC 8 /CS /G /Meta << /N 5 0 R /Color /Y >> /W 1 ID x EI".as_slice(),
+    );
+    let mut content = UntypedIter::new(&source);
+    let instruction = content.next().unwrap();
+    let Object::Stream(stream) = instruction.operands().next().unwrap() else {
+        panic!("expected an inline image")
+    };
+    let value = Value::from_object(
+        &Object::Dict(stream.dict().clone()),
+        &source,
+        &Budget::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        keys(dict(&value)),
+        [&b"W"[..], b"H", b"BPC", b"CS", b"Meta"]
+    );
+    assert_eq!(dict(&value).get("W"), Some(&Value::Integer(1)));
+    // In content, the tokens after the direct value 5 are stray operands.
+    let metadata = dict(dict(&value).get("Meta").unwrap());
+    assert_eq!(metadata.get("N"), Some(&Value::Integer(5)));
+    assert_eq!(metadata.get("Color"), Some(&Value::Name(name("Y"))));
+}
+
+#[test]
+fn dictionary_values_stop_at_the_token_hayro_skipped() {
+    use hayro_syntax::object::{FromBytes, Number};
+
+    let value = parse(
+        b"<< /N 12/Name /A#20B/Ref 5 0 R/Inner << /Kind /Sample >> stream /Sign + /Last -4.5 >>",
+    );
+    let entries = dict(&value);
+    assert_eq!(entries.get("N"), Some(&Value::Integer(12)));
+    assert_eq!(entries.get("Name"), Some(&Value::Name(name("A B"))));
+    assert_eq!(
+        entries.get("Ref"),
+        Some(&Value::Reference(Reference::new(5, 0)))
+    );
+    assert_eq!(
+        dict(entries.get("Inner").unwrap()).get("Kind"),
+        Some(&Value::Name(name("Sample")))
+    );
+    let sign = Number::from_bytes(b"+ ").map_or(Value::Null, |n| Value::Integer(n.as_i64()));
+    assert_eq!(entries.get("Sign"), Some(&sign));
+    assert_eq!(entries.get("Last"), Some(&real(-4.5)));
+}
+
+#[test]
+fn a_large_dictionary_keeps_the_last_value_and_charges_for_repeated_keys() {
+    let source = Bytes::from(b"<< /#41 0 /B 1 /C 2 /D 3 /E 4 /F 5 /G 6 /H 7 /I 8 /J 9 /K 10 /L 11 /M 12 /N 13 /O 14 /P 15 /Q 16 /A [17] >>".as_slice());
+    let value = Value::parse(&source, &Budget::default()).unwrap();
+    let entries = dict(&value).entries();
+    assert_eq!(entries.len(), 17);
+    assert_eq!(
+        entries[0],
+        (
+            name("A"),
+            Value::Array(Array::from(vec![Value::Integer(17)]))
+        )
+    );
+    assert_eq!(entries[1], (name("B"), Value::Integer(1)));
+    assert_eq!(entries[16], (name("Q"), Value::Integer(16)));
+    let limited = Budget::default().with_limit(LimitCode::MemorySize, Some(128));
+    assert_eq!(
+        Value::parse(&source, &limited)
+            .unwrap_err()
+            .limit()
+            .map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
 }
 
 #[test]
@@ -239,8 +323,11 @@ fn what_hayro_syntax_skips_between_entries_stays_in_the_lexeme() {
 
 #[test]
 fn a_value_that_hayro_syntax_cannot_read_is_null() {
-    // hayro-syntax skips a lone `+` as a number but does not read it.
-    let value = parse(b"<< /A + /B 2 >>");
+    use hayro_syntax::object::{FromBytes, MaybeRef, Object};
+
+    // Both readers can skip this number token but cannot decode it.
+    assert!(MaybeRef::<Object<'_>>::from_bytes(b"+- /B 2 >>").is_none());
+    let value = parse(b"<< /A +- /B 2 >>");
     assert_eq!(dict(&value).get("A"), Some(&Value::Null));
     assert_eq!(dict(&value).get("B"), Some(&Value::Integer(2)));
 }
