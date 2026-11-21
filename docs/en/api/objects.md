@@ -318,7 +318,8 @@ Add a stream of decoded `data`, in one transaction, and return its object number
 `dictionary` supplies further stream entries; `/Length`,
 `/Filter`, and `/DecodeParms` are set from the data and
 `filter`, which compresses with `"FlateDecode"` or stores the
-data as given with `None`.
+data as given with `None`. A leading `/Crypt` in `dictionary` retains
+its security selector and parameters with either encoding.
 
 ## `Real`
 
@@ -501,8 +502,9 @@ Stream.write(data: bytes, /, *, filter: Literal['FlateDecode'] | None = 'FlateDe
 Replace the stream data with `data`, given decoded, in one transaction.
 
 `filter="FlateDecode"` compresses it; `None` stores it
-uncompressed. Either way the previous `/Filter` and `/DecodeParms`
-are removed and `/Length` is updated.
+uncompressed. Both options replace the previous data filters and update
+`/Length`. An explicit leading `/Crypt` filter and its parameters
+keep the payload protected for the same recipients.
 
 ## `String`
 

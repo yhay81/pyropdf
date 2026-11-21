@@ -637,37 +637,26 @@ fn add(transaction: &mut Transaction, value: &Value, budget: &Budget) -> PyResul
     Ok((written.number(), written.generation()))
 }
 
-/// Sets the data of `stream` to `data`, given decoded, compressed with
-/// `/FlateDecode` when `compress`, and drops its previous filters. The copy
-/// and the compression are charged to `budget`, and compression polls it.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "inserts only the fixed Filter key"
-)]
+/// Encode the new payload while preserving any leading crypt filter and its audience.
 pub(crate) fn set_data(
     stream: &mut Stream,
     data: &[u8],
     compress: bool,
     budget: &Budget,
 ) -> PyResult<()> {
-    let dict = stream.dict_mut();
-    dict.remove("Filter");
-    dict.remove("DecodeParms");
-    if !compress {
+    let encoded = if compress {
+        deflate(data, 6, usize::MAX, budget)
+            .map_err(|e| store_error(&e))?
+            .ok_or_else(|| PyValueError::new_err("the data could not be compressed"))?
+    } else {
         let mut copy = BudgetVec::new(budget);
         copy.try_extend_from_slice(data)
             .map_err(|e| limit_error(&e))?;
-        stream.set_data(Bytes::from(copy.into_vec()));
-        return Ok(());
-    }
-    let encoded = deflate(data, 6, usize::MAX, budget)
-        .map_err(|e| store_error(&e))?
-        .ok_or_else(|| PyValueError::new_err("the data could not be compressed"))?;
+        copy.into_vec()
+    };
     stream
-        .dict_mut()
-        .insert(Name::from("Filter"), Value::Name(Name::from("FlateDecode")));
-    stream.set_data(Bytes::from(encoded));
-    Ok(())
+        .replace_encoded_data(Bytes::from(encoded), compress, budget)
+        .map_err(|e| store_error(&e))
 }
 
 /// Adds a stream of the tagged dictionary `dict` and the decoded `data`,

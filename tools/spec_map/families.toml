@@ -207,14 +207,6 @@ features = ["public-key-security-handler"]
 dimensions = ["interpret"]
 behavior = "Render authenticated pre-V5 recipient files through the engine object-source interface."
 
-[families.crypt-filter-payload-edits]
-tracker = 252
-issue = 992
-title = "Keep stream crypt-filter selection when replacing attachment or stream data"
-features = ["crypt-filter", "crypt-filters"]
-dimensions = ["edit"]
-behavior = "Retain the leading security filter and its parameters when replacing the decoded payload or compression, including an attachment restricted to a distinct recipient audience."
-
 [families.signature-dictionaries]
 tracker = 252
 issue = 905

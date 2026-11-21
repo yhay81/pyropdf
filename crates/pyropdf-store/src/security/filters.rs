@@ -366,3 +366,49 @@ impl Handler {
         Ok(handler)
     }
 }
+
+impl crate::value::Stream {
+    /// Replace a payload encoded with Flate or without a data filter. The
+    /// leading crypt filter selects an audience regardless of the encoding.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "at most two filter names, two parameters, and two fixed dictionary entries"
+    )]
+    pub fn replace_encoded_data(
+        &mut self,
+        data: crate::value::Bytes,
+        flate: bool,
+        budget: &Budget,
+    ) -> Result<()> {
+        let flate_name = || Value::Name(Name::from("FlateDecode"));
+        let (filters, parameters) = if explicit(self.dict(), budget)?.is_some() {
+            let crypt = Value::Name(Name::from("Crypt"));
+            let params = items(self.dict().get("DecodeParms"))
+                .first()
+                .filter(|v| !matches!(v, Value::Null))
+                .cloned();
+            if flate {
+                budget.check(LimitCode::StreamFilterCount, 2)?;
+                (
+                    Some(Value::Array(vec![crypt, flate_name()].into())),
+                    params.map(|p| Value::Array(vec![p, Value::Null].into())),
+                )
+            } else {
+                (Some(crypt), params)
+            }
+        } else {
+            (flate.then(flate_name), None)
+        };
+        let dict = self.dict_mut();
+        dict.remove("Filter");
+        dict.remove("DecodeParms");
+        if let Some(filters) = filters {
+            dict.insert(Name::from("Filter"), filters);
+        }
+        if let Some(params) = parameters {
+            dict.insert(Name::from("DecodeParms"), params);
+        }
+        self.set_data(data);
+        Ok(())
+    }
+}
