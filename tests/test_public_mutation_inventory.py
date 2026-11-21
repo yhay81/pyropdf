@@ -635,6 +635,8 @@ READ_ONLY = {
     "Stream": "read",
     "StructureTree": "resolve_role walk",
     "Table": "markdown",
+    "typed.LinkedTree": "lookup",
+    "typed.View": "interpret",
 }
 
 EXTERNAL = {

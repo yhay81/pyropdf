@@ -40,7 +40,8 @@ when the model gives one. An absent optional key reads as ``None`` through an
 attribute, and a ``null`` value counts as absent (ISO 32000-2 section 7.3.7).
 A required key that is absent, and a value of no declared type, raise
 :class:`~pyropdf.PdfError`. Predicates of the model are not evaluated here;
-the structural check evaluates them.
+the structural check evaluates them. Use ``view.interpret(key)`` to apply the
+model's type, link and value conditions to one entry of the current version.
 
 Writing takes the Python form of a declared type, or a view or handle for a
 container type, and refuses anything else with ``TypeError``, or a name
@@ -55,10 +56,10 @@ from __future__ import annotations
 
 import re
 from functools import cache
-from typing import Any, ClassVar, NamedTuple
+from typing import Any, ClassVar, NamedTuple, cast
 
 from pyropdf import _core
-from pyropdf._errors import LimitError, PdfError
+from pyropdf._errors import LimitError, MalformedPdfError, PdfError
 from pyropdf._geometry import Matrix as _Matrix
 
 # Aliased, since the model names object types Name and Stream.
@@ -68,6 +69,7 @@ from pyropdf._objects import Name as _Name
 from pyropdf._objects import Real as _Real
 from pyropdf._objects import Stream as _Stream
 from pyropdf._objects import String as _String
+from pyropdf._objects import _decode, _key
 
 #: The object types of the model, sorted.
 TYPES: tuple[str, ...] = tuple(_core.schema_names())
@@ -269,6 +271,13 @@ class View:
                 msg = f"{self._where(key)} is required and absent"
                 raise PdfError(msg)
             return _ABSENT
+        # Construction can read partially populated objects. Prefer the
+        # version-aware answer when the linked value has a distinguishing key.
+        if any(len(ty.links) > 1 and ty.kind not in _TREE_KINDS for ty in described.types):
+            try:
+                return self.interpret(key)
+            except MalformedPdfError:
+                pass
         for typed in described.types:
             converted = _read(typed, value)
             if converted is not _ABSENT:
@@ -276,6 +285,51 @@ class View:
         kinds = ", ".join(typed.kind for typed in described.types)
         msg = f"{self._where(key)} is {_kind_of(value)}, which is none of its types: {kinds}"
         raise PdfError(msg)
+
+    def interpret(self, key: str | int, /) -> Any:  # noqa: ANN401, PLR0911 - one Python type per PDF value kind.
+        """Interpret a declared entry in its document's current version.
+
+        Return the selected linked view, scalar, default, or ``None`` for an
+        absent optional value. A name or number tree returns a ``LinkedTree``
+        whose ``lookup`` resolves and interprets an individual leaf. An ambiguous link, an unresolved reference,
+        or a value outside the admitted types and values raises PdfError.
+        """
+        step, described = self._key(key)
+        if described is None or (isinstance(step, int) and step < 0):
+            raise KeyError(key)
+        handle = self._obj
+        address = _key(step) if isinstance(step, str) else step
+        kind, target, default, raw, inherited, alias = _core.schema_entry(
+            handle._core(),  # noqa: SLF001
+            handle._root,  # noqa: SLF001
+            list(handle._path),  # noqa: SLF001
+            address,
+            self._type,
+            described.name,
+        )
+        if not kind:
+            return None
+        declaration = _Type(kind, (), default, None)
+        if default is not None:
+            if default.startswith("[") and default.endswith("]"):
+                values = tuple(_default_element(item) for item in default[1:-1].split())
+                return _Matrix(*values) if kind == "matrix" else values
+            value = _default(declaration)
+            return None if value is _ABSENT else value
+        if kind in {"rectangle", "matrix"}:
+            return _Matrix(*cast("tuple[float, ...]", raw)) if kind == "matrix" else raw
+        document = handle._document  # noqa: SLF001
+        parent = handle if inherited is None else _Dictionary(document, inherited)
+        value = _decode(document, raw, parent, address if alias is None else _key(alias))
+        if kind in _TREE_KINDS:
+            return LinkedTree(value, self._type, described.name)
+        if target is not None:
+            return _class(target)(value)
+        converted = _read(declaration, value)
+        if converted is _ABSENT:
+            msg = f"{self._where(key)} does not have the required {kind} shape"
+            raise PdfError(msg)
+        return converted
 
     def __getitem__(self, key: str | int) -> Any:  # noqa: ANN401 - a PDF value is any of several types.
         """Return the typed value of ``key``; raise ``KeyError`` when it is absent."""
@@ -357,6 +411,36 @@ class View:
         return f"<{type(self).__name__} {self._obj._describe()}>"  # noqa: SLF001
 
 
+class LinkedTree(_Dictionary):
+    """A name or number tree with the Arlington types declared for its leaf values."""
+
+    __slots__ = ("_descriptor", "_key_name")
+
+    def __init__(self, tree: _Dictionary, descriptor: str, key: str) -> None:
+        """Bind the tree handle to the key whose model describes its values."""
+        super().__init__(tree._document, tree._root, tree._path)  # noqa: SLF001
+        self._descriptor = descriptor
+        self._key_name = key
+
+    def lookup(self, key: bytes | int, /) -> Any:  # noqa: ANN401 - the tree's declared link types vary.
+        """Return the typed value for a stored byte-string or integer key, raising KeyError if absent."""
+        if isinstance(key, bool):
+            msg = "a number tree takes an integer key"
+            raise TypeError(msg)
+        result = _core.schema_leaf(self._core(), self._root, list(self._path), self._descriptor, self._key_name, key)
+        if result is None:
+            raise KeyError(key)
+        target, raw, root, array_is_indirect, at = result
+        if array_is_indirect:
+            holder = _Array(self._document, root)
+        else:
+            node = self if root is None else _Dictionary(self._document, root)
+            pairs = b"Names" if isinstance(key, bytes) else b"Nums"
+            holder = _Array(self._document, node._root, (*node._path, pairs))  # noqa: SLF001
+        value = _decode(self._document, raw, holder, at)
+        return _class(target)(value) if target is not None else value
+
+
 class DictionaryView(View):
     """The base of the views of dictionary types."""
 
@@ -396,16 +480,15 @@ def _view(links: tuple[str, ...], obj: _Dictionary | _Array) -> View:
     """Return the view of ``obj`` as the linked type that its discriminating keys match best."""
     if len(links) == 1 or not isinstance(obj, _Dictionary):
         return _class(links[0])(obj)
-    present = set(obj)
     values: dict[str, object] = {}
     best, score = links[0], -1
     for name in links:
         matched = 0
         for key, names in _discriminators(name).items():
-            if key not in present:
-                continue
             if key not in values:
-                values[key] = obj[key]
+                values[key] = obj.get(key, _ABSENT)
+            if values[key] is _ABSENT:
+                continue
             if values[key] not in names:
                 matched = -1
                 break
@@ -499,11 +582,24 @@ def _default(typed: _Type) -> Any:  # noqa: ANN401, PLR0911 - one branch per kin
         return int(default)
     if typed.kind == "number" and re.fullmatch(r"-?(?:\d+\.\d*|\.\d+)", default):
         return _Real(default)
+    if typed.kind in _TEXT_KINDS and default.startswith("'") and default.endswith("'"):
+        return default[1:-1]
     if typed.kind == "boolean" and default in {"true", "false"}:
         return default == "true"
     if typed.kind == "name" and re.fullmatch(r"[A-Za-z0-9_.\-]+", default):
         return _Name(default)
     return _ABSENT
+
+
+def _default_element(item: str) -> Any:  # noqa: ANN401 - array literals may contain several PDF types.
+    """Return one scalar in an array literal of the pinned model."""
+    if item in {"true", "false"}:
+        return item == "true"
+    if re.fullmatch(r"-?\d+", item):
+        return int(item)
+    if re.fullmatch(r"-?(?:\d+\.\d*|\.\d+)", item):
+        return _Real(item)
+    return _Name(item)
 
 
 def _write(typed: _Type, value: object, where: str) -> Any:  # noqa: ANN401, C901, PLR0911, PLR0912 - one branch per kind.
@@ -546,4 +642,4 @@ def _write(typed: _Type, value: object, where: str) -> Any:  # noqa: ANN401, C90
     return _ABSENT
 
 
-__all__ = ["TYPES", "ArrayView", "DictionaryView", "StreamView", "View"]
+__all__ = ["TYPES", "ArrayView", "DictionaryView", "LinkedTree", "StreamView", "View"]
