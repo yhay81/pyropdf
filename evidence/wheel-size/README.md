@@ -82,7 +82,9 @@ The release profile keeps unwind, uses speed level 2 and fat LTO, strips native
 symbols, and uses `s` for pyropdf-engine, harfrust, read-fonts and RTen. The
 binding and raster and matrix-multiplication kernels keep speed optimization.
 Maturin writes level-9 DEFLATE. The abi3 release job then repacks with one
-Zopfli iteration, retaining the smaller standard-DEFLATE wheel.
+Zopfli iteration. It adopts the smaller wheel after checking the installed
+bytes and raw ZIP headers. If a valid header or layout cannot be reproduced
+losslessly, the release keeps the original artifact.
 For a native build with local symbols for profiling, set
 `CARGO_PROFILE_RELEASE_STRIP=none`.
 
