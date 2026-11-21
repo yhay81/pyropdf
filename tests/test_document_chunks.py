@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
@@ -263,3 +264,80 @@ def test_max_chars_must_be_a_positive_integer(value: object, error: type[Excepti
 def test_table_strategy_is_checked() -> None:
     with pytest.raises(ValueError, match="table_strategy"):
         _document().to_json(table_strategy="grid")  # ty: ignore[invalid-argument-type]
+
+
+def test_split_and_grouped_retrieval_evidence_survives_edit_and_close() -> None:
+    old = "BT /F1 12 Tf 40 300 Td (alpha) Tj 0 -14 Td (beta) Tj ET"
+    with _document(first=old) as document:
+        grouped = document.to_chunks([0], provenance=True, table_strategy=None)
+        sources = [s for chunk in grouped for e in chunk.elements for s in e.sources]
+        assert "".join(s.text for s in sources) == "alpha beta"
+        inferred = [s for s in sources if s.kind == "inferred"]
+        assert [s.text for s in inferred] == [" "]
+        assert inferred[0].resolve() is None
+        split = document.to_chunks([0], provenance=True, max_chars=2, table_strategy=None)
+        version = sources[0].version
+        for chunk in split:
+            for element in chunk.elements:
+                assert "".join(s.text for s in element.sources) == element.text
+                for s in element.sources:
+                    assert s.version.same_as(version)
+                    assert s.text_range is not None
+                    assert element.text[slice(*s.text_range)] == s.text
+                    assert s.bbox is not None
+        with ThreadPoolExecutor(1) as edit:
+            edit.submit(document.objects[7].write, old.replace("alpha", "new").encode()).result(timeout=5)
+        changed = document.to_chunks([0], provenance=True, table_strategy=None)[0].elements[0].sources[0]
+        assert not changed.version.same_as(version)
+        changed_op = changed.resolve()
+        assert changed_op is not None
+        assert changed_op.operands == (pyropdf.String(b"new"),)
+
+    version.page_operations(1)  # Evict the parsed first page; the original version still supplies its bytes.
+    first, last = sources[0].resolve(), sources[-1].resolve()
+    assert first is not None
+    assert first.operands == (pyropdf.String(b"alpha"),)
+    assert last is not None
+    assert last.operands == (pyropdf.String(b"beta"),)
+
+
+def test_provenance_json_table_and_image_are_located_and_bounded() -> None:
+    with _document() as document:
+        page = json.loads(document.to_json([0], provenance=True))["pages"][0]
+        direct = page["elements"][0]["sources"][0]
+        op = document.pages[0].operations[direct["operation"]]
+        assert direct["operation_sha256"] == hashlib.sha256(pyropdf.Operations((op,)).to_bytes()).hexdigest()
+        table = next(e for e in page["elements"] if e["kind"] == "table")
+        assert {s["text"] for s in table["sources"] if s["kind"] == "pdf"} >= {"N", "B", "1"}
+        assert any(s["kind"] == "inferred" for s in table["sources"])
+        image = next(e for e in page["elements"] if e["kind"] == "image")
+        assert image["sources"][0]["image_xref"] == 5
+        assert image["sources"][0]["kind"] == "unresolved"  # No OCR runs on this entry point.
+        assert image["sources"][0]["operation"] is None
+        with pytest.raises(pyropdf.LimitError) as refused:
+            document.to_chunks([0], provenance=True, max_size=250)
+        assert refused.value.code == "export_output_size"
+
+
+def test_retrieval_uses_one_version_while_the_source_changes_between_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    old = "BT /F1 12 Tf 40 300 Td (old) Tj ET"
+    with _document(first=old) as document, ThreadPoolExecutor(1) as writer:
+        first = document.to_chunks([0], provenance=True)[0].elements[0].sources[0]
+        layout = _markdown._page_layout  # noqa: SLF001
+        changed = False
+
+        def edit_after_layout(page: pyropdf.Page) -> tuple[TextPageDict, list[pyropdf.Word]]:
+            nonlocal changed
+            result = layout(page)
+            if not changed:
+                writer.submit(document.objects[7].write, old.replace("old", "new").encode()).result(timeout=5)
+                changed = True
+            return result
+
+        with monkeypatch.context() as patch:
+            patch.setattr(_markdown, "_page_layout", edit_after_layout)
+            captured = document.to_chunks([0], provenance=True)[0].elements[0]
+        assert captured.text == "old"
+        assert all(s.version.same_as(first.version) for s in captured.sources)
+        assert all(s.operation_sha256 == first.operation_sha256 for s in captured.sources)
+        assert document.to_chunks([0], provenance=True)[0].elements[0].text == "new"

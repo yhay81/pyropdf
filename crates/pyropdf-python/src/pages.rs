@@ -51,6 +51,26 @@ impl PageSnapshot {
         crate::errors::boundary(|| self.index.len())
     }
 
+    /// Whether two exports hold the same immutable store version, including a
+    /// draft snapshot. No serialized PDF revision or address stands in for it.
+    fn same_version(&self, other: &Self) -> PyResult<bool> {
+        crate::errors::boundary(|| Arc::ptr_eq(&self.version, &other.version))
+    }
+
+    /// Reserve Python-side evidence records before building them, in the
+    /// same operation that owns the pinned pages and shared deadline.
+    fn charge_evidence(&self, count: u64) -> PyResult<()> {
+        crate::errors::boundary(|| {
+            self.budget
+                .charge(LimitCode::ContentElementCount, count)
+                .and_then(|()| {
+                    self.budget
+                        .charge(LimitCode::MemorySize, count.saturating_mul(256))
+                })
+                .map_err(|error| limit_error(&error))
+        })?
+    }
+
     /// Fill the target's reserved font dictionaries from one captured version.
     /// The single resource walk shares descendant fonts, programs and encodings.
     fn copy_fonts(
@@ -96,6 +116,13 @@ pub enum PageSource<'py> {
 }
 
 impl PageSource<'_> {
+    pub(crate) fn budget(&self) -> SharedBudget {
+        match self {
+            Self::Live(document) => document.budget(),
+            Self::Pinned(view) => view.budget.clone(),
+        }
+    }
+
     pub(crate) fn document(&self) -> &_Document {
         match self {
             Self::Live(document) => document,

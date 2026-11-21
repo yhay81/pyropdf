@@ -325,6 +325,7 @@ Element(
     text: str,
     level: int | None = None,
     rows: tuple[tuple[str | None, ...], ...] | None = None,
+    sources: tuple[RetrievalSource, ...] = (),
 )
 ```
 
@@ -813,6 +814,76 @@ A paint for a `Canvas` that changes color between two circles.
 The line runs from the circle at `start` to the circle at `end`,
 through the circles between them, in the space of what it paints. The
 stops and `extend` are those of a `LinearGradient`.
+
+## `RetrievalSource`
+
+```python
+RetrievalSource(
+    *,
+    kind: Literal['pdf', 'unresolved', 'inferred'],
+    page: int,
+    page_xref: int,
+    text: str,
+    bbox: Rect | None,
+    text_range: tuple[int, int] | None,
+    stream: int | None = None,
+    operation: int | None = None,
+    operation_sha256: str | None = None,
+    image_xref: int | None = None,
+    version: RetrievalVersion,
+)
+```
+
+A contributor to an element. Display boxes describe the original glyph or image placement.
+
+A `pdf` glyph names its content stream and zero-based index in the captured page's operations.
+An `unresolved` glyph or image has a location but lacks an established content operator.
+An `inferred` contributor comes from layout or formatting, including synthetic spaces.
+The optional half-open `text_range` counts Python characters of the containing element.
+Table constituents preserve their original text and boxes independently of Markdown offsets.
+
+### `RetrievalSource.resolve`
+
+```python
+RetrievalSource.resolve() -> Operation | InlineImage | None
+```
+
+Return the exact contributing operation, or None when no operator was established.
+
+### `RetrievalSource.to_dict`
+
+```python
+RetrievalSource.to_dict() -> dict[str, Any]
+```
+
+Return the portable locations. The in-process version reader stays on the Python result.
+
+## `RetrievalVersion`
+
+```python
+RetrievalVersion(snapshot: _core._PageSnapshot, charge: Callable[[str], None])
+```
+
+The immutable store version used by an export, including the caller's unsaved edits.
+
+Obtain it from `RetrievalSource.version`. Keeping the version also keeps its
+original input available. At most the last page's parsed operations are cached.
+
+### `RetrievalVersion.same_as`
+
+```python
+RetrievalVersion.same_as(other: RetrievalVersion) -> bool
+```
+
+Return whether two exports captured the same version of the same store.
+
+### `RetrievalVersion.page_operations`
+
+```python
+RetrievalVersion.page_operations(page: int) -> Operations
+```
+
+Read a page's stored operation sequence from this version, even after its source changes.
 
 ## `Segment`
 

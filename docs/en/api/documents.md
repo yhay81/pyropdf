@@ -1097,6 +1097,7 @@ of UTF-8 in all raise `LimitError` with code
 Document.to_json(
     pages: Iterable[int] | None = None,
     *,
+    provenance: bool = False,
     table_strategy: Literal['lines', 'text'] | None = 'lines',
     max_size: int | None = 67108864,
 ) -> str
@@ -1105,6 +1106,9 @@ Document.to_json(
 Return the given pages of the current version as JSON: each page's size and its elements.
 
 Page selection and extraction use one version even while another thread edits the document.
+With `provenance=True`, each element includes its contributing display locations and known
+PDF stream/operation indexes. The export charges 256 bytes plus UTF-8 text per source record
+against `max_size`. `to_chunks` also returns a reader for the captured version.
 
 The document is `{"pages": [...]}`, each page `{"index",
 "width", "height", "elements"}`, and each element as
@@ -1123,6 +1127,7 @@ Document.to_chunks(
     pages: Iterable[int] | None = None,
     *,
     max_chars: int = 2000,
+    provenance: bool = False,
     table_strategy: Literal['lines', 'text'] | None = 'lines',
     max_size: int | None = 67108864,
 ) -> list[Chunk]
@@ -1131,6 +1136,9 @@ Document.to_chunks(
 Return the elements of `to_json` grouped into retrieval chunks of at most `max_chars` characters.
 
 Page selection and extraction use one version even while another thread edits the document.
+With `provenance=True`, each element supplies `Element.sources`. Their
+`RetrievalSource.resolve` reads the original content operator from the captured version.
+A split element keeps the contributors intersecting its own text.
 
 A chunk is a run of consecutive elements joined as Markdown, headings
 marked with `#`; each heading starts a chunk, and

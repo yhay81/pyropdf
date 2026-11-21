@@ -49,7 +49,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Fonts", ("_fonts", "_fallback_fonts")),
     ("Pages", ("_pages", "_page", "_presentations")),
     ("Drawing", ("_canvas",)),
-    ("Text and content", ("_text", "_content", "_tables", "_markdown", "_chunks")),
+    ("Text and content", ("_text", "_content", "_tables", "_markdown", "_chunks", "_chunk_sources")),
     ("OCR", ("_ocr",)),
     ("Rendering", ("_pixmap",)),
     ("Annotations", ("_annotations", "_media")),
