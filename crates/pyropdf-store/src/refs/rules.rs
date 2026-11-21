@@ -671,6 +671,57 @@ fn at_mut<'v>(value: &'v mut Value, path: &[Step]) -> Option<&'v mut Value> {
         })
 }
 
+/// Lists only nominated objects for which the trailer and every outside
+/// object, including an otherwise unreachable owner, hold no reference.
+/// References among nominees may form cycles. A retained nominee keeps
+/// its nominated targets without traversing the rest of the document.
+pub fn nominated_unreferenced<'b>(
+    index: &References,
+    candidates: &[u32],
+    budget: &'b Budget,
+) -> Result<BudgetVec<'b, u32>> {
+    budget.poll()?;
+    let mut nominated = Table::new();
+    for &number in candidates {
+        budget.poll()?;
+        nominated.insert(number, (), budget)?;
+    }
+    let mut kept = Table::new();
+    let mut pending = BudgetVec::new(budget);
+    for (number, _) in nominated.iter() {
+        budget.poll()?;
+        let mut outside = index.trailer().binary_search(&number).is_ok();
+        for &referrer in index.referrers(number) {
+            budget.poll()?;
+            if nominated.get(referrer).is_none() {
+                outside = true;
+                break;
+            }
+        }
+        if outside {
+            kept.insert(number, (), budget)?;
+            pending.try_push(number)?;
+        }
+    }
+    while let Some(number) = pending.pop() {
+        for &target in index.targets(number) {
+            budget.poll()?;
+            if nominated.get(target).is_some() && kept.get(target).is_none() {
+                kept.insert(target, (), budget)?;
+                pending.try_push(target)?;
+            }
+        }
+    }
+    let mut unused = BudgetVec::new(budget);
+    for (number, _) in nominated.iter() {
+        budget.poll()?;
+        if kept.get(number).is_none() {
+            unused.try_push(number)?;
+        }
+    }
+    Ok(unused)
+}
+
 /// Returns the objects that a structural edit frees, ascending: `seeds`,
 /// which leave whatever refers to them; the objects of `candidates`, and
 /// the objects that refer to them, that nothing refers to but freed objects
