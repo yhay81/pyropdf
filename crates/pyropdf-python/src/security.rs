@@ -18,6 +18,28 @@ use crate::document::_Document;
 use crate::errors::store_error;
 use crate::history::DEFAULT_HISTORY_LIMIT;
 
+/// Legacy CMS content encryption, after the credential provider has unwrapped
+/// the key. The maximum input is the store's default recipient-envelope bound.
+#[pyfunction]
+#[pyo3(signature = (key, ciphertext, rc2_parameters=None))]
+pub fn decrypt_legacy_cms<'py>(
+    py: Python<'py>,
+    key: &[u8],
+    ciphertext: &[u8],
+    rc2_parameters: Option<(usize, &[u8])>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    crate::errors::boundary(|| {
+        let payload = pyropdf_store::security::decrypt_legacy_cms(
+            key,
+            ciphertext,
+            rc2_parameters,
+            &Budget::default(),
+        )
+        .map_err(|error| store_error(&error))?;
+        Ok(PyBytes::new(py, &payload))
+    })?
+}
+
 fn access_name(access: Access) -> &'static str {
     match access {
         Access::User => "user",

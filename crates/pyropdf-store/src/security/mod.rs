@@ -11,6 +11,8 @@
 //! beyond ASCII.
 
 mod crypto;
+mod legacy_cms;
+pub use legacy_cms::decrypt_legacy_cms;
 mod recipient;
 pub use recipient::RecipientEncryption;
 #[cfg(test)]

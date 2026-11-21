@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import tempfile
 from datetime import UTC, datetime
@@ -11,7 +13,7 @@ from asn1crypto import cms
 from asn1crypto import x509 as asn1_x509
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.serialization import pkcs7
 from cryptography.x509.oid import NameOID
 from pyhanko.pdf_utils import generic
@@ -26,7 +28,10 @@ OPENSSL = {
     "3des": ["-des3"],
     "des": ["-des"],
     "rc4": ["-rc4"],
+    "rc2-40": ["-rc2-40"],
+    "rc2-64": ["-rc2-64"],
     "rc2-128": ["-rc2-128"],
+    "rc4-104": ["-rc4"],
 }
 
 
@@ -69,6 +74,33 @@ def ec_credential(label: str, curve: ec.EllipticCurve) -> None:
         key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
     )
     (ROOT / f"recipient-{label}.cer").write_bytes(cert.public_bytes(serialization.Encoding.DER))
+
+
+def rc4_104(envelope: cms.ContentInfo, payload: bytes, cert: x509.Certificate) -> cms.ContentInfo:
+    """Use Node's OpenSSL EVP interface for a variable key length the CMS CLI cannot select."""
+    node = shutil.which("node")
+    assert node is not None
+    key = os.urandom(13)
+    script = """
+const crypto = require('node:crypto');
+const input = require('node:fs').readFileSync(0);
+const key = input.subarray(0, 13);
+const plain = input.subarray(13);
+const enc = crypto.createCipheriv('rc4', key, null);
+const ciphertext = Buffer.concat([enc.update(plain), enc.final()]);
+const dec = crypto.createDecipheriv('rc4', key, null);
+if (!Buffer.concat([dec.update(ciphertext), dec.final()]).equals(plain)) process.exit(1);
+process.stdout.write(ciphertext);
+"""
+    result = subprocess.run(  # noqa: S603 - fixed local OpenSSL control.
+        [node, "--openssl-legacy-provider", "-e", script], input=key + payload, capture_output=True, check=True
+    )
+    message = envelope["content"]
+    public = cert.public_key()
+    assert isinstance(public, rsa.RSAPublicKey)
+    message["recipient_infos"][0].chosen["encrypted_key"] = public.encrypt(key, padding.PKCS1v15())
+    message["encrypted_content_info"]["encrypted_content"] = result.stdout
+    return cms.ContentInfo.load(envelope.dump(force=True))
 
 
 def generate(mode: str) -> None:
@@ -124,7 +156,35 @@ def generate(mode: str) -> None:
                         ]
                     )
             result = subprocess.run(args, input=seed_and_flags, capture_output=True, check=True)  # noqa: S603 - fixed fixture command.
-            selected.recipients[:] = [cms.ContentInfo.load(result.stdout)]
+            envelope = cms.ContentInfo.load(result.stdout)
+            if mode == "rc4-104":
+                envelope = rc4_104(envelope, seed_and_flags, public)
+            elif mode in {"rc2-40", "rc2-64"}:
+                private_path = Path(tmp, "fixture.key")
+                private_path.write_bytes(
+                    private.private_bytes(
+                        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+                    )
+                )
+                decrypt = [
+                    "openssl",
+                    "cms",
+                    "-decrypt",
+                    "-binary",
+                    "-inform",
+                    "DER",
+                    "-provider",
+                    "default",
+                    "-provider",
+                    "legacy",
+                    "-recip",
+                    str(pem),
+                    "-inkey",
+                    str(private_path),
+                ]
+                checked = subprocess.run(decrypt, input=result.stdout, capture_output=True, check=True)  # noqa: S603
+                assert checked.stdout == seed_and_flags
+            selected.recipients[:] = [envelope]
         writer._assign_security_handler(handler)  # noqa: SLF001 - pyHanko now hashes the exact OpenSSL envelope.
     with (ROOT / f"cms-{mode}.pdf").open("wb") as out:
         writer.write(out)

@@ -279,30 +279,38 @@ def _agreement_key(
     return keywrap.aes_key_unwrap(wrapping, encrypted["encrypted_key"].native)
 
 
+# RFC 2268 §6 assigns the CMS parameter version at index effective_key_bits.
+# Only entries 1 through 128 can occur within the PDF recipient-cipher limit.
+_RC2_VERSIONS = bytes.fromhex(
+    "bd56eaf2a2f1ac2ab093d19c1b33fdd03004b6dc7ddf324bf7cb459b31bb215a"
+    "419fe1d94a4d9edaa0682cc3275f80363eeefb951afecea834a913f0a63fd80c"
+    "7824af2352c16717f56690e7e807b86048e61e53f392a4728c08156e860084fa"
+    "f47f8a4219f6dbcd148d5012ba3c064eecb33511a1888e2b9499b77174d3e4bf3a"
+)
+
+
 def _decrypt_content(info: cms.EncryptedContentInfo, key: bytes) -> bytes:
     from cryptography.hazmat.decrepit.ciphers import algorithms as legacy  # noqa: PLC0415
     from cryptography.hazmat.primitives import padding  # noqa: PLC0415
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes  # noqa: PLC0415
+
+    from pyropdf._core import decrypt_legacy_cms  # noqa: PLC0415
 
     algorithm = info["content_encryption_algorithm"]
     name = algorithm["algorithm"].native
     params = algorithm["parameters"]
     data = info["encrypted_content"].native
     if name == "rc4" and params.native in (None, b""):
-        operation = Cipher(legacy.ARC4(key), None).decryptor()
-        return operation.update(data) + operation.finalize()
-    lengths = {"aes128_cbc": 16, "aes192_cbc": 24, "aes256_cbc": 32, "tripledes_3key": 24, "des": 8, "rc2": 16}
+        return decrypt_legacy_cms(key, data)
+    if name == "rc2":
+        version = params["rc2_parameter_version"].native
+        bits = 32 if version is None else _RC2_VERSIONS.index(version, 1)
+        return decrypt_legacy_cms(key, data, (bits, params["iv"].native))
+    lengths = {"aes128_cbc": 16, "aes192_cbc": 24, "aes256_cbc": 32, "tripledes_3key": 24, "des": 8}
     if len(key) != lengths[name]:
         msg = "the CMS content key length disagrees with its algorithm"
         raise ValueError(msg)
-    if name == "rc2":
-        rc2_version_128 = 58
-        if params["rc2_parameter_version"].native != rc2_version_128:
-            msg = "the CMS provider supports 128 effective RC2 key bits"
-            raise ValueError(msg)
-        cipher = legacy.RC2(key)
-        iv = params["iv"].native
-    elif name in {"tripledes_3key", "des"}:
+    if name in {"tripledes_3key", "des"}:
         cipher = legacy.TripleDES(key * 3 if name == "des" else key)
         iv = params.native
     else:
@@ -325,7 +333,16 @@ def _open_envelope(envelope: bytes, credential: RecipientCredential) -> bytes | 
         code = "recipient_envelope_size"
         raise LimitError(code, msg)
     cert = asn1_x509.Certificate.load(credential.certificate.public_bytes(serialization.Encoding.DER))
-    refusals = (ValueError, TypeError, KeyError, IndexError, OverflowError, UnsupportedAlgorithm, keywrap.InvalidUnwrap)
+    refusals = (
+        ValueError,
+        TypeError,
+        KeyError,
+        IndexError,
+        OverflowError,
+        MalformedPdfError,
+        UnsupportedAlgorithm,
+        keywrap.InvalidUnwrap,
+    )
     try:
         wrapper = cms.ContentInfo.load(envelope, strict=True)
         if wrapper["content_type"].native != "enveloped_data":
@@ -480,12 +497,20 @@ class RecipientCredential:
     independent MGF1 digest and label. P-256, P-384 and P-521 certificates
     use ephemeral-static ECDH with X9.63 derivation and AES key wrap.
 
-    ISO 32000-2:2020 §7.6.5 defines the CMS content ciphers. AES-CBC accepts
-    128, 192 and 256 bits. For older files the provider reads DES-CBC,
-    three-key Triple DES-CBC, 128-effective-bit RC2-CBC, and RC4 with 40, 56,
-    64, 80, 128, 160, 192 or 256 bits. PDF 2.0 deprecates all four legacy
-    ciphers. The private key stays with the caller. The store retains the
-    authenticated file key.
+    ISO 32000-2:2020 §7.6.5 defines the CMS content ciphers. RSAES-OAEP
+    and ephemeral-static ECDH follow the CMS formats in RFC 3560 and RFC 5753.
+
+    | Envelope algorithm | Read | New PDF |
+    | --- | --- | --- |
+    | AES-CBC (RFC 3565) | 128, 192 and 256 bits | All three |
+    | DES-CBC and three-key Triple DES-CBC | Both | Deprecated in PDF 2.0, read-only |
+    | RC2-CBC | 1 to 128 effective bits, with a 1 to 16-byte key | Deprecated in PDF 2.0, read-only |
+    | RC4 | Byte-sized keys from 8 through 256 bits | Deprecated in PDF 2.0, read-only |
+    | RSA PKCS#1 v1.5 | 2048 to 8192-bit RSA | Default RSA transport |
+    | RSAES-OAEP | Declared digest, MGF1 digest and label | SHA-256 and MGF1-SHA-256, empty label |
+    | ECDH with AES key wrap | P-256, P-384 and P-521 | All three with AES-256 key wrap |
+
+    The private key stays with the caller. The store retains the authenticated file key.
     """
 
     certificate: Certificate
