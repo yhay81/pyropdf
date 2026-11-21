@@ -19,7 +19,7 @@ The version string of the installed pyropdf package.
 ## `Document`
 
 ```python
-Document(*, limits: DocumentLimits | None = None)
+Document(*, limits: DocumentLimits | None = None, version: str = '1.7')
 ```
 
 A PDF document.
