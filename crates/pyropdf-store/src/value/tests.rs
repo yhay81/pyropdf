@@ -231,7 +231,9 @@ fn inline_image_dictionary_keys_keep_their_order_and_last_values() {
     use hayro_syntax::content::UntypedIter;
     use hayro_syntax::object::Object;
 
-    let source = Bytes::from(b"BI /#57 4 /H 1 /BPC 8 /CS /G /W 1 ID x EI".as_slice());
+    let source = Bytes::from(
+        b"BI /#57 4 /H 1 /BPC 8 /CS /G /Meta << /N 5 0 R /Color /Y >> /W 1 ID x EI".as_slice(),
+    );
     let mut content = UntypedIter::new(&source);
     let instruction = content.next().unwrap();
     let Object::Stream(stream) = instruction.operands().next().unwrap() else {
@@ -243,8 +245,38 @@ fn inline_image_dictionary_keys_keep_their_order_and_last_values() {
         &Budget::default(),
     )
     .unwrap();
-    assert_eq!(keys(dict(&value)), [&b"W"[..], b"H", b"BPC", b"CS"]);
+    assert_eq!(
+        keys(dict(&value)),
+        [&b"W"[..], b"H", b"BPC", b"CS", b"Meta"]
+    );
     assert_eq!(dict(&value).get("W"), Some(&Value::Integer(1)));
+    // In content, the tokens after the direct value 5 are stray operands.
+    let metadata = dict(dict(&value).get("Meta").unwrap());
+    assert_eq!(metadata.get("N"), Some(&Value::Integer(5)));
+    assert_eq!(metadata.get("Color"), Some(&Value::Name(name("Y"))));
+}
+
+#[test]
+fn dictionary_values_stop_at_the_token_hayro_skipped() {
+    use hayro_syntax::object::{FromBytes, Number};
+
+    let value = parse(
+        b"<< /N 12/Name /A#20B/Ref 5 0 R/Inner << /Kind /Sample >> stream /Sign + /Last -4.5 >>",
+    );
+    let entries = dict(&value);
+    assert_eq!(entries.get("N"), Some(&Value::Integer(12)));
+    assert_eq!(entries.get("Name"), Some(&Value::Name(name("A B"))));
+    assert_eq!(
+        entries.get("Ref"),
+        Some(&Value::Reference(Reference::new(5, 0)))
+    );
+    assert_eq!(
+        dict(entries.get("Inner").unwrap()).get("Kind"),
+        Some(&Value::Name(name("Sample")))
+    );
+    let sign = Number::from_bytes(b"+ ").map_or(Value::Null, |n| Value::Integer(n.as_i64()));
+    assert_eq!(entries.get("Sign"), Some(&sign));
+    assert_eq!(entries.get("Last"), Some(&real(-4.5)));
 }
 
 #[test]

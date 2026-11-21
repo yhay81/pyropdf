@@ -101,7 +101,15 @@ impl Value {
     pub fn from_object(object: &Object<'_>, source: &Bytes, budget: &Budget) -> Result<Self> {
         budget.poll()?;
         let result = guard(|| {
-            Converter::new(source, budget, &|_| Ok(None)).convert(MaybeRef::NotRef(object.clone()))
+            let mut converter = Converter::new(source, budget, &|_| Ok(None));
+            let dict = match object {
+                Object::Dict(dict) => Some(dict),
+                Object::Stream(stream) => Some(stream.dict()),
+                _ => None,
+            };
+            converter.inline_image =
+                dict.is_some_and(|d| !d.is_empty() && !d.data().starts_with(b"<<"));
+            converter.convert(MaybeRef::NotRef(object.clone()))
         });
         budget.poll()?;
         result
@@ -214,6 +222,8 @@ struct Converter<'s, 'b> {
     fetch: &'s dyn Fn(Reference) -> Result<Option<Bytes>>,
     /// How many values the conversion has converted, for polling the budget.
     steps: u32,
+    /// Inline image values and their nested dictionaries contain direct operands.
+    inline_image: bool,
 }
 
 /// An array or a dictionary whose values are being converted.
@@ -259,6 +269,7 @@ impl<'s, 'b> Converter<'s, 'b> {
             budget,
             fetch,
             steps: 0,
+            inline_image: false,
         }
     }
 
@@ -272,7 +283,7 @@ impl<'s, 'b> Converter<'s, 'b> {
         let mut parents = BudgetVec::new(self.budget);
         loop {
             self.tick()?;
-            if let Some(object) = current.next_object() {
+            if let Some(object) = current.next_object(self.inline_image) {
                 match self.start(object, parents.len() + 2)? {
                     Start::Value(value) => current.accept(value)?,
                     Start::Frame(frame) => parents.try_push(mem::replace(&mut current, frame))?,
@@ -421,23 +432,29 @@ impl<'s, 'b> Converter<'s, 'b> {
                 break;
             }
             let first = reader.offset();
-            let Some(name) = reader.skip::<syntax::Name<'_>>(inline) else {
+            let Some(name) = reader.skip::<syntax::Name<'_>>(self.inline_image) else {
                 // Hayro tolerates a stray object between dictionary entries.
                 reader
-                    .skip::<Object<'_>>(inline)
+                    .skip::<Object<'_>>(self.inline_image)
                     .ok_or_else(|| Error::malformed("unreadable dictionary key"))?;
                 continue;
             };
             reader.skip_white_spaces_and_comments();
-            let value = reader
-                .tail()
-                .ok_or_else(|| Error::malformed("missing dictionary value"))?;
-            if inline {
+            let start = reader.offset();
+            let token = if self.inline_image {
                 reader.skip::<Object<'_>>(true)
             } else {
                 reader.skip::<MaybeRef<Object<'_>>>(false)
             }
             .ok_or_else(|| Error::malformed("unreadable dictionary value boundary"))?;
+            // Hayro can read a lone number sign as zero only with its delimiter.
+            let value = if matches!(token, b"+" | b"-") {
+                reader
+                    .range(start..reader.offset().saturating_add(1))
+                    .unwrap_or(token)
+            } else {
+                token
+            };
             fields.try_push(DictField {
                 key: self.dict_key(name)?,
                 first,
@@ -461,7 +478,7 @@ impl<'s, 'b> Converter<'s, 'b> {
         Ok(fields)
     }
 
-    /// Decodes a key delimited by hayro. Plain names borrow their spelling.
+    /// Copies the decoded key. Plain names copy directly from the source.
     /// An escaped name can make hayro allocate a temporary decoded buffer.
     fn dict_key(&self, token: &[u8]) -> Result<Box<[u8]>> {
         let spelling = &token[1..];
@@ -597,17 +614,21 @@ impl<'s, 'b> Converter<'s, 'b> {
 impl<'a, 'b> Frame<'a, 'b> {
     /// Returns the next object of the container to convert, or `None` when
     /// it has no values left.
-    fn next_object(&mut self) -> Option<MaybeRef<Object<'a>>> {
+    fn next_object(&mut self, inline_image: bool) -> Option<MaybeRef<Object<'a>>> {
         match self {
             Self::Array { items, .. } => items.next(),
             Self::Dict { fields, next, .. } => {
                 let field = fields.get(*next)?;
                 *next += 1;
                 // A value that hayro can skip but cannot read counts as null.
-                Some(
+                let object = if inline_image {
+                    Reader::new(field.value)
+                        .read_without_context::<Object<'a>>()
+                        .map(MaybeRef::NotRef)
+                } else {
                     MaybeRef::<Object<'a>>::from_bytes(field.value)
-                        .unwrap_or(MaybeRef::NotRef(Object::Null(syntax::Null))),
-                )
+                };
+                Some(object.unwrap_or(MaybeRef::NotRef(Object::Null(syntax::Null))))
             }
         }
     }
