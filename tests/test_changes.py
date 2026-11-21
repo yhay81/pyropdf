@@ -392,6 +392,34 @@ def test_changing_the_label_role_names_the_changed_structure_element() -> None:
             assert "description" in loss.reason
 
 
+@pytest.mark.parametrize("owner", ["role map", "parent tree", "indirect leaf"])
+def test_label_relationship_loss_names_the_edited_structure_owner(owner: str) -> None:
+    with pyropdf.open(tagged_signature_widget("legacy")) as original:
+        del original.form["Review"].obj["Contents"]
+        if owner == "indirect leaf":
+            tree = original.catalog["StructTreeRoot"]["ParentTree"]
+            entries = tree["Nums"]
+            leaf = original.objects[original.objects.add({"Nums": [entries[-2], entries[-1]], "Limits": [1, 1]})]
+            page_leaf = original.objects[original.objects.add({"Nums": [entries[0], entries[1]], "Limits": [0, 0]})]
+            del tree["Nums"]
+            tree["Kids"] = [page_leaf, leaf]
+        baseline = original.to_bytes()
+    with pyropdf.open(baseline) as doc:
+        tree = doc.catalog["StructTreeRoot"]
+        if owner == "role map":
+            tree["RoleMap"] = {"ReviewLabel": Name("Span")}
+        else:
+            tree = tree["ParentTree"]
+            if owner == "indirect leaf":
+                tree = tree["Kids"][1]
+            del tree["Nums"][-1]
+            del tree["Nums"][-1]
+        for incremental in (False, True):
+            (loss,) = doc.changes(incremental=incremental).claims
+            assert loss.objects == (tree.xref,)
+            assert "description" in loss.reason
+
+
 @pytest.mark.parametrize("incremental", [False, True])
 @pytest.mark.parametrize("tabs", [False, True])
 @pytest.mark.parametrize("described", [False, True])

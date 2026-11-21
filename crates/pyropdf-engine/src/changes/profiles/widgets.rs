@@ -2,8 +2,7 @@
 
 use super::*;
 use crate::annotations::Reader;
-use pyropdf_store::refs::copy_for_edit;
-use pyropdf_store::tree::number_tree_pairs;
+use pyropdf_store::tree::MAX_TREE_DEPTH;
 
 /// ISO 14289-2 §8.9.2.4.13 treats a widget of zero width and height as an artifact.
 #[expect(
@@ -69,7 +68,6 @@ fn widget_rules<'b>(
     let reader = Reader::new(version, budget);
     let mut reads = Reads::new(version, budget);
     let pages = PageIndex::build(&mut reads)?;
-    let mut label_parents = None;
     let changed =
         |v: Option<&Value>| reference_number(v).filter(|n| written.binary_search(n).is_ok());
     for page in pages.pages() {
@@ -105,7 +103,7 @@ fn widget_rules<'b>(
             if !matches!(
                 reader.entry(widget, "Contents")?.as_deref(),
                 Some(Value::String(_))
-            ) && !has_label(&mut lookup, item, widget, &mut label_parents)?
+            ) && !has_label(&mut lookup, item, widget)?
             {
                 let cause = changed(Some(item))
                     .or_else(|| changed(widget.get("Contents")))
@@ -168,68 +166,106 @@ impl LabelLookup<'_, '_> {
     }
 }
 
-/// Reuse the bounded parent number tree for all undescribed widgets in this version.
-struct LabelParents<'b> {
-    entries: BudgetVec<'b, (i64, Value)>,
-    role_map: Option<Value>,
-}
-
-impl<'b> LabelParents<'b> {
-    fn read(reader: &Reader<'b>) -> Result<Self> {
-        let mut entries = BudgetVec::new(reader.budget);
-        let mut role_map = None;
-        if let Some(catalog) = catalog(reader.version, reader.budget)?
-            && let Some(catalog) = value_dict(&catalog)
-            && let Some(root) = reader.entry(catalog, "StructTreeRoot")?
-            && let Some(root) = value_dict(&root)
-        {
-            if let Some(tree) = root.get("ParentTree") {
-                number_tree_pairs(reader.version, tree, &mut entries, reader.budget)?;
-                entries.as_mut_slice().sort_unstable_by_key(|(key, _)| *key);
-            }
-            role_map = root
-                .get("RoleMap")
-                .map(|v| copy_for_edit(v, reader.budget))
-                .transpose()?;
-        }
-        Ok(Self { entries, role_map })
+/// Follow the matching ParentTree path while retaining the changed container of
+/// inline Nums, Kids or entries. Limits on child nodes exclude unrelated edits.
+fn widget_parent(
+    lookup: &mut LabelLookup<'_, '_>,
+    node: &Value,
+    key: i64,
+    depth: usize,
+    seen: &mut HashSet<Reference>,
+) -> Result<Option<Reference>> {
+    let budget = lookup.reader.budget;
+    budget.poll()?;
+    if depth > MAX_TREE_DEPTH {
+        return Err(LimitExceeded::new(LimitCode::StructureTreeCount).into());
     }
+    if let Value::Reference(r) = node
+        && !try_insert_set(seen, *r, budget)?
+    {
+        return Ok(None);
+    }
+    let node = lookup.resolve(node)?;
+    let Some(node) = value_dict(&node) else {
+        return Ok(None);
+    };
+    let nums = lookup.entry(node, "Nums")?;
+    if let Some(Value::Array(entries)) = nums.as_deref() {
+        let mut items = entries.iter();
+        while let (Some(index), Some(parent)) = (items.next(), items.next()) {
+            budget.poll()?;
+            if matches!(&*lookup.reader.resolve(index)?, Value::Integer(i) if *i == key) {
+                return Ok(match parent {
+                    Value::Reference(r) => Some(*r),
+                    _ => None,
+                });
+            }
+        }
+    }
+    let kids = lookup.entry(node, "Kids")?;
+    let Some(Value::Array(kids)) = kids.as_deref() else {
+        return Ok(None);
+    };
+    let common = lookup.changed;
+    let mut candidate = common;
+    for kid in kids.iter() {
+        budget.poll()?;
+        let value = lookup.reader.resolve(kid)?;
+        let Some(child) = value_dict(&value) else {
+            continue;
+        };
+        if let Some(Value::Array(limits)) = lookup.reader.entry(child, "Limits")?.as_deref()
+            && let Some((lo, hi)) = limits.get(0).zip(limits.get(1))
+            && let (Value::Integer(lo), Value::Integer(hi)) =
+                (&*lookup.reader.resolve(lo)?, &*lookup.reader.resolve(hi)?)
+            && (key < *lo || key > *hi)
+        {
+            continue;
+        }
+        lookup.changed = common;
+        if let Some(parent) = widget_parent(lookup, kid, key, depth + 1, seen)? {
+            return Ok(Some(parent));
+        }
+        candidate = candidate.or(lookup.changed);
+    }
+    lookup.changed = candidate;
+    Ok(None)
 }
 
 /// The field name and a StructParent number alone are not a widget label.
 /// ISO 14289-2 §8.10.2.2 places the label's real content in a Lbl child of the
 /// widget's structure parent. K can hold one child or an array.
-fn has_label<'b>(
-    reader: &mut LabelLookup<'_, 'b>,
-    reference: &Value,
-    widget: &Dict,
-    parents: &mut Option<LabelParents<'b>>,
-) -> Result<bool> {
+fn has_label(reader: &mut LabelLookup<'_, '_>, reference: &Value, widget: &Dict) -> Result<bool> {
     let key = reader.entry(widget, "StructParent")?;
     let Some(Value::Integer(key)) = key.as_deref() else {
         return Ok(false);
     };
-    if parents.is_none() {
-        *parents = Some(LabelParents::read(reader.reader)?);
-    }
-    let Some(parents) = parents else {
+    let Some(catalog_ref) = reader.reader.version.trailer().get("Root") else {
         return Ok(false);
     };
-    let Ok(index) = parents.entries.binary_search_by_key(key, |(key, _)| *key) else {
+    let catalog = reader.resolve(catalog_ref)?;
+    let Some(catalog) = value_dict(&catalog) else {
         return Ok(false);
     };
-    let parent = reader.resolve(&parents.entries[index].1)?;
+    let structure = reader.entry(catalog, "StructTreeRoot")?;
+    let Some(structure) = structure.as_deref().and_then(value_dict) else {
+        return Ok(false);
+    };
+    let Some(tree) = structure.get("ParentTree") else {
+        return Ok(false);
+    };
+    let Some(parent) = widget_parent(reader, tree, *key, 0, &mut HashSet::new())? else {
+        return Ok(false);
+    };
+    let parent_ref = Value::Reference(parent);
+    let parent = reader.resolve(&parent_ref)?;
     let Some(parent) = value_dict(&parent) else {
         return Ok(false);
     };
     let Some(kids) = reader.entry(parent, "K")? else {
         return Ok(false);
     };
-    let role_map = parents
-        .role_map
-        .as_ref()
-        .map(|v| reader.resolve(v))
-        .transpose()?;
+    let role_map = reader.entry(structure, "RoleMap")?;
     let roles = role_map.as_deref().and_then(value_dict);
     let (Value::Reference(widget_ref), Value::Array(children)) = (reference, &*kids) else {
         // A label and an object reference require two distinct children.
