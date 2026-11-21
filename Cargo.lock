@@ -797,6 +797,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "j2k-codec-math"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fca2353bc4e3e990c7f749491d132095d9475fa2bb2227a4aecd62441494323"
+dependencies = [
+ "j2k-types",
+]
+
+[[package]]
+name = "j2k-native"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5dd69d012d7ec6040f7b8b6b783f8a1239a5575a155ee7941eea5185ead39a37"
+dependencies = [
+ "bytemuck",
+ "j2k-codec-math",
+ "j2k-profile",
+ "j2k-types",
+ "libm",
+]
+
+[[package]]
+name = "j2k-profile"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0d6fe6c9e6ea9ca7fd3425fcc8fca7d4facb46c5517a29070828879ee83f05a"
+
+[[package]]
+name = "j2k-types"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b15b058e26501024f6b593100165c86b3af4c19af9fc7383e67310aad412cd1"
+
+[[package]]
 name = "jpeg-encoder"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -829,6 +863,12 @@ name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
+
+[[package]]
+name = "libm"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "linebender_resource_handle"
@@ -1228,6 +1268,7 @@ dependencies = [
  "hayro-jpeg2000",
  "hayro-svg",
  "hmac",
+ "j2k-native",
  "jpeg-encoder",
  "p256",
  "p384",
@@ -1277,6 +1318,7 @@ dependencies = [
  "proptest",
  "sha1",
  "sha2",
+ "weezl",
 ]
 
 [[package]]
