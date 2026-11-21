@@ -19,6 +19,20 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
 
+def test_ci_gives_the_floor_interpreter_time_to_collect_release_evidence() -> None:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    (python_job,) = re.findall(r"\n  python:\n(.*?)(?=\n  \S|\Z)", workflow, flags=re.DOTALL)
+    assert 'python: ["3.11", "3.15", "3.15t"]' in python_job
+    assert "timeout-minutes: ${{ matrix.python == '3.11' && 30 || 20 }}" in python_job
+    assert "uv run --no-sync pytest" in python_job
+    floor_guard = "        if: matrix.python == '3.11'"
+    floor_steps = [step for step in python_job.split("\n      - ") if floor_guard in step.splitlines()]
+    assert any("tools/verapdf.py" in step and "--arlington" in step for step in floor_steps)
+    assert any("tools/oracles.py --readers pdfjs" in step for step in floor_steps)
+    assert any("tools/spec_map/release_evidence.py" in step for step in floor_steps)
+    assert any("actions/upload-artifact@" in step and "target/release-evidence.json" in step for step in floor_steps)
+
+
 def test_the_release_builds_with_the_pinned_toolchain() -> None:
     toolchain = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
     pins = set(re.findall(r'(?:RUSTUP_TOOLCHAIN:|rust-toolchain:) "?([\d.]+)"?', WORKFLOW))
