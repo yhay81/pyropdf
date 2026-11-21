@@ -25,13 +25,45 @@ on:
 permissions:
   contents: read
 
+# New source pushes supersede older source runs immediately. An edit has its
+# own group so a delayed justification check cannot cancel a newer comparison.
 concurrency:
-  group: wheel-size-${{ github.event.pull_request.number }}
+  group: wheel-size-${{ github.event.action == 'edited' && format('edit-{0}', github.run_id) || github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
+  edited-inputs:
+    name: Check edited wheel inputs
+    if: >-
+      github.event.action == 'edited' &&
+      (github.event.changes.base != null ||
+      (github.event.changes.body != null &&
+      (contains(github.event.changes.body.from, 'Wheel growth justification:') ||
+      contains(github.event.pull_request.body, 'Wheel growth justification:'))))
+    runs-on: ubuntu-latest
+    outputs:
+      compare: ${{ steps.inputs.outputs.compare }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: inputs
+        shell: bash
+        run: |
+          python - <<'PYTHON' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          from pathlib import Path
+          from tools.wheel_size import comparison_inputs_changed
+
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+          print("compare=" + str(comparison_inputs_changed(event)).lower())
+          PYTHON
+
   compare:
     name: Compare abi3 (${{ matrix.platform.target }})
+    needs: edited-inputs
+    if: >-
+      ${{ !cancelled() &&
+      (github.event.action != 'edited' || needs.edited-inputs.outputs.compare == 'true') }}
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 60
     env:

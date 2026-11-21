@@ -40,6 +40,24 @@ HANDLERS = {
 USER = pytest.mark.parametrize("name", list(HANDLERS))
 
 
+def test_recipient_wheel_declares_its_optional_schema_and_crypto_provider() -> None:
+    from importlib.metadata import requires  # noqa: PLC0415
+    from importlib.util import find_spec  # noqa: PLC0415
+
+    from packaging.requirements import Requirement  # noqa: PLC0415
+
+    requirements = requires("pyropdf")
+    assert requirements is not None
+    providers = {r.name: r.marker for r in map(Requirement, requirements) if r.name in {"asn1crypto", "cryptography"}}
+    assert set(providers) == {"asn1crypto", "cryptography"}
+    for marker in providers.values():
+        assert marker is not None
+        assert marker.evaluate({"extra": "recipients"})
+        assert not marker.evaluate({"extra": ""})
+    assert find_spec("asn1crypto.cms") is not None
+    assert find_spec("cryptography.hazmat.primitives.serialization.pkcs7") is not None
+
+
 def rendered(doc: pyropdf.Document) -> list[bytes]:
     """Return the pixels of every page of ``doc``'s decrypted save."""
     with pyropdf.open(doc.to_bytes()) as plain:

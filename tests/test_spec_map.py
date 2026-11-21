@@ -300,8 +300,10 @@ def test_planned_and_partial_statuses_name_open_milestones_and_valid_issues() ->
     by_name = features()
     assert by_name["Catalog"]["create"]["status"] == "done"
     assert by_name["Catalog"]["edit"]["status"] == "done"
-    assert by_name["Catalog"]["preserve"]["issue"] == 890
-    assert by_name["Catalog"]["preserve"]["milestone"] == "Phase 4: Specification"
+    assert by_name["Catalog"]["preserve"]["status"] == "done"
+    assert by_name["Catalog"]["preserve"]["tests"] == [
+        "tests/test_typed_views.py::test_an_unrelated_edit_preserves_the_reachable_descriptor_and_its_targets[Catalog]"
+    ]
     for name, feature in by_name.items():
         for dimension in DIMENSIONS:
             entry = feature[dimension]
