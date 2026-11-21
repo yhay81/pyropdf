@@ -20,6 +20,7 @@ from pyropdf._content import (
     LineTo,
     MoveTo,
     Path,
+    PatternPaint,
     RadialGradient,
     Segment,
     ShadingPattern,
@@ -148,9 +149,9 @@ def _color(value: object, name: str) -> Color:
     return value
 
 
-def _paint(value: object, name: str) -> Color | Gradient | ShadingPattern:
+def _paint(value: object, name: str) -> Color | Gradient | PatternPaint | ShadingPattern:
     """Return what a canvas paints with, checked as far as it can be without its stops."""
-    if isinstance(value, (LinearGradient, RadialGradient)):
+    if isinstance(value, (LinearGradient, RadialGradient, PatternPaint)):
         return value
     if (
         isinstance(value, ShadingPattern)
@@ -159,21 +160,21 @@ def _paint(value: object, name: str) -> Color | Gradient | ShadingPattern:
     ):
         return value
     if isinstance(value, (ShadingPattern, TilingPattern)):
-        msg = f"{name} is a {type(value).__name__}, which does not hold what it paints; draw a Color or a gradient"
+        msg = f"{name} is a {type(value).__name__}, which does not hold what it paints; pass its stored PatternPaint"
         raise TypeError(msg)
     if not isinstance(value, Color):
-        msg = f"{name} must be a pyropdf.Color or a gradient, not {type(value).__name__}"
+        msg = f"{name} must be a Color, gradient or PatternPaint, not {type(value).__name__}"
         raise TypeError(msg)
     return _color(value, name)
 
 
-def _stroke(value: Stroke | Color | Gradient | None) -> Stroke | None:
+def _stroke(value: Stroke | Color | Gradient | PatternPaint | None) -> Stroke | None:
     """Return a stroke from a :class:`Stroke`, a :class:`Color`, or a gradient, checked."""
     if value is None:
         return None
-    stroke = Stroke(paint=value) if isinstance(value, (Color, LinearGradient, RadialGradient)) else value
+    stroke = Stroke(paint=value) if isinstance(value, (Color, LinearGradient, RadialGradient, PatternPaint)) else value
     if not isinstance(stroke, Stroke):
-        msg = f"stroke must be a pyropdf.Stroke, a Color, or a gradient, not {type(value).__name__}"
+        msg = f"stroke must be a Stroke, Color, gradient or PatternPaint, not {type(value).__name__}"
         raise TypeError(msg)
     _paint(stroke.paint, "stroke.paint")
     # A width of 0 draws the thinnest line that the device can show.

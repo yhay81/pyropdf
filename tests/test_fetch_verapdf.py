@@ -18,18 +18,34 @@ assert SPEC.loader is not None
 DOWNLOADER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DOWNLOADER)
 JAR = b"test jar bytes"
+FIRST = "/repo.maven.apache.org/maven2"
+SECOND = "/repo1.maven.org/maven2"
+MIRROR = "/maven-central.storage-download.googleapis.com/maven2"
+THROTTLED_PRIMARIES = [FIRST, FIRST, SECOND, SECOND]
 
 
 @pytest.mark.parametrize(
     ("responses", "paths", "error"),
     [
-        ([(429, b""), (200, JAR)], ["/first", "/first"], None),
-        ([(404, b""), (200, JAR)], ["/first", "/second"], None),
-        ([(404, b"")] * 2, ["/first", "/second"], "Could not download"),
-        ([(503, b"")] * 4, ["/first", "/first", "/second", "/second"], "Could not download"),
-        ([(200, b"wrong content")], ["/first"], "SHA-256 mismatch"),
+        ([(429, b""), (200, JAR)], [FIRST, FIRST], None),
+        ([(404, b""), (200, JAR)], [FIRST, SECOND], None),
+        ([(404, b"")] * 3, [FIRST, SECOND, MIRROR], "Could not download"),
+        ([(503, b"")] * 6, [*THROTTLED_PRIMARIES, MIRROR, MIRROR], "Could not download"),
+        ([(200, b"wrong content")], [FIRST], "SHA-256 mismatch"),
+        ([(429, b"")] * 4 + [(200, JAR)], [*THROTTLED_PRIMARIES, MIRROR], None),
+        ([(429, b"")] * 6, [*THROTTLED_PRIMARIES, MIRROR, MIRROR], "Could not download"),
+        ([(429, b"")] * 4 + [(200, b"wrong mirror bytes")], [*THROTTLED_PRIMARIES, MIRROR], "SHA-256 mismatch"),
     ],
-    ids=["rate-limited", "fallback", "missing", "retry-limit", "wrong-digest"],
+    ids=[
+        "rate-limited",
+        "fallback",
+        "missing",
+        "retry-limit",
+        "wrong-digest",
+        "mirror",
+        "mirror-limit",
+        "mirror-digest",
+    ],
 )
 def test_only_verified_downloads_are_installed(
     tmp_path: Path,
@@ -59,7 +75,8 @@ def test_only_verified_downloads_are_installed(
         thread = threading.Thread(target=server.serve_forever)
         thread.start()
         try:
-            urls = tuple(f"http://127.0.0.1:{server.server_port}/{name}" for name in ("first", "second"))
+            origin = f"http://127.0.0.1:{server.server_port}"
+            urls = tuple(f"{origin}/{endpoint.removeprefix('https://')}" for endpoint in DOWNLOADER.CENTRAL)
             with pytest.raises(RuntimeError, match=error) if error else nullcontext():
                 DOWNLOADER.fetch_jar(destination, urls, hashlib.sha256(JAR).hexdigest())
         finally:

@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 34 | 31 | 766 |
-| interpret | 9 | 19 | 0 | 29 | 40 | 734 |
-| create | 0 | 0 | 21 | 29 | 55 | 726 |
-| edit | 0 | 0 | 0 | 41 | 50 | 740 |
-| preserve | 0 | 0 | 0 | 19 | 35 | 777 |
+| read | 0 | 0 | 0 | 34 | 26 | 771 |
+| interpret | 9 | 19 | 0 | 29 | 35 | 739 |
+| create | 0 | 0 | 21 | 28 | 47 | 735 |
+| edit | 0 | 0 | 0 | 41 | 36 | 754 |
+| preserve | 0 | 0 | 0 | 19 | 28 | 784 |
 
 ## Clauses
 
@@ -69,10 +69,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.9.4 | Dates | `dates` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.9.6 | Name trees | `name-trees` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.9.7 | Number trees | `number-trees` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.10.2 | Type 0 sampled functions | `sampled-functions` | 1 done | 1 done | 1 planned | 1 planned | 1 planned |
-| 7.10.3 | Type 2 exponential interpolation functions | `exponential-functions` | 1 done | 1 done | 1 done | 1 planned | 1 done |
-| 7.10.4 | Type 3 stitching functions | `stitching-functions` | 1 done | 1 done | 1 done | 1 planned | 1 done |
-| 7.10.5 | Type 4 PostScript calculator functions | `calculator-functions` | 1 done | 1 done | 1 planned | 1 planned | 1 planned |
+| 7.10.2 | Type 0 sampled functions | `sampled-functions` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 7.10.3 | Type 2 exponential interpolation functions | `exponential-functions` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 7.10.4 | Type 3 stitching functions | `stitching-functions` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 7.10.5 | Type 4 PostScript calculator functions | `calculator-functions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11 | File specifications | `file-specifications` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11.4 | Embedded file streams | `embedded-files` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 7.11.4.2 | Related files arrays | `related-files` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -87,21 +87,21 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 8.6.5.4 | Lab colour spaces | `lab-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.5.5 | ICCBased colour spaces | `icc-based-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.5.8 | Rendering intent selection | `rendering-intents` | 1 done | 1 engine | 1 done | 1 done | 1 done |
-| 8.6.6.2 | Pattern colour spaces | `pattern-color-space` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
+| 8.6.6.2 | Pattern colour spaces | `pattern-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.6.3 | Indexed colour spaces | `indexed-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.6.4 | Separation colour spaces | `separation-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.6.5 | DeviceN colour spaces | `devicen-color-space` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 8.6.7 | Overprint control | `overprint` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 8.6.8 | Colour-setting operators | `colour-operators` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 8.7.3 | Tiling patterns | `tiling-patterns` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
-| 8.7.4 | Shading patterns | `shading-patterns` | 1 done | 1 done | 1 done | 1 planned | 1 done |
-| 8.7.4.5.2 | Type 1 function-based shadings | `function-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.7.4.5.3 | Type 2 axial shadings | `axial-shading` | 1 done | 1 done | 1 done | 1 planned | 1 done |
-| 8.7.4.5.4 | Type 3 radial shadings | `radial-shading` | 1 done | 1 done | 1 done | 1 planned | 1 done |
-| 8.7.4.5.5 | Type 4 free-form Gouraud-shaded triangle meshes | `free-form-triangle-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.7.4.5.6 | Type 5 lattice-form Gouraud-shaded triangle meshes | `lattice-triangle-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.7.4.5.7 | Type 6 Coons patch meshes | `coons-patch-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.7.4.5.8 | Type 7 tensor-product patch meshes | `tensor-patch-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.7.3 | Tiling patterns | `tiling-patterns` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4 | Shading patterns | `shading-patterns` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.2 | Type 1 function-based shadings | `function-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.3 | Type 2 axial shadings | `axial-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.4 | Type 3 radial shadings | `radial-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.5 | Type 4 free-form Gouraud-shaded triangle meshes | `free-form-triangle-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.6 | Type 5 lattice-form Gouraud-shaded triangle meshes | `lattice-triangle-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.7 | Type 6 Coons patch meshes | `coons-patch-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.8 | Type 7 tensor-product patch meshes | `tensor-patch-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.8 | External objects | `xobjects` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.9.5 | Image dictionaries | `images` | 1 partial | 1 done | 1 partial | 1 partial | 1 done |
 | 8.9.6 | Masked images | `image-masks` | 1 done | 1 done | 1 planned | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-372 unfinished cells in 831 features: 9 engine, 152 partial, 211 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+332 unfinished cells in 831 features: 9 engine, 151 partial, 172 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -261,11 +261,7 @@ Milestone [#245](https://github.com/yhay81/pyropdf/issues/245).
 
 Milestone [#246](https://github.com/yhay81/pyropdf/issues/246).
 
-- [#896](https://github.com/yhay81/pyropdf/issues/896) Complete PDF function, pattern and mesh shading authoring and evaluation. Exercise sampled/calculator functions, function edits, tiling and uncolored patterns and shading types 1–7. Create and edit resources through the store, verify mesh and function evaluation independently and round-trip untouched data.
-    - read, interpret — `function-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`.
-    - create — `sampled-functions`, `calculator-functions`, `tiling-patterns`, `function-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`, `pattern-color-space`.
-    - edit — `sampled-functions`, `exponential-functions`, `stitching-functions`, `calculator-functions`, `tiling-patterns`, `function-shading`, `axial-shading`, `radial-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`, `shading-patterns`, `pattern-color-space`.
-    - preserve — `sampled-functions`, `calculator-functions`, `function-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`.
+No unfinished specification-map cells assigned.
 
 ### 247 Reading
 
