@@ -1077,8 +1077,11 @@ Insert copies of `pages` before `index`, clamped as `list.insert` clamps it, in 
 document, this one or another. Pages of this document may repeat;
 each copy is a new page object that shares the content streams and
 resources of its original, with annotations, widgets, and structure
-elements of its own. Pages of another document are imported with
-what they reach, once each per call; their links to pages imported
+elements of its own. Actions and 3D measurements that target an
+annotation on the source page target its copy. References to other
+pages' annotations and shared media assets keep their identities.
+Pages of another document are imported with what they reach, once
+each per call; their links to pages imported
 with them keep leading there, and their other links within that
 document go. Their structure elements join this document's
 structure tree, under its single `Document` element when it has

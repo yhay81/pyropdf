@@ -25,6 +25,7 @@ mod images;
 mod model;
 mod provenance;
 mod reads;
+mod redraw;
 mod stretch;
 #[cfg(test)]
 mod tests;
