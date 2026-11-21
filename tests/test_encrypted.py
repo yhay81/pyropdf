@@ -758,6 +758,20 @@ def test_malformed_explicit_stream_crypt_refuses_save(
     assert path.read_bytes() == b"untouched"
 
 
+@pytest.mark.spec("crypt-filters", "create")
+def test_encryption_requires_a_resolved_filter_selector(tmp_path: Path) -> None:
+    path = tmp_path / "existing.pdf"
+    path.write_bytes(b"unchanged")
+    with pyropdf.open(numbered(1)) as doc:
+        stream = doc.objects[doc.objects.add_stream(b"test data", filter=None)]
+        filters = doc.objects[doc.objects.add([pyropdf.Name("Crypt")])]
+        stream["Filter"] = filters
+        with pytest.raises(pyropdf.MalformedPdfError, match="unresolved /Filter"):
+            doc.save(path, encryption=Encryption(user_password="reader"))
+        assert stream["Filter"].xref == filters.xref
+    assert path.read_bytes() == b"unchanged"
+
+
 def _private_recipient_control(*, attachment_only: bool, implicit: bool) -> bytes:
     """Produce two independent recipient seeds with pyHanko (ISO Table 27)."""
     import io  # noqa: PLC0415

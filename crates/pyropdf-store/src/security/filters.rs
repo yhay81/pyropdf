@@ -130,6 +130,16 @@ fn items(value: Option<&Value>) -> &[Value] {
 pub(crate) fn explicit<'a>(dict: &'a Dict, budget: &Budget) -> Result<Option<&'a [u8]>> {
     let filters = items(dict.get("Filter"));
     budget.check(LimitCode::StreamFilterCount, filters.len() as u64)?;
+    // An unresolved reference can name a security filter. Without the source
+    // revision it cannot be classified as ordinary data encoding.
+    if filters
+        .iter()
+        .any(|item| matches!(item, Value::Reference(_)))
+    {
+        return Err(Error::malformed(
+            "cannot select a stream crypt filter from an unresolved /Filter reference",
+        ));
+    }
     let crypt = |v: &Value| matches!(v, Value::Name(n) if n.as_bytes() == b"Crypt");
     if !filters.iter().any(crypt) {
         return Ok(None);

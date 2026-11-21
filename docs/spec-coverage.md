@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 39 | 35 | 757 |
+| read | 0 | 0 | 0 | 41 | 35 | 755 |
 | interpret | 8 | 19 | 0 | 36 | 43 | 725 |
-| create | 0 | 0 | 9 | 640 | 70 | 112 |
-| edit | 0 | 0 | 0 | 666 | 58 | 107 |
-| preserve | 0 | 0 | 0 | 24 | 654 | 153 |
+| create | 0 | 0 | 9 | 641 | 70 | 111 |
+| edit | 0 | 0 | 0 | 667 | 58 | 106 |
+| preserve | 0 | 0 | 0 | 26 | 653 | 152 |
 
 ## Clauses
 
@@ -50,16 +50,16 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.4.7 | JBIG2Decode filter | `jbig2-filter` | 1 done | 1 n/a | 1 planned | 1 planned | 1 done |
 | 7.4.8 | DCTDecode filter | `dct-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.4.9 | JPXDecode filter | `jpx-filter` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
-| 7.4.10 | Crypt filter | `crypt-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.10 | Crypt filter | `crypt-filter` | 1 partial | 1 n/a | 1 partial | 1 partial | 1 partial |
 | 7.5.2 | File header | `file-header` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.4 | Cross-reference table | `xref-table` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.6 | Incremental updates | `incremental-update` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.7 | Object streams | `object-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
-| 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 partial | 1 partial | 1 done |
+| 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.6.4 | Standard security handler | `standard-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
-| 7.6.6 | Crypt filters | `crypt-filters` | 1 done | 1 partial | 1 done | 1 done | 1 done |
+| 7.6.6 | Crypt filters | `crypt-filters` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.2 | Document catalog | `document-catalog` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.3 | Page tree | `page-tree`, `page-objects` | 2 done | 2 done | 2 done | 2 done | 2 done |
@@ -226,7 +226,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 14.13 | Associated files | `associated-files` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
 | Annex D | PDF character tables | `character-tables` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex E | Extension naming rules | `private-names` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 planned |
+| Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex I | Compatibility across PDF versions | `version-compatibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex K | XFA packets | `xfa` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
 | Annex L | Allowed structure children | `structure-children` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,273 unfinished cells in 831 features: 8 engine, 1,405 partial, 860 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,278 unfinished cells in 831 features: 8 engine, 1,411 partial, 859 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -352,6 +352,8 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - read, create, edit, preserve — `public-key-security-handler`.
 - [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
     - interpret — `public-key-security-handler`.
+- [#1056](https://github.com/yhay81/pyropdf/issues/1056) Resolve indirect stream filter selectors and parameters in their document revision. Resolve filter names and parameter references in the correct revision before reading or creating encrypted streams, and retain their reference identities through saves.
+    - read, create, edit, preserve — `crypt-filter`, `crypt-filters`.
 - [#905](https://github.com/yhay81/pyropdf/issues/905) Resolve signature seed constraints and build properties through signing and editing. Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification.
     - read, interpret — `signature-fields`.
     - create, edit — `signature-fields`, `digital-signatures`.
@@ -363,9 +365,6 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - create — `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
     - edit — `flate-filter`, `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
     - preserve — `ascii85-filter`, `lzw-filter`, `run-length-filter`.
-- [#892](https://github.com/yhay81/pyropdf/issues/892) Verify hybrid-reference writing and linearized-file preservation. Write and reopen hybrid XRefStm sections and verify fast-web-view hints and offsets after supported saves. Reuse independent qpdf checks, including the modes where linearization cannot survive.
-    - create, edit — `xref-streams`.
-    - preserve — `linearization`.
 
 ### 253 Understanding
 

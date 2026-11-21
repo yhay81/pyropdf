@@ -373,8 +373,8 @@ pub fn full_with(
     let mut out = Output::new(target, budget, 0, options.renew_id);
     let header = version
         .base()
-        .file()
-        .and_then(|file| file.bytes().get(file.origin()..file.origin() + 8))
+        .header_bytes()
+        .and_then(|bytes| bytes.get(..8))
         .filter(|bytes| bytes.starts_with(b"%PDF-"))
         .unwrap_or(b"%PDF-1.7");
     // Cross-reference streams and object streams are of PDF 1.5.
