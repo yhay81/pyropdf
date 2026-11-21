@@ -22,6 +22,25 @@ pub(super) fn free_unreachable(
     encrypt: bool,
     budget: &Budget,
 ) -> Result<()> {
+    let reached = reachable(version, rows, encrypt, budget)?;
+    for (row, &reached) in rows.iter_mut().zip(reached.iter()) {
+        if !reached && row.offset.is_some() {
+            row.offset = None;
+            // A free entry names the generation that the number takes next.
+            row.generation = row.generation.saturating_add(1);
+        }
+    }
+    Ok(())
+}
+
+/// Marks each live object reachable from the trailer. A hybrid save keeps
+/// these objects visible to readers of the classic table.
+pub(super) fn reachable<'a>(
+    version: &Version,
+    rows: &[Row],
+    encrypt: bool,
+    budget: &'a Budget,
+) -> Result<BudgetVec<'a, bool>> {
     let mut reached = BudgetVec::new(budget);
     reached.try_extend(rows.iter().map(|_| false))?;
     let mut pending = BudgetVec::new(budget);
@@ -46,14 +65,7 @@ pub(super) fn free_unreachable(
             Err(error) => return Err(error.into()),
         }
     }
-    for (row, &reached) in rows.iter_mut().zip(reached.iter()) {
-        if !reached && row.offset.is_some() {
-            row.offset = None;
-            // A free entry names the generation that the number takes next.
-            row.generation = row.generation.saturating_add(1);
-        }
-    }
-    Ok(())
+    Ok(reached)
 }
 
 /// Pushes the number of every reference inside `value` onto `out`, walking

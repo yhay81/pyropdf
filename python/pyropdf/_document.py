@@ -1035,7 +1035,7 @@ class Document:
         compression_level: int = 6,
         decompress: bool = False,
         keep_id: bool = False,
-        cross_reference: Literal["table", "stream"] | None = None,
+        cross_reference: Literal["table", "stream", "hybrid"] | None = None,
         object_streams: bool = False,
         renumber: bool = False,
         dedupe: bool = False,
@@ -1084,7 +1084,14 @@ class Document:
         or as a ``"stream"`` (PDF 1.5); ``None`` keeps the form of the
         section that the opened file's ``startxref`` names, and writes a
         table for a hybrid-reference file or a document without a file.
-        ``object_streams=True`` packs every object that ISO 32000-2 section
+        ``cross_reference="hybrid"`` writes a complete classic table and
+        a supplemental cross-reference stream in a subsequent section.
+        When packing is requested it keeps objects reachable from the
+        trailer visible to readers that only understand the classic table.
+        An edited incremental save of a hybrid appends a new hybrid section.
+
+        In a pure cross-reference stream, ``object_streams=True`` packs
+        every object that ISO 32000-2 section
         7.5.7 lets an object stream hold into object streams of up to 100
         objects: those that are not streams, have generation 0, and are not
         the encryption dictionary. It writes a cross-reference stream, so
@@ -1120,7 +1127,7 @@ class Document:
         prunes and renumbers whatever ``prune`` and ``renumber`` say, and
         moves the attributes that pages inherit from the page tree into the
         pages. It writes a cross-reference table, so it refuses
-        ``cross_reference="stream"``, ``object_streams``, and ``dedupe``,
+        ``cross_reference="stream"`` or ``"hybrid"``, ``object_streams``, and ``dedupe``,
         and an incremental save refuses it. :attr:`is_linearized` reads
         whether an opened file is linearized.
         """
@@ -1152,7 +1159,7 @@ class Document:
         compression_level: int = 6,
         decompress: bool = False,
         keep_id: bool = False,
-        cross_reference: Literal["table", "stream"] | None = None,
+        cross_reference: Literal["table", "stream", "hybrid"] | None = None,
         object_streams: bool = False,
         renumber: bool = False,
         dedupe: bool = False,
@@ -1709,12 +1716,12 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
     renumber: bool,
     dedupe: bool,
     linearize: bool,
-) -> tuple[bool, int | None, bool, bool, bool | None, bool, bool, bool, bool]:
+) -> tuple[bool, int | None, bool, bool, bool | None, bool, bool, bool, bool, bool]:
     """Check the save options, and return them as the core's save methods take them.
 
     They are ``prune``, the ``compress`` level, ``decompress``, ``renew_id``,
     ``cross_reference_stream``, ``object_streams``, ``renumber``,
-    ``dedupe``, and ``linearize``.
+    ``dedupe``, ``linearize``, and ``hybrid_reference``.
     """
     flags = {
         "incremental": incremental,
@@ -1748,18 +1755,18 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
     if compress and decompress:
         msg = "decompress=True needs compress=False, which would compress the streams again"
         raise ValueError(msg)
-    if cross_reference not in (None, "table", "stream"):
-        msg = f"cross_reference must be 'table', 'stream', or None: {cross_reference!r}"
+    if cross_reference not in (None, "table", "stream", "hybrid"):
+        msg = f"cross_reference must be 'table', 'stream', 'hybrid', or None: {cross_reference!r}"
         raise ValueError(msg)
     if dedupe and not prune:
         msg = "dedupe=True needs prune=True, which leaves the merged objects out"
         raise ValueError(msg)
     if object_streams and cross_reference == "table":
-        msg = "object_streams=True writes a cross-reference stream, so it needs cross_reference='stream' or None"
+        msg = "object_streams=True needs cross_reference='stream', 'hybrid', or None"
         raise ValueError(msg)
     if linearize:
         _refuse_linearized_options(cross_reference=cross_reference, object_streams=object_streams, dedupe=dedupe)
-    stream = None if cross_reference is None else cross_reference == "stream"
+    stream = None if cross_reference in (None, "hybrid") else cross_reference == "stream"
     return (
         prune,
         compression_level if compress else None,
@@ -1770,6 +1777,7 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
         renumber,
         dedupe,
         linearize,
+        cross_reference == "hybrid",
     )
 
 
@@ -1777,6 +1785,7 @@ def _refuse_linearized_options(*, cross_reference: object, object_streams: bool,
     """Raise ValueError for an option that a linearized file cannot hold."""
     conflicts = {
         "cross_reference='stream'": cross_reference == "stream",
+        "cross_reference='hybrid'": cross_reference == "hybrid",
         "object_streams=True": object_streams,
         "dedupe=True": dedupe,
     }
