@@ -47,7 +47,7 @@ impl FileBase {
     /// until the store validates the complete filter.
     pub fn open_with_recipient(
         bytes: Bytes,
-        decrypt: impl FnMut(&[u8]) -> Result<Option<[u8; 24]>>,
+        decrypt: impl FnMut(&[u8]) -> Result<Option<security::RecipientPayload>>,
         budget: &Budget,
     ) -> Result<Self> {
         let mut index = Index::open(bytes, budget)?;
