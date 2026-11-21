@@ -1,0 +1,743 @@
+diff --git a/tests/pdfs/custom/cmyk_mesh_source_interpolation.pdf b/tests/pdfs/custom/cmyk_mesh_source_interpolation.pdf
+new file mode 100644
+index 0000000000000000000000000000000000000000..f356f89ac1d5c3315b973f3843de1b843337ae57
+GIT binary patch
+literal 1507
+zcmb_c-)qxQ6wbuWkqrjo@M&;gI;+#=CT+45#?ZBP$~LWO=a4bjU2@k&y4;dvzkC`#
+z?jO(xA7n5P2fnKhQo*q)xU#=NQ1A~>M5gDa$vWGIKDd<T-kh9s^L^j>?v3R#*=zD(
+zQjER(v2`TM2qQNCP#hjcQjQd<hZKkyNGhzCDU#B}CnZ)yBO@YpES|_;M+IrN?D$AV
+z(ztDTXa*&M(%GoEwqCuIzpj@$K6QK#C2OCXq?S!a*&3{Z;in`qN?`;`<%kP;5h{av
+zY}qvdCI_5mCFbVK#H7Jv)?T4dFJ<V8ZPGh@nkx~X;&23@!Lt&MiEvEv@6?LYlMlv`
+z8bF!_(n!iL63cdq!TQG7DAH<h^JV6vp<oVKJh7%1r+h*zPA+0RL7k$%i1Z|qvUbU*
+zE{q&qhMLR@iag(?WJz3mHc+VcxT{9|bFQ<1tBH=b?l<w-%3-0hCv0vSy@waX-tOM+
+zjcTq^?aW;Idga@>i(j5>OdPI$x;j2}Yp`QLNWZx8VSoK;f4kcz?2Prj<=qRH5BtbT
+zM$j^BiP%mcJ@>=Ef6yko?3ljIoPZ<XH;4l?d8e9ELzd9KmMnMf<0)K-e>~W~7vGbv
+zS1xb2i?6p+V#nO#*7L5Z=`P{b%bwk4<h%tD@=@FOa@0+;r80B4Pjn<5$CwMP1BFin
+zLGdDgJmH+M^Srq*4SK<uf&0Q+og+vQ`XN#xq$_K!>6&wMKM#amEDHVK&;D+v#ocs@
+zv`%p!w2~#V!GFrL@%Rru|6UOKew{gLmS@eS3nE6kh>tI%scJ$+3+Ol|gRA+4oO(=y
+zP1q2V6*!6-VhOFeR#m_R4S7Qt{MQgmDd3SP=DWl$!S3b<l)>Pb;QoOFHE%x(oOnBf
+yW`=dDo4RRfa?(;|l1j{5d^WG8RLdNKz)0&1em;qwPh3BcMpm#c#$q?`X2rj6p0;-Y
+
+literal 0
+HcmV?d00001
+
+diff --git a/hayro-interpret/src/color/mod.rs b/hayro-interpret/src/color/mod.rs
+index a78e870a73d816040f642b7736b776ffa45c7155..e65e3611741e8f16ead6e5238d52d41f8279f6a6 100644
+--- a/hayro-interpret/src/color/mod.rs
++++ b/hayro-interpret/src/color/mod.rs
+@@ -328,6 +328,13 @@ impl ColorSpace {
+         )
+     }
+
++    pub(crate) fn is_device_gray_or_cmyk(&self) -> bool {
++        matches!(
++            self.0.as_ref(),
++            ColorSpaceType::DeviceGray(_) | ColorSpaceType::DeviceCmyk(_)
++        )
++    }
++
+     pub(crate) fn indexed_hival(&self) -> Option<u8> {
+         match self.0.as_ref() {
+             ColorSpaceType::Indexed(indexed) => Some(indexed.hival()),
+@@ -657,17 +664,45 @@ fn f32_to_u8(val: f32) -> u8 {
+     (val * 255.0 + 0.5) as u8
+ }
+
+-pub(crate) fn lerp_color(c0: [f32; 4], c1: [f32; 4], t: f32) -> [f32; 4] {
+-    [0, 1, 2, 3].map(|i| c0[i] + (c1[i] - c0[i]) * t)
++pub(crate) fn lerp_color<const N: usize>(c0: [f32; N], c1: [f32; N], t: f32) -> [f32; N] {
++    std::array::from_fn(|i| c0[i] + (c1[i] - c0[i]) * t)
+ }
+
+-pub(crate) fn color_error(c0: [f32; 4], c1: [f32; 4]) -> f32 {
++pub(crate) fn color_error<const N: usize>(c0: [f32; N], c1: [f32; N]) -> f32 {
+     c0.iter()
+         .zip(c1)
+         .map(|(a, b)| (a - b).abs())
+         .fold(0.0, f32::max)
+ }
+
++/// Convert the tints of a Separation or `DeviceN` color to CMYK through its alternate color
++/// space, without rounding them first, so that an alternate color in `DeviceCMYK` is kept
++/// exactly.
++fn tints_to_cmyk(
++    tint_transform: &Function,
++    alternate_space: &ColorSpace,
++    input: &[f32],
++    num_components: usize,
++    opacity: f32,
++    profile: Option<&CmykProfile>,
++) -> [f32; 5] {
++    // Missing tints take the initial value of 1.
++    let mut tints = [1.0; MAX_COMPONENTS];
++    let tints = &mut tints[..num_components];
++    for (tint, value) in tints.iter_mut().zip(input) {
++        *tint = value.clamp(0.0, 1.0);
++    }
++
++    let mut values = [0.0; MAX_COMPONENTS];
++    let values = &mut values[..tint_transform.num_outputs()];
++
++    if tint_transform.eval(tints, values).is_some() {
++        alternate_space.to_cmyk(values, opacity, profile)
++    } else {
++        alternate_space.to_cmyk(&alternate_space.initial_color(), opacity, profile)
++    }
++}
++
+ #[derive(Debug, Clone)]
+ /// A color.
+ pub struct Color {
+diff --git a/hayro-interpret/src/encode.rs b/hayro-interpret/src/encode.rs
+index a9e8415df84ac17b2611744ba3fa3c564a3d4cc8..12ce740686ccd9a2303f266a7d12522b84668a31 100644
+--- a/hayro-interpret/src/encode.rs
++++ b/hayro-interpret/src/encode.rs
+@@ -1,7 +1,7 @@
+ //! Encoding shading patterns for easy sampling.
+
+ use crate::canvas::Canvas;
+-use crate::color::{AlphaColor, ColorSpace};
++use crate::color::{AlphaColor, CmykProfile, ColorComponents, ColorSpace, srgb_to_cmyk};
+ use crate::function::MAX_COMPONENTS;
+ use crate::function_shading::draw_function;
+ use crate::gradient::function_lut;
+@@ -19,14 +19,31 @@ pub struct EncodedShadingPattern {
+     /// The base transform of the shading pattern.
+     pub base_transform: Affine,
+     pub(crate) color_space: ColorSpace,
+-    pub(crate) background: Option<ColorComponents>,
+     pub(crate) background_color: AlphaColor,
++    background: Option<ColorComponents>,
++    ink_pass: Option<InkPass>,
+     /// The encoded shading type.
+     pub shading_type: EncodedShadingType,
+     pub(crate) opacity: f32,
+     pub(crate) transfer_function: Option<ActiveTransferFunction>,
+ }
+
++#[derive(Clone, Debug)]
++struct InkPass {
++    black: bool,
++    profile: Option<CmykProfile>,
++}
++
++impl InkPass {
++    fn channels(&self, [c, m, y, k, alpha]: [f32; 5]) -> [f32; 4] {
++        if self.black {
++            [k, k, k, alpha]
++        } else {
++            [c, m, y, alpha]
++        }
++    }
++}
++
+ /// The encoded shading type.
+ #[derive(Clone, Debug)]
+ pub enum EncodedShadingType {
+@@ -99,7 +116,55 @@ impl EncodedShadingPattern {
+     }
+
+     pub(crate) fn convert(&self, components: &[f32]) -> [f32; 4] {
+-        self.finish(self.color_space.to_rgba(components, 1.0).components())
++        match &self.ink_pass {
++            Some(pass) => pass.channels(self.convert_cmyk(components, pass.profile.as_ref())),
++            None => self.finish(self.color_space.to_rgba(components, 1.0).components()),
++        }
++    }
++
++    fn convert_cmyk(&self, components: &[f32], profile: Option<&CmykProfile>) -> [f32; 5] {
++        if self.transfer_function.is_some() {
++            let [r, g, b, a] = self.finish(self.color_space.to_rgba(components, 1.0).components());
++            let [c, m, y, k] = srgb_to_cmyk([r, g, b], profile);
++            [c, m, y, k, a]
++        } else {
++            let mut color = self.color_space.to_cmyk(components, 1.0, profile);
++            color[4] *= self.opacity;
++            color
++        }
++    }
++
++    pub(crate) fn background_cmyk(&self, profile: Option<&CmykProfile>) -> [f32; 5] {
++        self.background
++            .as_ref()
++            .map_or([0.0; 5], |color| self.convert_cmyk(color, profile))
++    }
++
++    pub(crate) fn interpolates_ink_source(&self) -> bool {
++        self.ink_pass.is_some() && !self.has_linear_mesh_colors()
++    }
++
++    pub(crate) fn has_linear_mesh_colors(&self) -> bool {
++        self.transfer_function.is_none()
++            && if self.ink_pass.is_some() {
++                self.color_space.is_device_gray_or_cmyk()
++            } else {
++                self.color_space.is_device_gray_or_rgb()
++            }
++    }
++
++    pub(crate) fn eval_cmyk(
++        &self,
++        function: &ShadingFunction,
++        input: &[f32],
++        profile: Option<&CmykProfile>,
++    ) -> [f32; 5] {
++        let mut out = [0.0; MAX_COMPONENTS];
++        let out = &mut out[..function.num_outputs()];
++        match function.eval(input, out) {
++            Some(()) => self.convert_cmyk(out, profile),
++            None => [0.0; 5],
++        }
+     }
+
+     pub(crate) fn eval(&self, function: &ShadingFunction, input: &[f32]) -> [f32; 4] {
+@@ -119,11 +184,40 @@ impl EncodedShadingPattern {
+         scale: f32,
+         f: impl FnMut([f32; 4]),
+     ) -> (u32, u32, Affine) {
+-        self.walk_texture(bbox, scale, |point| f(self.sample(point)))
++        let (canvas, transform) = self.rasterize(bbox, scale);
++        let (width, height) = (canvas.width as u32, canvas.height as u32);
++        canvas.pixels.into_iter().for_each(f);
++        (width, height, transform)
+     }
+
+-    /// Like [`sample_texture`](Self::sample_texture), with the straight samples of
+-    /// [`sample_cmyk`](Self::sample_cmyk).
++    fn with_ink_pass(&self, profile: Option<&CmykProfile>, black: bool) -> Self {
++        Self {
++            ink_pass: Some(InkPass {
++                black,
++                profile: profile.cloned(),
++            }),
++            ..self.clone()
++        }
++    }
++
++    /// Rasterize the current CMYK pass as complementary RGB lanes and straight alpha.
++    /// The black pass repeats its key lane in all three color channels.
++    pub fn sample_texture_cmyk_pass(
++        &self,
++        bbox: Rect,
++        scale: f32,
++        profile: Option<&CmykProfile>,
++        black: bool,
++        mut f: impl FnMut([f32; 4]),
++    ) -> (u32, u32, Affine) {
++        self.with_ink_pass(profile, black)
++            .sample_texture(bbox, scale, |[r, g, b, a]| {
++                f([1.0 - r, 1.0 - g, 1.0 - b, a]);
++            })
++    }
++
++    /// Rasterize straight cyan, magenta, yellow, black and alpha on the grid of
++    /// [`sample_texture`](Self::sample_texture).
+     pub fn sample_texture_cmyk(
+         &self,
+         bbox: Rect,
+@@ -131,14 +225,23 @@ impl EncodedShadingPattern {
+         profile: Option<&CmykProfile>,
+         mut f: impl FnMut([f32; 5]),
+     ) -> (u32, u32, Affine) {
+-        self.walk_texture(bbox, scale, |point| f(self.sample_cmyk(point, profile)))
++        let (cmy, transform) = self.with_ink_pass(profile, false).rasterize(bbox, scale);
++        let (black, _) = self.with_ink_pass(profile, true).rasterize(bbox, scale);
++        let (width, height) = (cmy.width as u32, cmy.height as u32);
++        for ([c, m, y, alpha], [k, ..]) in cmy.pixels.into_iter().zip(black.pixels) {
++            f([c, m, y, k, alpha]);
++        }
++        (width, height, transform)
+     }
+
+-    fn walk_texture(&self, bbox: Rect, scale: f32, mut f: impl FnMut(Point)) -> (u32, u32, Affine) {
++    fn rasterize(&self, bbox: Rect, scale: f32) -> (Canvas, Affine) {
+         let (width, height) = texture_dimensions(bbox, scale);
+         let grid_transform =
+             Affine::translate((bbox.x0, bbox.y0)) * Affine::scale(1.0 / scale as f64);
+-        let background = self.finish(self.background_color.components());
++        let background = match &self.ink_pass {
++            Some(pass) => pass.channels(self.background_cmyk(pass.profile.as_ref())),
++            None => self.finish(self.background_color.components()),
++        };
+         let mut canvas = Canvas::new(width, height, background);
+         let transform = grid_transform.inverse() * self.base_transform.inverse();
+
+@@ -150,6 +253,7 @@ impl EncodedShadingPattern {
+                     &shading.function,
+                     transform,
+                     self,
++                    self.ink_pass.is_some(),
+                 );
+             }
+             EncodedShadingType::RadialAxial(shading) => shading.draw(&mut canvas, transform, self),
+@@ -159,9 +263,7 @@ impl EncodedShadingPattern {
+             EncodedShadingType::Dummy(_) => {}
+         }
+
+-        canvas.pixels.into_iter().for_each(f);
+-
+-        (width, height, grid_transform)
++        (canvas, grid_transform)
+     }
+
+     /// Rasterize the shading into a straight RGBA8 texture covering `bbox`.
+@@ -235,17 +337,20 @@ impl ShadingPattern {
+         };
+
+         let color_space = self.shading.color_space.clone();
+-        let background = self.shading.background.clone();
+
+-        let background_color = match (&shading_type, &self.shading.background) {
+-            (EncodedShadingType::Dummy(_), _) | (_, None) => AlphaColor::TRANSPARENT,
+-            (_, Some(background)) => color_space.to_rgba(background, 1.0),
++        let background = match shading_type {
++            EncodedShadingType::Dummy(_) => None,
++            _ => self.shading.background.clone(),
+         };
++        let background_color = background
++            .as_ref()
++            .map_or(AlphaColor::TRANSPARENT, |c| color_space.to_rgba(c, 1.0));
+
+         EncodedShadingPattern {
+             color_space,
+-            background,
+             background_color,
++            background,
++            ink_pass: None,
+             shading_type,
+             base_transform,
+             opacity: self.opacity,
+diff --git a/hayro-interpret/src/function_shading.rs b/hayro-interpret/src/function_shading.rs
+index 0919439c46507861c640972766e0254c0f8dd840..c1d9a3e7357d3040da69bf01529a7fc31339ef61 100644
+--- a/hayro-interpret/src/function_shading.rs
++++ b/hayro-interpret/src/function_shading.rs
+@@ -14,6 +14,7 @@ pub(crate) fn draw_function(
+     function: &ShadingFunction,
+     transform: Affine,
+     pattern: &EncodedShadingPattern,
++    sample_domain_edges: bool,
+ ) {
+     let area = transform
+         .transform_rect_bbox(domain)
+@@ -28,6 +29,7 @@ pub(crate) fn draw_function(
+         inverse: transform.inverse(),
+         domain,
+         pattern,
++        sample_domain_edges,
+     };
+     let (x0, y0) = (area.x0.floor() as usize, area.y0.floor() as usize);
+     let columns = (area.x1.ceil() as usize - x0).div_ceil(FUNCTION_CELL);
+@@ -71,6 +73,7 @@ struct FunctionSampler<'a> {
+     inverse: Affine,
+     domain: Rect,
+     pattern: &'a EncodedShadingPattern,
++    sample_domain_edges: bool,
+ }
+
+ impl FunctionSampler<'_> {
+@@ -110,7 +113,8 @@ fn draw_function_cell(
+         .into_iter()
+         .all(|p| sampler.domain.contains(p));
+
+-    if size <= FUNCTION_PIXEL_CELL {
++    // Out-of-domain corner samples can be clamped and bend an otherwise linear ink ramp.
++    if size <= FUNCTION_PIXEL_CELL || sampler.sample_domain_edges && !inside {
+         fill_cell(canvas, sampler, [x, y], size, inside, |center, _| {
+             sampler.sample_at(center)
+         });
+diff --git a/hayro-interpret/src/gradient.rs b/hayro-interpret/src/gradient.rs
+index 5bd5aaebc8628b816ba145a73b4bfb69a660feac..0f987a7a72cdb903ccf2607baac550df6e6cfa8a 100644
+--- a/hayro-interpret/src/gradient.rs
++++ b/hayro-interpret/src/gradient.rs
+@@ -1,6 +1,6 @@
+ //! SVG-like gradient approximations of encoded shadings.
+
+-use crate::color::{color_error, lerp_color};
++use crate::color::{CmykProfile, color_error, lerp_color};
+ use crate::encode::{EncodedRadialAxialShading, EncodedShadingPattern, RadialAxialParams};
+ use crate::shading::ShadingFunction;
+ use kurbo::{Affine, Point};
+@@ -12,16 +12,13 @@ const LUT_TOLERANCE: f32 = 0.01;
+ const MIN_LUT_SIZE: usize = 256;
+ const MAX_LUT_SIZE: usize = 4096;
+
+-/// An SVG-like gradient.
+-///
+-/// The colors of its stops are RGBA in sRGB, or cyan, magenta, yellow, black and alpha for
+-/// [`EncodedRadialAxialShading::as_svg_gradient_cmyk`].
++/// An SVG-like gradient with sRGB or CMYK color stops.
+ pub struct SvgGradient<C = [f32; 4]> {
+     /// The kind of the gradient.
+     pub kind: SvgGradientKind,
+     /// The transform from encoded shading coordinates into the renderer's coordinate space.
+     pub transform: Affine,
+-    /// The stops of the gradient.
++    /// The color stops and their opacity.
+     pub stops: Vec<SvgGradientStop<C>>,
+ }
+
+@@ -51,7 +48,7 @@ pub enum SvgGradientKind {
+ pub struct SvgGradientStop<C = [f32; 4]> {
+     /// Normalized offset.
+     pub offset: f32,
+-    /// The color components, see [`SvgGradient`].
++    /// Straight RGBA or CMYK and alpha components.
+     pub color: C,
+ }
+
+@@ -64,6 +61,33 @@ impl EncodedRadialAxialShading {
+     ) -> Option<SvgGradient> {
+         let background = pattern.background_color.components();
+         let background = (background[3] > 0.0).then(|| pattern.finish(background));
++        self.as_gradient(pattern, tolerance, background, |t| {
++            sample_function(&self.function, self.domain, pattern, t)
++        })
++    }
++
++    /// Like [`Self::as_svg_gradient`], with cyan, magenta, yellow, black and alpha stops.
++    pub fn as_svg_gradient_cmyk(
++        &self,
++        pattern: &EncodedShadingPattern,
++        tolerance: f32,
++        profile: Option<&CmykProfile>,
++    ) -> Option<SvgGradient<[f32; 5]>> {
++        let background = (pattern.background_color.components()[3] > 0.0)
++            .then(|| pattern.background_cmyk(profile));
++        let [t0, t1] = self.domain;
++        self.as_gradient(pattern, tolerance, background, |t| {
++            pattern.eval_cmyk(&self.function, &[t0 + (t1 - t0) * t], profile)
++        })
++    }
++
++    fn as_gradient<const N: usize>(
++        &self,
++        pattern: &EncodedShadingPattern,
++        tolerance: f32,
++        background: Option<[f32; N]>,
++        sample: impl FnMut(f32) -> [f32; N],
++    ) -> Option<SvgGradient<[f32; N]>> {
+         let range = self.padded_range(background.is_some())?;
+
+         Some(SvgGradient {
+@@ -71,7 +95,7 @@ impl EncodedRadialAxialShading {
+             transform: pattern.base_transform.inverse(),
+             stops: pad_stops(
+                 approximate_gradient_stops(
+-                    |t| sample_function(&self.function, self.domain, pattern, t),
++                    sample,
+                     &normalized_stitching_bounds(&self.function, self.domain),
+                     tolerance,
+                 ),
+@@ -205,15 +229,15 @@ impl ColorLut {
+     }
+ }
+
+-fn pad_stops(
+-    mut stops: Vec<SvgGradientStop>,
++fn pad_stops<const N: usize>(
++    mut stops: Vec<SvgGradientStop<[f32; N]>>,
+     [t0, t1]: [f64; 2],
+-    background: Option<[f32; 4]>,
+-) -> Vec<SvgGradientStop> {
++    background: Option<[f32; N]>,
++) -> Vec<SvgGradientStop<[f32; N]>> {
+     let (t0, t1) = (t0 as f32, t1 as f32);
+     let padding = |offset| SvgGradientStop {
+         offset,
+-        color: background.unwrap_or([0.0; 4]),
++        color: background.unwrap_or([0.0; N]),
+     };
+
+     for stop in &mut stops {
+diff --git a/hayro-interpret/src/mesh.rs b/hayro-interpret/src/mesh.rs
+index 42045281ebd73055ea7bb965ddcd9ce970eed3bb..808ae4b674296d9b6eabc9cf417e77ed655e7a86 100644
+--- a/hayro-interpret/src/mesh.rs
++++ b/hayro-interpret/src/mesh.rs
+@@ -15,6 +15,36 @@ pub(crate) fn draw_mesh(
+     shading_type: &ShadingType,
+     transform: Affine,
+     pattern: &EncodedShadingPattern,
++) {
++    if pattern.interpolates_ink_source() {
++        // A nonlinear conversion must see the interpolated source components. In
++        // particular, three primary RGB vertices can have a neutral grey centre.
++        let inks = SourceComponents { pattern };
++        if pattern.color_space.num_components() <= 4 {
++            draw_mesh_with::<4>(canvas, shading_type, transform, pattern, &inks, true);
++        } else {
++            draw_mesh_with::<MAX_COMPONENTS>(canvas, shading_type, transform, pattern, &inks, true);
++        }
++    } else {
++        let colors = Direct { pattern };
++        draw_mesh_with(
++            canvas,
++            shading_type,
++            transform,
++            pattern,
++            &colors,
++            pattern.has_linear_mesh_colors(),
++        );
++    }
++}
++
++fn draw_mesh_with<const N: usize>(
++    canvas: &mut Canvas,
++    shading_type: &ShadingType,
++    transform: Affine,
++    pattern: &EncodedShadingPattern,
++    colors: &impl MeshColors<N>,
++    linear_components: bool,
+ ) {
+     match shading_type {
+         ShadingType::TriangleMesh {
+@@ -31,15 +61,14 @@ pub(crate) fn draw_mesh(
+                 let colors = Parameter::new(function, corner_colors, pattern);
+                 draw_triangles(canvas, &triangles, 0, &colors);
+             } else {
+-                let colors = Direct { pattern };
+-                let depth = if colors.is_linear() {
++                let depth = if linear_components {
+                     0
+                 } else {
+                     let pieces = triangles.iter().map(|t| (t.extent(), t.bounds()));
+                     mesh_depth(canvas.bounds(), pieces)
+                 };
+
+-                draw_triangles(canvas, &triangles, depth, &colors);
++                draw_triangles(canvas, &triangles, depth, colors);
+             }
+         }
+         ShadingType::PatchMesh { patches, function } => {
+@@ -55,7 +84,7 @@ pub(crate) fn draw_mesh(
+                 let colors = Parameter::new(function, corner_colors, pattern);
+                 draw_patches(canvas, &patches, depth, &colors);
+             } else {
+-                draw_patches(canvas, &patches, depth, &Direct { pattern });
++                draw_patches(canvas, &patches, depth, colors);
+             }
+         }
+         _ => {}
+@@ -138,12 +167,6 @@ struct Direct<'a> {
+     pattern: &'a EncodedShadingPattern,
+ }
+
+-impl Direct<'_> {
+-    fn is_linear(&self) -> bool {
+-        self.pattern.color_space.is_device_gray_or_rgb() && self.pattern.transfer_function.is_none()
+-    }
+-}
+-
+ impl MeshColors<4> for Direct<'_> {
+     fn values(&self, components: &[f32]) -> [f32; 4] {
+         self.pattern.convert(components)
+@@ -154,6 +177,24 @@ impl MeshColors<4> for Direct<'_> {
+     }
+ }
+
++struct SourceComponents<'a> {
++    pattern: &'a EncodedShadingPattern,
++}
++
++impl<const N: usize> MeshColors<N> for SourceComponents<'_> {
++    fn values(&self, components: &[f32]) -> [f32; N] {
++        let mut values = [0.0; N];
++        let count = components.len().min(N);
++        values[..count].copy_from_slice(&components[..count]);
++        values
++    }
++
++    fn shade(&self, values: &[f32; N]) -> [f32; 4] {
++        let count = usize::from(self.pattern.color_space.num_components()).min(N);
++        self.pattern.convert(&values[..count])
++    }
++}
++
+ fn mix<'a, const K: usize>(
+     colors: [&ColorComponents; K],
+     weights: [f32; K],
+diff --git a/hayro-interpret/src/types.rs b/hayro-interpret/src/types.rs
+index 138f8911a94f6ce1680e2509d33f861a8460121f..e2412a39317a79c8b37b9d1d5ed6cfc048305911 100644
+--- a/hayro-interpret/src/types.rs
++++ b/hayro-interpret/src/types.rs
+@@ -79,6 +79,22 @@ impl RasterImage<'_> {
+         }
+     }
+
++    /// Perform some operation with the CMYK and alpha channel of the image.
++    ///
++    /// The colors are converted to CMYK as by
++    /// [`ColorSpace::to_cmyk`](crate::color::ColorSpace::to_cmyk), and the target
++    /// dimension works as for [`with_rgba`](Self::with_rgba).
++    pub fn with_cmyk(
++        &self,
++        profile: Option<&CmykProfile>,
++        func: impl FnOnce(CmykData, Option<LumaData>),
++        target_dimension: Option<(u32, u32)>,
++    ) {
++        if let Some(decoded) = self.0.decoded_cmyk_image(target_dimension, profile) {
++            func(decoded.image, decoded.alpha);
++        }
++    }
++
+     /// Return the underlying image stream.
+     pub fn stream(&self) -> &Stream<'_> {
+         self.0.stream()
+diff --git a/hayro-interpret/src/x_object/decode/image.rs b/hayro-interpret/src/x_object/decode/image.rs
+index bdd9ce0d8a7da3be3b689f70ea7459a83adc24a7..9adddb1d5c18986a8b3b415a67b04486ec0ab600 100644
+--- a/hayro-interpret/src/x_object/decode/image.rs
++++ b/hayro-interpret/src/x_object/decode/image.rs
+@@ -59,8 +59,7 @@ impl<'a, 'b> ImageDecoder<'a, 'b> {
+         let mut image = self.decode_image()?;
+         let color_space = self.ctx.color_space.clone();
+         let alpha = self.decode_alpha(|alpha, matte| {
+-            // In theory, matte needs to be applied in the image's original color space,
+-            // but we always do it in RGB for now.
++            // Matte is applied in RGB rather than the image's color space.
+             let mut matte_rgb = [0_u8; 3];
+             color_space.convert_values(matte, &mut matte_rgb);
+
+@@ -75,8 +74,7 @@ impl<'a, 'b> ImageDecoder<'a, 'b> {
+
+     fn decode_cmyk(mut self, profile: Option<&CmykProfile>) -> Option<DecodedCmykImage> {
+         let (components, color_space) = if self.obj.transfer_function.is_some() {
+-            // Transfer functions apply to RGB, so convert the RGB image, as is done for
+-            // solid colors.
++            // Use the same RGB transfer result as solid colors.
+             match self.decode_image()? {
+                 ImageData::Rgb(rgb) => (rgb.data, ColorSpace::device_rgb()),
+                 ImageData::Luma(luma) => (luma.data, ColorSpace::device_gray()),
+@@ -85,7 +83,12 @@ impl<'a, 'b> ImageDecoder<'a, 'b> {
+             (self.decode_components()?, self.ctx.color_space.clone())
+         };
+
+-        let mut data = vec![0; self.ctx.width as usize * self.ctx.height as usize * 4];
++        let len = (self.ctx.width as usize)
++            .checked_mul(self.ctx.height as usize)?
++            .checked_mul(4)?;
++        let mut data = Vec::new();
++        data.try_reserve_exact(len).ok()?;
++        data.resize(len, 0);
+         color_space.convert_cmyk(&components, &mut data, profile)?;
+
+         let color_space = self.ctx.color_space.clone();
+@@ -175,7 +178,7 @@ impl<'a, 'b> ImageDecoder<'a, 'b> {
+             None
+         };
+
+-        let mut components = if let Some(invert) = direct_invert {
++        if let Some(invert) = direct_invert {
+             fix_image_length(
+                 self.ctx.decoded.data.to_mut(),
+                 self.ctx.width,
+@@ -267,12 +270,13 @@ impl<'a, 'b> ImageDecoder<'a, 'b> {
+                 .image_data
+                 .as_mut()
+                 .and_then(|image| image.alpha.take())?;
+-            fix_image_length(&mut data, self.ctx.width, &mut self.ctx.height, 0, 1)?;
++            let mut height = self.ctx.height;
++            fix_image_length(&mut data, self.ctx.width, &mut height, 0, 1)?;
+
+             Some(LumaData {
+                 data,
+                 width: self.ctx.width,
+-                height: self.ctx.height,
++                height,
+                 interpolate: self.obj.interpolate,
+                 scale_factors: self.ctx.scale_factors,
+             })
+@@ -301,10 +305,6 @@ impl<'a, 'b> ImageDecoder<'a, 'b> {
+             return None;
+         }
+
+-        // Matte is applied in RGB rather than the image's color space.
+-        let mut matte_rgb = [0_u8; 3];
+-        self.ctx.color_space.convert_values(&matte, &mut matte_rgb);
+-
+         let mask_obj = ImageXObject::new_mask(&s_mask, &self.obj.warning_sink, &self.obj.cache)?;
+         let alpha = decode_mask(&mask_obj, self.target_dimension)?.luma;
+
+diff --git a/tests/tests/cmyk.rs b/tests/tests/cmyk.rs
+index d99b5ca82f136b88f28733fbc723269b61633638..53e0cb7712b2d485ac5f1182f1ad527e7b322085 100644
+--- a/tests/tests/cmyk.rs
++++ b/tests/tests/cmyk.rs
+@@ -3,11 +3,12 @@ use crate::{interpreter_settings, load_pdf};
+ use hayro::{CmykPixmap, CmykPixmapSettings, RenderCache, RenderSettings, render_cmyk};
+
+ pub(crate) fn tests() -> Vec<Test> {
+-    let units: [(&str, fn()); 6] = [
++    let units: [(&str, fn()); 7] = [
+         ("cmyk::ghostscript_patches", ghostscript_patches),
+         ("cmyk::spot_colors", spot_colors),
+         ("cmyk::blend_modes", blend_modes),
+         ("cmyk::shadings", shadings),
++        ("cmyk::mesh_source_interpolation", mesh_source_interpolation),
+         ("cmyk::images", images),
+         ("cmyk::text_and_patterns", text_and_patterns),
+     ];
+@@ -147,6 +148,20 @@ fn shadings() {
+     }
+ }
+
++fn mesh_source_interpolation() {
++    let pixmap = render("pdfs/custom/cmyk_mesh_source_interpolation.pdf");
++    // The three RGB vertices carry no black individually, but their neutral
++    // centre has the same black generation as a flat one-third grey swatch.
++    // The five-spot triangle's fifth component maps to its square in black.
++    for (sample_x, swatch_x, black) in [(30, 105, 170), (150, 225, 28)] {
++        let [c, m, y, k, a] = pixel(&pixmap, sample_x, 60);
++        assert_eq!(pixel(&pixmap, swatch_x, 60), [0, 0, 0, black, 255]);
++        // The sampled pixel centre lies within half a point of the centroid.
++        assert!(c <= 2 && m <= 2 && y <= 2 && k.abs_diff(black) <= 2);
++        assert_eq!(a, 255);
++    }
++}
++
+ fn images() {
+     let pixmap = render("pdfs/custom/cmyk_images.pdf");
+
+diff --git a/hayro/src/paint.rs b/hayro/src/paint.rs
+index be7440ea76316760d76e40983661fdf34a04a3ac..10661395c59a15280d09cb7be9d4cc9192838277 100644
+--- a/hayro/src/paint.rs
++++ b/hayro/src/paint.rs
+@@ -53,7 +53,7 @@ impl Renderer<'_> {
+
+                         if let EncodedShadingType::RadialAxial(gradient) = &encoded.shading_type
+                             && let Some(native) =
+-                                gradient.as_svg_gradient(&encoded, NATIVE_GRADIENT_TOLERANCE)
++                                self.native_gradient(gradient, &encoded, NATIVE_GRADIENT_TOLERANCE)
+                         {
+                             paint_transform = path_transform.inverse() * native.transform;
+
+@@ -100,11 +100,12 @@ impl Renderer<'_> {
+                                 image.push(pixel);
+                             };
+                             let (width, height, transform) = match &self.cmyk {
+-                                Some(pass) => encoded.sample_texture_cmyk(
++                                Some(pass) => encoded.sample_texture_cmyk_pass(
+                                     bbox,
+                                     1.0,
+                                     pass.profile.as_ref(),
+-                                    |sample| push(pass.lanes(sample)),
++                                    pass.black,
++                                    &mut push,
+                                 ),
+                                 None => encoded.sample_texture(bbox, 1.0, &mut push),
+                             };
+@@ -155,15 +156,13 @@ impl Renderer<'_> {
+         &self,
+         gradient: &EncodedRadialAxialShading,
+         encoded: &EncodedShadingPattern,
+-        bbox: Rect,
+         tolerance: f32,
+     ) -> Option<SvgGradient> {
+         let Some(pass) = &self.cmyk else {
+-            return gradient.as_svg_gradient(encoded, bbox, tolerance);
++            return gradient.as_svg_gradient(encoded, tolerance);
+         };
+
+-        let native =
+-            gradient.as_svg_gradient_cmyk(encoded, bbox, tolerance, pass.profile.as_ref())?;
++        let native = gradient.as_svg_gradient_cmyk(encoded, tolerance, pass.profile.as_ref())?;
+
+         Some(SvgGradient {
+             kind: native.kind,

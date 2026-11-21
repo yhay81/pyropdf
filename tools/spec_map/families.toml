@@ -261,16 +261,6 @@ features = ["structure-children"]
 dimensions = ["interpret"]
 behavior = "Resolve cross-namespace roles, use as a grouping element and role-specific content for the remaining conditional Annex L verdicts."
 
-[families.arlington-preservation]
-tracker = 254
-issue = 890
-title = "Prove full and incremental preservation by Arlington object type"
-features = [
-    "@arlington",
-]
-dimensions = ["preserve"]
-behavior = "Build or reuse a reachable valid example for each descriptor and compare its keys, reference targets and stream bytes after an unrelated edit in both save modes. Reuse equivalent cases with explicit type-to-fixture coverage."
-
 [families.display-space]
 tracker = 254
 issue = 851
