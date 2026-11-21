@@ -214,32 +214,32 @@
   },
   "coverage": {
     "read": {
-      "done": 755,
+      "done": 757,
       "partial": 40,
-      "planned": 36
+      "planned": 34
     },
     "interpret": {
-      "done": 725,
+      "done": 727,
       "engine": 8,
       "n/a": 19,
       "partial": 36,
-      "planned": 43
+      "planned": 41
     },
     "create": {
-      "done": 111,
+      "done": 113,
       "non-goal": 9,
       "partial": 640,
-      "planned": 71
+      "planned": 69
     },
     "edit": {
-      "done": 106,
+      "done": 108,
       "partial": 666,
-      "planned": 59
+      "planned": 57
     },
     "preserve": {
-      "done": 152,
+      "done": 154,
       "partial": 25,
-      "planned": 654
+      "planned": 652
     }
   },
   "work": {
@@ -280,7 +280,6 @@
     "3d-scene-settings": {"tracker": 256, "issue": 913, "title": "Author 3D scene settings and dimensional measurements as PDF data", "behavior": "Resolve scene, camera and activation settings and each dimensional measurement geometry. Verify view, stream and measurement references after editing.", "cells": {"read": ["3d-artwork"], "interpret": ["3d-artwork"], "create": ["3d-artwork"], "edit": ["3d-artwork"], "preserve": ["3d-artwork"]}},
     "legacy-media": {"tracker": 256, "issue": 915, "title": "Complete existing legacy movie, sound and alternate-presentation relationship editing", "behavior": "Resolve external sound parameters, movie posters, timing, title-based action targets and alternate-presentation name trees. Verify reference-safe edits in existing files.", "cells": {"read": ["sound-annotations", "movie-annotations", "sound-actions", "movie-actions", "sounds", "movies", "alternate-presentations"], "interpret": ["sound-annotations", "movie-annotations", "sound-actions", "movie-actions", "sounds", "movies", "alternate-presentations"], "edit": ["sound-annotations", "movie-annotations", "sound-actions", "movie-actions", "sounds", "movies", "alternate-presentations"], "preserve": ["sound-annotations", "movie-annotations", "sound-actions", "movie-actions", "sounds", "movies", "alternate-presentations"]}},
     "prepress": {"tracker": 256, "issue": 861, "title": "Complete prepress dictionaries and print annotation relationships", "behavior": "Resolve box colour, separations, trapping, OPI and print annotation relationships and preserve or edit them under the edition policy.", "cells": {"read": ["page-boundaries", "separation-dictionaries", "trapping", "opi", "printer-mark-annotations", "trap-network-annotations", "watermark-annotations"], "interpret": ["separation-dictionaries", "trapping", "opi", "printer-mark-annotations", "trap-network-annotations", "watermark-annotations"], "create": ["separation-dictionaries", "trapping", "opi", "printer-mark-annotations", "trap-network-annotations", "watermark-annotations"], "edit": ["page-boundaries", "separation-dictionaries", "trapping", "opi", "printer-mark-annotations", "trap-network-annotations", "watermark-annotations"], "preserve": ["separation-dictionaries", "trapping", "opi", "printer-mark-annotations", "trap-network-annotations", "watermark-annotations"]}},
-    "richmedia-extensions": {"tracker": 256, "issue": 863, "title": "Support STEP and glTF assets in RichMedia annotations under the published PDF 2.0 extensions", "behavior": "Read, author and verify STEP and glTF asset relationships against the published extensions.", "cells": {"read": ["step-rich-media", "gltf-rich-media"], "interpret": ["step-rich-media", "gltf-rich-media"], "create": ["step-rich-media", "gltf-rich-media"], "edit": ["step-rich-media", "gltf-rich-media"], "preserve": ["step-rich-media", "gltf-rich-media"]}},
     "web-capture": {"tracker": 256, "issue": 860, "title": "Read, edit and preserve Web Capture content sets and their indexes", "behavior": "Read, edit and round-trip captured content sets and their indexes.", "cells": {"read": ["web-capture"], "interpret": ["web-capture"], "create": ["web-capture"], "edit": ["web-capture"], "preserve": ["web-capture"]}}
   },
   "inventory": {
@@ -841,7 +840,7 @@
       {"issue": 801, "locations": ["32000-2-2020/clause12.html#H12.8.4.2"], "work": [], "features": ["digital-signatures"], "dimensions": ["read", "interpret", "create", "edit", "preserve"], "summary": "Time used to validate an existing timestamp"},
       {"issue": 802, "locations": ["32000-2-2020/clause12.html#H12.8.6"], "work": [], "features": ["permissions"], "dimensions": ["read", "interpret", "create", "edit", "preserve"], "summary": "Reference to the certification transform dictionary"},
       {"issue": 826, "locations": ["32000-2-2020/clause07.html#H7.3.3"], "work": [], "features": ["basic-objects"], "dimensions": ["read", "interpret", "create", "edit", "preserve"], "summary": "Delimiters between successive numeric values"},
-      {"issue": 835, "locations": ["32007-2024/clause04.html#H4.8"], "work": [863], "features": ["developer-extensions", "gltf-rich-media"], "dimensions": ["read", "interpret", "create", "edit", "preserve"], "summary": "Integer extension level in the glTF example"},
+      {"issue": 835, "locations": ["32007-2024/clause04.html#H4.8"], "work": [], "features": ["developer-extensions", "gltf-rich-media"], "dimensions": ["read", "interpret", "create", "edit", "preserve"], "summary": "Integer extension level in the glTF example"},
       {"issue": 837, "locations": ["32000-2-2020/clause08.html#H8.9.7", "32000-2-2020/clause14.html#H14.11.7"], "work": [], "features": ["inline-images", "opi"], "dimensions": ["read", "interpret", "create", "edit", "preserve"], "summary": "Filter order for ASCII-encoded inline images"},
       {"issue": 839, "locations": ["32000-2-2020/clause08.html#H8.6.5.5"], "work": [], "features": ["icc-based-color-space"], "dimensions": ["read", "interpret", "create", "edit", "preserve"], "summary": "ICC version of a profile used in a PDF colour space"},
       {"issue": 845, "locations": ["32000-2-2020/clause07.html#H7.9.4"], "work": [], "features": ["dates"], "dimensions": ["read", "interpret", "create", "edit", "preserve"], "summary": "Calendar used in PDF dates"},
@@ -1679,7 +1678,7 @@
     {"feature": "structure-children", "clause": "Annex L", "description": "Check parent and child standard roles and their allowed multiplicities in the PDF 2.0 namespace.", "objects": [], "read": {"status": "planned", "milestone": "Phase 4: Specification", "family": "tagged-reading", "issue": 907}, "interpret": {"status": "planned", "milestone": "Phase 4: Specification", "family": "tagged-reading", "issue": 907}, "create": {"status": "planned", "milestone": "Phase 4: Specification", "family": "tagged-authoring", "issue": 908}, "edit": {"status": "planned", "milestone": "Phase 4: Specification", "family": "tagged-authoring", "issue": 908}, "preserve": {"status": "planned", "milestone": "Phase 4: Specification", "family": "tagged-reading", "issue": 907}},
     {"feature": "fragment-identifiers", "clause": "Annex O", "description": "Resolve fragment parameters that select content or set viewing and navigation options.", "objects": [], "read": {"status": "planned", "milestone": "Phase 4: Specification", "family": "name-tree-navigation", "issue": 895}, "interpret": {"status": "planned", "milestone": "Phase 4: Specification", "family": "name-tree-navigation", "issue": 895}, "create": {"status": "planned", "milestone": "Phase 4: Specification", "family": "name-tree-navigation", "issue": 895}, "edit": {"status": "planned", "milestone": "Phase 4: Specification", "family": "name-tree-navigation", "issue": 895}, "preserve": {"status": "planned", "milestone": "Phase 4: Specification", "family": "name-tree-navigation", "issue": 895}},
     {"feature": "page-transparency", "clause": "Annex Q", "description": "Determine whether the resources and operations used on a page require transparent imaging.", "objects": [], "read": {"status": "planned", "milestone": "Phase 4: Specification", "family": "transparency", "issue": 899}, "interpret": {"status": "planned", "milestone": "Phase 4: Specification", "family": "transparency", "issue": 899}, "create": {"status": "planned", "milestone": "Phase 4: Specification", "family": "transparency", "issue": 899}, "edit": {"status": "planned", "milestone": "Phase 4: Specification", "family": "transparency", "issue": 899}, "preserve": {"status": "planned", "milestone": "Phase 4: Specification", "family": "transparency", "issue": 899}},
-    {"feature": "step-rich-media", "clause": "ISO/TS 24064", "description": "Connect the STEP AP242 payload, configuration and view to its RichMedia annotation.", "objects": [], "read": {"status": "planned", "milestone": "Phase 4: Specification", "family": "richmedia-extensions", "issue": 863}, "interpret": {"status": "planned", "milestone": "Phase 4: Specification", "family": "richmedia-extensions", "issue": 863}, "create": {"status": "planned", "milestone": "Phase 4: Specification", "family": "richmedia-extensions", "issue": 863}, "edit": {"status": "planned", "milestone": "Phase 4: Specification", "family": "richmedia-extensions", "issue": 863}, "preserve": {"status": "planned", "milestone": "Phase 4: Specification", "family": "richmedia-extensions", "issue": 863}},
-    {"feature": "gltf-rich-media", "clause": "ISO/TS 32007", "description": "Connect a glTF asset and its resources to a RichMedia configuration and view.", "objects": [], "read": {"status": "planned", "milestone": "Phase 4: Specification", "family": "richmedia-extensions", "issue": 863}, "interpret": {"status": "planned", "milestone": "Phase 4: Specification", "family": "richmedia-extensions", "issue": 863}, "create": {"status": "planned", "milestone": "Phase 4: Specification", "family": "richmedia-extensions", "issue": 863}, "edit": {"status": "planned", "milestone": "Phase 4: Specification", "family": "richmedia-extensions", "issue": 863}, "preserve": {"status": "planned", "milestone": "Phase 4: Specification", "family": "richmedia-extensions", "issue": 863}}
+    {"feature": "step-rich-media", "clause": "ISO/TS 24064", "description": "Read the STEP AP 242 edition, ISO extension, shared file and named 3D view. The geometry stays opaque.", "objects": [], "read": {"status": "done", "tests": ["tests/test_rich_models.py::test_independent_rich_model_survives_unrelated_edit", "tests/test_rich_models.py::test_step_instance_may_use_a_filespec_outside_the_pdf20_name_tree"]}, "interpret": {"status": "done", "tests": ["tests/test_rich_models.py::test_independent_rich_model_survives_unrelated_edit", "tests/test_rich_models.py::test_step_instance_may_use_a_filespec_outside_the_pdf20_name_tree"]}, "create": {"status": "done", "tests": ["tests/test_rich_models.py::test_create_and_replace_a_shared_model"]}, "edit": {"status": "done", "tests": ["tests/test_rich_models.py::test_create_and_replace_a_shared_model", "tests/test_rich_models.py::test_step_instance_may_use_a_filespec_outside_the_pdf20_name_tree"]}, "preserve": {"status": "done", "tests": ["tests/test_rich_models.py::test_independent_rich_model_survives_unrelated_edit"]}},
+    {"feature": "gltf-rich-media", "clause": "ISO/TS 32007", "description": "Resolve the glTF scene, embedded buffer and image references, 3D configuration and view. The viewer renders the geometry.", "objects": [], "read": {"status": "done", "tests": ["tests/test_rich_models.py::test_independent_rich_model_survives_unrelated_edit", "tests/test_rich_models.py::test_glb_binary_chunk_and_external_image_preserve_their_own_types"]}, "interpret": {"status": "done", "tests": ["tests/test_rich_models.py::test_independent_rich_model_survives_unrelated_edit", "tests/test_rich_models.py::test_glb_binary_chunk_and_external_image_preserve_their_own_types"]}, "create": {"status": "done", "tests": ["tests/test_rich_models.py::test_create_and_replace_a_shared_model", "tests/test_rich_models.py::test_glb_binary_chunk_and_external_image_preserve_their_own_types"]}, "edit": {"status": "done", "tests": ["tests/test_rich_models.py::test_create_and_replace_a_shared_model", "tests/test_rich_models.py::test_glb_binary_chunk_and_external_image_preserve_their_own_types"]}, "preserve": {"status": "done", "tests": ["tests/test_rich_models.py::test_independent_rich_model_survives_unrelated_edit", "tests/test_rich_models.py::test_glb_binary_chunk_and_external_image_preserve_their_own_types"]}}
   ]
 }

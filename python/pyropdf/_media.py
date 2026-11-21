@@ -6,9 +6,9 @@ import enum
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
-from pyropdf import _core, typed
+from pyropdf import _core, _rich_models, typed
 from pyropdf._errors import LimitError, PdfError
-from pyropdf._objects import Array, Dictionary, Name
+from pyropdf._objects import Array, Dictionary, Name, _encode_text_string
 
 if TYPE_CHECKING:
     from pyropdf._check import StructuralDefect
@@ -193,19 +193,47 @@ class ThreeD:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class RichMediaModel:
+    """A STEP or glTF model resolved from a PDF 2.0 RichMedia instance.
+
+    `format` is STEP or glTF. `versions` lists the matching catalog requirements.
+    The live file specification and resource file specifications share the stored assets.
+    For glTF, `scene` is the instance override, the model default, or zero.
+    Inspection resolves PDF links without fetching URIs or rendering geometry.
+    Each operation bounds its relationships and JSON punctuation to 4,096 items,
+    with a 4 MiB JSON chunk, 64 levels of JSON nesting and a 64 MiB model limit.
+    """
+
+    format: str
+    versions: tuple[str, ...]
+    configuration: typed.RichMediaConfiguration
+    instance: typed.RichMediaInstance
+    file: typed.FileSpecification
+    resources: tuple[typed.FileSpecification, ...]
+    scene: int | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RichMedia:
     """A RichMedia annotation with a named asset, configuration, instance and optional 3D views.
 
     The asset name tree and instance reference the same file specification.
     Use the annotation's live Arlington view to inspect its configurations,
     rename one, and read or replace its embedded stream. A viewer can use
-    the stored data for playback.
+    the stored data for playback. For STEP, pass the AP 242 edition in
+    `step_version`, such as `"2020.0"`. For glTF, pass external resources
+    as MediaAsset values whose filenames match the model URIs. An optional
+    zero-based `scene` overrides the glTF default. The PDF writer embeds each
+    file and declares the matching ISO developer extension and requirement.
     """
 
     rect: Rect
     kind: MediaKind
     asset: MediaAsset
     views: tuple[ModelView, ...] = ()
+    step_version: str | None = None
+    resources: tuple[MediaAsset, ...] = ()
+    scene: int | None = None
 
     def __post_init__(self) -> None:
         """Validate the rectangle, instance kind, asset and views."""
@@ -214,10 +242,46 @@ class RichMedia:
         if not isinstance(self.asset, MediaAsset):
             msg = "asset must be a MediaAsset"
             raise TypeError(msg)
+        self._check_model()
         _views(self.views)
         if self.views and self.kind != MediaKind.THREE_D:
             msg = "named 3D views require a 3D media instance"
             raise ValueError(msg)
+
+    def _check_model(self) -> None:
+        from pyropdf._measurement import DocumentRequirement  # noqa: PLC0415
+
+        model = _rich_models.format_for(self.asset.content_type)
+        if model and self.kind != MediaKind.THREE_D:
+            msg = "STEP and glTF require a 3D media instance"
+            raise ValueError(msg)
+        if model == "STEP":
+            DocumentRequirement(model, version=self.step_version)
+        elif self.step_version is not None:
+            msg = "step_version requires a STEP asset"
+            raise ValueError(msg)
+        if not isinstance(self.resources, tuple):
+            msg = "resources must be a tuple of MediaAsset values"
+            raise TypeError(msg)
+        _bounded(self.resources)
+        if (self.resources or self.scene is not None) and model != "glTF":
+            msg = "resources and scene require a glTF asset"
+            raise ValueError(msg)
+        if self.scene is not None and (type(self.scene) is not int or self.scene < 0):
+            msg = "glTF scene must be a nonnegative integer"
+            raise ValueError(msg)
+        size = len(self.asset.data)
+        names_size = len(self.asset.filename.encode("utf-8"))
+        for item in self.resources:
+            if not isinstance(item, MediaAsset):
+                msg = "resources must contain MediaAsset values"
+                raise TypeError(msg)
+            size += len(item.data)
+            names_size += len(item.filename.encode("utf-8"))
+            if size > _MAX_ASSET or names_size > _MAX_TEXT:
+                msg = "RichMedia model and resources exceed the annotation input limit"
+                code = "annotation_input_size"
+                raise LimitError(code, msg)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -286,7 +350,14 @@ def _write_rich_content(doc: Document, spec: RichMedia) -> dict[str, object]:
     config = _indirect(
         doc, {"Type": Name("RichMediaConfiguration"), "Subtype": Name(spec.kind), "Instances": [instance]}
     )
-    content: dict[str, object] = {"Assets": {"Names": [spec.asset.filename, asset]}, "Configurations": [config]}
+    names: list[object] = [spec.asset.filename, asset]
+    if spec.resources:
+        files = [(spec.asset.filename, asset), *((item.filename, _filespec(doc, item)) for item in spec.resources)]
+        files.sort(key=lambda pair: _encode_text_string(pair[0]))
+        names = [value for pair in files for value in pair]
+    if spec.scene is not None:
+        instance["Scene"] = spec.scene
+    content: dict[str, object] = {"Assets": {"Names": names}, "Configurations": [config]}
     if spec.views:
         content["Views"] = _write_views(doc, spec.views)
     return content
@@ -336,9 +407,41 @@ def _require_media_version(doc: Document, minimum: tuple[int, int]) -> None:
     _require_measurement_version(doc, doc.catalog, minimum)
 
 
-def finish_media_import(doc: Document, major: int, minor: int, first: int, *, contains_prc: bool) -> None:
+def _import_model_declarations(doc: Document, source: Document, selected: range) -> None:
+    """Merge the declarations needed by the imported instances into the receiver's catalog."""
+    from pyropdf._rich_media import _Work, models_for  # noqa: PLC0415
+
+    def merge(budget: _core._OperationBudget) -> None:
+        work = _Work(budget)
+        needed: dict[tuple[str, str], None] = {}
+        for index in selected:
+            budget.poll()
+            annotations = doc.pages[index].obj.get("Annots")
+            if not isinstance(annotations, Array):
+                continue
+            for annotation in annotations:
+                budget.poll()
+                if not isinstance(annotation, Dictionary) or annotation.get("Subtype") != Name("RichMedia"):
+                    continue
+                work.add(1)
+                for model in models_for(annotation, source, work):
+                    work.add(len(model.versions), 192 * len(model.versions))
+                    for version in model.versions:
+                        needed[model.format, version] = None
+        if needed:
+            _require_media_version(doc, (2, 0))
+            for model, version in needed:
+                _rich_models.declarations(doc, model, work, add_version=version)
+
+    _core.read_operation(doc._core(), merge)  # noqa: SLF001
+
+
+def finish_media_import(doc: Document, source: Document, selected: range, media: tuple[int, int, int, bool]) -> None:
     """Check the receiver's edition and the imported media graph before committing its new pages."""
     from pyropdf._annotations import _version  # noqa: PLC0415
+
+    major, minor, first, contains_prc = media
+    _import_model_declarations(doc, source, selected)
 
     def imported_defect() -> StructuralDefect | None:
         report = doc.check()
@@ -378,7 +481,11 @@ def add_media(page: Page, spec: MediaSpecification) -> tuple[int, int]:
     subtype, minimum = annotation_types[type(spec)]
     with doc.transaction("add multimedia annotation"):
         if isinstance(spec, (RichMedia, ProjectionAnnotation)):
-            minimum = _base_or_extension(doc, 3)
+            minimum = (
+                (2, 0)
+                if isinstance(spec, RichMedia) and _rich_models.format_for(spec.asset.content_type)
+                else _base_or_extension(doc, 3)
+            )
         elif isinstance(spec, ThreeD):
             if any(view.measurements for view in spec.views):
                 minimum = (2, 0)
@@ -406,6 +513,10 @@ def add_media(page: Page, spec: MediaSpecification) -> tuple[int, int]:
             },
         )
         _write_media(doc, annot, spec)
+        if isinstance(spec, RichMedia) and (model := _rich_models.format_for(spec.asset.content_type)):
+            from pyropdf._rich_media import initialize_model  # noqa: PLC0415
+
+            initialize_model(doc, annot, model, spec.step_version or "2.0")
         annots = page.obj.get("Annots")
         if annots is None:
             page.obj["Annots"] = [annot]

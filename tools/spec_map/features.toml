@@ -1535,10 +1535,10 @@ objects = []
 
 [features.step-rich-media]
 clause = "ISO/TS 24064"
-description = "Connect the STEP AP242 payload, configuration and view to its RichMedia annotation."
+description = "Read the STEP AP 242 edition, ISO extension, shared file and named 3D view. The geometry stays opaque."
 objects = []
 
 [features.gltf-rich-media]
 clause = "ISO/TS 32007"
-description = "Connect a glTF asset and its resources to a RichMedia configuration and view."
+description = "Resolve the glTF scene, embedded buffer and image references, 3D configuration and view. The viewer renders the geometry."
 objects = []

@@ -174,6 +174,7 @@ from pyropdf._media import (
     ModelView,
     ProjectionAnnotation,
     RichMedia,
+    RichMediaModel,
     Screen,
     ThreeD,
 )
@@ -248,6 +249,7 @@ _PUBLIC_MODULE_EXPORTS = (
     RenditionAction,
     RenditionOperation,
     RichMedia,
+    RichMediaModel,
     RichMediaExecute,
     Screen,
     ThreeD,
@@ -539,6 +541,7 @@ __all__ = [
     "Revision",
     "RichMedia",
     "RichMediaExecute",
+    "RichMediaModel",
     "RoleMap",
     "SanitizeReport",
     "Screen",

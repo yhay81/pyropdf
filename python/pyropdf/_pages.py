@@ -288,8 +288,7 @@ class Pages(Sequence[Page]):
             with self._document.transaction("pages"):
                 media = _core.import_pages(doc, source._core(), chosen, at)  # noqa: SLF001
                 if media is not None:
-                    major, minor, first, prc = media
-                    finish_media_import(self._document, major, minor, first, contains_prc=prc)
+                    finish_media_import(self._document, source, range(at, at + len(chosen)), media)
             return
         order = [*objects[:at], *chosen, *objects[at:]]
         copies = [False] * at + [True] * len(chosen) + [False] * (count - at)
