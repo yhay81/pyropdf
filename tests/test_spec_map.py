@@ -422,16 +422,6 @@ def test_a_stale_coverage_page_fails_the_check(tmp_path: Path) -> None:
     assert f"{COVERAGE.as_posix()} is stale" in result.stderr
 
 
-SCOPE = """name = "Test claim"
-revision = "0123456789abcdef0123456789abcdef01234567"
-pdf-versions = ["2.0"]
-errata = "{reviewed}"
-extensions = []
-profiles = []
-tools = ["qpdf"]
-"""
-
-
 REVISION = "0123456789abcdef0123456789abcdef01234567"
 CHECKS = ("preservation", "consistency", "qpdf", "pikepdf", "poppler", "pyhanko", "verapdf", "arlington", "pdfjs")
 
@@ -460,10 +450,22 @@ def record_evidence(root: Path) -> dict:
     }
 
 
-def claim(root: Path, scope: str, evidence: dict | None = None) -> subprocess.CompletedProcess[str]:
+def claim(
+    root: Path, scope: str, evidence: dict | None = None, *, metadata: dict | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run the claim on the named map with recorded observations."""
     path = root / "scope.toml"
-    dated = SCOPE.format(reviewed=json.loads((root / MAP).read_bytes())["inventory"]["reviewed"])
+    fields = {
+        "name": "Test claim",
+        "revision": REVISION,
+        "pdf-versions": ["2.0"],
+        "errata": json.loads((root / MAP).read_bytes())["inventory"]["reviewed"],
+        "extensions": [],
+        "profiles": [],
+        "tools": ["qpdf"],
+        **(metadata or {}),
+    }
+    dated = "".join(f"{key} = {json.dumps(value)}\n" for key, value in fields.items())
     path.write_text(dated + scope, encoding="utf-8")
     results = root / "release-evidence.json"
     results.write_text(json.dumps(record_evidence(root) if evidence is None else evidence))
@@ -472,7 +474,7 @@ def claim(root: Path, scope: str, evidence: dict | None = None) -> subprocess.Co
 
 
 def test_a_claim_holds_only_when_every_applicable_dimension_in_scope_is_done(tmp_path: Path) -> None:
-    held = claim(copy_root(tmp_path / "a"), 'clauses = ["7.6.4"]\n')
+    held = claim(copy_root(tmp_path / "a"), 'features = ["standard-security-handler"]\n')
     assert held.returncode == 0, held.stdout + held.stderr
     assert "The claim holds." in held.stdout
     assert "Full inventory: " in held.stdout
@@ -481,6 +483,107 @@ def test_a_claim_holds_only_when_every_applicable_dimension_in_scope_is_done(tmp
     assert blocked.returncode == 1
     assert "- flate-filter edit is planned" in blocked.stdout
     assert "- lzw-filter read is planned" in blocked.stdout
+
+
+def test_clause_claims_resolve_typed_objects_and_report_their_work(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    mapped = json.loads((root / MAP).read_bytes())
+    security = next(f for f in mapped["features"] if f["feature"] == "EncryptionStandard")
+    security["edit"] = {"status": "planned", "issue": 889}
+    (root / MAP).write_text(json.dumps(mapped))
+    broad = claim(root, 'clauses = ["7.6.4"]\nfeatures = ["EncryptionStandard"]')
+    assert broad.returncode == 1, broad.stderr
+    assert "Resolved features: EncryptionStandard, standard-security-handler\n" in broad.stdout
+    assert "of 10 applicable dimensions of 2 features" in broad.stdout
+    assert "EncryptionStandard edit is planned (#889)" in broad.stdout
+    parent = claim(root, 'clauses = ["7.6"]')
+    assert "EncryptionStandard edit is planned (#889)" in parent.stdout
+    pages = claim(root, 'clauses = ["7.7.3"]')
+    assert "Resolved features: PageObject, PageTreeNode, PageTreeNodeRoot, page-objects, page-tree\n" in pages.stdout
+    narrow = claim(root, 'features = ["page-tree"]', metadata={"input-profiles": ["PDF/UA-2"]})
+    assert narrow.returncode == 0, narrow.stderr + narrow.stdout
+    assert "Resolved features: page-tree\n" in narrow.stdout
+    assert "Input context (declared, unverified): profiles PDF/UA-2" in narrow.stdout
+    assert "page-tree edit tests: tests/test_pages.py::" in narrow.stdout
+
+
+def test_claimed_standards_require_their_own_passing_evidence(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    metadata = {"profiles": ["PDF/UA-2"], "extensions": ["ISO/TS 32003:2023"]}
+    scope = 'features = ["page-tree"]'
+    rows = {"pdfua", "pdfua-2", "aes-gcm"}
+    mapped = json.loads((root / MAP).read_bytes())
+    for feature in mapped["features"]:
+        if feature["feature"] in rows:
+            feature["read"] = {"status": "planned", "issue": 911}
+    (root / MAP).write_text(json.dumps(mapped))
+    blocked = claim(root, scope, metadata=metadata)
+    assert blocked.returncode == 1, blocked.stderr
+    assert "Resolved features: aes-gcm, page-tree, pdfua, pdfua-2\n" in blocked.stdout
+    for row in rows:
+        assert f"{row} read is planned (#911)" in blocked.stdout
+    excluded = claim(root, scope + '\n[exclusions.pdfua-2]\nread = "Skip the level"', metadata=metadata)
+    assert excluded.returncode == 2
+    assert "claimed standard requires every applicable cell" in excluded.stderr
+
+    # A release with passing evidence for these particular rows can substantiate the claim.
+    for feature in mapped["features"]:
+        if feature["feature"] in rows:
+            for dim in DIMENSIONS:
+                feature[dim] = {"status": "done", "tests": [f"tests/test_example.py::test_{dim}[{feature['feature']}]"]}
+    (root / MAP).write_text(json.dumps(mapped))
+    passed = claim(root, scope, metadata=metadata)
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    assert "20 of 20 applicable dimensions" in passed.stdout
+    evidence = record_evidence(root)
+    evidence["tests"]["tests/test_example.py::test_preserve[pdfua-2]"] = "skipped"
+    failed = claim(root, scope, evidence, metadata=metadata)
+    assert failed.returncode == 1
+    assert "pdfua-2 preserve lacks passing tests" in failed.stdout
+
+
+def test_scope_checks_versions_standards_and_the_public_label(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    scope = 'features = ["page-tree"]'
+    for metadata, error in (
+        ({"pdf-versions": ["2.1"]}, "unknown PDF versions"),
+        ({"profiles": ["PDF/UA-3"]}, "unknown profiles identifier"),
+        ({"input-extensions": ["ISO/TS 32003:2099"]}, "unknown extensions identifier"),
+        ({"profiles": ["PDF/A-1a"]}, "requires PDF 1.4"),
+        ({"input-profiles": ["PDF/UA-1"]}, "requires PDF 1.7"),
+        ({"pdf-versions": ["1.7"], "extensions": ["ISO/TS 32003:2023"]}, "requires PDF 2.0"),
+        ({"display-label": "All of PDF/UA-2"}, "display-label must match the resolved scope"),
+    ):
+        result = claim(root, scope, metadata=metadata)
+        assert result.returncode == 2
+        assert error in result.stderr
+    indirect = claim(root, 'features = ["pdfua-2"]', metadata={"pdf-versions": ["1.7"]})
+    assert indirect.returncode == 2
+    assert "requires PDF 2.0" in indirect.stderr
+    accepted = claim(
+        root,
+        scope,
+        metadata={
+            "name": "All of PDF",
+            "display-label": "Mapped features page-tree",
+            "input-extensions": ["ISO/TS 32005:2023"],
+        },
+    )
+    assert accepted.returncode == 0, accepted.stderr + accepted.stdout
+    assert "Claim: Mapped features page-tree" in accepted.stdout
+    assert "All of PDF" not in accepted.stdout
+    for clause, error in (("7.6.400", "unknown clause"), ("Foreword", "clause has no mapped operations")):
+        result = claim(root, f'clauses = ["{clause}"]\n' + scope)
+        assert result.returncode == 2
+        assert error in result.stderr
+
+
+def test_archive_profile_levels_select_their_own_rows_and_base_versions(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    for version, profile in (("1.4", "1b"), ("1.7", "2u"), ("1.7", "3a"), ("2.0", "4e"), ("2.0", "4f")):
+        result = claim(root, "", metadata={"pdf-versions": [version], "profiles": [f"PDF/A-{profile}"]})
+        assert result.returncode in (0, 1), result.stderr
+        assert f"Resolved features: pdfa, pdfa-{profile}\n" in result.stdout
 
 
 def test_a_non_goal_blocks_a_claim_unless_the_scope_excludes_it(tmp_path: Path) -> None:
