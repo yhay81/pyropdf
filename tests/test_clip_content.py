@@ -83,6 +83,28 @@ def test_reset_from_the_line_matrix_and_invisible_text_are_supported() -> None:
         assert b"Invisible" not in page.operations.to_bytes()
 
 
+@pytest.mark.parametrize("intervening", ["", "q q 0 g Q Q"])
+def test_selected_font_survives_between_positioned_text_objects(intervening: str) -> None:
+    program = f"BT /F1 18 Tf 40 450 Td (Away) Tj ET {intervening} BT 1 0 0 1 65 700 Tm (Keep) Tj ET"
+    with pyropdf.open(content_pdf(program)) as doc:
+        page = doc.pages[0]
+        keep = next(word for word in page.words() if word.text == "Keep")
+        assert page.clip_to_rect(keep.bbox) == 4
+        with pyropdf.open(doc.to_bytes()) as saved:
+            assert saved.pages[0].words() == [keep]
+
+
+def test_restoring_graphics_state_discards_a_font_selected_only_inside_it() -> None:
+    program = "q BT /F1 18 Tf 40 450 Td (Away) Tj ET Q BT 1 0 0 1 65 700 Tm (Keep) Tj ET"
+    with pyropdf.open(content_pdf(program)) as doc:
+        page = doc.pages[0]
+        before = doc.to_bytes()
+        with pytest.raises(pyropdf.PdfError, match="text operation"):
+            page.clip_to_rect(page.rect)
+        assert not doc.history.steps
+        assert doc.to_bytes() == before
+
+
 @pytest.mark.parametrize("incremental", [False, True])
 def test_clip_uses_the_joined_operation_index_across_shared_streams(*, incremental: bool) -> None:
     with pyropdf.open(content_pdf(DROP, KEEP)) as doc:

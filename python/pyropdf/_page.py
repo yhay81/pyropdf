@@ -253,41 +253,44 @@ class _ClipText:
         return None
 
 
-def _clip_graphics_depth(item: Operation | InlineImage, depth: int, index: int) -> int:
+def _clip_graphics(item: Operation | InlineImage, index: int, saved_fonts: list[bool], text: _ClipText) -> None:
     name, args = item.operator, item.operands
     if name == "q" and not args:
-        return depth + 1
-    if name == "Q" and depth and not args:
-        return depth - 1
-    if name == "cm" and _clip_numbers(args, 6):
-        return depth
-    _cannot_clip(f"unsupported graphics operation {index} ({name})")
+        text.budget.charge("memory_size", 16)
+        saved_fonts.append(text.font_set)
+    elif name == "Q" and saved_fonts and not args:
+        text.font_set = saved_fonts.pop()
+        text.budget.release("memory_size", 16)
+    elif name != "cm" or not _clip_numbers(args, 6):
+        _cannot_clip(f"unsupported graphics operation {index} ({name})")
 
 
 def _clip_shows(page: Page, operations: Operations, budget: _core._OperationBudget) -> dict[int, _ClipShow]:
     """Prove that skipping any one show cannot move another or change a clipping path."""
     if operations.tail.strip(b"\x00\t\n\x0c\r "):
         _cannot_clip("unparsed content after the last operation")
-    fonts = _sub(_resources(page), "Font")
+    text = _ClipText(_sub(_resources(page), "Font"), budget)
+    saved_fonts: list[bool] = []
     shows = {}
-    depth = 0
-    text = None
+    in_text = False
     for index, item in enumerate(operations):
         budget.poll()
         name, args = item.operator, item.operands
         if name in _CLIP_COLORS and _clip_numbers(args, _CLIP_COLORS[name]):
             continue
-        if text is not None:
+        if in_text:
             if name == "ET" and not args:
-                text = None
+                in_text = False
             elif (show := text.read(item, index)) is not None:
                 budget.charge("memory_size", 192)
                 shows[index] = show
         elif name == "BT" and not args:
-            text = _ClipText(fonts, budget)
+            # BT resets the text matrices. The selected font belongs to the graphics state.
+            text.positioned = True
+            in_text = True
         else:
-            depth = _clip_graphics_depth(item, depth, index)
-    if depth or text is not None:
+            _clip_graphics(item, index, saved_fonts, text)
+    if saved_fonts or in_text:
         _cannot_clip("unbalanced graphics or text object")
     return shows
 
