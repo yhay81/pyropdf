@@ -2,9 +2,12 @@
 //! image sample and stream helpers (DESIGN.md section 11).
 
 mod codecs;
+mod curve;
+pub use curve::{CurveStep, DeviceCurve, apply_black_tables};
 mod encode;
 pub mod fax;
 pub mod images;
+pub mod jpx;
 mod ops;
 #[cfg(test)]
 mod tests;

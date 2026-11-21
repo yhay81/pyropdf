@@ -5,9 +5,14 @@
 
 # Every object of the Arlington PDF Model is a feature of the map.
 [arlington]
-create = { status = "partial", missing = "Typed views write every key as declared, but creation and settling of required references are unverified for this object type.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Typed views change and remove every key as declared, but completeness of inbound reference rules is unverified for this object type.", milestone = "Phase 4: Specification" }
 preserve = { status = "planned", milestone = "Phase 4: Specification" }
+
+[[arlington.rule]]
+objects = [
+    "ActionNOP", "ActionSetState", "ActionMovie", "ActionSound", "AnnotMovie", "AnnotSound", "ArrayOfNamesForProcSet",
+    "ArrayOfXFA", "Movie", "MovieActivation", "SlideShow", "SoundObject",
+]
+create = { status = "non-goal", decision = "#256", reason = "The specification milestone excludes creation of these deprecated objects." }
 
 [[arlington.rule]]
 objects = ["ArrayOfBooleansGeneral", "ArrayOfIntegersGeneral", "ArrayOfNamesGeneral", "ArrayOfNumbersGeneral"]
@@ -343,8 +348,6 @@ clause = "7.5.8"
 description = "Cross-reference data as a stream, and hybrid-reference files."
 objects = ["XRefStream"]
 interpret = { status = "n/a", reason = "7.5.8: cross-reference streams index indirect objects in the file, whose resolution Read covers." }
-create = { status = "partial", missing = "Saves write pure cross-reference streams, without hybrid-reference `/XRefStm` sections.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Saves rewrite and renumber cross-reference streams, without writing hybrid-reference `/XRefStm` sections.", milestone = "Phase 4: Specification" }
 
 [features.encryption-dictionary]
 clause = "7.6.3"
@@ -477,13 +480,11 @@ objects = ["DeviceGrayColorSpace", "DeviceRGBColorSpace", "DeviceCMYKColorSpace"
 clause = "8.6.5.2"
 description = "CalGray: calibrated gray."
 objects = ["CalGrayColorSpace", "CalGrayDict"]
-edit = { status = "partial", missing = "Content cleaning prunes unused CalGray entries, without creating or editing CalGray dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.calrgb-color-space]
 clause = "8.6.5.3"
 description = "CalRGB: calibrated RGB."
 objects = ["CalRGBColorSpace", "CalRGBDict"]
-edit = { status = "partial", missing = "Recoloring converts CalRGB colors to device spaces, without creating or editing CalRGB dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.lab-color-space]
 clause = "8.6.5.4"
@@ -494,13 +495,11 @@ objects = ["LabColorSpace", "LabDict"]
 clause = "8.6.5.5"
 description = "ICCBased: color described by an embedded ICC profile."
 objects = ["ICCBasedColorSpace", "ICCProfileStream"]
-edit = { status = "partial", missing = "Image rewriting resamples ICCBased images and recoloring converts ICCBased operators to device spaces, without embedding new ICCBased spaces.", milestone = "Phase 4: Specification" }
 
 [features.indexed-color-space]
 clause = "8.6.6.3"
 description = "Indexed: a color table over a base color space."
 objects = ["IndexedColorSpace"]
-edit = { status = "partial", missing = "Image rewriting resamples Indexed images and recoloring converts Indexed colors to device spaces, without creating new Indexed palettes.", milestone = "Phase 4: Specification" }
 
 [features.pattern-color-space]
 clause = "8.6.6.2"
@@ -512,19 +511,18 @@ create = { status = "partial", missing = "Canvas paints gradients in Pattern col
 clause = "8.6.6.4"
 description = "Separation: one colorant with its alternate space and tint transform."
 objects = ["SeparationColorSpace", "Separation"]
-edit = { status = "partial", missing = "Recoloring converts Separation spaces with exponential tint transforms, without other tint transforms or creating Separation spaces.", milestone = "Phase 4: Specification" }
 
 [features.devicen-color-space]
 clause = "8.6.6.5"
 description = "DeviceN: several colorants, with their attributes and mixing hints."
 objects = ["DeviceNColorSpace", "DeviceNDict", "DeviceNProcess", "DeviceNMixingHints", "ColorantsDict"]
-read = { status = "partial", missing = "DeviceN alternate spaces and tint transforms are read, without reading mixing hints.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "DeviceN alternate spaces and tint transforms are rendered, without evaluating mixing hints.", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 1016 }
 
 [features.overprint]
 clause = "8.6.7"
 description = "Overprint and its mode."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.tiling-patterns]
 clause = "8.7.3"
@@ -682,27 +680,31 @@ objects = ["ToUnicodeCMapStream"]
 clause = "10.3"
 description = "Converting colors to device colors, with rendering intents."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.device-color-conversion]
 clause = "10.4"
 description = "Conversions among device color spaces, black generation, and undercolor removal."
 objects = []
-edit = { status = "partial", missing = "Recoloring converts among DeviceGray, DeviceRGB, and DeviceCMYK with full black generation, without custom `/BG2` or `/UCR2` functions.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The active black-generation and undercolor-removal functions apply to RGB paint, Forms and images. Filtered, nested and larger functions outside the bounded evaluator retain source color and are reported; #1007 tracks the remaining interpreter support.", milestone = "Phase 4: Specification" }
 
 [features.transfer-functions]
 clause = "10.5"
 description = "Transfer functions."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.halftones]
 clause = "10.6"
 description = "Halftone screens and spot functions."
 objects = ["HalftoneType1", "HalftoneType5", "HalftoneType6", "HalftoneType10", "HalftoneType16"]
+interpret = { status = "engine", upstream = 1001 }
 
 [features.scan-conversion]
 clause = "10.7"
 description = "Flatness, smoothness, and stroke adjustment."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.blend-modes]
 clause = "11.3.5"
@@ -1462,6 +1464,7 @@ objects = []
 clause = "8.6.5.8"
 description = "Select how out-of-gamut colours are translated for the output device."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.colour-operators]
 clause = "8.6.8"
@@ -1472,6 +1475,7 @@ objects = []
 clause = "10.8"
 description = "Render process and spot plates with the specified interactions between colourants."
 objects = []
+interpret = { status = "engine", upstream = 1001 }
 
 [features.alpha-compositing]
 clause = "11.3"

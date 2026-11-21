@@ -19,7 +19,7 @@ The version string of the installed pyropdf package.
 ## `Document`
 
 ```python
-Document(*, limits: DocumentLimits | None = None)
+Document(*, limits: DocumentLimits | None = None, version: str = '1.7')
 ```
 
 A PDF document.
@@ -323,8 +323,8 @@ Document.rewrite_images(
     color: bool = True,
     gray: bool = True,
     set_to_gray: bool = False,
-    lossless_format: Literal['flate', 'jpeg'] = 'flate',
-    bitonal_format: Literal['fax', 'flate'] = 'fax',
+    lossless_format: Literal['flate', 'jpeg', 'jpx'] = 'flate',
+    bitonal_format: Literal['fax', 'fax-g3', 'fax-g3-2d', 'jbig2', 'flate'] = 'fax',
 ) -> ImageRewriteReport
 ```
 
@@ -340,9 +340,12 @@ when it keeps its size.
 
 Lossy images (JPEG and JPEG 2000) are written as JPEG at
 `quality`, or 75 when it is `None`. Lossless ones are written as
-8-bit Flate, or as JPEG when `lossless_format` is `"jpeg"`.
-Bitonal ones (1 bit, CCITT, or JBIG2) are written as CCITT Group 4
-with `bitonal_format="fax"`, or as 1-bit Flate with `"flate"`;
+8-bit Flate, or as JPEG when `lossless_format` is `"jpeg"`. Choose
+`"jpx"` for lossless JPEG 2000 output on gray and RGB XObjects.
+Images that keep other sample spaces and inline images use Flate.
+Bitonal images use Group 4 (`"fax"`), Group 3 one-dimensional
+(`"fax-g3"`) or mixed (`"fax-g3-2d"`), lossless JBIG2 XObjects
+(`"jbig2"`, 1-bit Flate for inline images), or 1-bit Flate (`"flate"`);
 resampled bitonal pixels below half gray become black. A soft mask,
 a stencil `/Mask` of the image's size, or a color-key mask
 becomes a new 8-bit soft mask resampled with the image, so a mask
