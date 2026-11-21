@@ -170,3 +170,27 @@ def test_every_corpus_source_names_a_text_operation_of_the_page(name: str) -> No
                 continue
             assert operations[char.operation].operator in SHOWS_TEXT
             assert char.stream in streams
+
+
+def test_redraw_refuses_a_declared_program_that_only_loads_with_a_substitute() -> None:
+    doc = pyropdf.open(build_provenance_pdf("BT /F1 16 Tf 20 100 Td (Text) Tj ET"))
+    font = doc.objects[9]
+    font["Subtype"] = pyropdf.Name("TrueType")
+    font["BaseFont"] = pyropdf.Name("UnavailableFace")
+    font["FirstChar"], font["LastChar"], font["Widths"] = 32, 127, [500] * 96
+    program = doc.objects.add_stream(b"not an installed font")
+    descriptor = doc.objects.add(
+        {
+            "Type": pyropdf.Name("FontDescriptor"),
+            "FontName": pyropdf.Name("UnavailableFace"),
+            "FontFile2": doc.objects[program],
+        }
+    )
+    font["FontDescriptor"] = doc.objects[descriptor]
+    run = doc.pages[0].content().text_runs[0]
+    target = pyropdf.Document()
+    blank = target.pages.new((200, 200))
+    before = target.to_bytes(), target.history.steps
+    with blank.draw() as canvas, pytest.raises(ValueError, match="substitute"):
+        canvas.draw(run)
+    assert (target.to_bytes(), target.history.steps) == before

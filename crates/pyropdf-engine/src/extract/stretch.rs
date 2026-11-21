@@ -26,6 +26,8 @@ const SAME_LENGTH: f64 = 1e-9;
 /// resolvers that it uses.
 pub(super) struct Stretches<'a> {
     cache: FontCache<'a>,
+    embedded: FontCache<'a>,
+    no_substitution: FontResolverFn,
     font_resolver: FontResolverFn,
     cmap_resolver: CMapResolverFn,
 }
@@ -34,9 +36,26 @@ impl<'a> Stretches<'a> {
     pub(super) fn new(settings: &InterpreterSettings) -> Self {
         Self {
             cache: FontCache::new(),
+            embedded: FontCache::new(),
+            no_substitution: std::sync::Arc::new(|_| None),
             font_resolver: settings.font_resolver.clone(),
             cmap_resolver: settings.cmap_resolver.clone(),
         }
+    }
+
+    pub(super) fn resolve(&self, dict: &hayro::hayro_syntax::object::Dict<'a>) -> Option<Font<'a>> {
+        self.cache
+            .font(dict, &self.font_resolver, &self.cmap_resolver)
+    }
+
+    /// A declared embedded program must load without asking for a substitute.
+    /// Keep that result apart from the normal resolver's dictionary cache.
+    pub(super) fn embedded_font(
+        &self,
+        dict: &hayro::hayro_syntax::object::Dict<'a>,
+    ) -> Option<Font<'a>> {
+        self.embedded
+            .font(dict, &self.no_substitution, &self.cmap_resolver)
     }
 
     /// The font that tells the stretches of `run`'s glyphs, or `None` when
@@ -49,10 +68,7 @@ impl<'a> Stretches<'a> {
             .any(|glyph| {
                 matches!(&**glyph, Glyph::Outline(_)) && may_be_stretched(glyph.transform())
             })
-            .then(|| {
-                self.cache
-                    .font(dict, &self.font_resolver, &self.cmap_resolver)
-            })?
+            .then(|| self.resolve(dict))?
     }
 }
 

@@ -73,6 +73,8 @@ from pyropdf._content import (
     RadialGradient,
     ShadingPattern,
     Stroke,
+    TextRenderMode,
+    TextRun,
 )
 from pyropdf._errors import LimitError, PdfError, StaleObjectError
 from pyropdf._fonts import (
@@ -160,6 +162,7 @@ class Canvas:
         "_buffered",
         "_charged",
         "_closed",
+        "_copied_fonts",
         "_copies",
         "_depth",
         "_elements",
@@ -208,6 +211,7 @@ class Canvas:
         self._xobjects: dict[str, int] = {}
         # The copy of each image of another document that the canvas drew, by its document and number.
         self._copies: dict[tuple[Document, int], int] = {}
+        self._copied_fonts: dict[_core._PageSnapshot, dict[tuple[int, int], int]] = {}
         # A Standard 14 font's base name, or the object number of an embedded face's Type0 font.
         self._fonts: dict[str, str | int] = {}
         self._gstates: dict[tuple[float | None, float | None, str | None], str] = {}
@@ -599,6 +603,9 @@ class Canvas:
         page = self._page
         document = page.document
         objects = document.objects
+        for snapshot, copies in self._copied_fonts.items():
+            roots = [(number, generation, target) for (number, generation), target in copies.items()]
+            snapshot.copy_fonts(document._core(), roots, self._active)  # noqa: SLF001
         if self._oc:
             self._prepare_optional_content()
         rotation, box, unit = _page_space(page)
@@ -1256,8 +1263,8 @@ class Canvas:
             + b" Do\nQ"
         )
 
-    def draw(self, item: Path | Image) -> None:
-        """Paint a :class:`Path` or :class:`Image` item that :meth:`Page.content` returned.
+    def draw(self, item: Path | Image | TextRun) -> None:
+        """Paint a :class:`Path`, :class:`Image`, or :class:`TextRun` from :meth:`Page.content`.
 
         The item's clips, its groups' opacity and blend modes, and its own
         blend mode are applied; soft masks are not. An axial or radial
@@ -1271,22 +1278,84 @@ class Canvas:
         image's own masks: a canvas on a page of the item's document draws
         that object again, and one of another document copies it, with the
         objects it reaches but pages, as it is when this call is made. Inline
-        images, stencil image masks, and text runs cannot be drawn; an item
-        that cannot be drawn raises ``TypeError`` or ``ValueError`` and draws
-        nothing.
+        images and stencil image masks cannot be drawn.
+
+        A text run uses its original PDF codes and positioned text matrices.
+        Its font dictionary, encoding, and embedded program are copied from
+        the version that was read, including when drawing on the same document.
+        Simple embedded and standard 14 fonts, embedded Identity-H/V fonts, and
+        Type 3 fonts with their own resources are supported. Runs with a fallback
+        or direct font, Type 3 procedures that need enclosing resources,
+        other composite encodings, a singular glyph transform, replacement
+        text, a soft mask, or a pattern paint raise :class:`ValueError`. A closed source raises
+        :class:`DocumentClosedError`. These refusals draw nothing.
         """
         self._check_open()
+        if isinstance(item, TextRun):
+            self._draw_run(item)
+            return
         if isinstance(item, Image):
             self._draw_image(item)
             return
         if not isinstance(item, Path):
-            msg = f"draw() paints Path and Image items, not {type(item).__name__}"
+            msg = f"draw() paints Path, Image and TextRun items, not {type(item).__name__}"
             raise TypeError(msg)
         fill = None if item.fill is None else _paint(item.fill, "fill")
         # Checked before any scope opens, so that a refused stroke draws nothing.
         stroke = _stroke(item.stroke)
         with self._item_context(item):
             self.path(item.segments, fill=fill, stroke=stroke, fill_rule=item.fill_rule)
+
+    def _draw_run(self, item: TextRun) -> None:
+        """Use the original font resource and character codes, retaining the PDF glyph positions."""
+        replay = item._replay  # noqa: SLF001 - captured by Page.content.
+        if replay is None or replay.source is None or replay.source.snapshot is None or replay.source.document is None:
+            msg = "a text run must retain the source that Page.content() read"
+            raise ValueError(msg)
+        if replay.refusal or replay.reference is None:
+            raise ValueError(replay.refusal or "the text run has no source font")
+        if item.soft_mask is not None or any(group.soft_mask is not None for group in item.context.groups):
+            msg = "a text run under a soft mask cannot be drawn"
+            raise ValueError(msg)
+        if (item.fill is not None and not isinstance(item.fill, Color)) or (
+            item.stroke is not None and not isinstance(item.stroke.paint, Color)
+        ):
+            msg = "a text run with a pattern paint cannot be drawn"
+            raise ValueError(msg)
+        replay.source.document._ensure_open()  # noqa: SLF001
+        snapshot = replay.source.snapshot
+        # PDF real operands fit in 51 characters at f32 range. Reserve the
+        # per-glyph operator and the joins used to assemble and paint the run.
+        with self._scratch(len(replay.codes) * 1024 + 1024):
+            glyphs = bytearray()
+            for index, (code, matrix) in enumerate(replay.codes):
+                if index % 256 == 0:
+                    self._active.poll()
+                glyphs.extend(b" ".join(_real(round(_number(value, "text matrix"), 10)) for value in matrix))
+                glyphs.extend(b" Tm <" + code.to_bytes(replay.width, "big").hex().encode("ascii") + b"> Tj\n")
+            copies = self._copied_fonts.setdefault(snapshot, {})
+            font = copies.get(replay.reference)
+            if font is None:
+                self._charge(256)  # The source/target mapping and its temporary commit row.
+                font = self._page.document.objects.add({})
+                copies[replay.reference] = font
+            name = self._font_name(font).encode("ascii")
+            shown = b"BT /" + name + b" 1 Tf 0 Tc 0 Tw 100 Tz 0 Ts\n" + glyphs + b"ET"
+            if item.render_mode is TextRenderMode.INVISIBLE:
+                painted = b"q 3 Tr\n" + shown + b"\nQ"
+            else:
+                fill = self._setting(item.fill, [], None) if item.fill is not None else None
+                stroke = (
+                    self._setting(cast("Color", item.stroke.paint), [], item.stroke)
+                    if item.stroke is not None
+                    else None
+                )
+                painted = self._paint_text(shown, fill, stroke, item.stroke, duplicate=False)
+            if replay.pen is not None:
+                basis = b" ".join(_real(value) for value in replay.pen)
+                painted = b"q " + basis + b" cm\n" + painted + b"\nQ"
+            with self._item_context(item):
+                self._emit(painted)
 
     def _draw_image(self, item: Image) -> None:
         """Paint an :class:`Image` item from the object it names."""
@@ -1320,7 +1389,7 @@ class Canvas:
             self._emit(b"q\n" + _numbers(*matrix) + b" cm\n/" + name.encode() + b" Do\nQ")
 
     @contextmanager
-    def _item_context(self, item: Path | Image) -> Generator[None]:
+    def _item_context(self, item: Path | Image | TextRun) -> Generator[None]:
         """Apply an item's clips, groups, and blend mode around its painting."""
         scopes: list[AbstractContextManager[None]] = [
             self.clip(clip.segments, fill_rule=clip.fill_rule) for clip in item.context.clips

@@ -278,6 +278,18 @@ unit = "bytes"
 default = 127
 reached = "A password is longer in UTF-8 than PDF 2.0 allows."
 
+[codes.recipient_count]
+message = "too many public-key recipients"
+unit = "recipients"
+default = 128
+reached = "A recipient operation exceeds 128 certificates or CMS envelopes."
+
+[codes.recipient_envelope_size]
+message = "the CMS recipient envelope is too large"
+unit = "bytes"
+default = 65_536
+reached = "A CMS recipient envelope exceeds 64 KiB before the credential provider processes it."
+
 [codes.embedded_file_size]
 message = "the attachment is too large"
 unit = "bytes"
