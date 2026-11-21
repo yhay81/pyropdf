@@ -535,6 +535,94 @@ def dual_archival(files: dict[Path, str]) -> dict[Path, str]:
     return {path: "4" for path in files if path.stem == DUAL or path.stem.startswith(DUAL + "-")}
 
 
+ARCHIVAL_MEDIA_RULES = {
+    "flags": {"6.3.2-1"},
+    "flags-null": {"6.3.2-1"},
+    "flags-no-print": {"6.3.2-2"},
+    "flags-toggle-no-view": {"6.3.2-2"},
+    "filename": {"6.9-2"},
+    "unicode-filename": {"6.9-2"},
+    "unicode-filename-name": {"6.9-2"},
+    "relationship": {"6.9-4"},
+    "relationship-string": {"6.9-4"},
+}
+expect("media", "4e", ARCHIVAL_MEDIA_RULES, "#967")
+# A complete untagged RichMedia annotation and its embedded U3D already
+# violate these rules on the plain A-4 / UA-2 source. The edits below add
+# a rule only to the archival verdict.
+for case in ("complete", "flags-numeric", *ARCHIVAL_MEDIA_RULES):
+    expect(f"{DUAL}-media", "ua2", {case: {"8.9.3.3-1", "8.9.2.4.19-2"}}, "#967")
+    expect(f"{DUAL}-media", "4", {case: {"6.3.1-1", "6.9-3"} | ARCHIVAL_MEDIA_RULES.get(case, set())}, "#967")
+
+
+def archival_media_source(source: Path) -> bytes:
+    """Establish the baseline with complete engineering annotation flags and file keys."""
+    spec = pyropdf.RichMedia(
+        rect=pyropdf.Rect(10, 10, 30, 30),
+        kind=pyropdf.MediaKind.THREE_D,
+        asset=pyropdf.MediaAsset(filename="model.u3d", content_type="model/u3d", data=b"stored asset"),
+    )
+    with pyropdf.open(source) as doc:
+        annotation = doc.pages[0].annotations.add(spec)
+        file = annotation.obj["RichMediaContent"]["Assets"]["Names"][1]
+        annotation.flags = pyropdf.AnnotationFlags.PRINT
+        file["UF"] = "model.u3d"
+        file["AFRelationship"] = pyropdf.Name("Data")
+        return doc.to_bytes()
+
+
+def archival_media_controls(directory: Path) -> dict[Path, str]:
+    """Compare the changed owner and both saved verdicts against each source's own baseline."""
+    remove = object()
+    edits = {
+        "complete": ("", None),
+        # The structure checker requires an integer. veraPDF tests the
+        # integer portion of numeric values for the archival flag bits.
+        "flags-numeric": ("F", 4.5),
+        "flags": ("F", remove),
+        "flags-null": ("F", None),
+        "flags-no-print": ("F", 0),
+        "flags-toggle-no-view": ("F", int(pyropdf.AnnotationFlags.PRINT | pyropdf.AnnotationFlags.TOGGLE_NO_VIEW)),
+        "filename": ("F", remove),
+        "unicode-filename": ("UF", remove),
+        "unicode-filename-name": ("UF", pyropdf.Name("model.u3d")),
+        "relationship": ("AFRelationship", remove),
+        "relationship-string": ("AFRelationship", "Data"),
+    }
+    files = {}
+    inputs = [
+        (ROOT / "tests/assets/pdfa/pdfa-4e.pdf", "media", "4e", "PDF/A-4E"),
+        (ROOT / f"tests/assets/pdfua/{DUAL}.pdf", f"{DUAL}-media", "ua2", "PDF/A-4"),
+    ]
+    for source, prefix, profile, archival_claim in inputs:
+        original = archival_media_source(source)
+        for case, (field, value) in edits.items():
+            with pyropdf.open(original) as doc:
+                annotation = doc.pages[0].annotations[-1]
+                file = annotation.obj["RichMediaContent"]["Assets"]["Names"][1]
+                owner = annotation.obj if case.startswith("flags") else file
+                if value is remove:
+                    del owner[field]
+                elif field:
+                    owner[field] = value
+                for incremental in (False, True):
+                    claims = doc.changes(incremental=incremental).claims
+                    expected = [(archival_claim, (owner.xref,))] if case in ARCHIVAL_MEDIA_RULES else []
+                    if [(item.claim, item.objects) for item in claims] != expected:
+                        msg = f"unexpected {prefix} report for {case}: {claims}"
+                        raise ValueError(msg)
+                    mode = "incremental" if incremental else "full"
+                    path = directory / f"{prefix}-{case}-{mode}.pdf"
+                    doc.save(path, incremental=incremental)
+                    with pyropdf.open(path) as reopened:
+                        reopened.pages[0].rotation = 90
+                        if reopened.changes(incremental=incremental).claims:
+                            msg = f"an unrelated edit reported the existing {case} defect"
+                            raise ValueError(msg)
+                    files[path] = profile
+    return files
+
+
 # The shared Screen case embeds a clip and a rendition action without tagging
 # the annotation. Each profile restricts a different part of that graph.
 SCREEN_RULES = {
@@ -610,6 +698,9 @@ def main() -> int:
         failures += run(args.jar.resolve(), dual_archival(targeted))
         failures += run(args.jar.resolve(), files)
         failures += run(args.jar.resolve(), dual_archival(files))
+        media = archival_media_controls(Path(directory))
+        failures += run(args.jar.resolve(), media)
+        failures += run(args.jar.resolve(), dual_archival(media))
         failures += controls(args.jar.resolve(), Path(directory))
         if args.arlington:
             models = {path: arlington(path, flavour) for path, flavour in files.items()}

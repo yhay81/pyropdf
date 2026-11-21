@@ -1124,11 +1124,6 @@ objects = ["RequirementsHandler"]
 clause = "13.2"
 description = "Renditions, media clips, play and screen parameters, and media players."
 objects = ["RenditionMedia", "RenditionSelector", "MediaClipData", "MediaClipSection", "MediaPlayParameters", "MediaScreenParameters", "MediaPlayers", "MediaPlayerInfo", "MediaCriteria"]
-read = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
 
 [features.sounds]
 clause = "13.3"

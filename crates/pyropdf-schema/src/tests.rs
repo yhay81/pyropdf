@@ -78,3 +78,17 @@ fn predicates_are_kept_as_the_model_writes_them() {
         "fn:IsPDFVersion(1.7,fn:Extension(ADBE_Extn3,ExDataMarkupGeo))"
     );
 }
+
+#[test]
+fn viewport_links_to_the_geo_measure_in_both_editions() {
+    let measure = object("Viewport").unwrap().key("Measure").unwrap();
+    let conditions = measure.types[0]
+        .links
+        .iter()
+        .filter(|link| link.target().name == "MeasureGEO")
+        .map(|link| link.condition);
+    assert!(conditions.eq([
+        Some("fn:IsPDFVersion(1.7,fn:Extension(ADBE_Extn3,MeasureGEO))"),
+        Some("fn:SinceVersion(2.0,MeasureGEO)"),
+    ]));
+}

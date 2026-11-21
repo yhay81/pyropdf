@@ -98,6 +98,7 @@ MUTATIONS = (
         "Annotations",
         "add",
     ),
+    ("add_screen", "Validate and commit changes to the linked rendition.", "RenditionAction", "edit_rendition"),
     ("delete_annotation", "Detach annotation and owned appearance from page Annots.", "Annotations", "__delitem__"),
     (
         "edit_annotation",
