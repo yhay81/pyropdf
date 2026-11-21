@@ -498,7 +498,7 @@ def claim(
 
 
 def test_a_claim_holds_only_when_every_applicable_dimension_in_scope_is_done(tmp_path: Path) -> None:
-    held = claim(copy_root(tmp_path / "a"), 'features = ["standard-security-handler"]\n')
+    held = claim(copy_root(tmp_path / "a"), 'features = ["standard-aes-r6"]\n')
     assert held.returncode == 0, held.stdout + held.stderr
     assert "The claim holds." in held.stdout
     assert "Full inventory: " in held.stdout
@@ -509,6 +509,23 @@ def test_a_claim_holds_only_when_every_applicable_dimension_in_scope_is_done(tmp
     assert "- lzw-filter read is partial" in blocked.stdout
 
 
+@pytest.mark.parametrize("selector", ['clauses = ["7.6.4"]', 'features = ["standard-security-handler"]'])
+def test_password_handler_claim_reports_rc4_creation_and_legacy_owner_rendering(tmp_path: Path, selector: str) -> None:
+    root = copy_root(tmp_path)
+    result = claim(root, selector)
+    assert result.returncode == 1
+    for method in ("standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4"):
+        assert f"{method} create is non-goal" in result.stdout
+        assert f"{method} interpret is partial" in result.stdout
+    assert "standard-aes-r5 create is non-goal" in result.stdout
+    evidence = record_evidence(root)
+    node = "tests/test_encrypted.py::test_aes_authoring_sets_the_exact_revision_and_permissions[standard-aes-r6]"
+    assert evidence["tests"].pop(node) == "passed"
+    missing = claim(root, 'features = ["standard-aes-r6"]', evidence)
+    assert missing.returncode == 1
+    assert node in missing.stdout
+
+
 def test_clause_claims_resolve_typed_objects_and_report_their_work(tmp_path: Path) -> None:
     root = copy_root(tmp_path)
     mapped = json.loads((root / MAP).read_bytes())
@@ -517,8 +534,12 @@ def test_clause_claims_resolve_typed_objects_and_report_their_work(tmp_path: Pat
     (root / MAP).write_text(json.dumps(mapped))
     broad = claim(root, 'clauses = ["7.6.4"]\nfeatures = ["EncryptionStandard"]')
     assert broad.returncode == 1, broad.stderr
-    assert "Resolved features: EncryptionStandard, standard-security-handler\n" in broad.stdout
-    assert "of 10 applicable dimensions of 2 features" in broad.stdout
+    security_rows = (
+        "EncryptionStandard, standard-aes-r4, standard-aes-r5, standard-aes-r6, "
+        "standard-rc4-r2, standard-rc4-r3, standard-rc4-r4, standard-security-handler"
+    )
+    assert f"Resolved features: {security_rows}\n" in broad.stdout
+    assert "of 40 applicable dimensions of 8 features" in broad.stdout
     assert "EncryptionStandard edit is planned (#889)" in broad.stdout
     parent = claim(root, 'clauses = ["7.6"]')
     assert "EncryptionStandard edit is planned (#889)" in parent.stdout
@@ -645,9 +666,11 @@ def test_a_claim_rejects_empty_scopes_and_invalid_exclusions(tmp_path: Path) -> 
 
 def test_a_claim_requires_the_named_tests_and_validators_at_the_revision(tmp_path: Path) -> None:
     root = copy_root(tmp_path)
-    scope = 'features = ["standard-security-handler"]'
+    scope = 'features = ["standard-aes-r6"]'
     original = record_evidence(root)
-    test = next(test for test in original["tests"] if "test_every_standard_handler_reads_with_both_passwords" in test)
+    test = (
+        "tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-aes-r6]"
+    )
     for outcome in ("failed", "skipped", None):
         data = record_evidence(root)
         del data["tests"][test]
@@ -655,7 +678,7 @@ def test_a_claim_requires_the_named_tests_and_validators_at_the_revision(tmp_pat
             data["tests"][test + "[revision-6]"] = outcome
         result = claim(root, scope, data)
         assert result.returncode != 0
-        assert f"standard-security-handler read lacks passing tests: {test}" in result.stdout
+        assert f"standard-aes-r6 read lacks passing tests: {test}" in result.stdout
     for check in CHECKS:
         data = record_evidence(root)
         del data["checks"][check]
@@ -775,7 +798,7 @@ def test_prospective_merge_checks_both_branches_and_preserves_the_checkout(tmp_p
 def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_path: Path) -> None:
     root = copy_root(tmp_path)
     spec_map = json.loads((root / MAP).read_bytes())
-    feature = next(f for f in spec_map["features"] if f["feature"] == "standard-security-handler")
+    feature = next(f for f in spec_map["features"] if f["feature"] == "standard-aes-r6")
     spec_map["features"] = [feature]
     feature["edit"].update(missing="A remaining edit.", issue=257)
     decisions = root / "evidence/releases/v1.0.0/decisions.toml"
@@ -808,7 +831,7 @@ def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_pat
 
     assert run("partial").returncode != 0
     decisions.write_text(
-        'release = "v1.0.0"\n[exceptions.standard-security-handler.edit]\n'
+        'release = "v1.0.0"\n[exceptions.standard-aes-r6.edit]\n'
         'decision = "https://github.com/yhay81/pyropdf/issues/257#issuecomment-123"\n'
         'limitation = "The recorded limitation."\n'
     )
@@ -816,12 +839,12 @@ def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_pat
         result = run(status)
         assert result.returncode == 0, result.stderr + result.stdout
         assert "The recorded limitation." in result.stdout
-        result = claim(root, 'features = ["standard-security-handler"]')
+        result = claim(root, 'features = ["standard-aes-r6"]')
         assert result.returncode != 0
-        assert f"standard-security-handler edit is {status}" in result.stdout
+        assert f"standard-aes-r6 edit is {status}" in result.stdout
         result = claim(
             root,
-            'features = ["standard-security-handler"]\n[exclusions.standard-security-handler]\nedit="Outside scope"',
+            'features = ["standard-aes-r6"]\n[exclusions.standard-aes-r6]\nedit="Outside scope"',
         )
         assert result.returncode == 0
         assert "4 of 4" in result.stdout
@@ -836,7 +859,7 @@ def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_pat
     for status in ("engine", "planned"):
         result = run(status)
         assert result.returncode != 0
-        assert f"standard-security-handler edit is {status}" in result.stdout
+        assert f"standard-aes-r6 edit is {status}" in result.stdout
 
 
 def qualifying_workflows(root: Path) -> tuple[dict, dict]:
