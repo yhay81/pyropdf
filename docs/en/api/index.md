@@ -130,6 +130,7 @@ method and property of its classes with its full description.
 - [`Paint`](text-and-content.md#paint)
 - [`Path`](text-and-content.md#path): A path that is filled, stroked, or both.
 - [`Paths`](text-and-content.md#paths): The paths of a page as columns, from `Page.paths`.
+- [`PatternPaint`](text-and-content.md#patternpaint): Paint with an indirect tiling or shading pattern in the canvas document.
 - [`RadialGradient`](text-and-content.md#radialgradient): A paint for a `Canvas` that changes color between two circles.
 - [`Segment`](text-and-content.md#segment)
 - [`ShadingPattern`](text-and-content.md#shadingpattern): A paint that a shading fills, from a shading pattern or `sh`.
@@ -280,7 +281,9 @@ method and property of its classes with its full description.
 - [`ObjectReference`](structure.md#objectreference): An indirect PDF object item of a structure element (`/Type /OBJR` dictionary).
 - [`RoleMap`](structure.md#rolemap): The structure tree's `/RoleMap` dictionary as a live mutable mapping.
 - [`StructureChildren`](structure.md#structurechildren): The child `StructureElement` handles of one `StructureElement` in `/K` order.
+- [`StructureChildRule`](structure.md#structurechildrule): An Annex L relationship, its observed count and the applicable occurrence rule.
 - [`StructureElement`](structure.md#structureelement): A handle on an indirect `StructElem` dictionary in `Document.structure`.
+- [`StructureText`](structure.md#structuretext): One piece of logical text and its originating element or content reference.
 - [`StructureTree`](structure.md#structuretree): The document's logical structure tree as its top-level elements, as `doc.structure` returns it.
 
 ## [Attachments](attachments.md)

@@ -300,9 +300,10 @@ class _Handle:
         """Return whether this is an indirect object rather than a direct value inside one."""
         return self._root is not None and not self._path
 
-    def _get(self, step: _Step) -> Any:  # noqa: ANN401 - a PDF value is any of several types.
-        """Return the resolved value at ``step``."""
-        return _decode(self._document, _core.object_get(self._core(), self._root, list(self._path), step), self, step)
+    def _get(self, step: _Step, *, direct_only: bool = False) -> Any:  # noqa: ANN401 - a PDF value has several types.
+        """Read a child value, optionally requiring it to be stored directly."""
+        value = _core.object_get(self._core(), self._root, list(self._path), step, direct_only=direct_only)
+        return _decode(self._document, value, self, step)
 
     def _set(self, step: _Step, value: object) -> None:
         """Write ``value`` at ``step``."""
@@ -648,6 +649,11 @@ def _object_number(xref: object) -> int:
     if not 0 <= xref <= _MAX_OBJECT_NUMBER:
         raise KeyError(xref)
     return xref
+
+
+def _direct_value(dictionary: Dictionary, key: str) -> Any:  # noqa: ANN401 - a PDF value has several types.
+    """Read a direct dictionary entry, returning None when it is absent or indirect."""
+    return dictionary._get(_key(key), direct_only=True)  # noqa: SLF001 - the handle reads its addressed child.
 
 
 def _key(key: object) -> bytes:
