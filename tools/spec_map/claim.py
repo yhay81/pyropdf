@@ -7,9 +7,13 @@ report to this specification map, including its dated inventory.
 
     python3 tools/spec_map/claim.py SCOPE --evidence release-evidence.json
 
-A TOML scope declares name, revision (full commit SHA), pdf-versions, errata
-(the inventory review date), extensions, profiles, tools, and clauses or
-features. A per-cell entry such as [exclusions.standard-security-handler]
+A TOML scope declares name (a private identifier), revision (full commit SHA),
+pdf-versions, errata (the inventory review date), extensions, profiles and tools.
+Clauses include linked Arlington objects. Explicit features select only the
+mapped operations and their tests. Profiles and dated extensions add evidence
+requirements. Optional input-profiles and input-extensions describe unverified
+input context. An optional display-label must match the generated claim title.
+A per-cell entry such as [exclusions.standard-security-handler]
 with edit = "Reason for leaving editing out" removes that cell from the claim.
 A scope needs at least one applicable, demonstrated cell.
 
@@ -37,6 +41,17 @@ from release_evidence import SUITES, VALIDATORS, digest, suite_outcomes, test_ou
 ROOT = Path(__file__).resolve().parent.parent.parent
 MAP = Path("docs/spec-map.json")
 FIELDS = ("name", "revision", "pdf-versions", "errata", "extensions", "profiles", "tools")
+SELECTORS = ("clauses", "features", "profiles", "extensions")
+PDF_VERSIONS = {*(f"1.{minor}" for minor in range(8)), "2.0"}
+# Base PDF editions for the individual profile parts in the dated inventory.
+PROFILE_BASES = {
+    "ISO 19005-1:2005": "1.4",
+    "ISO 19005-2:2011": "1.7",
+    "ISO 19005-3:2012": "1.7",
+    "ISO 19005-4:2020": "2.0",
+    "ISO 14289-1:2014": "1.7",
+    "ISO 14289-2:2024": "2.0",
+}
 
 
 class ScopeError(Exception):
@@ -45,7 +60,7 @@ class ScopeError(Exception):
 
 def validate_metadata(spec_map: dict[str, Any], scope: dict[str, Any]) -> None:
     """Identify the claim and its dated baseline unambiguously."""
-    unexpected = set(scope) - {*FIELDS, "features", "clauses", "exclusions"}
+    unexpected = set(scope) - {*FIELDS, *SELECTORS, "input-profiles", "input-extensions", "display-label", "exclusions"}
     if unexpected:
         msg = f"unknown scope fields: {', '.join(sorted(unexpected))}"
         raise ScopeError(msg)
@@ -57,7 +72,7 @@ def validate_metadata(spec_map: dict[str, Any], scope: dict[str, Any]) -> None:
         if not isinstance(scope[field], str) or not scope[field].strip():
             msg = f"the scope needs a nonempty {field}"
             raise ScopeError(msg)
-    for field in ("pdf-versions", "extensions", "profiles", "tools", "clauses", "features"):
+    for field in ("pdf-versions", "tools", *SELECTORS, "input-profiles", "input-extensions"):
         entries = scope.get(field, [])
         if not isinstance(entries, list) or any(not isinstance(entry, str) or not entry.strip() for entry in entries):
             msg = f"invalid scope list: {field}"
@@ -65,31 +80,125 @@ def validate_metadata(spec_map: dict[str, Any], scope: dict[str, Any]) -> None:
     if not scope["pdf-versions"] or scope["errata"] != spec_map["inventory"]["reviewed"]:
         msg = "the scope needs PDF versions and the review date of the selected inventory"
         raise ScopeError(msg)
+    unknown = set(scope["pdf-versions"]) - PDF_VERSIONS
+    if unknown:
+        msg = f"unknown PDF versions: {', '.join(sorted(unknown))}"
+        raise ScopeError(msg)
+
+
+def standards(inventory: dict[str, Any]) -> dict[str, dict[str, tuple[str, set[str]]]]:
+    """Index the dated publications by extension ID or individual conformance level."""
+    entries: dict[str, dict[str, tuple[str, set[str]]]] = {"profiles": {}, "extensions": {}}
+    for row in inventory["provisions"]:
+        if row["source"] != "standards":
+            continue
+        part = row["provision"]
+        if row["kind"] in {"extension", "clarification"}:
+            entries["extensions"][part] = ("2.0", set(row["features"]))
+        elif row["kind"] == "profile part":
+            if part not in PROFILE_BASES:
+                msg = f"missing base PDF version for inventory profile part: {part}"
+                raise ScopeError(msg)
+            for feature in row["features"]:
+                family, _, level = feature.partition("-")
+                if level:
+                    label = {"pdfa": "PDF/A", "pdfua": "PDF/UA"}[family]
+                    entries["profiles"][f"{label}-{level}"] = (PROFILE_BASES[part], {family, feature})
+    return entries
+
+
+def display_label(scope: dict[str, Any]) -> str:
+    """Describe the actual selectors. Free-form scope names are never published as claims."""
+    parts = [f"{field} {', '.join(sorted(set(scope[field])))}" for field in SELECTORS if scope.get(field)]
+    label = "Mapped " + " / ".join(parts) if parts else "Empty scope"
+    return label + (" with listed exclusions" if scope.get("exclusions") else "")
+
+
+def clause_features(spec_map: dict[str, Any], clauses: list[str]) -> set[str]:
+    """Select mapped operations from the clause rows and the base provision crosswalk."""
+    base = {row["provision"]: row["features"] for row in spec_map["inventory"]["provisions"] if row["source"] == "base"}
+    broad: set[str] = set()
+    for clause in clauses:
+        if clause not in spec_map["clauses"] and clause not in base:
+            msg = f"unknown clause: {clause}"
+            raise ScopeError(msg)
+        selected = {
+            row["feature"]
+            for row in spec_map["features"]
+            if row.get("clause") == clause or row.get("clause", "").startswith(clause + ".")
+        }
+        for provision, features in base.items():
+            if provision == clause or provision.startswith(clause + "."):
+                selected.update(features)
+        if not selected:
+            msg = f"clause has no mapped operations: {clause}"
+            raise ScopeError(msg)
+        broad.update(selected)
+    return broad
+
+
+def standard_features(inventory: dict[str, Any], scope: dict[str, Any], selected: set[str]) -> set[str]:
+    """Check the declared bases and return the operations required for standards claims."""
+    required: set[str] = set()
+    for field, catalog in standards(inventory).items():
+        claimed = set(scope[field])
+        context = set(scope.get("input-" + field, []))
+        unknown_ids = (claimed | context) - catalog.keys()
+        if unknown_ids:
+            msg = f"unknown {field} identifier: {', '.join(sorted(unknown_ids))}"
+            raise ScopeError(msg)
+        for identifier, (version, rows) in catalog.items():
+            # A shared PDF/A or PDF/UA mechanism alone selects no individual level.
+            explicit_rows = (rows - {"pdfa", "pdfua"}) & selected
+            if (identifier in claimed | context or explicit_rows) and version not in scope["pdf-versions"]:
+                msg = f"{identifier} requires PDF {version} in pdf-versions"
+                raise ScopeError(msg)
+            if identifier in claimed:
+                required.update(rows)
+    return required
+
+
+def included_features(names: set[str], by_name: dict[str, dict[str, Any]]) -> set[str]:
+    """Expand each aggregate into its operations, including nested aggregates once."""
+    selected = names.copy()
+    pending = list(names)
+    while pending:
+        for member in by_name[pending.pop()].get("includes", []):
+            if member not in selected:
+                selected.add(member)
+                pending.append(member)
+    return selected
 
 
 def in_scope(spec_map: dict[str, Any], scope: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return the features of the map that ``scope`` covers."""
+    """Return every feature row needed to substantiate the published selectors."""
     validate_metadata(spec_map, scope)
-    clauses = set(scope.get("clauses", []))
-    unknown = sorted(clauses - set(spec_map["clauses"]))
     by_name = {feature["feature"]: feature for feature in spec_map["features"]}
-    unknown += sorted(set(scope.get("features", [])) - set(by_name))
+    names = set(scope.get("features", []))
+    unknown = sorted(names - by_name.keys())
     if unknown:
         msg = f"the scope names what the map does not list: {', '.join(unknown)}"
         raise ScopeError(msg)
-    names = [name for name, feature in by_name.items() if feature.get("clause") in clauses]
-    names += [name for name in scope.get("features", []) if name not in names]
-    selected = set(names)
-    for name in names:
-        for member in by_name[name].get("includes", []):
-            if member not in selected:
-                selected.add(member)
-                names.append(member)
-    validate_exclusions(scope.get("exclusions", {}), names, spec_map["dimensions"])
-    return [by_name[name] for name in names]
+    clauses = clause_features(spec_map, scope.get("clauses", []))
+    required = standard_features(spec_map["inventory"], scope, names | clauses)
+    standard_objects = {obj for name in required for obj in by_name[name]["objects"]}
+    names.update(clauses, required, standard_objects)
+    names.update(obj for name in clauses for obj in by_name[name]["objects"])
+    names = included_features(names, by_name)
+    exclusions = scope.get("exclusions", {})
+    validate_exclusions(exclusions, names, spec_map["dimensions"])
+    omitted = included_features(required | standard_objects, by_name) & exclusions.keys()
+    if omitted:
+        msg = f"claimed standard requires every applicable cell of: {', '.join(sorted(omitted))}"
+        raise ScopeError(msg)
+    label = display_label(scope)
+    if scope.get("display-label", label) != label:
+        msg = f"display-label must match the resolved scope: {label}"
+        raise ScopeError(msg)
+    return [by_name[name] for name in sorted(names)]
 
 
-def validate_exclusions(exclusions: object, names: list[str], dimensions: list[str]) -> None:
+def validate_exclusions(exclusions: object, names: set[str], dimensions: list[str]) -> None:
     """Require each exclusion to name a selected cell and explain its omission."""
     if not isinstance(exclusions, dict):
         msg = "exclusions must name a feature, dimension and reason"
@@ -164,17 +273,29 @@ def check(spec_map: dict[str, Any], scope: dict[str, Any], evidence: dict[str, A
             else:
                 applicable += 1
                 undeclared = " that the scope does not declare as an exclusion" if given["status"] == "non-goal" else ""
-                blockers.append(f"- {name} {dimension} is {given['status']}{undeclared}")
+                owner = f" (#{given['issue']})" if given.get("issue") else ""
+                blockers.append(f"- {name} {dimension} is {given['status']}{undeclared}{owner}")
     if not applicable:
         blockers.append("- the claim has no applicable dimensions")
     totals = Counter(feature[dimension]["status"] for feature in spec_map["features"] for dimension in dimensions)
     share = f"{100 * done / applicable:.1f}%" if applicable else "none"
     lines = [
-        f"Claim: {scope['name']} at {scope['revision']}",
+        f"Claim: {display_label(scope)} at {scope['revision']}",
         (
-            f"Scope: PDF {', '.join(scope['pdf-versions'])}; inventory reviewed {scope['errata']}; "
-            f"extensions {', '.join(scope['extensions']) or 'none'}; "
-            f"profiles {', '.join(scope['profiles']) or 'none'}; tools {', '.join(scope['tools']) or 'none'}"
+            f"Baseline: {spec_map['inventory']['sources']['base']['id']}, reviewed {scope['errata']}. "
+            f"Declared PDF versions: {', '.join(scope['pdf-versions'])}. Tools: {', '.join(scope['tools']) or 'none'}"
+        ),
+        (
+            f"Input context (declared, unverified): profiles {', '.join(scope.get('input-profiles', [])) or 'none'}, "
+            f"extensions {', '.join(scope.get('input-extensions', [])) or 'none'}"
+        ),
+        "Resolved features: " + (", ".join(feature["feature"] for feature in features) or "none"),
+        *(
+            f"- {feature['feature']} {dim} tests: {', '.join(feature[dim]['tests'])}"
+            for feature in features
+            if feature["feature"] in scope.get("features", [])
+            for dim in dimensions
+            if dim not in exclusions.get(feature["feature"], {}) and feature[dim].get("tests")
         ),
         f"Errata revision: {spec_map['inventory']['sources']['errata']['revision']}",
         f"Full inventory: {len(spec_map['features'])} features in {len(dimensions)} dimensions: "
