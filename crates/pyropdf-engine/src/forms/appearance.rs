@@ -210,17 +210,13 @@ fn draw(
                 },
                 _ => None,
             };
+            // Resolve the default metrics while retaining the producer's /DA
+            // resource name for rich runs without an explicit CSS family.
+            let base = base.or_else(|| da.as_ref().map(|da| standard::da_font(&da.font)));
             let text = TextStyle::new(da, base);
-            return super::rich_layout::draw(
-                &runs,
-                &css,
-                &style,
-                &text,
-                align,
-                layout,
-                reader.budget,
-            )
-            .map(Some);
+            let fonts = super::rich_fonts::RichFonts::read(reader, form)?;
+            return super::rich_layout::draw(&runs, &css, &style, &text, align, layout, fonts)
+                .map(Some);
         }
     }
     if let TextLayout::Comb(max_len) = layout {

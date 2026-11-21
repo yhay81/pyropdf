@@ -26,14 +26,17 @@ pub fn is_widget(dict: &Dict) -> bool {
 
 /// What the settler writes for a widget.
 pub enum Drawing {
-    /// The value holds a character outside WinAnsi, which no Standard 14
-    /// font draws: the widget's normal appearance is removed, so that none
-    /// shows a stale value.
+    /// The available fonts cannot render the value. Remove the stale normal
+    /// appearance when settling the field.
     Removed,
     /// The widget's new normal appearance.
     Drawn(WidgetAppearance),
-    /// A rich text field names each of its Standard 14 faces in the normal appearance.
-    Rich(WidgetAppearance, Vec<crate::standard::Base14Font>),
+    /// A rich field owns its Standard 14 resources and refers to the producer's embedded faces.
+    Rich(
+        WidgetAppearance,
+        Vec<crate::standard::Base14Font>,
+        Vec<(Name, Reference)>,
+    ),
     /// The normal appearances that a check box or radio button widget
     /// lacks, by state: `Off` and the state that its `/AS` names. A state
     /// that holds content is kept.
@@ -62,7 +65,7 @@ impl WidgetAppearance {
     /// Writes the font and the form XObject of the appearance as new
     /// objects, and returns the form's reference.
     fn write(self, transaction: &mut Transaction, budget: &Budget) -> Result<Reference> {
-        self.write_fonts(transaction, budget, &[])
+        self.write_fonts(transaction, budget, &[], &[])
     }
 
     #[expect(
@@ -74,6 +77,7 @@ impl WidgetAppearance {
         transaction: &mut Transaction,
         budget: &Budget,
         extra: &[crate::standard::Base14Font],
+        embedded: &[(Name, Reference)],
     ) -> Result<Reference> {
         let mut dict = Dict::new();
         dict.insert(Name::from("Type"), Value::Name(Name::from("XObject")));
@@ -99,6 +103,9 @@ impl WidgetAppearance {
             let name = font.pdf_base_name();
             let reference = standard_font(transaction, name, budget)?;
             fonts.insert(Name::from(name), Value::Reference(reference));
+        }
+        for (name, id) in embedded {
+            fonts.insert(name.clone(), Value::Reference(*id));
         }
         if !fonts.is_empty() {
             resources.insert(Name::from("Font"), Value::Dict(fonts));
@@ -188,8 +195,8 @@ pub fn write(
             )]
             appearances.insert(Name::from("N"), Value::Reference(reference));
         }
-        Drawing::Rich(drawn, fonts) => {
-            let reference = drawn.write_fonts(transaction, budget, &fonts)?;
+        Drawing::Rich(drawn, fonts, embedded) => {
+            let reference = drawn.write_fonts(transaction, budget, &fonts, &embedded)?;
             #[expect(
                 clippy::disallowed_methods,
                 reason = "only the normal appearance key is inserted"

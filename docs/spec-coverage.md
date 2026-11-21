@@ -31,7 +31,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
 | read | 0 | 0 | 0 | 39 | 42 | 750 |
-| interpret | 1 | 19 | 0 | 35 | 49 | 727 |
+| interpret | 1 | 19 | 0 | 34 | 49 | 728 |
 | create | 0 | 0 | 9 | 639 | 79 | 104 |
 | edit | 0 | 0 | 0 | 665 | 65 | 101 |
 | preserve | 0 | 0 | 0 | 25 | 662 | 144 |
@@ -183,7 +183,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.6.4.17 | ECMAScript actions | `ecmascript-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.18 | Rich media execute actions | `rich-media-execute-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.3 | Interactive form dictionary | `interactive-form` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.7.4.3 | Variable text | `variable-text` | 1 done | 1 partial | 1 done | 1 done | 1 done |
+| 12.7.4.3 | Variable text | `variable-text` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.5.2 | Button fields | `button-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.5.3 | Text fields | `text-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.5.4 | Choice fields | `choice-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,301 unfinished cells in 831 features: 1 engine, 1,403 partial, 897 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,300 unfinished cells in 831 features: 1 engine, 1,402 partial, 897 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -304,8 +304,6 @@ Milestone [#249](https://github.com/yhay81/pyropdf/issues/249).
     - read, interpret — `devicen-color-space`, `colour-operators`.
     - create, edit — `calgray-color-space`, `calrgb-color-space`, `lab-color-space`, `icc-based-color-space`, `indexed-color-space`, `separation-color-space`, `devicen-color-space`, `colour-operators`.
     - preserve — `colour-operators`.
-- [#1032](https://github.com/yhay81/pyropdf/issues/1032) Resolve embedded font fallbacks in rich text field appearances. Select embedded fonts from the form resources for rich text CSS families, including shaped non-WinAnsi spans, and independently verify mixed appearances.
-    - interpret — `variable-text`.
 
 ### 250 Rewriting
 

@@ -99,14 +99,6 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Retain source operands and independently verify calibration, ICC profiles, palettes and tint transforms including DeviceN mixing hints. Construct and edit colour resources and exercise the corresponding operators."
 
-[families.rich-text-embedded-fonts]
-tracker = 249
-issue = 1032
-title = "Resolve embedded font fallbacks in rich text field appearances"
-features = ["variable-text"]
-dimensions = ["interpret"]
-behavior = "Select embedded fonts from the form resources for rich text CSS families, including shaped non-WinAnsi spans, and independently verify mixed appearances."
-
 [families.image-resources]
 tracker = 250
 issue = 900
