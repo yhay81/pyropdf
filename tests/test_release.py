@@ -9,7 +9,7 @@ import sys
 import tomllib
 from pathlib import Path
 from urllib.parse import unquote_plus
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 import pytest
 
@@ -192,6 +192,67 @@ def test_larger_free_threaded_wheel_reports_size_and_checks_notices(
         tool()
 
 
+def test_abi3_recompression_preserves_installed_members_and_signed_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "tools"))
+    repack = runpy.run_path(str(ROOT / "tools/repack_wheel.py"))["repack"]
+    path = tmp_path / "pyropdf-1.0-cp311-abi3-win_amd64.whl"
+    files = {
+        "pyropdf/_core.pyd": bytes(range(256)) * 40,
+        "pyropdf/__init__.py": b"# test package",
+        "pyropdf-1.0.dist-info/RECORD": b"original,record,entries",
+        "pyropdf-1.0.dist-info/RECORD.jws": b"original signature bytes",
+        "pyropdf-1.0.dist-info/licenses/NOTICE": b"original notice",
+    }
+    with ZipFile(path, "w") as archive:
+        archive.comment = b"wheel comment"
+        for name, content in files.items():
+            member = ZipInfo(name, (2024, 1, 2, 3, 4, 6))
+            member.external_attr = 0o100755 << 16
+            member.comment = b"member comment"
+            archive.writestr(member, content, compress_type=ZIP_DEFLATED, compresslevel=0)
+    input_bytes = path.read_bytes()
+    before, after = repack(path)
+    delivered_bytes = path.read_bytes()
+    assert after.size_bytes < before.size_bytes
+    assert after.sha256 != before.sha256
+    with ZipFile(path) as archive:
+        assert archive.namelist() == list(files)
+        assert archive.comment == b"wheel comment"
+        assert archive.testzip() is None
+        for member in archive.infolist():
+            assert archive.read(member) == files[member.filename]
+            assert member.date_time == (2024, 1, 2, 3, 4, 6)
+            assert member.external_attr == 0o100755 << 16
+            assert member.comment == b"member comment"
+            assert member.compress_type == ZIP_DEFLATED
+    assert repack(path) == (after, after)
+    path.write_bytes(input_bytes)
+    assert repack(path) == (before, after)
+    assert path.read_bytes() == delivered_bytes
+
+
+def test_recompression_failure_leaves_the_input_wheel_intact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "tools"))
+    repacker = runpy.run_path(str(ROOT / "tools/repack_wheel.py"))
+    path = tmp_path / "pyropdf-1.0-cp311-abi3-win_amd64.whl"
+    with ZipFile(path, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("pyropdf/_core.pyd", b"original native code")
+    before = path.read_bytes()
+    writer = repacker["zopfli"].ZipFile
+    write = writer.writestr
+
+    def damage(archive: ZipFile, member: ZipInfo, data: bytes, *, compress_type: int) -> None:
+        write(archive, member, data + b"!", compress_type=compress_type)
+
+    monkeypatch.setattr(writer, "writestr", damage)
+    with pytest.raises(ValueError, match=r"changed wheel member pyropdf/_core.pyd"):
+        repacker["repack"](path)
+    assert path.read_bytes() == before
+    assert list(tmp_path.iterdir()) == [path]
+
+
 def test_pr_wheels_match_the_native_release_builds() -> None:
     comparison = (ROOT / ".github/workflows/wheel-size.yml").read_text(encoding="utf-8")
     (native,) = re.findall(r"\n  build-wheels:\n(.*?)(?=\n  \S)", WORKFLOW, flags=re.DOTALL)
@@ -207,7 +268,18 @@ def test_pr_wheels_match_the_native_release_builds() -> None:
     assert "git -C head rev-parse HEAD^1" in comparison
     assert "args: ${{ steps.native.outputs.base }}" in comparison
     assert "args: ${{ steps.native.outputs.head }}" in comparison
-    assert native.index("tools/wheel_size.py") < native.index("actions/upload-artifact")
+    packaging = "uv run --locked --only-group wheel --python 3.14 python tools/repack_wheel.py dist"
+    assert native.count(packaging) == comparison.count(packaging) == 1
+    assert "for checkout in base head; do" in comparison[: comparison.index(packaging)].rsplit("      - name:", 1)[1]
+    assert '[[ -f "$checkout/tools/repack_wheel.py" ]]' in comparison
+    assert '(cd "$checkout" && ' + packaging in comparison
+    assert comparison.index(packaging) < comparison.index("run: python head/tools/wheel_size.py")
+    assert native.index(packaging) < native.index("tools/wheel_size.py") < native.index("tools/smoke_artifact.py")
+    assert (
+        native.index("tools/smoke_artifact.py")
+        < native.index("actions/attest@")
+        < native.index("actions/upload-artifact")
+    )
 
 
 @pytest.mark.parametrize("action", ["opened", "reopened", "synchronize"])
