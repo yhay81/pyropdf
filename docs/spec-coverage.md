@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 25 | 34 | 772 |
-| interpret | 9 | 19 | 0 | 35 | 42 | 726 |
-| create | 0 | 0 | 21 | 28 | 49 | 733 |
-| edit | 0 | 0 | 0 | 49 | 55 | 727 |
-| preserve | 0 | 0 | 0 | 26 | 39 | 766 |
+| read | 0 | 0 | 0 | 19 | 26 | 786 |
+| interpret | 9 | 19 | 0 | 29 | 35 | 739 |
+| create | 0 | 0 | 21 | 28 | 34 | 748 |
+| edit | 0 | 0 | 0 | 41 | 36 | 754 |
+| preserve | 0 | 0 | 0 | 19 | 28 | 784 |
 
 ## Clauses
 
@@ -42,14 +42,14 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 7.2 | Lexical conventions | `lexical-conventions` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.3 | Objects | `basic-objects` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
-| 7.4.2 | ASCIIHexDecode filter | `asciihex-filter` | 1 done | 1 n/a | 1 planned | 1 partial | 1 done |
-| 7.4.3 | ASCII85Decode filter | `ascii85-filter` | 1 done | 1 n/a | 1 planned | 1 planned | 1 planned |
-| 7.4.4 | LZWDecode and FlateDecode filters | `flate-filter`, `lzw-filter` | 1 done, 1 planned | 1 n/a, 1 planned | 1 done, 1 planned | 2 planned | 1 done, 1 planned |
-| 7.4.5 | RunLengthDecode filter | `run-length-filter` | 1 planned | 1 n/a | 1 planned | 1 planned | 1 planned |
-| 7.4.6 | CCITTFaxDecode filter | `ccitt-fax-filter` | 1 done | 1 n/a | 1 planned | 1 partial | 1 done |
-| 7.4.7 | JBIG2Decode filter | `jbig2-filter` | 1 done | 1 n/a | 1 planned | 1 planned | 1 done |
+| 7.4.2 | ASCIIHexDecode filter | `asciihex-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.3 | ASCII85Decode filter | `ascii85-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.4 | LZWDecode and FlateDecode filters | `flate-filter`, `lzw-filter` | 1 done, 1 partial | 1 n/a, 1 partial | 1 done, 1 partial | 2 partial | 2 done |
+| 7.4.5 | RunLengthDecode filter | `run-length-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.6 | CCITTFaxDecode filter | `ccitt-fax-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.7 | JBIG2Decode filter | `jbig2-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.4.8 | DCTDecode filter | `dct-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
-| 7.4.9 | JPXDecode filter | `jpx-filter` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
+| 7.4.9 | JPXDecode filter | `jpx-filter` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.4.10 | Crypt filter | `crypt-filter` | 1 partial | 1 n/a | 1 partial | 1 partial | 1 partial |
 | 7.5.2 | File header | `file-header` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.4 | Cross-reference table | `xref-table` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
@@ -69,10 +69,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.9.4 | Dates | `dates` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.9.6 | Name trees | `name-trees` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.9.7 | Number trees | `number-trees` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.10.2 | Type 0 sampled functions | `sampled-functions` | 1 done | 1 done | 1 planned | 1 planned | 1 planned |
-| 7.10.3 | Type 2 exponential interpolation functions | `exponential-functions` | 1 done | 1 done | 1 done | 1 planned | 1 done |
-| 7.10.4 | Type 3 stitching functions | `stitching-functions` | 1 done | 1 done | 1 done | 1 planned | 1 done |
-| 7.10.5 | Type 4 PostScript calculator functions | `calculator-functions` | 1 done | 1 done | 1 planned | 1 planned | 1 planned |
+| 7.10.2 | Type 0 sampled functions | `sampled-functions` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 7.10.3 | Type 2 exponential interpolation functions | `exponential-functions` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 7.10.4 | Type 3 stitching functions | `stitching-functions` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 7.10.5 | Type 4 PostScript calculator functions | `calculator-functions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11 | File specifications | `file-specifications` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11.4 | Embedded file streams | `embedded-files` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 7.11.4.2 | Related files arrays | `related-files` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -87,21 +87,21 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 8.6.5.4 | Lab colour spaces | `lab-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.5.5 | ICCBased colour spaces | `icc-based-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.5.8 | Rendering intent selection | `rendering-intents` | 1 done | 1 engine | 1 done | 1 done | 1 done |
-| 8.6.6.2 | Pattern colour spaces | `pattern-color-space` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
+| 8.6.6.2 | Pattern colour spaces | `pattern-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.6.3 | Indexed colour spaces | `indexed-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.6.4 | Separation colour spaces | `separation-color-space` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.6.5 | DeviceN colour spaces | `devicen-color-space` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 8.6.7 | Overprint control | `overprint` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 8.6.8 | Colour-setting operators | `colour-operators` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 8.7.3 | Tiling patterns | `tiling-patterns` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
-| 8.7.4 | Shading patterns | `shading-patterns` | 1 done | 1 done | 1 done | 1 planned | 1 done |
-| 8.7.4.5.2 | Type 1 function-based shadings | `function-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.7.4.5.3 | Type 2 axial shadings | `axial-shading` | 1 done | 1 done | 1 done | 1 planned | 1 done |
-| 8.7.4.5.4 | Type 3 radial shadings | `radial-shading` | 1 done | 1 done | 1 done | 1 planned | 1 done |
-| 8.7.4.5.5 | Type 4 free-form Gouraud-shaded triangle meshes | `free-form-triangle-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.7.4.5.6 | Type 5 lattice-form Gouraud-shaded triangle meshes | `lattice-triangle-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.7.4.5.7 | Type 6 Coons patch meshes | `coons-patch-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.7.4.5.8 | Type 7 tensor-product patch meshes | `tensor-patch-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.7.3 | Tiling patterns | `tiling-patterns` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4 | Shading patterns | `shading-patterns` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.2 | Type 1 function-based shadings | `function-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.3 | Type 2 axial shadings | `axial-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.4 | Type 3 radial shadings | `radial-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.5 | Type 4 free-form Gouraud-shaded triangle meshes | `free-form-triangle-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.6 | Type 5 lattice-form Gouraud-shaded triangle meshes | `lattice-triangle-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.7 | Type 6 Coons patch meshes | `coons-patch-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 8.7.4.5.8 | Type 7 tensor-product patch meshes | `tensor-patch-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.8 | External objects | `xobjects` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.9.5 | Image dictionaries | `images` | 1 partial | 1 done | 1 partial | 1 partial | 1 done |
 | 8.9.6 | Masked images | `image-masks` | 1 done | 1 done | 1 planned | 1 done | 1 done |
@@ -154,8 +154,8 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.5.6.13 | Ink annotations | `ink-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.14 | Popup annotations | `popup-annotations` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 12.5.6.15 | File attachment annotations | `file-attachment-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.5.6.16 | Sound annotations | `sound-annotations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
-| 12.5.6.17 | Movie annotations | `movie-annotations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
+| 12.5.6.16 | Sound annotations | `sound-annotations` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
+| 12.5.6.17 | Movie annotations | `movie-annotations` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 12.5.6.18 | Screen annotations | `screen-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.19 | Widget annotations | `widget-annotations` | 1 partial | 1 done | 1 partial | 1 partial | 1 done |
 | 12.5.6.20 | Printer's mark annotations | `printer-mark-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -172,8 +172,8 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.6.4.6 | Launch actions | `launch-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
 | 12.6.4.7 | Thread actions | `thread-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.8 | URI actions | `uri-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
-| 12.6.4.9 | Sound actions | `sound-actions` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
-| 12.6.4.10 | Movie actions | `movie-actions` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
+| 12.6.4.9 | Sound actions | `sound-actions` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
+| 12.6.4.10 | Movie actions | `movie-actions` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 12.6.4.11 | Hide actions | `hide-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.12 | Named actions | `named-actions` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 12.6.4.13 | Set-OCG-state actions | `set-ocg-state-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -201,9 +201,9 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.10 | Geospatial coordinates | `geospatial` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.11 | Document requirements | `document-requirements` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 13.2 | Multimedia | `renditions` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 13.3 | Sounds | `sounds` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
-| 13.4 | Movies | `movies` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
-| 13.5 | Alternate presentations | `alternate-presentations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
+| 13.3 | Sounds | `sounds` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
+| 13.4 | Movies | `movies` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
+| 13.5 | Alternate presentations | `alternate-presentations` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 13.6 | 3D artwork | `3d-artwork` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 13.7 | Rich media | `rich-media` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.2 | Legacy resource procedure sets | `procedure-sets` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
@@ -215,7 +215,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 14.7 | Logical structure | `logical-structure` | 1 done | 1 partial | 1 partial | 1 done | 1 done |
 | 14.7.4 | Structure namespaces | `structure-namespaces` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.8 | Tagged PDF | `tagged-pdf` | 1 done | 1 partial | 1 partial | 1 done | 1 done |
-| 14.9 | Accessibility support | `accessibility` | 1 done | 1 partial | 1 done | 1 done | 1 done |
+| 14.9 | Accessibility support | `accessibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.10 | Web capture | `web-capture` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.11.2 | Page boundaries | `page-boundaries` | 1 partial | 1 done | 1 done | 1 partial | 1 done |
 | 14.11.4 | Separation dictionaries | `separation-dictionaries` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -229,7 +229,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex I | Compatibility across PDF versions | `version-compatibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex K | XFA packets | `xfa` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
-| Annex L | Allowed structure children | `structure-children` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| Annex L | Allowed structure children | `structure-children` | 1 done | 1 partial | 1 planned | 1 planned | 1 done |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex Q | Page transparency detection | `page-transparency` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 done | 3 partial | 2 done, 1 planned | 3 partial | 3 partial |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-391 unfinished cells in 831 features: 9 engine, 163 partial, 219 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+304 unfinished cells in 831 features: 9 engine, 136 partial, 159 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -261,11 +261,7 @@ Milestone [#245](https://github.com/yhay81/pyropdf/issues/245).
 
 Milestone [#246](https://github.com/yhay81/pyropdf/issues/246).
 
-- [#896](https://github.com/yhay81/pyropdf/issues/896) Complete PDF function, pattern and mesh shading authoring and evaluation. Exercise sampled/calculator functions, function edits, tiling and uncolored patterns and shading types 1–7. Create and edit resources through the store, verify mesh and function evaluation independently and round-trip untouched data.
-    - read, interpret — `function-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`.
-    - create — `sampled-functions`, `calculator-functions`, `tiling-patterns`, `function-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`, `pattern-color-space`.
-    - edit — `sampled-functions`, `exponential-functions`, `stitching-functions`, `calculator-functions`, `tiling-patterns`, `function-shading`, `axial-shading`, `radial-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`, `shading-patterns`, `pattern-color-space`.
-    - preserve — `sampled-functions`, `calculator-functions`, `function-shading`, `free-form-triangle-shading`, `lattice-triangle-shading`, `coons-patch-shading`, `tensor-patch-shading`.
+No unfinished specification-map cells assigned.
 
 ### 247 Reading
 
@@ -349,28 +345,24 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 - [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
     - interpret — `public-key-security-handler`.
 - [#1056](https://github.com/yhay81/pyropdf/issues/1056) Resolve indirect stream filter selectors and parameters in their document revision. Resolve filter names and parameter references in the correct revision before reading or creating encrypted streams, and retain their reference identities through saves.
-    - read, create, preserve — `crypt-filter`, `crypt-filters`.
-- [#992](https://github.com/yhay81/pyropdf/issues/992) Keep stream crypt-filter selection when replacing attachment or stream data. Retain the leading security filter and its parameters when replacing the decoded payload or compression, including an attachment restricted to a distinct recipient audience.
-    - edit — `crypt-filter`, `crypt-filters`.
+    - read, create, edit, preserve — `crypt-filter`, `crypt-filters`.
 - [#905](https://github.com/yhay81/pyropdf/issues/905) Resolve signature seed constraints and build properties through signing and editing. Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification.
     - read, interpret — `signature-fields`.
     - create, edit — `signature-fields`, `digital-signatures`.
 - [#993](https://github.com/yhay81/pyropdf/issues/993) Render explicit legacy crypt filters and independently keyed recipient streams from the store. Interpret explicit legacy password filters and an independently keyed page stream through the authenticated version, including correct refusal for an unauthorized page.
     - interpret — `crypt-filters`.
-- [#891](https://github.com/yhay81/pyropdf/issues/891) Complete stream filter read, rewrite and preservation cases. Round-trip encoded and decoded streams across the listed filter chains and parameters. Cover ASCIIHex re-encoding, Group 3 fax and JPX output gaps, and retain untouched encoded data. Account for unsupported encoder paths explicitly.
-    - read — `lzw-filter`, `run-length-filter`.
-    - interpret — `lzw-filter`.
-    - create — `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
-    - edit — `flate-filter`, `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
-    - preserve — `ascii85-filter`, `lzw-filter`, `run-length-filter`.
+- [#982](https://github.com/yhay81/pyropdf/issues/982) Round-trip packed and wide predictor rows after adopting the hayro fix. Adopt the released row-local decoder through #603, then verify partially filled TIFF rows, externally filtered partial PNG pixel strides and predictor pixels wider than 255 bits in independent save and render controls.
+    - read, interpret, create — `lzw-filter`.
+    - edit — `flate-filter`, `lzw-filter`.
 
 ### 253 Understanding
 
 Milestone [#253](https://github.com/yhay81/pyropdf/issues/253).
 
-- [#907](https://github.com/yhay81/pyropdf/issues/907) Interpret standard structure roles, children, and abbreviation expansion in document order. Walk standard/custom roles and parent-child multiplicities, order content using structure references and expose abbreviation expansion in extracted output. Compare with hand-verified tagged documents.
-    - read, preserve — `structure-children`.
-    - interpret — `logical-structure`, `tagged-pdf`, `accessibility`, `structure-children`.
+- [#989](https://github.com/yhay81/pyropdf/issues/989) Resolve tagged form text using the originating content stream. Resolve external Form stream MCIDs and text enclosed by page-level Form invocations once hayro supplies stream provenance.
+    - interpret — `logical-structure`, `tagged-pdf`.
+- [#990](https://github.com/yhay81/pyropdf/issues/990) Resolve contextual Annex L rules and namespace-mapped structure children. Resolve cross-namespace roles, use as a grouping element and role-specific content for the remaining conditional Annex L verdicts.
+    - interpret — `structure-children`.
 
 ### 254 Verification
 
@@ -399,8 +391,6 @@ Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
     - preserve — `developer-extensions`, `page-piece`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
 - [#913](https://github.com/yhay81/pyropdf/issues/913) Author 3D scene settings and dimensional measurements as PDF data. Resolve scene, camera and activation settings and each dimensional measurement geometry. Verify view, stream and measurement references after editing.
     - read, interpret, create, edit, preserve — `3d-artwork`.
-- [#915](https://github.com/yhay81/pyropdf/issues/915) Complete existing legacy movie, sound and alternate-presentation relationship editing. Resolve external sound parameters, movie posters, timing, title-based action targets and alternate-presentation name trees. Verify reference-safe edits in existing files.
-    - read, interpret, edit, preserve — `sound-annotations`, `movie-annotations`, `sound-actions`, `movie-actions`, `sounds`, `movies`, `alternate-presentations`.
 - [#861](https://github.com/yhay81/pyropdf/issues/861) Complete prepress dictionaries and print annotation relationships. Resolve box colour, separations, trapping, OPI and print annotation relationships and preserve or edit them under the edition policy.
     - read, edit — `page-boundaries`, `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
     - interpret, create, preserve — `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.

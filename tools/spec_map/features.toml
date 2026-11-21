@@ -26,7 +26,7 @@ clause = "7.4.4"
 description = "The FlateDecode filter: zlib-compressed stream data."
 objects = []
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "planned", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The current decoder cannot round-trip TIFF Predictor 2 rows ending in a partial byte or predictor pixels wider than 255 bits.", milestone = "Phase 4: Specification" }
 
 [features.page-tree]
 clause = "7.7.3"
@@ -270,7 +270,6 @@ clause = "7.4.2"
 description = "The ASCIIHexDecode filter: stream data as hexadecimal digits."
 objects = []
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "partial", missing = "Decompressed saves remove ASCIIHexDecode, without re-encoding streams in hexadecimal.", milestone = "Phase 4: Specification" }
 
 [features.ascii85-filter]
 clause = "7.4.3"
@@ -282,6 +281,10 @@ interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a
 clause = "7.4.4"
 description = "The LZWDecode filter: LZW-compressed stream data, with its predictors."
 objects = ["FilterLZWDecode"]
+read = { status = "partial", missing = "The pinned reader misreads packed TIFF row boundaries, some externally filtered partial PNG pixel strides, and pixels wider than 255 bits.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Content with ordinary LZW data renders, but the pinned decoder cannot supply correct samples for the remaining packed or wide predictor layouts.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "The stream writer refuses TIFF Predictor 2 rows ending in a partial byte or predictor pixels wider than 255 bits until they round-trip in the pinned reader.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The stream editor refuses TIFF Predictor 2 rows ending in a partial byte or predictor pixels wider than 255 bits until they round-trip in the pinned reader.", milestone = "Phase 4: Specification" }
 
 [features.run-length-filter]
 clause = "7.4.5"
@@ -294,7 +297,6 @@ clause = "7.4.6"
 description = "The CCITTFaxDecode filter: Group 3 and Group 4 fax encoding of monochrome images."
 objects = ["FilterCCITTFaxDecode"]
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "partial", missing = "Image rewriting encodes monochrome images with Group 4 CCITTFaxDecode, without Group 3 encoding.", milestone = "Phase 4: Specification" }
 
 [features.jbig2-filter]
 clause = "7.4.7"
@@ -312,7 +314,6 @@ interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a
 clause = "7.4.9"
 description = "The JPXDecode filter: JPEG 2000 images, with their own color and transparency."
 objects = []
-edit = { status = "partial", missing = "Image rewriting transcodes JPEG 2000 images to JPEG or Flate, without encoding new JPX streams.", milestone = "Phase 4: Specification" }
 
 [features.crypt-filter]
 clause = "7.4.10"
@@ -321,7 +322,7 @@ objects = ["FilterCrypt"]
 read = { status = "partial", missing = "Direct crypt-filter choices are resolved. An indirect Filter array, filter name or DecodeParms dictionary needs revision-aware resolution (#1056).", milestone = "Phase 4: Specification" }
 create = { status = "partial", missing = "Creating encrypted output with an indirect stream filter or parameter requires selecting its resolved value (#1056).", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Saving streams whose security filter or parameters are stored indirectly must preserve their shared references across revisions (#1056).", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Stream dictionary edits and full and incremental saves preserve or change the explicit selector. Replacing the decoded payload through Stream.write still drops the selector (#992).", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Replacing data or compression retains direct crypt selectors. Indirect selector and parameter edits must resolve against the working version (#1056).", milestone = "Phase 4: Specification" }
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
 
 [features.file-header]
@@ -375,7 +376,7 @@ read = { status = "partial", missing = "Direct crypt-filter choices are resolved
 create = { status = "partial", missing = "Creating encrypted output with an indirect stream filter or parameter requires selecting its resolved value (#1056).", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Saving streams whose security filter or parameters are stored indirectly must preserve their shared references across revisions (#1056).", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The store interprets explicit filters and EFF, including independent recipient keys. Direct rendering of explicit legacy filters and a second recipient page key requires the authenticated store source (#993).", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Both save modes rewrite inherited attachments when EFF changes and preserve untouched ciphertext. Stream.write and Attachment.write must retain an existing private selector while replacing encoded data (#992).", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Replacing data or compression retains direct crypt selectors. Indirect selector and parameter edits must resolve against the working version (#1056).", milestone = "Phase 4: Specification" }
 
 [features.document-catalog]
 clause = "7.7.2"
@@ -509,7 +510,6 @@ objects = ["IndexedColorSpace"]
 clause = "8.6.6.2"
 description = "Pattern: painting with a tiling or shading pattern."
 objects = ["PatternColorSpace"]
-create = { status = "partial", missing = "Canvas paints gradients in Pattern color space, without creating tiling or uncolored pattern spaces.", milestone = "Phase 4: Specification" }
 
 [features.separation-color-space]
 clause = "8.6.6.4"
@@ -859,10 +859,6 @@ description = "Sound annotations."
 objects = ["AnnotSound"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
 
 [features.movie-annotations]
 clause = "12.5.6.17"
@@ -870,10 +866,6 @@ description = "Movie annotations."
 objects = ["AnnotMovie", "Movie", "MovieActivation"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
 
 [features.screen-annotations]
 clause = "12.5.6.18"
@@ -970,10 +962,6 @@ description = "Sound actions."
 objects = ["ActionSound"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
 
 [features.movie-actions]
 clause = "12.6.4.10"
@@ -981,10 +969,6 @@ description = "Movie actions."
 objects = ["ActionMovie"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
 
 [features.hide-actions]
 clause = "12.6.4.11"
@@ -1135,10 +1119,6 @@ description = "Sound objects."
 objects = ["SoundObject"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
 
 [features.movies]
 clause = "13.4"
@@ -1146,10 +1126,6 @@ description = "Movie dictionaries."
 objects = []
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
 
 [features.alternate-presentations]
 clause = "13.5"
@@ -1157,10 +1133,6 @@ description = "Alternate presentations: slide shows."
 objects = ["SlideShow"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
 
 [features.3d-artwork]
 clause = "13.6"
@@ -1207,7 +1179,7 @@ objects = []
 clause = "14.7"
 description = "The structure tree, its elements, parent tree, attributes, and class map."
 objects = ["StructTreeRoot", "StructElem", "MarkedContentReference", "ObjectReference", "ClassMap", "RoleMap", "StructureAttributesDict", "UserProperty"]
-interpret = { status = "partial", missing = "Page import, copy, and deletion resolve MCIDs, object references, and role and class maps, without structure-driven text extraction.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Logical reading follows mixed child and cross-page references. Form-stream glyph origins still require #104.", milestone = "Phase 4: Specification" }
 create = { status = "partial", missing = "Structure trees, elements, parent trees, role maps, and list and table attributes are created, without creating `ClassMap`, `ObjectReference`, or `UserProperty`.", milestone = "Phase 4: Specification" }
 
 [features.structure-namespaces]
@@ -1219,14 +1191,13 @@ objects = ["Namespace", "RoleMapNS"]
 clause = "14.8"
 description = "Tagged PDF: the mark information and the standard structure types and attributes."
 objects = ["MarkInfo"]
-interpret = { status = "partial", missing = "Profile checks and page operations interpret `MarkInfo` and standard roles, without structure-driven text extraction.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Structure-driven extraction reads page content, element replacements and object references. Glyphs inside a referenced Form await stream provenance (#104).", milestone = "Phase 4: Specification" }
 create = { status = "partial", missing = "Canvas tags create `MarkInfo` and standard block, list, table, inline, figure, and artifact structures, without full standard attribute coverage.", milestone = "Phase 4: Specification" }
 
 [features.accessibility]
 clause = "14.9"
 description = "Natural language, alternate descriptions, replacement text, and abbreviations."
 objects = []
-interpret = { status = "partial", missing = "Text extraction and profile checks interpret `/ActualText` and `/Lang`, without `/E` abbreviation expansion.", milestone = "Phase 4: Specification" }
 
 [features.web-capture]
 clause = "14.10"
@@ -1506,6 +1477,7 @@ deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated features is excluded by the specification completion milestone." }
 
 [features.structure-children]
+interpret = { status = "partial", missing = "The July 2024 Annex L matrix, numerical bounds, caption placement and Ruby sequences are interpreted. Cross-namespace role mapping and semantic conditions such as grouping usage or Warichu still need contextual resolution.", milestone = "Phase 4: Specification" }
 clause = "Annex L"
 description = "Check parent and child standard roles and their allowed multiplicities in the PDF 2.0 namespace."
 objects = []
