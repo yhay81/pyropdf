@@ -32,8 +32,8 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | --- | --- | --- | --- | --- | --- | --- |
 | read | 0 | 0 | 0 | 43 | 42 | 746 |
 | interpret | 1 | 13 | 0 | 39 | 662 | 116 |
-| create | 0 | 0 | 9 | 644 | 79 | 99 |
-| edit | 0 | 0 | 0 | 670 | 66 | 95 |
+| create | 0 | 0 | 9 | 643 | 78 | 101 |
+| edit | 0 | 0 | 0 | 671 | 65 | 95 |
 | preserve | 0 | 0 | 0 | 28 | 662 | 141 |
 
 ## Clauses
@@ -212,9 +212,9 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 14.4 | File identifiers | `file-identifiers` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.5 | Page-piece dictionaries | `page-piece` | 1 planned | 1 planned | 1 planned | 1 partial | 1 planned |
 | 14.6 | Marked content | `marked-content` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 14.7 | Logical structure | `logical-structure` | 1 done | 1 partial | 1 partial | 1 done | 1 done |
+| 14.7 | Logical structure | `logical-structure` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 14.7.4 | Structure namespaces | `structure-namespaces` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 14.8 | Tagged PDF | `tagged-pdf` | 1 done | 1 partial | 1 partial | 1 done | 1 done |
+| 14.8 | Tagged PDF | `tagged-pdf` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 14.9 | Accessibility support | `accessibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.10 | Web capture | `web-capture` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.11.2 | Page boundaries | `page-boundaries` | 1 partial | 1 done | 1 done | 1 partial | 1 done |
@@ -229,7 +229,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 planned |
 | Annex I | Compatibility across PDF versions | `version-compatibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex K | XFA packets | `xfa` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
-| Annex L | Allowed structure children | `structure-children` | 1 done | 1 partial | 1 planned | 1 planned | 1 done |
+| Annex L | Allowed structure children | `structure-children` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex Q | Page transparency detection | `page-transparency` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 partial | 3 partial | 3 planned | 3 partial | 3 partial |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-2,936 unfinished cells in 831 features: 1 engine, 1,424 partial, 1,511 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,934 unfinished cells in 831 features: 1 engine, 1,424 partial, 1,509 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -333,9 +333,6 @@ Milestone [#251](https://github.com/yhay81/pyropdf/issues/251).
     - interpret — `name-dictionary`, `embedded-files`, `destinations`, `remote-goto-actions`, `launch-actions`, `uri-actions`, `named-actions`, `fragment-identifiers`.
     - create, edit — `name-dictionary`, `destinations`, `launch-actions`, `uri-actions`, `fragment-identifiers`.
     - preserve — `fragment-identifiers`.
-- [#908](https://github.com/yhay81/pyropdf/issues/908) Author standard tagged attributes, class maps and legal structure children. Author and edit class maps, object references, user properties and standard structure attributes. Validate child multiplicities and relationships through page operations and independent checks.
-    - create — `logical-structure`, `tagged-pdf`, `structure-children`.
-    - edit — `structure-children`.
 
 ### 252 Persistence
 
@@ -376,7 +373,7 @@ Milestone [#253](https://github.com/yhay81/pyropdf/issues/253).
 - [#989](https://github.com/yhay81/pyropdf/issues/989) Resolve tagged form text using the originating content stream. Resolve external Form stream MCIDs and text enclosed by page-level Form invocations once hayro supplies stream provenance.
     - interpret — `logical-structure`, `tagged-pdf`.
 - [#990](https://github.com/yhay81/pyropdf/issues/990) Resolve contextual Annex L rules and namespace-mapped structure children. Resolve cross-namespace roles, use as a grouping element and role-specific content for the remaining conditional Annex L verdicts.
-    - interpret — `structure-children`.
+    - interpret, create, edit — `structure-children`.
 
 ### 254 Verification
 
