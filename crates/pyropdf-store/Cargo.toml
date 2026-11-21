@@ -22,10 +22,8 @@ sha2 = "0.11.1"
 sha1 = "0.11.0"
 # Fresh AES initialization vectors for recipient ciphertext.
 getrandom = "0.4.3"
-# ISO/TS 32004:2024 PDF MAC uses the same CMS types as the signing engine.
-cms = { version = "0.3.0-rc.2", default-features = false }
+# The restricted ISO/TS 32004:2024 DER profile and its cryptographic primitives.
 der = { version = "0.8.3", features = ["alloc", "derive", "oid"] }
-x509-cert = { version = "0.3.0", default-features = false }
 aes-kw = { version = "0.3.1", default-features = false }
 hkdf = "0.13.0"
 hmac = "0.13.0"

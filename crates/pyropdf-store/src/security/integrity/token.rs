@@ -1,20 +1,16 @@
 //! CMS AuthenticatedData restricted to the profile in ISO/TS 32004:2024 §6.
 
+use super::syntax::{
+    Algorithm, Attribute, Attributes, AuthenticatedData, ContentInfo, EncapsulatedContentInfo,
+    Originator, PasswordRecipientInfo, RecipientInfo, SignedData,
+};
 use aes_kw::KwAes256;
-use cms::authenticated_data::AuthenticatedData;
-use cms::cert::CertificateChoices;
-use cms::content_info::{CmsVersion, ContentInfo};
-use cms::enveloped_data::{PasswordRecipientInfo, RecipientInfo, RecipientInfos};
-use cms::revocation::RevocationInfoChoice;
-use cms::signed_data::{EncapsulatedContentInfo, SignedData};
 use der::asn1::{ObjectIdentifier as Oid, OctetString, SetOfVec};
 use der::{Any, Decode, Encode, Reader, Sequence, SliceReader};
 use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use sha3::{Sha3_256, Sha3_384, Sha3_512};
-use x509_cert::attr::{Attribute, Attributes};
-use x509_cert::spki::AlgorithmIdentifierOwned as Algorithm;
 
 use crate::budget::{Budget, LimitCode};
 use crate::{Error, Result};
@@ -141,15 +137,15 @@ pub(super) fn encode(
         .wrap_key(mac_key, &mut wrapped)
         .expect("RFC 3394 fixed-size key");
     let recipient = RecipientInfo::Pwri(PasswordRecipientInfo {
-        version: CmsVersion::V0,
+        version: 0,
         key_derivation_alg: Some(algorithm(KDF)),
         key_enc_alg: algorithm(WRAP),
         enc_key: octets(wrapped)?,
     });
     let auth = AuthenticatedData {
-        version: CmsVersion::V0,
+        version: 0,
         originator_info: None,
-        recip_infos: RecipientInfos(SetOfVec::try_from(vec![recipient]).map_err(invalid)?),
+        recip_infos: SetOfVec::try_from(vec![recipient]).map_err(invalid)?,
         mac_alg,
         digest_alg: Some(digest_alg),
         encap_content_info: EncapsulatedContentInfo {
@@ -229,7 +225,7 @@ fn signed_container(data: &[u8], budget: &Budget) -> Result<SignedData> {
     )?;
     let signed: SignedData = container.content.decode_as().map_err(invalid)?;
     check(
-        signed.signer_infos.0.len() == 1,
+        signed.signer_infos.len() == 1,
         "an attached PDF MAC requires exactly one signer",
     )?;
     Ok(signed)
@@ -242,7 +238,7 @@ pub(super) fn attach(
     budget: &Budget,
 ) -> Result<Vec<u8>> {
     let mut signed = signed_container(data, budget)?;
-    let mut signer = signed.signer_infos.0.into_vec().pop().expect("one signer");
+    let mut signer = signed.signer_infos.into_vec().pop().expect("one signer");
     let token = encode(
         &writer.file_key,
         &writer.salt,
@@ -261,7 +257,7 @@ pub(super) fn attach(
             Any::from_der(&token).map_err(invalid)?,
         )?)
         .map_err(invalid)?;
-    signed.signer_infos.0 = SetOfVec::try_from(vec![signer]).map_err(invalid)?;
+    signed.signer_infos = SetOfVec::try_from(vec![signer]).map_err(invalid)?;
     ContentInfo {
         content_type: SIGNED,
         content: Any::encode_from(&signed).map_err(invalid)?,
@@ -272,7 +268,7 @@ pub(super) fn attach(
 
 pub(super) fn attached(data: &[u8], budget: &Budget) -> Result<(ContentInfo, OctetString)> {
     let signed = signed_container(data, budget)?;
-    let signer = signed.signer_infos.0.get(0).expect("one signer");
+    let signer = signed.signer_infos.get(0).expect("one signer");
     let value = signer
         .unsigned_attrs
         .as_ref()
@@ -299,25 +295,7 @@ pub(super) fn verify(
         "expected CMS AuthenticatedData in PDF MAC",
     )?;
     let auth: AuthenticatedData = token.content.decode_as().map_err(invalid)?;
-    // RFC 5652 §9.1. The CMS decoder supports ordinary certificates/CRLs
-    // and the explicit "other" formats, which require CMS version 3.
-    let other = auth.originator_info.as_ref().is_some_and(|origin| {
-        origin.certs.as_ref().is_some_and(|certs| {
-            certs
-                .0
-                .iter()
-                .any(|c| matches!(c, CertificateChoices::Other(_)))
-        }) || origin.crls.as_ref().is_some_and(|crls| {
-            crls.0
-                .iter()
-                .any(|c| matches!(c, RevocationInfoChoice::Other(_)))
-        })
-    });
-    let expected_version = if other {
-        CmsVersion::V3
-    } else {
-        CmsVersion::V0
-    };
+    let expected_version = auth.originator_info.as_ref().map_or(0, Originator::version);
     check(
         auth.version == expected_version && auth.unauth_attrs.is_none(),
         "incorrect CMS version or unauthenticated PDF MAC attributes",
@@ -334,11 +312,11 @@ pub(super) fn verify(
             && auth.encap_content_info.econtent_type == INFO,
         "unsupported MAC algorithm or encapsulated PDF MAC content type",
     )?;
-    let [RecipientInfo::Pwri(recipient)] = auth.recip_infos.0.as_slice() else {
+    let [RecipientInfo::Pwri(recipient)] = auth.recip_infos.as_slice() else {
         return Err(Error::malformed("PDF MAC requires one password recipient"));
     };
     check(
-        recipient.version == CmsVersion::V0
+        recipient.version == 0
             && recipient.key_derivation_alg == Some(algorithm(KDF))
             && recipient.key_enc_alg == algorithm(WRAP)
             && recipient.enc_key.as_bytes().len() == 40,

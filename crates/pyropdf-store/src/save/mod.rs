@@ -559,6 +559,9 @@ fn write_incremental(
     }
     let mode = Mode::of(version, None, budget)?;
     let mut mac = integrity::plan(version, &mode, false, false, budget)?;
+    if signature.is_some() && file.is_encrypted() && mac.is_none() {
+        return Err(Error::Refused(Refusal::IntegrityProtection));
+    }
     let previous = file
         .revisions()
         .last()

@@ -748,6 +748,8 @@ decrypted and an incremental save keeps its encryption;
 `Encryption.KEEP` keeps it in a full save too, copying its
 untouched encrypted bytes, and an `Encryption` encrypts a full
 save anew.
+A document with an ISO/TS 32004 MAC requires retained or replacement
+MAC protection. Use an incremental save for a signed MAC revision.
 
 `prune=True` writes only the objects that the trailer reaches, so
 what an edit unlinked leaves the file; the document in memory keeps

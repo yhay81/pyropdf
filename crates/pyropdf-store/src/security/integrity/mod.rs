@@ -1,4 +1,5 @@
 //! Integrity protection of encrypted PDF revisions (ISO/TS 32004:2024).
+mod syntax;
 mod token;
 
 use super::{Handler, bytes, crypto};
