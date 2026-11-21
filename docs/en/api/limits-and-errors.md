@@ -201,7 +201,7 @@ LIMIT_CODES = {
     'page_label_ranges': "The document's `/PageLabels` number tree holds more than 4,096 `/Nums` pairs.",
     'page_label_text_size': "The prefixes and style names of the document's `/PageLabels` number tree are longer than 1 MiB in UTF-8 together.",
     'page_label_input_size': 'The prefixes that setting `Document.page_labels` writes are longer than 1 MiB in UTF-8 together.',
-    'optional_content_count': "The document's `/OCGs`, `/Configs`, or an optional-content configuration array holds, or `Layers.add` or `LayerMembership` would give it, more than 4,096 entries.",
+    'optional_content_count': 'A document group list, membership group list, or optional-content configuration array holds more than 4,096 entries, or `Layers.add` or `LayerMembership` would exceed that limit.',
     'optional_content_expression': '`Layers.visible` evaluates a `/VE` visibility expression deeper than 32 levels or with more than 4,096 operands.',
     'sanitize_action_chain': '`Document.sanitize` follows more than 256 actions along a `/Next` action chain when checking for JavaScript.',
     'sanitize_forms': '`Document.sanitize` reaches more than 4,096 Form XObjects and appearance streams while removing hidden text.',

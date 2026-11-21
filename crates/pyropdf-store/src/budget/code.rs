@@ -239,9 +239,9 @@ pub enum LimitCode {
     /// The prefixes that setting `Document.page_labels` writes are longer than
     /// 1 MiB in UTF-8 together.
     PageLabelInputSize,
-    /// The document's `/OCGs`, `/Configs`, or an optional-content configuration
-    /// array holds, or `Layers.add` or `LayerMembership` would give it, more
-    /// than 4,096 entries.
+    /// A document group list, membership group list, or optional-content
+    /// configuration array holds more than 4,096 entries, or `Layers.add` or
+    /// `LayerMembership` would exceed that limit.
     OptionalContentCount,
     /// `Layers.visible` evaluates a `/VE` visibility expression deeper than 32
     /// levels or with more than 4,096 operands.

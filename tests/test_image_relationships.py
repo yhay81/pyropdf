@@ -137,6 +137,23 @@ def test_invalid_and_oversized_alternate_entries_are_reported() -> None:
         assert caught.value.code == "content_element_count"
 
 
+@pytest.mark.parametrize("placement", ["base", "alternate"])
+def test_image_membership_obeys_the_group_count_limit(placement: str) -> None:
+    with pyropdf.open(_source()) as doc:
+        base = _resources(doc)["Base"]
+        selector = base if placement == "base" else base["Alternates"][1]
+        shown, hidden = doc.catalog["OCProperties"]["OCGs"]
+        selector["OC"] = {"Type": Name("OCMD"), "OCGs": [hidden] * 4095 + [shown]}
+        selected = doc.image_for_output(base.xref)
+        assert selected is not None
+        assert selected.xref == (base.xref if placement == "base" else selector["Image"].xref)
+
+        selector["OC"]["OCGs"].append(shown)
+        with pytest.raises(pyropdf.LimitError) as caught:
+            doc.image_for_output(base.xref)
+        assert caught.value.code == "optional_content_count"
+
+
 @pytest.mark.parametrize("kind", ["stencil", "colour-key"])
 @pytest.mark.parametrize("incremental", [False, True])
 @pytest.mark.spec("image-masks", "create")
