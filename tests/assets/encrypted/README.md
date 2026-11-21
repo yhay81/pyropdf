@@ -40,3 +40,16 @@ permission to change encryption.
 
 The tests in `tests/test_encrypted.py` also read pyropdf's AES-128 and
 AES-256 output with pyHanko and compare exact string, stream and XMP bytes.
+
+## Document MAC
+
+`integrity/generate.py` uses pyHanko 0.38.1 (pinned in `uv.lock`) to create
+the standalone table, standalone xref stream, signed incremental revision and
+RSA-recipient files in `integrity/`. The password fixtures use userpw and
+ownerpw. The signed and recipient cases use the local recipient-owner test
+key. All four contain the same unmodified blue rectangle.
+
+`tests/test_document_mac.py` checks the six digest algorithms in ISO/TS
+32004:2024 Table 8, verifies the signed and unsigned forms, and uses pyHanko
+to validate pyropdf-generated and renewed MACs. The tests use the
+[published 2024 edition](https://www.iso.org/standard/45877.html).

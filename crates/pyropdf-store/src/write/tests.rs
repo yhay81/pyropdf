@@ -817,7 +817,7 @@ fn every_object_of_the_corpus_reads_back_as_itself() {
                 // hayro-syntax reads the bytes as the object it read from the
                 // file, and the store reads them as the same value, keys in
                 // the same order.
-                let reread = MaybeRef::<Object<'_>>::from_bytes(&written);
+                let reread = Object::from_bytes(&written).map(MaybeRef::NotRef);
                 assert!(
                     reread.is_some_and(|reread| same(&object, &reread)),
                     "{file}, object {objects}: {}",

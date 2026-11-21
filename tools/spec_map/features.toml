@@ -5,7 +5,6 @@
 
 # Every object of the Arlington PDF Model is a feature of the map.
 [arlington]
-preserve = { status = "planned", milestone = "Phase 4: Specification" }
 
 [[arlington.rule]]
 objects = [
@@ -1297,7 +1296,7 @@ interpret = { status = "partial", missing = "Standard and recipient AESV4 string
 
 [features.integrity-protection]
 clause = "ISO/TS 32004"
-description = "Integrity protection of encrypted documents with a message authentication code."
+description = "ISO/TS 32004:2024 standalone and signature-attached PDF MAC verification, with standalone MACs on unsigned revisions and attached MACs on signing and timestamping."
 objects = []
 
 [features.namespace-inclusion]

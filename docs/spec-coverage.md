@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 39 | 34 | 758 |
-| interpret | 9 | 19 | 0 | 36 | 41 | 726 |
-| create | 0 | 0 | 21 | 27 | 62 | 721 |
-| edit | 0 | 0 | 0 | 48 | 55 | 728 |
-| preserve | 0 | 0 | 0 | 25 | 652 | 154 |
+| read | 0 | 0 | 0 | 39 | 33 | 759 |
+| interpret | 9 | 19 | 0 | 36 | 40 | 727 |
+| create | 0 | 0 | 21 | 27 | 61 | 722 |
+| edit | 0 | 0 | 0 | 48 | 54 | 729 |
+| preserve | 0 | 0 | 0 | 25 | 38 | 768 |
 
 ## Clauses
 
@@ -240,13 +240,13 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 done | 1 partial | 1 done | 1 done | 1 done |
-| ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32007 | RichMedia glTF assets | `gltf-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 
 ## Unfinished work by milestone
 
-1,028 unfinished cells in 831 features: 9 engine, 175 partial, 844 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+410 unfinished cells in 831 features: 9 engine, 175 partial, 226 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -342,8 +342,6 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 - [#867](https://github.com/yhay81/pyropdf/issues/867) Complete the PDF hash and signature algorithm coverage for ISO/TS 32001 and 32002. Verify and create each specified hash/signature algorithm against independent vectors, including Ed25519 and Ed448.
     - read, interpret, create, edit — `sha3-hashes`, `ecc-signatures`.
     - preserve — `sha3-hashes`.
-- [#866](https://github.com/yhay81/pyropdf/issues/866) Verify and maintain document integrity protection for encrypted PDFs under ISO/TS 32004. Verify and maintain integrity protection during encrypted saves and refuse tampered data.
-    - read, interpret, create, edit, preserve — `integrity-protection`.
 - [#936](https://github.com/yhay81/pyropdf/issues/936) Extend CMS algorithm coverage for public-key PDF recipients. Verify and extend additional CMS provider algorithms for recipient access, creation, editing and preservation.
     - read, create, edit, preserve — `public-key-security-handler`.
 - [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
@@ -374,8 +372,7 @@ Milestone [#253](https://github.com/yhay81/pyropdf/issues/253).
 
 Milestone [#254](https://github.com/yhay81/pyropdf/issues/254).
 
-- [#890](https://github.com/yhay81/pyropdf/issues/890) Prove full and incremental preservation by Arlington object type. Build or reuse a reachable valid example for each descriptor and compare its keys, reference targets and stream bytes after an unrelated edit in both save modes. Reuse equivalent cases with explicit type-to-fixture coverage.
-    - preserve — all 613 standalone Arlington object rows.
+No unfinished specification-map cells assigned.
 
 ### 255 Conformance
 

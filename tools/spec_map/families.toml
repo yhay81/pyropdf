@@ -178,16 +178,6 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Verify and create each specified hash/signature algorithm against independent vectors, including Ed25519 and Ed448."
 
-[families.integrity-protection]
-tracker = 252
-issue = 866
-title = "Verify and maintain document integrity protection for encrypted PDFs under ISO/TS 32004"
-features = [
-    "integrity-protection",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Verify and maintain integrity protection during encrypted saves and refuse tampered data."
-
 [families.public-key-encryption]
 tracker = 252
 issue = 936
@@ -252,16 +242,6 @@ features = [
 ]
 dimensions = ["read", "interpret", "preserve"]
 behavior = "Walk standard/custom roles and parent-child multiplicities, order content using structure references and expose abbreviation expansion in extracted output. Compare with hand-verified tagged documents."
-
-[families.arlington-preservation]
-tracker = 254
-issue = 890
-title = "Prove full and incremental preservation by Arlington object type"
-features = [
-    "@arlington",
-]
-dimensions = ["preserve"]
-behavior = "Build or reuse a reachable valid example for each descriptor and compare its keys, reference targets and stream bytes after an unrelated edit in both save modes. Reuse equivalent cases with explicit type-to-fixture coverage."
 
 [families.display-space]
 tracker = 254

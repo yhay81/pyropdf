@@ -952,7 +952,7 @@ impl Writer<'_> {
     ) -> Result<Fields> {
         let plan = self.plan;
         let fields = fields.unwrap_or_default();
-        out.bytes(self.mode.header(plan.version, false))?;
+        out.bytes(self.mode.header(plan.version, false, false))?;
         out.bytes(b"\n%\xE2\xE3\xCF\xD3\n")?;
         let linearization = plan.linearization();
         let first_page = plan.infos[plan.pages[0]].new;

@@ -39,9 +39,10 @@ pub(super) fn finish(
         }
         out.bytes(b"trailer\n<<")?;
         trailer_fields(version, mode, out, ending, &mut digest)?;
-        out.display(format_args!(
-            " /Size {number} >>\nstartxref\n{main}\n%%EOF\n"
-        ))?;
+        out.display(format_args!(" /Size {number}"))?;
+        out.authentication()?;
+        out.display(format_args!(" >>\nstartxref\n{main}\n%%EOF\n"))?;
+        super::integrity::MacOutput::next_revision(out)?;
         main
     };
     let supplement = out.offset()?;
@@ -72,6 +73,8 @@ pub(super) fn finish(
     out.bytes(b"trailer\n<<")?;
     trailer_fields(version, mode, out, ending, &mut digest)?;
     out.display(format_args!(
-        " /Size {size} /Prev {previous} /XRefStm {supplement} >>\nstartxref\n{xref}\n%%EOF\n"
-    ))
+        " /Size {size} /Prev {previous} /XRefStm {supplement}"
+    ))?;
+    out.authentication()?;
+    out.display(format_args!(" >>\nstartxref\n{xref}\n%%EOF\n"))
 }
