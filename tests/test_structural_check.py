@@ -474,3 +474,16 @@ def test_invalid_structure_array_members_retain_their_own_path(
     ]
     for current in (doc, pyropdf.open(doc.to_bytes())):
         assert (f"{key}/{index}", f"{descriptor}/{slot}") in {(d.path, d.clause) for d in current.check().defects}
+
+
+def test_xfa_packet_arrays_still_require_alternating_names_and_indirect_streams() -> None:
+    with pyropdf.Document() as doc:
+        doc.pages.new((100, 100))
+        doc.catalog["Version"] = pyropdf.Name("1.7")
+        packet = doc.objects[doc.objects.add_stream(b"<packet/>")]
+        doc.catalog["AcroForm"] = {"Fields": [], "XFA": ["template", packet, "datasets", packet]}
+        assert not [d for d in doc.check().defects if d.clause.startswith("ArrayOfXFA/")]
+        doc.catalog["AcroForm"]["XFA"] = ["template", "datasets", packet]
+        assert {
+            (d.path.split("/")[-1], d.clause) for d in doc.check().defects if d.clause.startswith("ArrayOfXFA/")
+        } == {("1", "ArrayOfXFA/1*"), ("2", "ArrayOfXFA/0*")}
