@@ -309,16 +309,18 @@ Objects.add_stream(
     /,
     dictionary: Mapping[str, Any] | None = None,
     *,
-    filter: Literal['FlateDecode'] | None = 'FlateDecode',
+    filter: str | Sequence[str] | None = 'FlateDecode',
+    decode_parms: Mapping[str, int] | Sequence[Mapping[str, int] | None] | None = None,
 ) -> int
 ```
 
 Add a stream of decoded `data`, in one transaction, and return its object number.
 
-`dictionary` supplies further stream entries; `/Length`,
-`/Filter`, and `/DecodeParms` are set from the data and
-`filter`, which compresses with `"FlateDecode"` or stores the
-data as given with `None`.
+`dictionary` supplies further stream entries. The stream length and
+filter entries are derived from the data, `filter` and `decode_parms`
+as in `Stream.write`.
+A leading `/Crypt` in `dictionary` retains its security selector and
+parameters with every encoding.
 
 ## `Real`
 
@@ -485,6 +487,7 @@ Stream.read(*, decode: bool = True, max_size: int | None = 67108864) -> bytes
 
 Return the stream data, decoded through its filters unless `decode` is false.
 
+Indirect filter names and parameters are read from the current revision.
 hayro-syntax decodes the filters, and a filter that it does not
 decode, such as an image filter, raises `PdfError` instead of
 returning encoded bytes. `max_size` bounds the result with
@@ -495,14 +498,26 @@ input.
 ### `Stream.write`
 
 ```python
-Stream.write(data: bytes, /, *, filter: Literal['FlateDecode'] | None = 'FlateDecode')
+Stream.write(
+    data: bytes,
+    /,
+    *,
+    filter: str | Sequence[str] | None = 'FlateDecode',
+    decode_parms: Mapping[str, int] | Sequence[Mapping[str, int] | None] | None = None,
+)
 ```
 
-Replace the stream data with `data`, given decoded, in one transaction.
+Replace decoded stream data and its filter metadata in one transaction.
 
-`filter="FlateDecode"` compresses it; `None` stores it
-uncompressed. Either way the previous `/Filter` and `/DecodeParms`
-are removed and `/Length` is updated.
+Choose `FlateDecode` (the default), `ASCIIHexDecode`, `ASCII85Decode`,
+`LZWDecode`, `RunLengthDecode`, or `None` for raw storage. A list or
+tuple names a chain in decoding order. Supply one decode parameter mapping
+for a name or one mapping or `None` per filter in a chain. LZW accepts
+`EarlyChange`; Flate and LZW accept TIFF and PNG predictor parameters.
+Predictors currently support up to 255 bits per pixel. TIFF predictor
+rows must fill whole bytes so every row can be read back.
+A leading `/Crypt` filter keeps the same recipients and shared security
+parameters. An unchanged filter chain keeps its indirect declarations.
 
 ## `String`
 

@@ -19,7 +19,9 @@
 //! generation)` for a reference, and `("c", root, path)` for a copy of what
 //! a handle names.
 
+mod author;
 mod schema;
+pub use author::{schema_change, schema_created};
 pub use schema::{schema_entry, schema_leaf};
 
 use std::sync::Arc;
@@ -30,10 +32,8 @@ use pyo3::types::{PyBool, PyBytes, PyList, PyTuple};
 use pyo3::{IntoPyObjectExt, intern};
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
-use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs;
-use pyropdf_store::save::deflate;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, PdfString, Real, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
 
@@ -430,14 +430,16 @@ pub fn object_numbers(document: &_Document) -> PyResult<Vec<u32>> {
 
 /// Returns the tagged child at `step` of the container that `root` and
 /// `path` name, resolving a reference; `KeyError` or `IndexError` when it
-/// has none.
-#[pyfunction]
+/// has none. A direct-only lookup returns Python None for an absent or
+/// indirect child without following the reference.
+#[pyfunction(signature = (document, root, path, step, *, direct_only=false))]
 pub fn object_get<'py>(
     py: Python<'py>,
     document: &_Document,
     root: Root,
     path: Vec<Step>,
     step: Step,
+    direct_only: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     crate::errors::boundary(|| {
         let version = document.reading()?;
@@ -445,11 +447,17 @@ pub fn object_get<'py>(
         let value = root_value(&version, root, &path, &budget)?;
         let container = walk(&value, root, &path)?;
         let Some(found) = child(container, &step) else {
+            if direct_only {
+                return Ok(py.None().into_bound(py));
+            }
             return Err(match step {
                 Step::Key(key) => PyKeyError::new_err(String::from_utf8_lossy(&key).into_owned()),
                 Step::Index(index) => index_error(index),
             });
         };
+        if direct_only && matches!(found, Value::Reference(_)) {
+            return Ok(py.None().into_bound(py));
+        }
         tagged(py, &version, found, None, &budget)
     })?
 }
@@ -637,37 +645,38 @@ fn add(transaction: &mut Transaction, value: &Value, budget: &Budget) -> PyResul
     Ok((written.number(), written.generation()))
 }
 
-/// Sets the data of `stream` to `data`, given decoded, compressed with
-/// `/FlateDecode` when `compress`, and drops its previous filters. The copy
-/// and the compression are charged to `budget`, and compression polls it.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "inserts only the fixed Filter key"
-)]
+fn filter_options(value: &Bound<'_, PyAny>, version: &Version, budget: &Budget) -> PyResult<Dict> {
+    let Value::Dict(options) = untagged(value, version, 0, budget)? else {
+        return Err(PyTypeError::new_err("expected stream filter options"));
+    };
+    Ok(options)
+}
+
 pub(crate) fn set_data(
     stream: &mut Stream,
     data: &[u8],
-    compress: bool,
+    options: Dict,
     budget: &Budget,
 ) -> PyResult<()> {
-    let dict = stream.dict_mut();
-    dict.remove("Filter");
-    dict.remove("DecodeParms");
-    if !compress {
-        let mut copy = BudgetVec::new(budget);
-        copy.try_extend_from_slice(data)
-            .map_err(|e| limit_error(&e))?;
-        stream.set_data(Bytes::from(copy.into_vec()));
-        return Ok(());
-    }
-    let encoded = deflate(data, 6, usize::MAX, budget)
-        .map_err(|e| store_error(&e))?
-        .ok_or_else(|| PyValueError::new_err("the data could not be compressed"))?;
-    stream
-        .dict_mut()
-        .insert(Name::from("Filter"), Value::Name(Name::from("FlateDecode")));
-    stream.set_data(Bytes::from(encoded));
-    Ok(())
+    pyropdf_store::value::encode::write(stream, data, options, budget)
+        .map_err(|error| store_error(&error))
+}
+
+fn set_data_in(
+    stream: &mut Stream,
+    data: &[u8],
+    options: Dict,
+    version: &Version,
+    budget: &Budget,
+) -> PyResult<()> {
+    pyropdf_store::value::encode::write_with_lookup(
+        stream,
+        data,
+        options,
+        &|r, b| version.filter_object(r, b),
+        budget,
+    )
+    .map_err(|e| store_error(&e))
 }
 
 /// Adds a stream of the tagged dictionary `dict` and the decoded `data`,
@@ -678,7 +687,7 @@ pub fn object_add_stream(
     document: &_Document,
     dict: &Bound<'_, PyAny>,
     data: &[u8],
-    compress: bool,
+    options: &Bound<'_, PyAny>,
 ) -> PyResult<(u32, u16)> {
     crate::errors::boundary(|| {
         document.edit(py, |transaction, budget| {
@@ -688,7 +697,9 @@ pub fn object_add_stream(
                 ));
             };
             let mut stream = Stream::new(dict, Bytes::default());
-            set_data(&mut stream, data, compress, budget)?;
+            let version = transaction.version();
+            let options = filter_options(options, version, budget)?;
+            set_data_in(&mut stream, data, options, version, budget)?;
             add(transaction, &Value::Stream(Box::new(stream)), budget)
         })
     })?
@@ -722,7 +733,7 @@ pub fn stream_read<'py>(
             return Ok(PyBytes::new(py, stream.data()));
         }
         let data = py
-            .detach(|| stream.decoded(&budget))
+            .detach(|| stream.decoded_in(&version, &budget))
             .map_err(|e| store_error(&e))?;
         limit(data.len())?;
         Ok(PyBytes::new(py, &data))
@@ -737,14 +748,20 @@ pub fn stream_write(
     document: &_Document,
     root: (u32, u16),
     data: &[u8],
-    compress: bool,
+    options: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
     crate::errors::boundary(|| {
-        change(py, document, Some(root), &[], |value, _, budget| {
+        change(py, document, Some(root), &[], |value, version, budget| {
             let Value::Stream(stream) = value else {
                 return Err(stale(Some(root), &[]));
             };
-            set_data(stream, data, compress, budget)
+            set_data_in(
+                stream,
+                data,
+                filter_options(options, version, budget)?,
+                version,
+                budget,
+            )
         })
     })?
 }
@@ -766,25 +783,47 @@ pub fn object_free_unreferenced(
     document: &_Document,
     candidates: Vec<u32>,
 ) -> PyResult<Vec<u32>> {
-    crate::errors::boundary(|| {
-        let store = |e: pyropdf_store::Error| store_error(&e);
-        document.edit(py, |transaction, budget| {
-            let parent = Arc::clone(transaction.parent());
-            let before = transaction.snapshot();
-            let references = document.references.get(&parent, budget).map_err(store)?;
-            let references = match parent.changes(&before, budget).map_err(store)? {
-                Some(changes) if !changes.is_empty() => Arc::new(
-                    references
-                        .update(&mut Reads::new(&before, budget), &changes)
-                        .map_err(store)?,
-                ),
-                _ => references,
-            };
-            let freed = refs::unreferenced(&references, &[], &candidates, budget).map_err(store)?;
-            for &number in freed.iter() {
-                transaction.free(number, budget).map_err(store)?;
+    crate::errors::boundary(|| retire_objects(py, document, &candidates, false))?
+}
+
+/// Frees only nominated objects with no outside reference, leaving all
+/// non-nominated objects intact even when an unrelated owner is unreachable.
+#[pyfunction]
+pub fn object_free_nominated(
+    py: Python<'_>,
+    document: &_Document,
+    candidates: Vec<u32>,
+) -> PyResult<Vec<u32>> {
+    crate::errors::boundary(|| retire_objects(py, document, &candidates, true))?
+}
+
+fn retire_objects(
+    py: Python<'_>,
+    document: &_Document,
+    candidates: &[u32],
+    nominated_only: bool,
+) -> PyResult<Vec<u32>> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    document.edit(py, |transaction, budget| {
+        let references = document
+            .references
+            .in_transaction(transaction, budget)
+            .map_err(store)?;
+        let mut plan = if nominated_only {
+            refs::nominated_unreferenced(&references, candidates, budget)
+        } else {
+            refs::unreferenced(&references, &[], candidates, budget)
+        }
+        .map_err(store)?;
+        let mut count = 0;
+        for index in 0..plan.len() {
+            let number = plan[index];
+            if transaction.free(number, budget).map_err(store)? || !nominated_only {
+                plan.as_mut_slice()[count] = number;
+                count += 1;
             }
-            Ok(freed.into_vec())
-        })
-    })?
+        }
+        plan.truncate(count);
+        Ok(plan.into_vec())
+    })
 }

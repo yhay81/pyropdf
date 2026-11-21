@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterator, Mapping, MutableMapping, MutableSequence
+from collections.abc import Iterator, Mapping, MutableMapping, MutableSequence, Sequence
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Literal, Self, overload
+from typing import TYPE_CHECKING, Any, Self, overload
 
 from pyropdf import _core
 from pyropdf._errors import EncryptedDocumentError, LimitError, StaleObjectError
@@ -48,6 +48,47 @@ _REAL_LEXEME = re.compile(rb"[+-]?(?:[0-9]+\.[0-9]*|\.[0-9]+)")
 _Root = tuple[int, int] | None
 _Step = int | bytes
 _Path = tuple[_Step, ...]
+
+
+_MAX_FILTERS = 16
+_ENCODERS = frozenset(("ASCIIHexDecode", "ASCII85Decode", "LZWDecode", "FlateDecode", "RunLengthDecode"))
+
+
+def _stream_options(
+    document: Document,
+    filters: str | Sequence[str] | None,
+    parameters: Mapping[str, int] | Sequence[Mapping[str, int] | None] | None,
+) -> object:
+    """Build the filter dictionary used by the same transaction as its encoded bytes."""
+    options: dict[str, object] = {}
+    if filters is not None:
+        names = (filters,) if isinstance(filters, str) else filters
+        if not isinstance(names, Sequence) or not names:
+            msg = "filter must be a name or a nonempty sequence of names"
+            raise ValueError(msg)
+        if len(names) > _MAX_FILTERS:
+            code = "stream_filter_count"
+            msg = f"a stream chains more than {_MAX_FILTERS} filters"
+            raise LimitError(code, msg)
+        if any(not isinstance(name, str) or name not in _ENCODERS for name in names):
+            msg = f"filter must use one of {sorted(_ENCODERS)!r}"
+            raise ValueError(msg)
+        options["Filter"] = Name(filters) if isinstance(filters, str) else [Name(name) for name in names]
+    if parameters is not None:
+        if isinstance(filters, str) and isinstance(parameters, Mapping):
+            options["DecodeParms"] = dict(parameters)
+        elif (
+            isinstance(filters, Sequence)
+            and not isinstance(filters, str)
+            and isinstance(parameters, Sequence)
+            and len(parameters) == len(filters)
+            and all(item is None or isinstance(item, Mapping) for item in parameters)
+        ):
+            options["DecodeParms"] = [None if item is None else dict(item) for item in parameters]
+        else:
+            msg = "decode_parms must match the filter or filter array"
+            raise ValueError(msg)
+    return _encode(document, options, 0)
 
 
 def _name_bytes(name: str) -> bytes:
@@ -259,9 +300,10 @@ class _Handle:
         """Return whether this is an indirect object rather than a direct value inside one."""
         return self._root is not None and not self._path
 
-    def _get(self, step: _Step) -> Any:  # noqa: ANN401 - a PDF value is any of several types.
-        """Return the resolved value at ``step``."""
-        return _decode(self._document, _core.object_get(self._core(), self._root, list(self._path), step), self, step)
+    def _get(self, step: _Step, *, direct_only: bool = False) -> Any:  # noqa: ANN401 - a PDF value has several types.
+        """Read a child value, optionally requiring it to be stored directly."""
+        value = _core.object_get(self._core(), self._root, list(self._path), step, direct_only=direct_only)
+        return _decode(self._document, value, self, step)
 
     def _set(self, step: _Step, value: object) -> None:
         """Write ``value`` at ``step``."""
@@ -389,6 +431,7 @@ class Stream(Dictionary):
     def read(self, *, decode: bool = True, max_size: int | None = _DEFAULT_MAX_STREAM_DATA_SIZE) -> bytes:
         """Return the stream data, decoded through its filters unless ``decode`` is false.
 
+        Indirect filter names and parameters are read from the current revision.
         hayro-syntax decodes the filters, and a filter that it does not
         decode, such as an image filter, raises :class:`PdfError` instead of
         returning encoded bytes. ``max_size`` bounds the result with
@@ -402,17 +445,28 @@ class Stream(Dictionary):
             raise TypeError(msg)
         return _core.stream_read(self._core(), self._stream_root(), decode, max_size)
 
-    def write(self, data: bytes, /, *, filter: Literal["FlateDecode"] | None = "FlateDecode") -> None:  # noqa: A002 - pymupdf and pikepdf name it filter.
-        """Replace the stream data with ``data``, given decoded, in one transaction.
+    def write(
+        self,
+        data: bytes,
+        /,
+        *,
+        filter: str | Sequence[str] | None = "FlateDecode",  # noqa: A002 - public filter selector.
+        decode_parms: Mapping[str, int] | Sequence[Mapping[str, int] | None] | None = None,
+    ) -> None:
+        """Replace decoded stream data and its filter metadata in one transaction.
 
-        ``filter="FlateDecode"`` compresses it; ``None`` stores it
-        uncompressed. Either way the previous ``/Filter`` and ``/DecodeParms``
-        are removed and ``/Length`` is updated.
+        Choose ``FlateDecode`` (the default), ``ASCIIHexDecode``, ``ASCII85Decode``,
+        ``LZWDecode``, ``RunLengthDecode``, or ``None`` for raw storage. A list or
+        tuple names a chain in decoding order. Supply one decode parameter mapping
+        for a name or one mapping or ``None`` per filter in a chain. LZW accepts
+        ``EarlyChange``; Flate and LZW accept TIFF and PNG predictor parameters.
+        Predictors currently support up to 255 bits per pixel. TIFF predictor
+        rows must fill whole bytes so every row can be read back.
+        A leading ``/Crypt`` filter keeps the same recipients and shared security
+        parameters. An unchanged filter chain keeps its indirect declarations.
         """
-        if filter not in ("FlateDecode", None):
-            msg = f"filter must be 'FlateDecode' or None: {filter!r}"
-            raise ValueError(msg)
-        _core.stream_write(self._core(), self._stream_root(), bytes(data), filter is not None)
+        options = _stream_options(self._document, filter, decode_parms)
+        _core.stream_write(self._core(), self._stream_root(), bytes(data), options)
 
     def _stream_root(self) -> tuple[int, int]:
         """Return the object that holds this stream, which is always indirect."""
@@ -542,21 +596,21 @@ class Objects(Mapping[int, Any]):
         /,
         dictionary: Mapping[str, Any] | None = None,
         *,
-        filter: Literal["FlateDecode"] | None = "FlateDecode",  # noqa: A002 - pymupdf and pikepdf name it filter.
+        filter: str | Sequence[str] | None = "FlateDecode",  # noqa: A002 - mirrors Stream.write.
+        decode_parms: Mapping[str, int] | Sequence[Mapping[str, int] | None] | None = None,
     ) -> int:
         """Add a stream of decoded ``data``, in one transaction, and return its object number.
 
-        ``dictionary`` supplies further stream entries; ``/Length``,
-        ``/Filter``, and ``/DecodeParms`` are set from the data and
-        ``filter``, which compresses with ``"FlateDecode"`` or stores the
-        data as given with ``None``.
+        ``dictionary`` supplies further stream entries. The stream length and
+        filter entries are derived from the data, ``filter`` and ``decode_parms``
+        as in :meth:`Stream.write`.
+        A leading ``/Crypt`` in ``dictionary`` retains its security selector and
+        parameters with every encoding.
         """
-        if filter not in ("FlateDecode", None):
-            msg = f"filter must be 'FlateDecode' or None: {filter!r}"
-            raise ValueError(msg)
         core = self._core()
+        options = _stream_options(self._document, filter, decode_parms)
         encoded = _encode(self._document, {} if dictionary is None else dictionary, 0, top_level=True)
-        number, _generation = _core.object_add_stream(core, encoded, bytes(data), filter is not None)
+        number, _generation = _core.object_add_stream(core, encoded, bytes(data), options)
         return number
 
     def __repr__(self) -> str:
@@ -595,6 +649,11 @@ def _object_number(xref: object) -> int:
     if not 0 <= xref <= _MAX_OBJECT_NUMBER:
         raise KeyError(xref)
     return xref
+
+
+def _direct_value(dictionary: Dictionary, key: str) -> Any:  # noqa: ANN401 - a PDF value has several types.
+    """Read a direct dictionary entry, returning None when it is absent or indirect."""
+    return dictionary._get(_key(key), direct_only=True)  # noqa: SLF001 - the handle reads its addressed child.
 
 
 def _key(key: object) -> bytes:

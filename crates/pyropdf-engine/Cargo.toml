@@ -25,6 +25,8 @@ unicode-bidi = "0.3.18"
 pdf-base14-metrics = "0.0.2"
 unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.13.3"
+# Rich-text field values use the XHTML subset of XFA.
+quick-xml = { version = "0.42.0", default-features = false }
 # PP-OCR inference in pure Rust, with pylopdf's pins (DESIGN.md section 14).
 rten = { version = "0.28.0", default-features = false, features = ["rten_format"] }
 rten-tensor = "0.28.0"
@@ -50,6 +52,8 @@ flate2 = "1.1.11"
 png = "0.18.1"
 # JPEG output of Pixmap, doc.render, and image rewriting, as pylopdf encodes it.
 jpeg-encoder = "0.7.1"
+# Lossless JPEG 2000 Part 1 encoding for JPXDecode image XObjects.
+j2k-native = { version = "0.14.0", default-features = false, features = ["std"] }
 # JPEG input of Pixmap.from_bytes and image samples, the version that hayro
 # already pulls in.
 zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }

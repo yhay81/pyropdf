@@ -26,6 +26,7 @@ import tempfile
 from pathlib import Path
 
 import pyropdf
+from pyropdf._objects import _direct_value
 
 ROOT = Path(__file__).resolve().parent.parent
 # The preservation harness imports its sibling test modules.
@@ -437,19 +438,30 @@ def profile_saves(directory: Path) -> dict[Path, str]:
     return files
 
 
+def declares_pades(extensions: object) -> bool:
+    """Recognize the PDF 1.7 declarations registered for PAdES signatures."""
+    if not isinstance(extensions, pyropdf.Dictionary) or extensions.is_indirect:
+        return False
+    for prefix, required in (("ESIC", PADES_LEVEL), ("ADBE", 8)):
+        entry = extensions.get(prefix)
+        if (
+            isinstance(entry, pyropdf.Dictionary)
+            and not entry.is_indirect
+            and _direct_value(entry, "BaseVersion") == "1.7"
+        ):
+            level = _direct_value(entry, "ExtensionLevel")
+            if type(level) is int and level >= required:
+                return True
+    return False
+
+
 def arlington(path: Path, flavour: str) -> str:
     """Validate the effective version, including a catalog promotion in a later revision."""
     with path.open("rb") as source:
         header = source.read(8)[5:8].decode("ascii")
     with pyropdf.open(path) as doc:
         declared = doc.catalog.get("Version")
-        extensions = doc.catalog.get("Extensions")
-        pades = extensions.get("ETSI_PAdES") if isinstance(extensions, pyropdf.Dictionary) else None
-        declares_pades = (
-            isinstance(pades, pyropdf.Dictionary)
-            and pades.get("BaseVersion") == pyropdf.Name("1.7")
-            and pades.get("ExtensionLevel") == PADES_LEVEL
-        )
+        pades = declares_pades(doc.catalog.get("Extensions"))
     # Valid PDF version names are ordered by their one-digit components.
     effective = (
         max(header, str(declared))
@@ -458,7 +470,7 @@ def arlington(path: Path, flavour: str) -> str:
     )
     version = "arlington" + effective
     names = [EXTENSIONS[flavour]] if flavour in EXTENSIONS else []
-    if declares_pades:
+    if pades:
         names.append("ETSI_PAdES")
     return f"{version}+{','.join(names)}" if names else version
 
@@ -483,6 +495,11 @@ def cli(jar: Path, flavour: str) -> list[str]:
     return [*command, "--extensions", extensions] if extensions else command
 
 
+def verdict_path(header: str) -> Path:
+    """Extract the path before the flavour and optional Arlington extension list."""
+    return Path(re.sub(r" \S+(?: extensions: [\w.-]+(?:,\s*[\w.-]+)*)?$", "", header))
+
+
 def validate(jar: Path, flavour: str, paths: list[Path]) -> dict[str, bool]:
     """Return whether veraPDF accepts each of ``paths`` under ``flavour``, by file name."""
     command = cli(jar, flavour)
@@ -492,7 +509,7 @@ def validate(jar: Path, flavour: str, paths: list[Path]) -> dict[str, bool]:
         verdict, _, rest = line.partition(" ")
         # The Arlington profiles report a deviation from the model as DEVIATION.
         if verdict in {"PASS", "FAIL", "DEVIATION"}:
-            verdicts[Path(rest.rpartition(" ")[0]).name] = verdict == "PASS"
+            verdicts[verdict_path(rest).name] = verdict == "PASS"
     missing = [path.name for path in paths if path.name not in verdicts]
     if missing:
         sys.stderr.write(f"{result.stdout}\n{result.stderr}\n")
@@ -521,8 +538,7 @@ def detailed_reports(jar: Path, flavour: str, paths: list[Path]) -> dict[Path, s
     current: list[str] | None = None
     for line in result.stdout.splitlines():
         if line.startswith(("PASS ", "FAIL ", "DEVIATION ")):
-            # The text header ends with its flavour; paths may contain spaces.
-            source = Path(line.partition(" ")[2].rpartition(" ")[0])
+            source = verdict_path(line.partition(" ")[2])
             current = reports.setdefault(source, [])
         if current is not None:
             current.append(line)

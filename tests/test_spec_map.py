@@ -134,7 +134,7 @@ def test_done_comes_only_from_a_marked_test(tmp_path: Path) -> None:
 
     features_path.write_text(features_text, encoding="utf-8")
     views = root / "tests/test_typed_views.py"
-    marker = '@pytest.mark.spec("arlington", "read", "create", "edit")\n'
+    marker = '@pytest.mark.spec("arlington", "read", "edit")\n'
     views.write_text(views.read_text(encoding="utf-8").replace(marker, ""), encoding="utf-8")
     result = generate(root, "--check")
     assert result.returncode == 1
@@ -177,10 +177,9 @@ def test_markers_and_statuses_the_generator_does_not_understand_are_refused(tmp_
         (features_path, features_text.replace('reason = "7.4: a filter', 'reason = "A filter'), "cites no clause"),
         (
             features_path,
-            features_text.replace(
-                "[features.lzw-filter]\n",
-                '[features.lzw-filter]\ndeprecated = true\ncreate = { status = "n/a", reason = "7.4.4: old." }\n',
-            ),
+            features_text
+            + '\n[features.fixture-deprecated]\nclause = "7.4.4"\ndescription = "Fixture."\nobjects = []\n'
+            'deprecated = true\ncreate = { status = "n/a", reason = "7.4.4: old." }\n',
             "creating a deprecated feature is a non-goal",
         ),
         (features_path, features_text.replace('"7.2" = ', '"7.2.1" = "Unused"\n"7.2" = '), "without a feature: 7.2.1"),
@@ -279,11 +278,23 @@ def test_upstream_correction_comparison_ignores_navigation_and_reports_new_locat
     assert result.stdout == "New: #2 edition/clause01.html#H2\n"
 
 
-def test_a_feature_takes_the_default_status_only_where_no_test_proves_it() -> None:
-    by_name = features()
-    assert by_name["flate-filter"]["read"]["status"] == "done"
-    assert by_name["lzw-filter"]["read"]["status"] == "planned"
-    assert by_name["lzw-filter"]["read"]["family"] == "stream-filters"
+def test_a_feature_takes_the_default_status_only_where_no_test_proves_it(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    feature = "fixture-default"
+    with (root / FEATURES).open("a", encoding="utf-8") as target:
+        target.write(f'\n[features.{feature}]\nclause = "7.4.4"\ndescription = "Fixture."\nobjects = []\n')
+    with (root / FEATURES.with_name("families.toml")).open("a", encoding="utf-8") as target:
+        target.write(
+            f'\n[families.fixture]\ntracker = 252\nissue = 891\ntitle = "Fixture"\nfeatures = ["{feature}"]\n'
+            'dimensions = ["read", "interpret", "create", "edit", "preserve"]\nbehavior = "Fixture."\n'
+        )
+    (root / "tests/test_fixture.py").write_text(f'@pytest.mark.spec("{feature}", "read")\ndef test_read(): pass\n')
+    result = generate(root)
+    assert result.returncode == 0, result.stderr
+    fixture = next(item for item in json.loads((root / MAP).read_text())["features"] if item["feature"] == feature)
+    assert fixture["read"]["status"] == "done"
+    assert fixture["edit"]["status"] == "planned"
+    assert fixture["edit"]["family"] == "fixture"
 
 
 OPEN_MILESTONES = frozenset(
@@ -298,10 +309,12 @@ OPEN_MILESTONES = frozenset(
 
 def test_planned_and_partial_statuses_name_open_milestones_and_valid_issues() -> None:
     by_name = features()
-    assert by_name["Catalog"]["create"]["issue"] == 889
-    assert by_name["Catalog"]["create"]["milestone"] == "Phase 4: Specification"
-    assert by_name["Catalog"]["edit"]["issue"] == 889
-    assert by_name["Catalog"]["edit"]["milestone"] == "Phase 4: Specification"
+    assert by_name["Catalog"]["create"]["status"] == "done"
+    assert by_name["Catalog"]["edit"]["status"] == "done"
+    assert by_name["Catalog"]["preserve"]["status"] == "done"
+    assert by_name["Catalog"]["preserve"]["tests"] == [
+        "tests/test_typed_views.py::test_an_unrelated_edit_preserves_the_reachable_descriptor_and_its_targets[Catalog]"
+    ]
     for name, feature in by_name.items():
         for dimension in DIMENSIONS:
             entry = feature[dimension]
@@ -482,8 +495,8 @@ def test_a_claim_holds_only_when_every_applicable_dimension_in_scope_is_done(tmp
     assert "5 of 5 applicable dimensions of 1 features done (100.0%)" in held.stdout
     blocked = claim(copy_root(tmp_path / "b"), 'clauses = ["7.6.4", "7.4.4"]\n')
     assert blocked.returncode == 1
-    assert "- flate-filter edit is planned" in blocked.stdout
-    assert "- lzw-filter read is planned" in blocked.stdout
+    assert "- flate-filter edit is partial" in blocked.stdout
+    assert "- lzw-filter read is partial" in blocked.stdout
 
 
 def test_clause_claims_resolve_typed_objects_and_report_their_work(tmp_path: Path) -> None:
@@ -592,19 +605,19 @@ def test_a_non_goal_blocks_a_claim_unless_the_scope_excludes_it(tmp_path: Path) 
     features_path = root / FEATURES
     goal = '{ status = "non-goal", decision = "#1", reason = "Test." }'
     entry = "".join(f"{dimension} = {goal}\n" for dimension in DIMENSIONS)
-    features_path.write_text(
-        features_path.read_text(encoding="utf-8").replace("[features.lzw-filter]\n", f"[features.lzw-filter]\n{entry}"),
-        encoding="utf-8",
-    )
+    with features_path.open("a", encoding="utf-8") as target:
+        target.write(
+            f'\n[features.fixture-non-goal]\nclause = "7.4.4"\ndescription = "Fixture."\nobjects = []\n{entry}'
+        )
     assert generate(root).returncode == 0
-    blocked = claim(root, 'clauses = []\nfeatures = ["lzw-filter"]\n')
+    blocked = claim(root, 'clauses = []\nfeatures = ["fixture-non-goal"]\n')
     assert blocked.returncode == 1
-    assert "- lzw-filter create is non-goal that the scope does not declare as an exclusion" in blocked.stdout
+    assert "- fixture-non-goal create is non-goal that the scope does not declare as an exclusion" in blocked.stdout
     excluded = "".join(f'{dimension} = "Out of this claim."\n' for dimension in DIMENSIONS)
-    held = claim(root, f'clauses = []\nfeatures = ["lzw-filter"]\n\n[exclusions.lzw-filter]\n{excluded}')
+    held = claim(root, f'clauses = []\nfeatures = ["fixture-non-goal"]\n\n[exclusions.fixture-non-goal]\n{excluded}')
     assert held.returncode == 1, held.stdout
     assert "no applicable dimensions" in held.stdout
-    assert "- lzw-filter create (non-goal): Out of this claim." in held.stdout
+    assert "- fixture-non-goal create (non-goal): Out of this claim." in held.stdout
 
 
 def test_a_claim_rejects_empty_scopes_and_invalid_exclusions(tmp_path: Path) -> None:

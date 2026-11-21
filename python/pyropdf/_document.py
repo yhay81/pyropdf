@@ -71,6 +71,7 @@ from pyropdf._measurement import (
     _read_document_requirements,
     _write_document_requirements,
 )
+from pyropdf._media import SlideShow, alternate_presentations
 from pyropdf._metadata import (
     METADATA_KEYS,
     MarkInfo,
@@ -202,6 +203,12 @@ class Document:
         self._fallback: dict[str, FallbackFont | _FontPackage] | None = None
         _set_fallback(self, None)
 
+    def _import_source(self, core: _Document) -> Document:
+        """Wrap the version captured by a foreign page import for its catalog reads."""
+        view = Document.__new__(Document)
+        view._setup(lambda _: core, self._limits)  # noqa: SLF001
+        return view
+
     @property
     def limits(self) -> DocumentLimits:
         """Return the limits that the document's operations start from."""
@@ -212,6 +219,12 @@ class Document:
         """Return the pages, a sequence of :class:`Page` handles that edits keep valid."""
         self._ensure_open()
         return Pages(self)
+
+    @property
+    def alternate_presentations(self) -> dict[bytes, SlideShow]:
+        """Read the catalog's multi-level AlternatePresentations name tree as existing slideshows."""
+        self._ensure_open()
+        return alternate_presentations(self)
 
     @property
     def attachments(self) -> Attachments:
@@ -524,8 +537,8 @@ class Document:
         color: bool = True,
         gray: bool = True,
         set_to_gray: bool = False,
-        lossless_format: Literal["flate", "jpeg"] = "flate",
-        bitonal_format: Literal["fax", "flate"] = "fax",
+        lossless_format: Literal["flate", "jpeg", "jpx"] = "flate",
+        bitonal_format: Literal["fax", "fax-g3", "fax-g3-2d", "jbig2", "flate"] = "fax",
     ) -> ImageRewriteReport:
         """Downsample and recompress the images that the pages place, each image object once, in one transaction.
 
@@ -539,9 +552,12 @@ class Document:
 
         Lossy images (JPEG and JPEG 2000) are written as JPEG at
         ``quality``, or 75 when it is ``None``. Lossless ones are written as
-        8-bit Flate, or as JPEG when ``lossless_format`` is ``"jpeg"``.
-        Bitonal ones (1 bit, CCITT, or JBIG2) are written as CCITT Group 4
-        with ``bitonal_format="fax"``, or as 1-bit Flate with ``"flate"``;
+        8-bit Flate, or as JPEG when ``lossless_format`` is ``"jpeg"``. Choose
+        ``"jpx"`` for lossless JPEG 2000 output on gray and RGB XObjects.
+        Images that keep other sample spaces and inline images use Flate.
+        Bitonal images use Group 4 (``"fax"``), Group 3 one-dimensional
+        (``"fax-g3"``) or mixed (``"fax-g3-2d"``), lossless JBIG2 XObjects
+        (``"jbig2"``, 1-bit Flate for inline images), or 1-bit Flate (``"flate"``);
         resampled bitonal pixels below half gray become black. A soft mask,
         a stencil ``/Mask`` of the image's size, or a color-key mask
         becomes a new 8-bit soft mask resampled with the image, so a mask

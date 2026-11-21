@@ -91,6 +91,23 @@ def check_size(head: Wheel, abi: str, base: Wheel | None, justification: str) ->
         raise ValueError(msg)
 
 
+def growth_justification(body: str) -> str:
+    """Return the first justification that the growth check accepts."""
+    match = re.search(r"^Wheel growth justification:[ \t]*(\S[^\r\n]*)", body, re.MULTILINE)
+    return match[1].strip() if match else ""
+
+
+def comparison_inputs_changed(event: dict) -> bool:
+    """Check whether the PR source, target branch or effective growth justification changed."""
+    changes = event.get("changes", {})
+    if event["action"] != "edited" or "base" in changes:
+        return True
+    previous = changes.get("body")
+    if previous is None:
+        return False
+    return growth_justification(previous["from"] or "") != growth_justification(event["pull_request"]["body"] or "")
+
+
 def main() -> None:
     """Print the measured wheels and fail when a release requirement is unmet."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -101,8 +118,7 @@ def main() -> None:
     path = only_wheel(args.directory)
     head = measure(path)
     base = measure(only_wheel(args.base)) if args.base else None
-    match = re.search(r"^Wheel growth justification:[ \t]*(\S[^\r\n]*)", os.getenv("PR_BODY", ""), re.MULTILINE)
-    reason = match[1].strip() if match else ""
+    reason = growth_justification(os.getenv("PR_BODY", ""))
     report = {"head": asdict(head)}
     if base:
         report.update(base=asdict(base), growth_bytes=head.size_bytes - base.size_bytes)

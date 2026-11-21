@@ -1,0 +1,49 @@
+browser	version	fixture	query	found	selected	double_click	width_css_px	height_css_px	click_pdf_x	click_pdf_y	displaced_click_matches	changed_pixels
+chromium	159.0.8154.6	positions	Searchable	true	Searchable	Searchable	89.04	22.00	47	150	true	0
+chromium	159.0.8154.6	positions	Rotated	true	Rotated	Rotated	22.00	62.03	100	53	false	0
+chromium	159.0.8154.6	positions	Slanted	true	Slanted	Slanted	64.77	33.54	160	78	false	0
+chromium	159.0.8154.6	positions	Invisible	true	Invisible	Invisible	63.01	22.00	30	19	true	0
+chromium	159.0.8154.6	upstream-ocr	Scanned page	true	Scanned page		76.04	14.00				0
+chromium	159.0.8154.6	upstream-ocr	with OCR text	true	with OCR text		74.02	14.00				0
+chromium	159.0.8154.6	upstream-layer	Fish & <Chips>	true	Fish & <Chips>		81.81	14.00				0
+chromium	159.0.8154.6	upstream-layer	fi	true	fi		6.34	14.00				0
+chromium	159.0.8154.6	upstream-layer	outlined	true	outlined		41.35	14.00				0
+chromium	159.0.8154.6	upstream-layer	up	true	up		14.00	12.67				0
+chromium	159.0.8154.6	upstream-layer	縦書	true	縦書		12.00	26.00				0
+chromium	159.0.8154.6	upstream-layer	a	true	a		5.33	14.00				0
+chromium	159.0.8154.6	nonembedded-latin	Hello big world	true	Hello big world		205.71	23.35				0
+chromium	159.0.8154.6	nonembedded-cjk	計画地	true	計画地		120.00	46.00				0
+chromium	159.0.8154.6	hebrew-niqqud	שָׁלוֹם עולם	false								0
+chromium	159.0.8154.6	hebrew-niqqud	םלוע םֹולָׁש	true	םלוע םֹולָׁש		103.74	28.00				0
+firefox	159.0	positions	Searchable	true	Searchable	Searchable	95.22	19.00	47	150	false	0
+firefox	159.0	positions	Rotated	true	Rotated	Rotated	19.00	67.73	100	53	false	0
+firefox	159.0	positions	Slanted	true	Slanted	Slanted	69.95	32.73	160	78	false	0
+firefox	159.0	positions	Invisible	true	Invisible	Invisible	68.67	19.00	30	19	false	0
+firefox	159.0	upstream-ocr	Scanned page	true	Scanned page		80.70	13.00				0
+firefox	159.0	upstream-ocr	with OCR text	true	with OCR text		78.32	13.00				0
+firefox	159.0	upstream-layer	Fish & <Chips>	true	Fish & <Chips>		84.15	13.00				0
+firefox	159.0	upstream-layer	fi	true	fi		7.43	13.00				0
+firefox	159.0	upstream-layer	outlined	true	outlined		45.58	13.00				0
+firefox	159.0	upstream-layer	up	true	up		13.00	16.53				0
+firefox	159.0	upstream-layer	縦書	true	縦書		14.15	25.00				0
+firefox	159.0	upstream-layer	a	true	a		6.90	13.00				0
+firefox	159.0	nonembedded-latin	Hello big world	true	Hello big world		213.07	21.00				0
+firefox	159.0	nonembedded-cjk	計画地	true	計画地		125.22	41.00				0
+firefox	159.0	hebrew-niqqud	שָׁלוֹם עולם	false								0
+firefox	159.0	hebrew-niqqud	םלוע םֹולָׁש	true	םלוע םֹולָׁש		107.72	28.00				0
+webkit	27.2	positions	Searchable	true	Searchable	Searchable	89.03	21.00	47	150	false	0
+webkit	27.2	positions	Rotated	true	Rotated	Rotated	21.00	62.03	100	53	false	0
+webkit	27.2	positions	Slanted	true	Slanted	Slanted	64.64	32.94	160	78	false	0
+webkit	27.2	positions	Invisible	true	Invisible	Invisible	63.00	21.00	30	19	false	0
+webkit	27.2	upstream-ocr	Scanned page	true	Scanned page		76.04	14.00				0
+webkit	27.2	upstream-ocr	with OCR text	true	with OCR text		74.01	14.00				0
+webkit	27.2	upstream-layer	Fish & <Chips>	true	Fish & <Chips>		81.79	14.00				0
+webkit	27.2	upstream-layer	fi	true	fi		6.33	14.00				0
+webkit	27.2	upstream-layer	outlined	true	outlined		41.35	14.00				0
+webkit	27.2	upstream-layer	up	true	up		14.00	12.67				0
+webkit	27.2	upstream-layer	縦書	true	縦書		12.00	26.00				0
+webkit	27.2	upstream-layer	a	true	a		5.33	14.00				0
+webkit	27.2	nonembedded-latin	Hello big world	true	Hello big world		205.70	23.05				0
+webkit	27.2	nonembedded-cjk	計画地	true	計画地		120.00	46.00				0
+webkit	27.2	hebrew-niqqud	שָׁלוֹם עולם	false								0
+webkit	27.2	hebrew-niqqud	םלוע םֹולָׁש	true	םלוע םֹולָׁש		103.74	28.00				0
