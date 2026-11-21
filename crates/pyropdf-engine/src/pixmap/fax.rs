@@ -1,7 +1,5 @@
-//! A CCITT Group 4 encoder (ITU-T T.6) for the bitonal images that
-//! `Document.rewrite_images` writes (issue 432). Its output is what PDF's
-//! `CCITTFaxDecode` filter reads with `/K -1`, the default `/BlackIs1
-//! false`, and an end-of-facsimile block.
+//! Lossless 1-bit image output for PDF. Group 3 and Group 4 fax use the
+//! default BlackIs1=false. Embedded JBIG2 uses an MMR generic region.
 
 use super::MAX_PIXELS;
 
@@ -216,6 +214,9 @@ impl Bits {
     /// terminating code.
     fn run(&mut self, mut length: usize, white: bool) {
         while length >= 2560 {
+            if self.over() {
+                return;
+            }
             self.put(EXTENDED_MAKEUP[12]);
             length -= 2560;
         }
@@ -336,14 +337,119 @@ pub fn encode_g4(data: &[u8], width: usize, height: usize, limit: usize) -> Opti
     (out.len() <= limit).then_some(out)
 }
 
-/// Validates `width`, `height`, and `data.len()` against [`MAX_PIXELS`] and
-/// packed row bytes before encoding 1-bit samples as CCITT Group 4 data.
-pub fn encode_checked(
+/// Writes a T.4 one-dimensional row, starting with a possibly empty white run.
+fn encode_runs(bits: &mut Bits, row: &[bool]) {
+    let mut start = 0;
+    let mut white = true;
+    for (x, &pixel) in row.iter().enumerate() {
+        if pixel != white {
+            bits.run(x - start, white);
+            if bits.over() {
+                return;
+            }
+            start = x;
+            white = pixel;
+        }
+    }
+    bits.run(row.len() - start, white);
+}
+
+/// Encodes Group 3 fax (T.4, 4.1 and 4.2). K=0 uses one-dimensional
+/// rows. K=2 alternates one-dimensional rows and reference-coded rows.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "two rows bounded by the checked raster dimensions"
+)]
+pub fn encode_g3_checked(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    limit: usize,
+    mixed: bool,
+) -> Result<Option<Vec<u8>>, String> {
+    validate_rows(data, width, height)?;
+    let mut bits = Bits {
+        out: Vec::new(),
+        byte: 0,
+        used: 0,
+        limit,
+    };
+    let mut line = vec![true; width];
+    let mut reference = if mixed { vec![true; width] } else { Vec::new() };
+    for (y, row) in data.chunks_exact(width.div_ceil(8)).enumerate() {
+        bits.put(EOL);
+        for (x, pixel) in line.iter_mut().enumerate() {
+            *pixel = row[x / 8] & (0x80 >> (x % 8)) != 0;
+        }
+        if mixed && y % 2 == 1 {
+            bits.put("0");
+            encode_line(&mut bits, &line, &reference);
+        } else {
+            if mixed {
+                bits.put("1");
+            }
+            encode_runs(&mut bits, &line);
+        }
+        if bits.over() {
+            return Ok(None);
+        }
+        if mixed {
+            std::mem::swap(&mut line, &mut reference);
+        }
+    }
+    for _ in 0..6 {
+        bits.put(EOL);
+        if mixed {
+            bits.put("1");
+        }
+    }
+    let out = bits.finish();
+    Ok((out.len() <= limit).then_some(out))
+}
+
+/// Encodes a lossless embedded JBIG2 page with one MMR generic region
+/// (ITU-T T.88, 7.4.6 and 7.4.8; ISO 32000-2, 7.4.7). The image needs
+/// neither a global symbol dictionary nor a file header or end-page segment.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "exactly the two fixed segment headers and at most limit bytes of MMR data"
+)]
+pub fn encode_jbig2_checked(
     data: &[u8],
     width: usize,
     height: usize,
     limit: usize,
 ) -> Result<Option<Vec<u8>>, String> {
+    validate_rows(data, width, height)?;
+    const OVERHEAD: usize = 11 + 19 + 11 + 18;
+    let Some(payload_limit) = limit.checked_sub(OVERHEAD) else {
+        return Ok(None);
+    };
+    let Some(mmr) = encode_g4(data, width, height, payload_limit) else {
+        return Ok(None);
+    };
+    let width = u32::try_from(width).expect("validated pixel count");
+    let height = u32::try_from(height).expect("validated pixel count");
+    let length =
+        u32::try_from(18 + mmr.len()).map_err(|_| "JBIG2 region length exceeds 32 bits")?;
+    let mut bytes = Vec::with_capacity(OVERHEAD + mmr.len());
+    // No referred-to segments; one-byte page association 1.
+    bytes.extend_from_slice(&[0, 0, 0, 0, 48, 0, 1, 0, 0, 0, 19]);
+    bytes.extend_from_slice(&width.to_be_bytes());
+    bytes.extend_from_slice(&height.to_be_bytes());
+    bytes.extend_from_slice(&[0; 8]); // unspecified resolution
+    bytes.extend_from_slice(&[1, 0, 0]); // lossless, white background, non-striped
+    bytes.extend_from_slice(&[0, 0, 0, 1, 39, 0, 1]); // immediate lossless generic region
+    bytes.extend_from_slice(&length.to_be_bytes());
+    bytes.extend_from_slice(&width.to_be_bytes());
+    bytes.extend_from_slice(&height.to_be_bytes());
+    bytes.extend_from_slice(&[0; 9]); // origin (0, 0), OR composition
+    bytes.push(1); // MMR coding
+    bytes.extend_from_slice(&mmr);
+    Ok(Some(bytes))
+}
+
+fn validate_rows(data: &[u8], width: usize, height: usize) -> Result<(), String> {
     if width == 0
         || height == 0
         || (width as u64)
@@ -360,6 +466,18 @@ pub fn encode_checked(
             data.len()
         ));
     }
+    Ok(())
+}
+
+/// Validates `width`, `height`, and `data.len()` against [`MAX_PIXELS`] and
+/// packed row bytes before encoding 1-bit samples as CCITT Group 4 data.
+pub fn encode_checked(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    limit: usize,
+) -> Result<Option<Vec<u8>>, String> {
+    validate_rows(data, width, height)?;
     Ok(encode_g4(data, width, height, limit))
 }
 
