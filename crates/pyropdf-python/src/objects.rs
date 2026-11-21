@@ -19,6 +19,9 @@
 //! generation)` for a reference, and `("c", root, path)` for a copy of what
 //! a handle names.
 
+mod schema;
+pub use schema::{schema_entry, schema_leaf};
+
 use std::sync::Arc;
 
 use pyo3::exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError};
@@ -35,7 +38,7 @@ use pyropdf_store::value::{Array, Bytes, Dict, Name, PdfString, Real, Reference,
 use pyropdf_store::version::{Transaction, Version};
 
 use crate::document::_Document;
-use crate::errors::{MalformedPdfError, StaleObjectError, limit_error, store_error};
+use crate::errors::{StaleObjectError, limit_error, store_error};
 
 /// Maximum nesting depth of written arrays and dictionaries (32,
 /// `object_value_depth`); `python/pyropdf/_objects.py` checks it first.
@@ -160,24 +163,33 @@ fn walk_mut<'v>(value: &'v mut Value, root: Root, path: &[Step]) -> PyResult<&'v
 /// names: `None` for a missing object or a null.
 fn resolve(
     version: &Version,
-    mut reference: Reference,
+    reference: Reference,
     budget: &Budget,
 ) -> PyResult<Option<(Reference, Arc<Value>)>> {
+    Ok(reference_target(version, reference, budget)
+        .map_err(|e| store_error(&e))?
+        .filter(|(_, value)| !matches!(value.as_ref(), Value::Null)))
+}
+
+/// Retain an indirect null so a typed array can distinguish it from a broken reference.
+pub(crate) fn reference_target(
+    version: &Version,
+    mut reference: Reference,
+    budget: &Budget,
+) -> pyropdf_store::Result<Option<(Reference, Arc<Value>)>> {
     for _ in 0..MAX_CHAIN {
         let Some(object) = version
-            .get(reference.number(), budget)
-            .map_err(|e| store_error(&e))?
+            .get(reference.number(), budget)?
             .filter(|object| object.generation() == reference.generation())
         else {
             return Ok(None);
         };
         match &**object.value() {
-            Value::Null => return Ok(None),
             Value::Reference(next) => reference = *next,
             _ => return Ok(Some((reference, Arc::clone(object.value())))),
         }
     }
-    Err(MalformedPdfError::new_err(
+    Err(pyropdf_store::Error::malformed(
         "a reference chain is longer than 16 references",
     ))
 }

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import runpy
 from pathlib import Path
 
+import pikepdf
 import pytest
 
 import pyropdf
@@ -233,6 +235,89 @@ def test_the_check_holds_a_file_to_its_declared_version() -> None:
     report = pyropdf.open(BROKEN / "version.pdf").check()
     assert report.version == "1.3"
     assert "PDF 1.4" in report.defects[0].message
+
+
+def _geo_viewport(version: str, extension: bytes = b"", *, pcsm: bool = False) -> bytes:
+    catalog = b"/Extensions << /ADBE << " + extension + b" >> >>" if extension else b""
+    matrix = b"/PCSM [1 0 0 0 1 0 0 0 1 0 0 0]" if pcsm else b""
+    data: bytes = CORPUS["pdf"](
+        [
+            b"<< /Type /Catalog /Pages 2 0 R " + catalog + b" >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> /VP [4 0 R] >>",
+            b"<< /Type /Viewport /BBox [0 0 100 100] /Measure << /Type /Measure /Subtype /GEO "
+            b"/GCS << /Type /GEOGCS /EPSG 4326 >> /GPTS [37 -122] /LPTS [1 0] " + matrix + b" >> >>",
+        ],
+        version,
+    )
+    # PDF 2.0 requires a file identifier. The trailer follows all indexed objects.
+    return data.replace(b"/Root 1 0 R >>", b"/Root 1 0 R /ID [(0123456789abcdef) (0123456789abcdef)] >>")
+
+
+@pytest.mark.parametrize("level", [3, 11])
+@pytest.mark.parametrize("incremental", [False, True])
+def test_legacy_geo_viewport_survives_a_save(level: int, *, incremental: bool) -> None:
+    source = _geo_viewport("1.7", f"/BaseVersion /1.7 /ExtensionLevel {level}".encode())
+    with pyropdf.open(source) as doc:
+        assert not doc.check().defects
+        doc.catalog["Lang"] = "en-US"
+        saved = doc.to_bytes(incremental=incremental)
+    if incremental:
+        assert saved.startswith(source)
+    with pyropdf.open(saved) as reopened:
+        assert not reopened.check().defects
+    with pikepdf.open(io.BytesIO(saved)) as independent:
+        assert not independent.check_pdf_syntax()
+        assert independent.pdf_version == "1.7"
+        assert independent.Root.Extensions.ADBE.BaseVersion == pikepdf.Name("/1.7")
+        assert independent.Root.Extensions.ADBE.ExtensionLevel == level
+        assert str(independent.Root.Lang) == "en-US"
+        [viewport] = independent.pages[0].obj.VP
+        assert list(viewport.BBox) == [0, 0, 100, 100]
+        measure = viewport.Measure
+        assert (measure.Type, measure.Subtype) == (pikepdf.Name.Measure, pikepdf.Name.GEO)
+        assert (measure.GCS.Type, measure.GCS.EPSG) == (pikepdf.Name.GEOGCS, 4326)
+        assert list(measure.GPTS) == [37, -122]
+        assert list(measure.LPTS) == [1, 0]
+
+
+@pytest.mark.parametrize(
+    ("version", "extension"),
+    [
+        ("1.7", b""),
+        ("1.7", b"/BaseVersion /1.7 /ExtensionLevel 2"),
+        ("1.7", b"/BaseVersion /1.6 /ExtensionLevel 3"),
+        ("1.6", b"/BaseVersion /1.7 /ExtensionLevel 3"),
+    ],
+)
+def test_legacy_geo_requires_the_matching_adobe_extension(version: str, extension: bytes) -> None:
+    with pyropdf.open(_geo_viewport(version, extension)) as doc:
+        defects = {(d.clause, d.kind) for d in doc.check().defects}
+    assert ("MeasureGEO/Type", "version") in defects
+    assert ("MeasureGEO/Subtype", "version") in defects
+
+
+@pytest.mark.parametrize(
+    ("version", "extension", "expected"),
+    [
+        ("1.7", b"/BaseVersion /1.7 /ExtensionLevel 3", [("MeasureGEO/PCSM", "version")]),
+        ("2.0", b"", []),
+    ],
+)
+def test_geo_matrix_requires_pdf_20(version: str, extension: bytes, expected: list[tuple[str, str]]) -> None:
+    with pyropdf.open(_geo_viewport(version, extension, pcsm=True)) as doc:
+        assert [(d.clause, d.kind) for d in doc.check().defects] == expected
+
+
+def test_legacy_geo_checks_its_viewport_and_coordinate_system() -> None:
+    source = _geo_viewport("1.7", b"/BaseVersion /1.7 /ExtensionLevel 3")
+    # Equal-length substitutions retain the literal file's cross-reference offsets.
+    source = source.replace(b"/BBox ", b"/Test ").replace(b"/EPSG 4326", b"/EPSG /bad")
+    with pyropdf.open(source) as doc:
+        assert {(d.clause, d.kind) for d in doc.check().defects} == {
+            ("Viewport/BBox", "required"),
+            ("GeographicCoordinateSystem/EPSG", "type"),
+        }
 
 
 def test_a_cyclic_page_tree_is_walked_once() -> None:
