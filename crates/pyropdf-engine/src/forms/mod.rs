@@ -25,6 +25,7 @@ mod import;
 mod radio;
 mod read;
 pub mod remove;
+pub mod rich_text;
 mod settle;
 mod style;
 mod text;
