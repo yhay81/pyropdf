@@ -110,6 +110,13 @@ fn tokens(source: &str) -> Option<Vec<Token<'_>>> {
                     let joins = next == b'-'
                         && bytes[at].is_ascii_alphabetic()
                         && bytes.get(end + 1).is_some_and(u8::is_ascii_alphabetic);
+                    if next == b'*'
+                        && bytes[at] == b'@'
+                        && bytes[at + 1..end].iter().all(u8::is_ascii_digit)
+                    {
+                        end += 1;
+                        break;
+                    }
                     if !is_word(next) && !joins {
                         break;
                     }
@@ -326,9 +333,10 @@ impl<G: Graph> Scope<'_, '_, G> {
                 clippy::disallowed_methods,
                 reason = "copies one word of a predicate of the generated model"
             )]
-            Expr::Word(word) => word
-                .parse::<f64>()
-                .map_or_else(|_| Val::Name(word.as_bytes().to_vec()), Val::Num),
+            Expr::Word(word) => word.parse::<f64>().map_or_else(
+                |_| Val::Name(word.trim_matches('\'').as_bytes().to_vec()),
+                Val::Num,
+            ),
             Expr::Path(path) => self.path(path, |value| {
                 value.map_or(Val::Absent, |value| scalar(&self.graph.view(value)))
             })?,
@@ -563,6 +571,13 @@ impl<G: Graph> Scope<'_, '_, G> {
             reason = "the segments of one path in a predicate of the generated model"
         )]
         let mut segments: Vec<&str> = path.split("::").collect();
+        if let [subject] = segments.as_slice()
+            && subject.starts_with('@')
+            && subject.ends_with('*')
+            && let Some(value) = self.subject
+        {
+            return Ok(then(Some(value)));
+        }
         let start = match segments.first() {
             Some(&"trailer") => {
                 segments.remove(0);
@@ -604,8 +619,8 @@ impl<G: Graph> Scope<'_, '_, G> {
         let Some(child) = child else {
             return Ok(then(None));
         };
-        if let View::Reference(number) = self.graph.view(child) {
-            let resolved = self.graph.resolve(number)?;
+        if let View::Reference(_) = self.graph.view(child) {
+            let resolved = self.graph.target(child)?;
             return match (&resolved, rest.is_empty()) {
                 (Some(resolved), false) => self.walk(resolved, rest, then),
                 (resolved, _) => Ok(then(resolved.as_deref())),
@@ -683,8 +698,8 @@ impl<G: Graph> Scope<'_, '_, G> {
         raw: &'a G::Value,
         slot: &'a mut Option<G::Owned>,
     ) -> Result<Option<&'a G::Value>, G::Error> {
-        if let View::Reference(number) = self.graph.view(raw) {
-            *slot = self.graph.resolve(number)?;
+        if let View::Reference(_) = self.graph.view(raw) {
+            *slot = self.graph.target(raw)?;
             Ok(slot.as_deref())
         } else {
             Ok(Some(raw))
