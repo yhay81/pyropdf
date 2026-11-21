@@ -407,6 +407,7 @@ method and property of its classes with its full description.
 - [`typed`](typed-objects.md#pyropdftyped): Typed views of PDF objects, one per object type of the Arlington PDF Model.
 - [`typed.ArrayView`](typed-objects.md#typedarrayview): The base of the views of array types.
 - [`typed.DictionaryView`](typed-objects.md#typeddictionaryview): The base of the views of dictionary types.
+- [`typed.LinkedTree`](typed-objects.md#typedlinkedtree): A name or number tree with the Arlington types declared for its leaf values.
 - [`typed.StreamView`](typed-objects.md#typedstreamview): The base of the views of stream types.
 - [`typed.TYPES`](typed-objects.md#typedtypes): The object types of the model, sorted.
 - [`typed.View`](typed-objects.md#typedview): A typed view of one object: the base of the views of every object type.
