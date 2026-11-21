@@ -60,7 +60,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Threads", ("_threads",)),
     ("Structure", ("_structure",)),
     ("Attachments", ("_attachments",)),
-    ("Collections", ("_collections",)),
+    ("Collections", ("_collections", "_web_capture")),
     ("Measurement and requirements", ("_measurement",)),
     ("History and changes", ("_history", "_changes", "_revisions")),
     ("Encryption", ("_encryption",)),

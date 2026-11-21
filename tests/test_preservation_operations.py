@@ -589,6 +589,76 @@ def check_flattened_widgets(doc: pyropdf.Document) -> None:
     assert "AVA" in doc.pages[0].text(unmapped="replacement")
 
 
+_CAPTURE_ID = b"pyropdf-capture!"
+_CAPTURE_URL = b"http://example.org/pyropdf-capture"
+
+
+def prepare_web_capture(doc: pyropdf.Document) -> None:
+    """Start with an existing capture even on PDF 2.0, where registration is deprecated."""
+    page = doc.pages[0].obj
+    assert "ID" not in page
+    assert "SpiderInfo" not in doc.catalog
+    page["ID"] = _CAPTURE_ID
+    spec = {"S": pyropdf.Name("SPS"), "ID": _CAPTURE_ID, "O": [page], "SI": {"AU": _CAPTURE_URL}}
+    content = doc.objects[doc.objects.add(spec)]
+    if "Names" not in doc.catalog:
+        doc.catalog["Names"] = {}
+    names = doc.catalog["Names"]
+    assert "IDS" not in names
+    assert "URLS" not in names
+    names["IDS"] = {"Names": [_CAPTURE_ID, content]}
+    names["URLS"] = {"Names": [_CAPTURE_URL, content]}
+    doc.catalog["SpiderInfo"] = {"V": 1}
+
+
+def edit_web_capture(doc: pyropdf.Document) -> set[int]:
+    database = doc.web_capture
+    (content,) = database.by_id(_CAPTURE_ID)
+    names = doc.catalog["Names"]
+    touched = {number(doc.catalog), number(doc.pages[0].obj), number(content.obj)}
+    if names.xref is not None:
+        touched.add(names.xref)
+    url = _CAPTURE_URL + b"-revised"
+    source = pyropdf.typed.SourceInformation(doc.objects[doc.objects.add({"AU": url})])
+    database.set_sources(content, source)
+    assert database.by_url(url.decode()) == (content,)
+    database.remove(content)
+    if pdf_version(doc) < (2, 0):
+        # Re-register a second independently prepared set after unregistering the first.
+        new = doc.objects[
+            doc.objects.add(
+                {
+                    "S": pyropdf.Name("SPS"),
+                    "ID": _CAPTURE_ID,
+                    "O": [doc.pages[0].obj],
+                    "SI": {"AU": url},
+                }
+            )
+        ]
+        registered = pyropdf.typed.WebCapturePageSet(new)
+        database.add(registered)
+        assert database.by_id(_CAPTURE_ID) == (registered,)
+    return touched
+
+
+def check_web_capture(doc: pyropdf.Document) -> None:
+    database = doc.web_capture
+    assert not database.by_url(_CAPTURE_URL.decode())
+    renamed = database.by_url((_CAPTURE_URL + b"-revised").decode())
+    if pdf_version(doc) < (2, 0):
+        (content,) = renamed
+        assert database.by_id(_CAPTURE_ID) == (content,)
+        assert isinstance(content, pyropdf.typed.WebCapturePageSet)
+        assert content.O[0].obj == doc.pages[0].obj
+        assert bytes(doc.pages[0].obj["ID"]) == _CAPTURE_ID
+        assert database.info is not None
+    else:
+        assert not renamed
+        assert not database.by_id(_CAPTURE_ID)
+        assert "ID" not in doc.pages[0].obj
+        assert database.info is None
+
+
 def prepare_related_files(doc: pyropdf.Document) -> None:
     owner = doc.attachments.add("pyropdf-related-owner", b"owner", filename="drawing.dat")
     previous = doc.objects[doc.objects.add_stream(b"previous", {"Type": pyropdf.Name("EmbeddedFile")})]
@@ -1984,6 +2054,7 @@ def check_timestamp(doc: pyropdf.Document) -> None:
 
 
 FAMILY_EDITS = {
+    "web_capture": Edit(prepare=prepare_web_capture, apply=edit_web_capture, check=check_web_capture),
     "action_triggers": Edit(prepare=prepare_widget_events, apply=edit_widget_events, check=check_widget_events),
     "annotation_relations": Edit(
         prepare=prepare_replies, apply=edit_replies, check=check_replies, affected_pages=first_page
