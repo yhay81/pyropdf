@@ -191,12 +191,24 @@ def test_verapdf_rules_include_full_iso_table_names_and_model_deviations() -> No
     assert VERAPDF.failed_rules(report) == {"8.2.5.2-1", "Table 5. StructTreeRoot-Document-1", "VRI-OCSP-Array-9"}
 
 
-@pytest.mark.parametrize(("level", "extensions"), [(1, "ISO_19005_3"), (2, "ISO_19005_3,ETSI_PAdES")])
-def test_arlington_selects_the_declared_pades_extension(tmp_path: Path, level: int, extensions: str) -> None:
+@pytest.mark.parametrize(
+    ("prefix", "level", "extensions"),
+    [
+        ("ESIC", 1, "ISO_19005_3"),
+        ("ESIC", 2, "ISO_19005_3,ETSI_PAdES"),
+        ("ESIC", 3, "ISO_19005_3,ETSI_PAdES"),
+        ("ADBE", 7, "ISO_19005_3"),
+        ("ADBE", 8, "ISO_19005_3,ETSI_PAdES"),
+        ("ETSI_PAdES", 2, "ISO_19005_3"),
+    ],
+)
+def test_arlington_selects_the_declared_pades_extension(
+    tmp_path: Path, prefix: str, level: int, extensions: str
+) -> None:
     source = ROOT / "tests/assets/pdfa/pdfa-3b.pdf"
     result = tmp_path / "document with spaces.pdf"
     with pyropdf.open(source) as doc:
-        doc.catalog["Extensions"] = {"ETSI_PAdES": {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": level}}
+        doc.catalog["Extensions"] = {prefix: {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": level}}
         doc.save(result)
     assert VERAPDF.arlington(result, "3b") == f"arlington1.7+{extensions}"
 
