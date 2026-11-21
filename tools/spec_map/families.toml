@@ -217,6 +217,14 @@ features = ["public-key-security-handler"]
 dimensions = ["interpret"]
 behavior = "Render authenticated pre-V5 recipient files through the engine object-source interface."
 
+[families.indirect-stream-filter-selection]
+tracker = 252
+issue = 1056
+title = "Resolve indirect stream filter selectors and parameters in their document revision"
+features = ["crypt-filter", "crypt-filters"]
+dimensions = ["read", "create", "preserve"]
+behavior = "Resolve filter names and parameter references in the correct revision before reading or creating encrypted streams, and retain their reference identities through saves."
+
 [families.crypt-filter-payload-edits]
 tracker = 252
 issue = 992
