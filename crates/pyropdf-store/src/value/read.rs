@@ -82,7 +82,12 @@ impl Value {
         // of the base check the bytes against `object_parse_size` first.
         budget.poll()?;
         let result = guard(|| {
-            let object = MaybeRef::<Object<'_>>::from_bytes(source.as_slice());
+            // An indexed body can itself be a reference or a stream. Reading
+            // Object at the top level lets hayro distinguish a stream from
+            // a dictionary embedded inside another value.
+            let object = ObjRef::from_bytes(source)
+                .map(MaybeRef::Ref)
+                .or_else(|| Object::from_bytes(source).map(MaybeRef::NotRef));
             budget.poll()?;
             let object = object
                 .ok_or_else(|| Error::malformed("the bytes do not begin with a PDF value"))?;

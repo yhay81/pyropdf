@@ -196,6 +196,53 @@ def test_stream_write_compresses_and_reads_back() -> None:
     assert _content(pyropdf.open(doc.to_bytes()).pages[0]) == b"BT /F1 12 Tf 72 720 Td (replaced) Tj ET"
 
 
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.parametrize("indirect_length", [False, True])
+def test_top_level_stream_bodies_survive_both_save_modes(*, incremental: bool, indirect_length: bool) -> None:
+    payload = b"a\x00\nendstream\nendobj\nb  \r\n"
+    length = "5 0 R" if indirect_length else str(len(payload))
+    source = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Original 4 0 R /Copy 6 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 10 10] >>",
+            4: f"<< /Length {length} >>\nstream\n{payload.decode('ascii')}\nendstream",
+            5: str(len(payload)),
+            6: "<< /Length 0 >>\nstream\n\nendstream",
+        }
+    )
+    doc = pyropdf.open(source)
+    assert doc.catalog["Original"].read(decode=False) == payload
+    edited = b"\xff\x00new data\r\n"
+    doc.catalog["Copy"].write(edited, filter=None)
+
+    saved = doc.to_bytes(incremental=incremental)
+    reopened = pyropdf.open(saved)
+    assert reopened.catalog["Original"].read(decode=False) == payload
+    assert reopened.catalog["Copy"].read(decode=False) == edited
+    assert f"<< /Length {length} >>\nstream\n".encode() + payload + b"\nendstream" in saved
+
+
+@pytest.mark.parametrize(
+    ("length", "reason"),
+    [(1, "the indirect stream length does not end at endstream"), (99999, "invalid indirect stream length")],
+)
+def test_full_save_reports_an_invalid_indirect_stream_length(length: int, reason: str) -> None:
+    source = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Original 4 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>",
+            4: "<< /Length 5 0 R >>\nstream\nABC\nendstream",
+            5: str(length),
+        }
+    )
+    doc = pyropdf.open(source)
+    doc.catalog["Edited"] = True
+    with pytest.raises(pyropdf.MalformedPdfError, match=reason):
+        doc.to_bytes()
+
+
 def test_stream_write_without_a_filter_stores_the_data() -> None:
     doc = _two_pages()
     contents = doc.pages[0].obj["Contents"]
