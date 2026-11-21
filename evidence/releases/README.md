@@ -4,7 +4,7 @@ Use the [workflow manifest](../../tools/spec_map/minimum.toml) and the [approved
 
 1. Freeze the tag and full commit. Use a successful CI run of that commit and the actual distribution wheels from the tag build. Download them and record their filenames and SHA-256 digests. Run each specified case with the recorded wheel. Retain the generated input and observed output (PDF, rendered image, or serialized extraction), external comparison and pre-save report at a durable evidence URL. For a refusal, retain the typed error and the demonstration that no output was written.
 2. Record the external observations as JSON in `evidence/releases/<tag>/workflows.json` on the default branch. This file can be committed after the candidate has been built. The release job pins and logs the commit containing the observations, downloads them as data and runs the checker from the candidate itself. When a first attempt stops for missing evidence, retry the publish job using the same build artifacts. If a wheel is rebuilt, repeat the observations whose digest changed.
-3. Review the combined report before publishing. The job checks the candidate CI, both release gates, the actual wheel bytes and the live GitHub completion state of #15 and #243. It retains the report, the records, their source commit, the CI evidence and the issue state snapshot in the `minimum-workflows` artifact. Whole-map exceptions remain in `decisions.toml`. The separate [release declaration](https://github.com/yhay81/pyropdf/issues/966) owns publication of capability claims.
+3. Review the combined report before publishing. The job checks the candidate CI, both release gates, the actual wheel bytes and the live GitHub completion state of #15 and #243. It retains the report, the records, their source commit, the CI evidence and the issue state snapshot in the `minimum-workflows` artifact. Whole-map exceptions remain in `decisions.toml`. The release notes link the separate, replayable capability declaration.
 
 ## Observation format
 
@@ -30,3 +30,29 @@ python3 tools/spec_map/claim.py --release "$tag" --revision "$revision" \
 ```
 
 The issue-state snapshot is keyed by the issue number, with the GitHub `state` and `stateReason` fields. A qualifying synthetic example, including missing and skipped controls, is built by `qualifying_workflows` in [the release tests](../../tests/test_spec_map.py). The synthetic observations exercise the checker only.
+
+## Publishing a tagged capability declaration
+
+The candidate commit can include `evidence/releases/<tag>/capability.toml`. Its
+`processor`, `components` and `limitations` fields describe the interface, external
+dependencies and known boundaries. The `[scope]` table uses the selectors of the
+[scoped checker](../../tools/spec_map/claim.py); omit `revision`, which the release
+job resolves from the tag. Use `input-profiles` and `input-extensions` for input
+context. The [rehearsal declaration](rehearsal/capability.toml) selects page labels.
+An absent scope produces an explicit no-claim report. Version 0.3.1 has no published
+verified scope. A declaration is never inferred for a historical tag.
+
+A tag build bundles its scope, exact map, checker, coverage report and release notes
+in `capabilities.zip`. A positive scope also requires the `release-evidence` artifact
+from successful CI on that revision. For 1.0, the archive contains the tag's documented
+whole-map decisions and links to `report.txt`, which records the separate qualification
+of the ten minimum workflows on release wheels. Both gates run before publication.
+
+To rehearse without publishing, run CI on the candidate branch, then dispatch the
+Release workflow on the same branch with `capability_rehearsal=v0.0.0-rehearsal`.
+The job checks the versioned example and uploads `release-capabilities`. Readers can
+repeat the result after extracting `capabilities.zip` with Python 3.11 or newer:
+
+```sh
+python3 tools/spec_map/declaration.py verify --tag "$tag" --revision "$commit"
+```
