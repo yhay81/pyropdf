@@ -1119,10 +1119,18 @@ def test_set_to_gray_leaves_vector_colors_to_recolor() -> None:
     assert red[0] == red[1] == red[2]
 
 
-@pytest.mark.parametrize(("mode", "width", "height"), [("L", 29, 71), ("RGB", 29, 71), ("RGB", 513, 305)])
-def test_rewrite_generates_lossless_jp2_samples(mode: str, width: int, height: int) -> None:
+@pytest.mark.parametrize(
+    ("mode", "width", "height", "constant"),
+    [("L", 29, 71, None), ("RGB", 29, 71, None), ("RGB", 513, 305, None), ("RGB", 65, 65, 128)],
+)
+def test_rewrite_generates_lossless_jp2_samples(mode: str, width: int, height: int, constant: int | None) -> None:
     channels = 1 if mode == "L" else 3
-    samples = bytes((x + 2 * y + c * 17) % 256 for y in range(height) for x in range(width) for c in range(channels))
+    # Midgray comprises empty JPEG 2000 packets, including at all four tile edges.
+    samples = (
+        bytes([constant]) * (width * height * channels)
+        if constant is not None
+        else bytes((x + 2 * y + c * 17) % 256 for y in range(height) for x in range(width) for c in range(channels))
+    )
     entries: dict[str, object] = {
         "Width": width,
         "Height": height,
