@@ -523,14 +523,34 @@ impl<'g, G: Graph> Walk<'g, G> {
         let repeat_start = repeating
             .first()
             .and_then(|key| key.name.trim_end_matches('*').parse::<usize>().ok());
+        let revision_pairs = matches!(
+            described.name,
+            "ArrayOfAttributeRevisions" | "ArrayOfClassNamesRevisions"
+        );
+        let mut after_payload = false;
         for (at, item) in items.iter().enumerate() {
             let named = described.key(&at.to_string());
-            let key = named
-                .or_else(|| {
-                    let offset = at.checked_sub(repeat_start?)?;
+            let repeated = if revision_pairs {
+                // Each attribute or class may have an integer revision. Omitting
+                // one does not shift the type of the next payload (14.7.6.3).
+                let owned = self.graph.target(item)?;
+                let view = self.graph.view(owned.as_deref().unwrap_or(item));
+                let revision = after_payload && matches!(view, View::Integer(_));
+                let payload = described.key("0*");
+                after_payload =
+                    payload.is_some_and(|key| key.types.iter().any(|ty| matches(ty.kind, &view)));
+                if revision {
+                    described.key("1*")
+                } else {
+                    payload
+                }
+            } else {
+                repeat_start.and_then(|start| {
+                    let offset = at.checked_sub(start)?;
                     repeating.get(offset % repeating.len()).copied()
                 })
-                .or_else(|| described.key("*"));
+            };
+            let key = named.or(repeated).or_else(|| described.key("*"));
             if let Some(key) = key {
                 let at = join(path, &at.to_string());
                 self.value(object, array, described, key, item, &at, stack)?;
