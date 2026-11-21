@@ -248,16 +248,18 @@ def typed_delete(doc: pyropdf.Document) -> set[int]:
 
 def typed_author(doc: pyropdf.Document) -> set[int]:
     """Create, replace and remove checked objects without leaving a dangling alias."""
-    view = typed.DocInfo.create(doc, {"Title": "draft"})
-    discarded = typed.DocInfo.create(doc, {"Title": "finished"})
-    view.replace(discarded)
-    discarded.remove()
-    doc.catalog["CheckedInfo"] = view.obj
+    original = doc.catalog.get("ViewerPreferences")
+    values = dict(original) if isinstance(original, Dictionary) else {}
+    view = typed.ViewerPreferences.create(doc, {**values, "HideToolbar": False})
+    replacement = typed.ViewerPreferences.create(doc, {**values, "HideToolbar": True})
+    view.replace(replacement)
+    replacement.remove()
+    doc.catalog["ViewerPreferences"] = view.obj
     return {number(doc.catalog)}
 
 
 def check_typed_author(doc: pyropdf.Document) -> None:
-    assert typed.DocInfo(doc.catalog["CheckedInfo"]).Title == "finished"
+    assert typed.ViewerPreferences(doc.catalog["ViewerPreferences"]).HideToolbar is True
 
 
 def undo(doc: pyropdf.Document) -> set[int]:
