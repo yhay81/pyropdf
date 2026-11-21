@@ -9,7 +9,7 @@ use hayro_syntax::object as syntax;
 use super::{Entry, Location, Source, Ticker, decoded, find, lex};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::security::{Handler, Kind};
-use crate::value::{Bytes, Dict, Reference, Value};
+use crate::value::{Bytes, Dict, FilterLookup, Reference, Value};
 use crate::{Error, Result};
 
 /// An object stream, decoded: its data, and the member table at its start.
@@ -223,6 +223,7 @@ pub(super) fn decode(
     source: &Source<'_>,
     number: u32,
     security: Option<&Handler>,
+    lookup: &FilterLookup<'_>,
     budget: &Budget,
 ) -> Result<Decoded> {
     let reference = Reference::new(number, 0);
@@ -240,11 +241,12 @@ pub(super) fn decode(
         Some(&Value::Reference(length)) => resolve(source, length, budget)?,
         _ => None,
     };
+    let selectors = crate::value::filters::resolved(&dict, lookup, budget)?;
     let decrypt = |raw: &[u8]| match security {
         Some(handler) => handler
             .transform_data(
                 Kind::Stream,
-                Some(&dict),
+                Some(&selectors),
                 (reference, reference),
                 raw,
                 budget,
@@ -253,7 +255,11 @@ pub(super) fn decode(
             .map(Some),
         None => Ok(None),
     };
-    let data = data(&bytes, &stream, length, &decrypt, budget)?;
+    let normalized = match &selectors {
+        Cow::Owned(dict) => Some(dict),
+        Cow::Borrowed(_) => None,
+    };
+    let data = data(&bytes, &stream, length, &decrypt, normalized, budget)?;
     let mut members = BudgetVec::new(budget);
     let mut ticker = Ticker::default();
     let mut pos = 0;
@@ -309,6 +315,7 @@ fn data(
     stream: &syntax::Stream<'_>,
     length: Option<u64>,
     decrypt: &Decrypt<'_>,
+    selectors: Option<&Dict>,
     budget: &Budget,
 ) -> Result<Bytes> {
     let raw = stream.raw_data();
@@ -325,6 +332,15 @@ fn data(
     let end = declared.unwrap_or(start + raw.len());
     let decrypted = decrypt(&bytes[start..end])?;
     let decoded = match declared {
+        _ if let Some(dict) = selectors => {
+            let payload = decrypted.map(Bytes::new).unwrap_or_else(|| {
+                bytes
+                    .slice(start..end)
+                    .expect("the data is contained in the source")
+            });
+            crate::value::Stream::new(crate::value::copy_dict_for_edit(dict, budget)?, payload)
+                .decoded(budget)?
+        }
         _ if decrypted.is_some() || end != start + raw.len() => {
             let data = decrypted.as_deref().unwrap_or(&bytes[start..end]);
             let dict = stream.dict().data();

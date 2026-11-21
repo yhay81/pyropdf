@@ -294,6 +294,7 @@ fn stream<'b>(
     if trailer.get("Type") != Some(&Value::Name(Name::from("XRef"))) {
         return Err(Error::malformed("the stream's /Type is not /XRef"));
     }
+    crate::value::filters::check_xref(&trailer, budget)?;
     let widths = widths(&trailer)?;
     let size = match trailer.get("Size") {
         Some(&Value::Integer(size)) => u64::try_from(size).ok(),

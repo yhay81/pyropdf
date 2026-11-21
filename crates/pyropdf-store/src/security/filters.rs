@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use super::{Handler, Kind, Method, copy, crypto};
 use crate::budget::{Budget, BudgetVec, LimitCode};
-use crate::value::{Dict, Name, Reference, Value};
+use crate::value::{Dict, FilterLookup, Name, Reference, Value};
 use crate::{Error, Password, Result};
 
 pub(super) const IDENTITY: &[u8] = b"Identity";
@@ -327,16 +327,28 @@ pub(super) fn prepend_identity(dict: &mut Dict, budget: &Budget) -> Result<()> {
 }
 
 /// Drop only the consumed security filter when exporting the decrypted file.
-pub(crate) fn plain(bytes: crate::value::Bytes, budget: &Budget) -> Result<crate::value::Bytes> {
+pub(crate) fn plain(
+    bytes: crate::value::Bytes,
+    lookup: &FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<crate::value::Bytes> {
     let Value::Stream(mut stream) = Value::parse(&bytes, budget)? else {
         return Ok(bytes);
     };
-    if explicit(stream.dict(), budget)?.is_none() {
+    if explicit(
+        crate::value::filters::resolved(stream.dict(), lookup, budget)?.as_ref(),
+        budget,
+    )?
+    .is_none()
+    {
         return Ok(bytes);
     }
     for key in ["Filter", "DecodeParms"] {
         let value = stream.dict_mut().remove(key);
-        if let Some(Value::Array(mut array)) = value {
+        if let Some(value) = value
+            && let Value::Array(mut array) =
+                crate::value::filters::direct(&value, key, lookup, budget)?
+        {
             array.remove(0);
             if !array.is_empty() {
                 #[expect(
@@ -352,6 +364,59 @@ pub(crate) fn plain(bytes: crate::value::Bytes, budget: &Budget) -> Result<crate
     let mut out = BudgetVec::new(budget);
     crate::write::value(&mut out, &Value::Stream(stream))?;
     Ok(crate::value::Bytes::new(out.into_vec()))
+}
+
+impl Handler {
+    /// An edit to a shared filter or file specification can change the encryption
+    /// of an otherwise untouched stream. Its original plaintext must be re-encrypted.
+    pub fn changed_streams(
+        &self,
+        version: &crate::version::Version,
+        index: &crate::index::Index,
+        old: &Handler,
+        selector_changed: bool,
+        budget: &Budget,
+    ) -> Result<Vec<u32>> {
+        let include_direct = selector_changed
+            || old.distinguishes_embedded_files()
+            || self.distinguishes_embedded_files();
+        let mut numbers = BudgetVec::new(budget);
+        for (number, entry) in index.entries() {
+            budget.poll()?;
+            if version.slot(number).is_some()
+                || !matches!(entry.location(), crate::index::Location::Offset(_))
+            {
+                continue;
+            }
+            let reference = Reference::new(number, entry.generation());
+            let Some(dict) = index.stream_dictionary(reference, include_direct, budget)? else {
+                continue;
+            };
+            let role_changed = old.embedded_stream(reference, &dict)
+                != self.embedded_stream(reference, &dict)
+                || selector_changed && self.embedded_stream(reference, &dict);
+            if !role_changed && !crate::value::filters::has_indirect(&dict, budget)? {
+                continue;
+            }
+            let old_filters = crate::value::filters::resolved(
+                &dict,
+                &|r, b| crate::value::filters::indexed_filter(index, r, b),
+                budget,
+            )?;
+            let new_filters = crate::value::filters::resolved(
+                &dict,
+                &|r, b| version.filter_object(r, b),
+                budget,
+            )?;
+            let old_name = explicit(&old_filters, budget)?;
+            let new_name = explicit(&new_filters, budget)?;
+            if old_name != new_name || role_changed && new_name.is_none() {
+                numbers.try_push(number)?;
+            }
+        }
+        numbers.sort_unstable();
+        Ok(numbers.into_vec())
+    }
 }
 
 impl Handler {
@@ -377,26 +442,71 @@ impl Handler {
     }
 }
 
+fn first_declaration(
+    dict: &Dict,
+    key: &str,
+    lookup: &FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<Option<Value>> {
+    let Some(value) = dict.get(key) else {
+        return Ok(None);
+    };
+    let resolved = crate::value::filters::direct(value, key, lookup, budget)?;
+    let first = match &resolved {
+        Value::Array(array) => array.get(0),
+        Value::Null => None,
+        _ => Some(value),
+    };
+    first
+        .filter(|v| !matches!(v, Value::Null))
+        .map(|v| crate::value::copy_for_edit(v, budget))
+        .transpose()
+}
+
 impl crate::value::Stream {
     /// Replace a payload encoded with Flate or without a data filter. The
     /// leading crypt filter selects an audience regardless of the encoding.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "at most two filter names, two parameters, and two fixed dictionary entries"
-    )]
     pub fn replace_encoded_data(
         &mut self,
         data: crate::value::Bytes,
         flate: bool,
         budget: &Budget,
     ) -> Result<()> {
+        self.replace_encoded_data_with(data, flate, &|_, _| Ok(None), budget)
+    }
+
+    /// Replace a decoded payload while preserving its revision's security declaration.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "at most two filter names, two parameters, and two fixed dictionary entries"
+    )]
+    pub fn replace_encoded_data_with(
+        &mut self,
+        data: crate::value::Bytes,
+        flate: bool,
+        lookup: &FilterLookup<'_>,
+        budget: &Budget,
+    ) -> Result<()> {
+        let resolved = crate::value::filters::resolved(self.dict(), lookup, budget)?;
         let flate_name = || Value::Name(Name::from("FlateDecode"));
-        let (filters, parameters) = if explicit(self.dict(), budget)?.is_some() {
-            let crypt = Value::Name(Name::from("Crypt"));
-            let params = items(self.dict().get("DecodeParms"))
-                .first()
-                .filter(|v| !matches!(v, Value::Null))
-                .cloned();
+        let (filters, parameters) = if explicit(&resolved, budget)?.is_some() {
+            let chain = items(resolved.get("Filter"));
+            let parameters = items(resolved.get("DecodeParms"));
+            let unchanged = match (flate, chain) {
+                (false, [_]) => true,
+                (true, [_, Value::Name(name)]) => {
+                    name.as_bytes() == b"FlateDecode"
+                        && parameters.get(1).is_none_or(|v| matches!(v, Value::Null))
+                }
+                _ => false,
+            };
+            if unchanged {
+                self.set_data(data);
+                return Ok(());
+            }
+            let crypt = first_declaration(self.dict(), "Filter", lookup, budget)?
+                .expect("the validated leading Crypt filter");
+            let params = first_declaration(self.dict(), "DecodeParms", lookup, budget)?;
             if flate {
                 budget.check(LimitCode::StreamFilterCount, 2)?;
                 (

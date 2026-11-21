@@ -389,6 +389,7 @@ class Stream(Dictionary):
     def read(self, *, decode: bool = True, max_size: int | None = _DEFAULT_MAX_STREAM_DATA_SIZE) -> bytes:
         """Return the stream data, decoded through its filters unless ``decode`` is false.
 
+        Indirect filter names and parameters are read from the current revision.
         hayro-syntax decodes the filters, and a filter that it does not
         decode, such as an image filter, raises :class:`PdfError` instead of
         returning encoded bytes. ``max_size`` bounds the result with
@@ -408,7 +409,8 @@ class Stream(Dictionary):
         ``filter="FlateDecode"`` compresses it; ``None`` stores it
         uncompressed. Both options replace the previous data filters and update
         ``/Length``. An explicit leading ``/Crypt`` filter and its parameters
-        keep the payload protected for the same recipients.
+        keep the payload protected for the same recipients. Shared security
+        parameters keep their indirect reference.
         """
         if filter not in ("FlateDecode", None):
             msg = f"filter must be 'FlateDecode' or None: {filter!r}"

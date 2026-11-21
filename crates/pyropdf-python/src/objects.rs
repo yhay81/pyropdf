@@ -644,6 +644,16 @@ pub(crate) fn set_data(
     compress: bool,
     budget: &Budget,
 ) -> PyResult<()> {
+    set_data_in(stream, data, compress, &|_, _| Ok(None), budget)
+}
+
+fn set_data_in(
+    stream: &mut Stream,
+    data: &[u8],
+    compress: bool,
+    lookup: &pyropdf_store::value::FilterLookup<'_>,
+    budget: &Budget,
+) -> PyResult<()> {
     let encoded = if compress {
         deflate(data, 6, usize::MAX, budget)
             .map_err(|e| store_error(&e))?
@@ -655,7 +665,7 @@ pub(crate) fn set_data(
         copy.into_vec()
     };
     stream
-        .replace_encoded_data(Bytes::from(encoded), compress, budget)
+        .replace_encoded_data_with(Bytes::from(encoded), compress, lookup, budget)
         .map_err(|e| store_error(&e))
 }
 
@@ -677,7 +687,13 @@ pub fn object_add_stream(
                 ));
             };
             let mut stream = Stream::new(dict, Bytes::default());
-            set_data(&mut stream, data, compress, budget)?;
+            set_data_in(
+                &mut stream,
+                data,
+                compress,
+                &|r, b| transaction.version().filter_object(r, b),
+                budget,
+            )?;
             add(transaction, &Value::Stream(Box::new(stream)), budget)
         })
     })?
@@ -711,7 +727,7 @@ pub fn stream_read<'py>(
             return Ok(PyBytes::new(py, stream.data()));
         }
         let data = py
-            .detach(|| stream.decoded(&budget))
+            .detach(|| stream.decoded_in(&version, &budget))
             .map_err(|e| store_error(&e))?;
         limit(data.len())?;
         Ok(PyBytes::new(py, &data))
@@ -729,11 +745,17 @@ pub fn stream_write(
     compress: bool,
 ) -> PyResult<()> {
     crate::errors::boundary(|| {
-        change(py, document, Some(root), &[], |value, _, budget| {
+        change(py, document, Some(root), &[], |value, version, budget| {
             let Value::Stream(stream) = value else {
                 return Err(stale(Some(root), &[]));
             };
-            set_data(stream, data, compress, budget)
+            set_data_in(
+                stream,
+                data,
+                compress,
+                &|r, b| version.filter_object(r, b),
+                budget,
+            )
         })
     })?
 }

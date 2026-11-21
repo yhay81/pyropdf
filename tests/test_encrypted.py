@@ -1151,12 +1151,110 @@ def test_a_malformed_security_selector_does_not_partially_replace_stream_data() 
         assert list(stream["Filter"]) == [pyropdf.Name("FlateDecode"), pyropdf.Name("Crypt")]
 
 
-def test_stream_replacement_preserves_an_unresolved_selector() -> None:
+def test_stream_replacement_resolves_a_shared_identity_selector() -> None:
     with pyropdf.open(numbered(1)) as doc:
         target = doc.objects[doc.objects.add_stream(b"original", filter=None)]
         shared = doc.objects[doc.objects.add([pyropdf.Name("Crypt")])]
         target["Filter"] = shared
-        with pytest.raises(pyropdf.MalformedPdfError, match="unresolved /Filter"):
-            target.write(b"replacement")
-        assert target["Filter"].xref == shared.xref
-        assert target.read(decode=False) == b"original"
+        target.write(b"replacement")
+        assert target.read() == b"replacement"
+        assert list(shared) == [pyropdf.Name("Crypt")]
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.parametrize("compress", [False, True])
+@pytest.mark.usefixtures("_pyhanko_oracle")
+@pytest.mark.spec("crypt-filter", "read", "edit", "preserve")
+@pytest.mark.spec("crypt-filters", "read", "edit", "preserve")
+def test_indirect_private_stream_parameters_remain_shared_after_replacement(
+    *, incremental: bool, compress: bool
+) -> None:
+    import io  # noqa: PLC0415
+
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.crypt.pubkey import SimpleEnvelopeKeyDecrypter  # noqa: PLC0415
+    from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
+
+    source = _private_recipient_control(attachment_only=False, implicit=False)
+    owner = recipient("owner")
+    with pyropdf.open(source, credential=owner) as doc:
+        stream = doc.catalog["FixtureNamed"]
+        options = doc.objects[doc.objects.add({"Name": pyropdf.Name("PrivateContent")})]
+        number = options.xref
+        stream["Filter"] = doc.objects[doc.objects.add([pyropdf.Name("Crypt"), pyropdf.Name("FlateDecode")])]
+        stream["DecodeParms"] = doc.objects[doc.objects.add([options, None])]
+        shared = doc.to_bytes(encryption=Encryption.KEEP)
+    with pyropdf.open(shared, credential=owner) as doc:
+        stream = doc.catalog["FixtureNamed"]
+        assert stream.read() == b"Named private data"
+        stream.write(b"revised private stream", filter="FlateDecode" if compress else None)
+        saved = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
+    assert saved.startswith(shared) is incremental
+    with pyropdf.open(saved, credential=owner) as doc:
+        stream = doc.catalog["FixtureNamed"]
+        assert stream.read() == b"revised private stream"
+        selected = stream["DecodeParms"][0] if compress else stream["DecodeParms"]
+        assert selected.xref == number
+    with pyropdf.open(saved, credential=recipient("editor")) as doc, pytest.raises(pyropdf.PasswordError):
+        doc.catalog["FixtureNamed"].read()
+    reader = PdfFileReader(io.BytesIO(saved))
+    credential = SimpleEnvelopeKeyDecrypter.load(
+        str(RECIPIENT_ASSETS / "recipient-owner.key"), str(RECIPIENT_ASSETS / "recipient-owner.cer")
+    )
+    handler = reader.security_handler
+    assert handler is not None
+    assert handler.get_stream_filter().authenticate(credential).status.value > 0
+    assert handler.get_stream_filter(generic.pdf_name("/PrivateContent")).authenticate(credential).status.value > 0
+    stream = reader.root["/FixtureNamed"]
+    assert stream.data == b"revised private stream"
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.usefixtures("_pyhanko_oracle")
+@pytest.mark.spec("crypt-filters", "interpret", "edit")
+def test_changing_only_shared_crypt_parameters_selects_each_revision_key(*, incremental: bool) -> None:
+    source = _private_recipient_control(attachment_only=False, implicit=False)
+    owner, editor = recipient("owner"), recipient("editor")
+    with pyropdf.open(source, credential=owner) as doc:
+        shared = doc.objects[doc.objects.add({"Name": pyropdf.Name("PrivateContent")})]
+        stream = doc.catalog["FixtureNamed"]
+        stream["DecodeParms"] = [shared, None]
+        initial = doc.to_bytes(encryption=Encryption.KEEP)
+    with pyropdf.open(initial, credential=owner) as doc:
+        doc.catalog["FixtureNamed"]["DecodeParms"][0]["Name"] = pyropdf.Name("Identity")
+        updated = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
+    assert updated.startswith(initial) is incremental
+    with pyropdf.open(initial, credential=editor) as doc, pytest.raises(pyropdf.PasswordError):
+        doc.catalog["FixtureNamed"].read()
+    with pyropdf.open(updated, credential=editor) as doc:
+        assert doc.catalog["FixtureNamed"].read() == b"Named private data"
+
+
+@pytest.mark.parametrize("layout", ["plain", "decompress", "renumber", "packed", "linearized"])
+def test_normalized_saves_follow_the_indirect_identity_filter(layout: str) -> None:
+    import io  # noqa: PLC0415
+
+    import pikepdf  # noqa: PLC0415
+
+    payload = b"0 g 12 14 6 4 re f\n"
+    with pyropdf.open(numbered(1)) as doc:
+        target = doc.objects[doc.objects.add_stream(payload, filter="FlateDecode")]
+        doc.pages[0].obj["Contents"] = target
+        selector = doc.objects[doc.objects.add({"Name": pyropdf.Name("Identity")})]
+        target["Filter"] = doc.objects[doc.objects.add([pyropdf.Name("Crypt"), pyropdf.Name("FlateDecode")])]
+        target["DecodeParms"] = doc.objects[doc.objects.add([selector, None])]
+        protected = doc.to_bytes(encryption=Encryption(user_password="viewer", owner_password="owner"))
+    with pyropdf.open(protected, password="owner") as doc:
+        assert doc.pages[0].obj["Contents"].read() == payload
+        keep = layout not in {"plain", "decompress"}
+        saved = doc.to_bytes(
+            encryption=Encryption.KEEP if keep else None,
+            renumber=layout == "renumber",
+            object_streams=layout == "packed",
+            linearize=layout == "linearized",
+            decompress=layout == "decompress",
+        )
+    with pyropdf.open(saved, password="viewer" if keep else None) as doc:
+        assert doc.pages[0].obj["Contents"].read() == payload
+    with pikepdf.Pdf.open(io.BytesIO(saved), password="viewer" if keep else "") as reader:
+        assert reader.pages[0].obj.Contents.read_bytes() == payload

@@ -656,3 +656,85 @@ def test_objects_nest_at_most_64_levels() -> None:
     assert len(doc.objects[3]) == 1
     with pytest.raises(pyropdf.MalformedPdfError, match="deeper than 64 levels"):
         len(doc.objects[4])
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_indirect_flate_filter_and_parameters_keep_their_references(*, packed: bool) -> None:
+    import io  # noqa: PLC0415
+    import sysconfig  # noqa: PLC0415
+
+    import pikepdf  # noqa: PLC0415
+
+    if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
+        pytest.skip("pyHanko imports enable the GIL on free-threaded Python")
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.writer import PageObject, PdfFileWriter  # noqa: PLC0415
+
+    writer = PdfFileWriter(stream_xrefs=packed)
+    container = writer.prepare_object_stream() if packed else None
+    name = generic.pdf_name
+    payload = b"0 g 2 3 4 5 re f\n"
+    stream = generic.StreamObject(encoded_data=zlib.compress(payload))
+    filter_name = writer.add_object(name("/FlateDecode"), obj_stream=container)
+    params = writer.add_object(generic.DictionaryObject(), obj_stream=container)
+    filters = writer.add_object(generic.ArrayObject([filter_name]), obj_stream=container)
+    options = writer.add_object(generic.ArrayObject([params]), obj_stream=container)
+    stream[name("/Filter")] = filters
+    stream[name("/DecodeParms")] = options
+    writer.insert_page(PageObject(writer.add_object(stream), [0, 0, 30, 40]))
+    out = io.BytesIO()
+    writer.write(out)
+    original = out.getvalue()
+    with pyropdf.open(original) as doc:
+        target = doc.pages[0].obj["Contents"]
+        assert target.read() == payload
+        doc.pages[0].rotation = 90
+        rewrites = (doc.to_bytes(), doc.to_bytes(incremental=True))
+    assert rewrites[1].startswith(original)
+    for saved in (original, *rewrites):
+        with pikepdf.Pdf.open(io.BytesIO(saved)) as reader:
+            content = reader.pages[0].obj.Contents
+            assert content.read_bytes() == payload
+            assert content.Filter.objgen == (filters.idnum, 0)
+            assert content.Filter[0].objgen == (filter_name.idnum, 0)
+            assert content.DecodeParms.objgen == (options.idnum, 0)
+            assert content.DecodeParms[0].objgen == (params.idnum, 0)
+
+
+@pytest.mark.parametrize(
+    ("filters", "name", "parameters"),
+    [
+        ("6 1 R", "/FlateDecode", "<< >>"),
+        ("6 0 R", "7 0 R", "<< >>"),
+        ("6 0 R", "false", "<< >>"),
+        ("/Crypt", "/Unused", "9"),
+    ],
+)
+@pytest.mark.parametrize("incremental", [False, True])
+def test_unresolvable_stream_selectors_refuse_before_replacement(
+    filters: str, name: str, parameters: str, tmp_path: Path, *, incremental: bool
+) -> None:
+    source = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [] /Count 0 >>",
+            3: f"<< /Length 5 /Filter {filters} /DecodeParms 8 0 R >>\nstream\nhello\nendstream",
+            6: "[7 0 R]",
+            7: name,
+            8: parameters,
+        }
+    )
+    with pyropdf.open(source) as doc:
+        stream = doc.objects[3]
+        with pytest.raises(pyropdf.MalformedPdfError):
+            stream.read()
+        with pytest.raises(pyropdf.MalformedPdfError):
+            stream.write(b"new content")
+        assert stream.read(decode=False) == b"hello"
+        assert doc.to_bytes(incremental=True) == source
+        stream["Unrelated"] = 1
+        destination = tmp_path / "existing.pdf"
+        destination.write_bytes(b"previous output")
+        with pytest.raises(pyropdf.MalformedPdfError):
+            doc.save(destination, incremental=incremental)
+        assert destination.read_bytes() == b"previous output"
