@@ -215,3 +215,18 @@ def test_split_widgets_use_the_terminal_fields_own_rich_entries() -> None:
             for widget in root.Kids:
                 assert "/RV" not in widget
                 assert [bytes(args[0]) for args in _operators(widget.AP.N, "Tj")] == [b"Two widgets"]
+
+
+@pytest.mark.spec("variable-text", "interpret")
+def test_rich_css_point_sizes_respect_page_user_units() -> None:
+    with pyropdf.open(_seed()) as doc:
+        page = doc.pages[0]
+        page.obj["UserUnit"] = 2
+        page.widgets.add(
+            TextField(
+                "scaled", (4, 4, 164, 60), rich_text=_BODY + "<p>Scaled</p></body>", default_style="font-size:12pt"
+            )
+        )
+        with pikepdf.open(io.BytesIO(doc.to_bytes())) as pdf:
+            stream = pdf.Root.AcroForm.Fields[0].AP.N
+            assert [float(args[1]) for args in _operators(stream, "Tf")] == [6.0]

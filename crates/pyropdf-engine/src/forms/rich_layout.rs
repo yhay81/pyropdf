@@ -207,6 +207,7 @@ pub(super) fn draw(
         align,
     );
     base.auto_size = text.size <= 0.;
+    base.user_unit = widget.unit;
     base.css(css);
     let mut glyphs = BudgetVec::new(budget);
     let mut unsupported = false;

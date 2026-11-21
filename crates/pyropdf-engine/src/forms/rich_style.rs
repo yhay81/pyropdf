@@ -66,6 +66,7 @@ pub(super) struct Style {
     italic: bool,
     pub(super) size: f64,
     pub(super) auto_size: bool,
+    pub(super) user_unit: f64,
     pub(super) color: [f64; 3],
     pub(super) align: Align,
     pub(super) rise: f64,
@@ -78,6 +79,7 @@ impl Style {
         let mut s = Self {
             family: font,
             auto_size: false,
+            user_unit: 1.,
             bold: false,
             italic: false,
             size,
@@ -137,13 +139,13 @@ impl Style {
             },
             "font-size" => {
                 if let Some(pt) = points(val).filter(|v| *v > 0.) {
-                    self.size = pt;
+                    self.size = pt / self.user_unit;
                     self.auto_size = false;
                 }
             }
             "vertical-align" => {
                 if let Some(pt) = points(val) {
-                    self.rise = pt;
+                    self.rise = pt / self.user_unit;
                 }
             }
             "font-style" => match val {
@@ -171,7 +173,7 @@ impl Style {
                         "normal" | "100" | "200" | "300" | "400" | "500" => {}
                         _ => {
                             if let Some(pt) = points(word).filter(|v| *v > 0.) {
-                                self.size = pt;
+                                self.size = pt / self.user_unit;
                                 self.auto_size = false;
                                 self.families(rest);
                                 break;
