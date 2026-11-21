@@ -201,7 +201,7 @@ def _clip_numbers(operands: tuple[object, ...], count: int) -> bool:
     )
 
 
-def _show_size(operator: str, operands: tuple[object, ...]) -> int:
+def _show_size(operator: str, operands: tuple[object, ...], budget: _core._OperationBudget) -> int:
     if len(operands) == 1:
         argument = operands[0]
         if operator == "Tj" and isinstance(argument, bytes):
@@ -209,6 +209,7 @@ def _show_size(operator: str, operands: tuple[object, ...]) -> int:
         if operator == "TJ" and isinstance(argument, tuple):
             size = 0
             for entry in argument:
+                budget.poll()
                 if isinstance(entry, bytes):
                     size += len(entry)
                 elif not _clip_numbers((entry,), 1):
@@ -225,6 +226,7 @@ _CLIP_TEXT_STATE = {"Tc", "Tw", "Tz", "TL", "Ts"}
 @dataclass(slots=True)
 class _ClipText:
     fonts: Dictionary | None
+    budget: _core._OperationBudget
     positioned: bool = True
     font_set: bool = False
 
@@ -245,7 +247,7 @@ class _ClipText:
             return None
         elif name in {"Tj", "TJ"} and self.font_set and self.positioned:
             self.positioned = False
-            return _ClipShow(_show_size(name, args))
+            return _ClipShow(_show_size(name, args, self.budget))
         else:
             _cannot_clip(f"unsupported or dependent text operation {index} ({name})")
         return None
@@ -282,12 +284,31 @@ def _clip_shows(page: Page, operations: Operations, budget: _core._OperationBudg
                 budget.charge("memory_size", 192)
                 shows[index] = show
         elif name == "BT" and not args:
-            text = _ClipText(fonts)
+            text = _ClipText(fonts, budget)
         else:
             depth = _clip_graphics_depth(item, depth, index)
     if depth or text is not None:
         _cannot_clip("unbalanced graphics or text object")
     return shows
+
+
+def _retained_clip_operations(
+    operations: Operations, shows: dict[int, _ClipShow], budget: _core._OperationBudget
+) -> Operations:
+    """Keep the original operations and reserve space for writing their bytes."""
+    # Reserve the operation references and both the growing bytearray and the final bytes.
+    budget.charge("memory_size", 24 * len(operations) + 3 * (len(operations.tail) + 1))
+    retained = []
+    for index, item in enumerate(operations):
+        budget.poll()
+        show = shows.get(index)
+        if show is not None and show.codes and not show.kept:
+            continue
+        source = item._source  # noqa: SLF001 - page.operations retains each original byte span.
+        assert source is not None  # noqa: S101 - all operations came from the page parser.
+        budget.charge("memory_size", 3 * (len(source) + 1))
+        retained.append(item)
+    return Operations(retained, tail=operations.tail)
 
 
 def _clip_page(page: Page, rect: Rect, budget: _core._OperationBudget) -> int:
@@ -297,31 +318,24 @@ def _clip_page(page: Page, rect: Rect, budget: _core._OperationBudget) -> int:
     operations = page.operations
     shows = _clip_shows(page, operations, budget)
     for char in page.chars(clipped=True, unmapped="replacement"):
+        budget.poll()
         if char.is_synthetic:
             continue
         show = shows.get(char.operation) if char.operation is not None and char.stream is not None else None
         if show is None or char.bbox.is_empty or char.bbox.is_infinite:
             _cannot_clip("a glyph lacks a direct operation or display box")
-        budget.poll()
         show.seen += 1
         show.kept += int(rect.intersects(char.bbox))
     removed = 0
     for show in shows.values():
+        budget.poll()
         if show.seen != show.codes:
             _cannot_clip("the source bytes and located glyphs do not correspond")
         if 0 < show.kept < show.seen:
             _cannot_clip("the rectangle splits a text-showing operation")
         removed += show.seen - show.kept
     if removed:
-        budget.charge("memory_size", 24 * len(operations))
-        page.operations = Operations(
-            (
-                item
-                for index, item in enumerate(operations)
-                if index not in shows or shows[index].kept or not shows[index].codes
-            ),
-            tail=operations.tail,
-        )
+        page.operations = _retained_clip_operations(operations, shows, budget)
     return removed
 
 

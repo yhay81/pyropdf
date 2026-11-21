@@ -83,6 +83,37 @@ def test_reset_from_the_line_matrix_and_invisible_text_are_supported() -> None:
         assert b"Invisible" not in page.operations.to_bytes()
 
 
+@pytest.mark.parametrize("incremental", [False, True])
+def test_clip_uses_the_joined_operation_index_across_shared_streams(*, incremental: bool) -> None:
+    with pyropdf.open(content_pdf(DROP, KEEP)) as doc:
+        page, sibling = doc.pages
+        page.obj["Contents"] = [page.obj["Contents"], sibling.obj["Contents"]]
+        keep = next(word for word in page.words() if word.text == "Keep")
+        assert page.clip_to_rect(keep.bbox) == 4
+        data = doc.to_bytes(incremental=incremental)
+        with pyropdf.open(data) as saved, pikepdf.open(io.BytesIO(data)) as parsed:
+            assert saved.pages[0].words() == saved.pages[1].words() == [keep]
+            assert parsed.pages[0].Contents.objgen != parsed.pages[1].Contents.objgen
+
+
+def test_clip_reserves_the_retained_stream_before_editing() -> None:
+    data = content_pdf(DROP + " " * 32768 + KEEP)
+    with pyropdf.open(data) as reference:
+        keep = next(word for word in reference.pages[0].words() if word.text == "Keep")
+    with pyropdf.open(data, limits=pyropdf.DocumentLimits(max_memory_size=300_000)) as doc:
+        page = doc.pages[0]
+        before = doc.to_bytes()
+        assert page.clip_to_rect(page.rect) == 0
+        with pytest.raises(pyropdf.LimitError) as exc:
+            page.clip_to_rect(keep.bbox)
+        assert exc.value.code == "memory_size"
+        assert not doc.history.steps
+        assert doc.to_bytes() == before
+    with pyropdf.open(data) as doc:
+        assert doc.pages[0].clip_to_rect(keep.bbox) == 4
+        assert doc.pages[0].words() == [keep]
+
+
 @pytest.mark.parametrize(
     ("extra", "message"),
     [
