@@ -10,6 +10,10 @@ measurements behind it. [upstream-draft.md](upstream-draft.md) is the draft
 issue, published as
 [LaurenzV/hayro#1725](https://github.com/LaurenzV/hayro/issues/1725).
 
+The November 21 rehearsal applies the published proposal to hayro main, checks
+its native output against Ghostscript and compares the default renderer before
+and after the change. [Patch, measurements and replay instructions](current-main/README.md)
+
 ## Upstream status (2026-11-02)
 
 - **hayro** (main at `04a801de`, 220 commits after `hayro-interpret-v0.8.0`):

@@ -41,6 +41,24 @@ HANDLERS = {
 USER = pytest.mark.parametrize("name", list(HANDLERS))
 
 
+def test_recipient_wheel_declares_its_optional_schema_and_crypto_provider() -> None:
+    from importlib.metadata import requires  # noqa: PLC0415
+    from importlib.util import find_spec  # noqa: PLC0415
+
+    from packaging.requirements import Requirement  # noqa: PLC0415
+
+    requirements = requires("pyropdf")
+    assert requirements is not None
+    providers = {r.name: r.marker for r in map(Requirement, requirements) if r.name in {"asn1crypto", "cryptography"}}
+    assert set(providers) == {"asn1crypto", "cryptography"}
+    for marker in providers.values():
+        assert marker is not None
+        assert marker.evaluate({"extra": "recipients"})
+        assert not marker.evaluate({"extra": ""})
+    assert find_spec("asn1crypto.cms") is not None
+    assert find_spec("cryptography.hazmat.primitives.serialization.pkcs7") is not None
+
+
 def rendered(doc: pyropdf.Document) -> list[bytes]:
     """Return the pixels of every page of ``doc``'s decrypted save."""
     with pyropdf.open(doc.to_bytes()) as plain:
@@ -942,10 +960,11 @@ def test_undefined_crypt_name_on_an_existing_stream_refuses_its_data() -> None:
 
 
 @pytest.mark.parametrize("selected", ["Identity", "StdCF"])
+@pytest.mark.parametrize("repeat_count", [False, True])
 @pytest.mark.spec("crypt-filter", "read")
 @pytest.mark.usefixtures("_pyhanko_oracle")
 def test_object_stream_members_obey_the_containers_explicit_crypt_filter(
-    monkeypatch: pytest.MonkeyPatch, selected: str
+    monkeypatch: pytest.MonkeyPatch, selected: str, *, repeat_count: bool
 ) -> None:
     import io  # noqa: PLC0415
 
@@ -961,6 +980,8 @@ def test_object_stream_members_obey_the_containers_explicit_crypt_filter(
     def with_filter() -> generic.StreamObject:
         result = materialise()
         result.add_crypt_filter(generic.pdf_name(f"/{selected}"), handler=writer.security_handler)
+        if repeat_count:
+            result[generic.pdf_name("/X")] = generic.NumberObject(1)
         return result
 
     assert isinstance(container, ObjectStream)
@@ -969,7 +990,12 @@ def test_object_stream_members_obey_the_containers_explicit_crypt_filter(
     writer.root[generic.pdf_name("/Packed")] = ref
     output = io.BytesIO()
     writer.write(output)
-    with pyropdf.open(output.getvalue(), password="user") as doc:
+    data = output.getvalue()
+    if repeat_count:
+        # The last /N supplies the member count. Equal-width replacements keep xref offsets valid.
+        assert data.count(b"/N 1\n/First") == data.count(b"/X 1\n/Length") == 1
+        data = data.replace(b"/N 1\n/First", b"/N 0\n/First").replace(b"/X 1\n/Length", b"/N 1\n/Length")
+    with pyropdf.open(data, password="user") as doc:
         assert doc.catalog["Packed"] == b"object stream member"
 
 
