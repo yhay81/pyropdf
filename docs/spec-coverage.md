@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 43 | 43 | 745 |
-| interpret | 2 | 13 | 0 | 40 | 663 | 113 |
-| create | 0 | 0 | 9 | 644 | 78 | 100 |
-| edit | 0 | 0 | 0 | 670 | 66 | 95 |
-| preserve | 0 | 0 | 0 | 28 | 663 | 140 |
+| read | 0 | 0 | 0 | 44 | 42 | 745 |
+| interpret | 2 | 13 | 0 | 41 | 662 | 113 |
+| create | 0 | 0 | 9 | 645 | 77 | 100 |
+| edit | 0 | 0 | 0 | 671 | 65 | 95 |
+| preserve | 0 | 0 | 0 | 29 | 662 | 140 |
 
 ## Clauses
 
@@ -36,7 +36,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 partial | 1 partial | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.6.4 | Standard security handler | `standard-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 7.6.6 | Crypt filters | `crypt-filters` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.2 | Document catalog | `document-catalog` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-2,940 unfinished cells in 831 features: 2 engine, 1,425 partial, 1,513 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,940 unfinished cells in 831 features: 2 engine, 1,430 partial, 1,508 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -326,12 +326,12 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - preserve — `sha3-hashes`.
 - [#866](https://github.com/yhay81/pyropdf/issues/866) Verify and maintain document integrity protection for encrypted PDFs under ISO/TS 32004. Verify and maintain integrity protection during encrypted saves and refuse tampered data.
     - read, interpret, create, edit, preserve — `integrity-protection`.
-- [#864](https://github.com/yhay81/pyropdf/issues/864) Read and write PDF public-key security handler recipients. Handle recipient selection, public-key crypt filters and permissions across open, save, decryption and rendering.
-    - read, interpret, create, edit, preserve — `public-key-security-handler`.
-- [#864](https://github.com/yhay81/pyropdf/issues/864) Read and write PDF public-key security handler recipients. Keep the public-key filter dictionaries and encrypted data valid when saving a recipient-encrypted document.
-    - preserve — `crypt-filters`.
+- [#936](https://github.com/yhay81/pyropdf/issues/936) Extend CMS algorithm coverage for public-key PDF recipients. Verify and extend additional CMS provider algorithms for recipient access, creation, editing and preservation.
+    - read, create, edit, preserve — `public-key-security-handler`.
+- [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
+    - interpret — `public-key-security-handler`.
 - [#893](https://github.com/yhay81/pyropdf/issues/893) Resolve stream Crypt overrides and embedded-file filter selection. Resolve and update EFF and per-stream filter choices. Check selection for both standard and public-key recipients once the recipient handler in #864 is available.
-    - read, interpret, create, edit — `crypt-filters`.
+    - read, interpret, create, edit, preserve — `crypt-filters`.
 - [#905](https://github.com/yhay81/pyropdf/issues/905) Resolve signature seed constraints and build properties through signing and editing. Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification.
     - read, interpret — `signature-fields`.
     - create, edit — `signature-fields`, `digital-signatures`.

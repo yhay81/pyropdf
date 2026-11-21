@@ -15,7 +15,9 @@
 //! For an encrypted base, the written objects are encrypted with the
 //! base's security handler, as a save that keeps the encryption writes
 //! them, and hayro opens the bytes with the password that unlocked the
-//! base (yhay81/pyropdf#13).
+//! base (yhay81/pyropdf#13). For an authenticated V5 recipient key, a
+//! temporary Standard dictionary in the bridge trailer wraps that same key.
+//! The store's version, file encryption dictionary and ciphertext stay intact.
 //!
 //! [`Bridged::with_appearances`], which [`Cache`] builds, also hands hayro
 //! the appearances that a render draws for annotations stored without one
@@ -54,6 +56,8 @@ pub enum Error {
     EncryptionChanged,
     /// A password that is not UTF-8, which hayro cannot take.
     PasswordNotUtf8,
+    /// Hayro accepts standard passwords, not a pre-V5 recipient file key.
+    LegacyRecipientKey,
     /// hayro could not read the bridged version.
     Unreadable,
     /// hayro's page list differs from the store's page index.
@@ -94,6 +98,7 @@ impl fmt::Display for Error {
             Self::PasswordNotUtf8 => {
                 f.write_str("a document opened with a password that is not UTF-8 cannot be interpreted")
             }
+            Self::LegacyRecipientKey => f.write_str("hayro cannot interpret a legacy public-key file key through its password interface"),
             Self::Unreadable => f.write_str("hayro cannot read the document"),
             Self::PageMismatch { store, hayro } => write!(
                 f,
@@ -162,11 +167,19 @@ impl Bridged {
     ) -> Result<Self> {
         let started = Instant::now();
         let handler = handler(version)?;
-        let password = match handler {
-            Some(handler) => {
+        let bridge = handler
+            .map(|h| h.recipient_bridge(budget))
+            .transpose()?
+            .flatten();
+        let password = match (&bridge, handler) {
+            (Some((password, _)), _) => password.as_str(),
+            (None, Some(handler)) if handler.is_recipient() => {
+                return Err(Error::LegacyRecipientKey);
+            }
+            (None, Some(handler)) => {
                 std::str::from_utf8(handler.password()).map_err(|_| Error::PasswordNotUtf8)?
             }
-            None => "",
+            (None, None) => "",
         };
         // The original is a prefix in either mode, even when appearances
         // still have to be synthesized or the cross-reference stream rebuilt.
@@ -179,10 +192,18 @@ impl Bridged {
             Vec::new()
         };
         let (bytes, update) = match (handler, version.base().file()) {
-            (Some(_), Some(file)) if !version.has_changes() && extra.is_empty() => {
+            (Some(_), Some(file))
+                if bridge.is_none() && !version.has_changes() && extra.is_empty() =>
+            {
                 (copy(file.bytes(), budget)?, 0)
             }
-            _ => update(version, &extra, handler, budget)?,
+            _ => update(
+                version,
+                &extra,
+                handler,
+                bridge.as_ref().map(|(_, dict)| dict),
+                budget,
+            )?,
         };
         let store = started.elapsed();
         let started = Instant::now();
@@ -357,6 +378,7 @@ fn update(
     version: &Version,
     extra: &[(Reference, Value)],
     handler: Option<&Handler>,
+    recipient_bridge: Option<&Dict>,
     budget: &Budget,
 ) -> Result<(Vec<u8>, usize)> {
     let file = version.base().file();
@@ -455,6 +477,13 @@ fn update(
         ) {
             insert(&mut trailer, key.clone(), value.clone());
         }
+    }
+    if let Some(dict) = recipient_bridge {
+        insert(
+            &mut trailer,
+            Name::from("Encrypt"),
+            Value::Dict(dict.clone()),
+        );
     }
     insert(
         &mut trailer,

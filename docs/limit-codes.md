@@ -45,6 +45,8 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `svg_output_size` | 64 MiB | A page's SVG holds more UTF-8 bytes than the call's `max_size`. |
 | `render_output_size` | 512 MiB | The images that `doc.render` encodes write more bytes in all than the call's `max_size`. |
 | `password_input_size` | 127 bytes | A password is longer in UTF-8 than PDF 2.0 allows. |
+| `recipient_count` | 128 recipients | A recipient operation exceeds 128 certificates or CMS envelopes. |
+| `recipient_envelope_size` | 64 KiB | A CMS recipient envelope exceeds 64 KiB before the credential provider processes it. |
 | `embedded_file_size` | 64 MiB | An attachment that `Attachment.read`, `Attachment.write`, or `Attachments.add` handles is larger than the call's `max_size`. |
 | `embedded_file_input_size` | 1 MiB | An attachment's name, file name, or description is longer in UTF-8 than 1 MiB. |
 | `annotation_count` | 4,096 entries | A page's Annots array, including popups, links, and widgets, or an annotation removal batch has more than 4,096 entries. |

@@ -56,3 +56,43 @@ sets them. The values are the `/P` bits of ISO 32000-2 Table 22, and
 `ALL` combines every member.
 
 Members: `PRINT`, `MODIFY`, `COPY`, `ANNOTATE`, `FORM`, `ACCESSIBILITY`, `ASSEMBLE`, `PRINT_HQ`, `ALL`.
+
+## `RecipientCredential`
+
+```python
+RecipientCredential(*, certificate: Certificate, private_key: RSAPrivateKey)
+```
+
+An X.509 recipient certificate and its matching RSA private key.
+
+Install the `recipients` extra, load the certificate and key with
+`cryptography`, and pass this credential to `open(credential=...)`,
+`probe(credential=...)` or `Document.unlock`. RSA keys between
+2048 and 8192 bits can unwrap CMS EnvelopedData with PKCS#1 v1.5
+key transport and AES-CBC content encryption. The store retains the
+authenticated file key. The private key stays with the caller.
+
+## `RecipientEncryption`
+
+```python
+RecipientEncryption(
+    *,
+    recipients: Mapping[Certificate, Permissions | None],
+    encrypt_metadata: bool = True,
+    method: Literal['aes-256', 'aes-128'] = 'aes-256',
+)
+```
+
+Encrypt a full save for RSA certificate recipients with Adobe.PubSec, adbe.pkcs7.s5 and AES.
+
+Install `pyropdf[recipients]` and supply up to 128 X.509 certificates.
+Recipients with the same permissions share a CMS envelope. The named filter for strings and
+streams is `DefaultCryptFilter`. Set `encrypt_metadata=False` to leave
+the metadata stream readable. AES-256 supports direct rendering. AES-128 supports
+store operations including saving, while the engine needs a decrypted input for rendering.
+Both an incremental save and a full save with
+`Encryption.KEEP` preserve untouched ciphertext.
+
+Map each X.509 certificate to its permission flags. A value of `None` gives the recipient
+permission to change encryption and implies all other permissions (ISO 32000-2 Table 24 bit 2).
+Other recipients must keep the encryption when saving.

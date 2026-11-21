@@ -131,6 +131,11 @@ pub enum LimitCode {
     RenderOutputSize,
     /// A password is longer in UTF-8 than PDF 2.0 allows.
     PasswordInputSize,
+    /// A recipient operation exceeds 128 certificates or CMS envelopes.
+    RecipientCount,
+    /// A CMS recipient envelope exceeds 64 KiB before the credential provider
+    /// processes it.
+    RecipientEnvelopeSize,
     /// An attachment that `Attachment.read`, `Attachment.write`, or
     /// `Attachments.add` handles is larger than the call's `max_size`.
     EmbeddedFileSize,
@@ -273,7 +278,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 88] = [
+    pub const ALL: [Self; 90] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -316,6 +321,8 @@ impl LimitCode {
         Self::SvgOutputSize,
         Self::RenderOutputSize,
         Self::PasswordInputSize,
+        Self::RecipientCount,
+        Self::RecipientEnvelopeSize,
         Self::EmbeddedFileSize,
         Self::EmbeddedFileInputSize,
         Self::AnnotationCount,
@@ -410,6 +417,8 @@ impl LimitCode {
             Self::SvgOutputSize => "svg_output_size",
             Self::RenderOutputSize => "render_output_size",
             Self::PasswordInputSize => "password_input_size",
+            Self::RecipientCount => "recipient_count",
+            Self::RecipientEnvelopeSize => "recipient_envelope_size",
             Self::EmbeddedFileSize => "embedded_file_size",
             Self::EmbeddedFileInputSize => "embedded_file_input_size",
             Self::AnnotationCount => "annotation_count",
@@ -506,6 +515,8 @@ impl LimitCode {
             Self::SvgOutputSize => "the SVG document is too large",
             Self::RenderOutputSize => "the rendered images are too large",
             Self::PasswordInputSize => "the password is too long",
+            Self::RecipientCount => "too many public-key recipients",
+            Self::RecipientEnvelopeSize => "the CMS recipient envelope is too large",
             Self::EmbeddedFileSize => "the attachment is too large",
             Self::EmbeddedFileInputSize => "the attachment's text is too long",
             Self::AnnotationCount => "the page has too many annotations",
@@ -608,6 +619,8 @@ impl LimitCode {
             Self::SvgOutputSize => Some("bytes"),
             Self::RenderOutputSize => Some("bytes"),
             Self::PasswordInputSize => Some("bytes"),
+            Self::RecipientCount => Some("recipients"),
+            Self::RecipientEnvelopeSize => Some("bytes"),
             Self::EmbeddedFileSize => Some("bytes"),
             Self::EmbeddedFileInputSize => Some("bytes"),
             Self::AnnotationCount => Some("entries"),
@@ -704,6 +717,8 @@ impl LimitCode {
             Self::SvgOutputSize => Some(67_108_864),
             Self::RenderOutputSize => Some(536_870_912),
             Self::PasswordInputSize => Some(127),
+            Self::RecipientCount => Some(128),
+            Self::RecipientEnvelopeSize => Some(65_536),
             Self::EmbeddedFileSize => Some(67_108_864),
             Self::EmbeddedFileInputSize => Some(1_048_576),
             Self::AnnotationCount => Some(4_096),
