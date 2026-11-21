@@ -244,16 +244,6 @@ features = [
 dimensions = ["read", "interpret", "preserve"]
 behavior = "Walk standard/custom roles and parent-child multiplicities, order content using structure references and expose abbreviation expansion in extracted output. Compare with hand-verified tagged documents."
 
-[families.arlington-preservation]
-tracker = 254
-issue = 890
-title = "Prove full and incremental preservation by Arlington object type"
-features = [
-    "@arlington",
-]
-dimensions = ["preserve"]
-behavior = "Build or reuse a reachable valid example for each descriptor and compare its keys, reference targets and stream bytes after an unrelated edit in both save modes. Reuse equivalent cases with explicit type-to-fixture coverage."
-
 [families.display-space]
 tracker = 254
 issue = 851

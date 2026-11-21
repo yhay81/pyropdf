@@ -16,7 +16,7 @@ SAMPLES: dict[str, list[str]] = {row["Object"]: json.loads(row["PDFObjects"]) fo
 VERSIONS = {row["Object"]: row["Version"] for row in _ROWS}
 
 
-def object_pdf(objects: list[str], version: str = "2.0") -> bytes:
+def object_pdf(objects: list[str], version: str = "2.0", *, catalog_entry: bytes = b"") -> bytes:
     """Build one PDF with its representative object at 3 and related objects immediately after it."""
     page = len(objects) + 3
     beads = " ".join(f"{i} 0 R" for i, obj in enumerate(objects, 3) if re.search(r"/Type /Bead(?:\s|>)", obj))
@@ -28,7 +28,7 @@ def object_pdf(objects: list[str], version: str = "2.0") -> bytes:
                 b" /ADBE << /BaseVersion /1.7 /ExtensionLevel 8 >>"
                 b" /ISO_19593 << /BaseVersion /1.7 /ExtensionLevel 1 >> /ISO_ ["
                 b"<< /BaseVersion /2.0 /ExtensionLevel 24064 >> << /BaseVersion /2.0 /ExtensionLevel 32002 >>"
-                b" << /BaseVersion /2.0 /ExtensionLevel 32004 >>] >> >>"
+                b" << /BaseVersion /2.0 /ExtensionLevel 32004 >>] >> " + catalog_entry + b" >>"
             ),
             f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>".encode(),
             *(obj.encode() for obj in objects),
