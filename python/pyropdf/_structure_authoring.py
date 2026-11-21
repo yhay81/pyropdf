@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 from pyropdf import _core, typed
 from pyropdf._errors import MalformedPdfError
-from pyropdf._objects import Array, Dictionary, Name, Stream, String, _encode
+from pyropdf._objects import Array, Dictionary, Name, Stream, String, _encode, _name_text
 from pyropdf._structure import (
     ObjectReference,
     _discover_tree_nodes,
@@ -16,9 +16,10 @@ from pyropdf._structure import (
     _validate_role_name,
     _validate_text_value,
 )
+from pyropdf._xobjects import _resources, _sub
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
 
     from pyropdf._document import Document
     from pyropdf._page import Page
@@ -220,9 +221,17 @@ def add_class(element: StructureElement, name: str) -> None:
     name = _validate_role_name(name, label="class name")
     doc = element.document
     classes = _ensure_root(doc).get("ClassMap")
+    if classes is not None and not _is_dictionary(classes):
+        msg = "structure /ClassMap is not a dictionary"
+        raise MalformedPdfError(msg)
     if not isinstance(classes, Dictionary) or name not in classes:
         msg = f"undefined structure attribute class /{name}"
         raise ValueError(msg)
+    definition = classes[name]
+    attributes = definition if isinstance(definition, Array) else (definition,)
+    if any(not isinstance(attr, Dictionary) or not isinstance(attr.get("O"), Name) for attr in attributes):
+        msg = f"structure class /{name} has no valid attribute definition"
+        raise MalformedPdfError(msg)
     holder = element.obj
     entries = _entries(doc, holder.get("C"))
     if Name(name) not in entries:
@@ -309,6 +318,114 @@ def _verify_parent_key(element: StructureElement, key: int) -> None:
         raise MalformedPdfError(msg)
 
 
+def _drawn_xobjects(
+    page: Page, stream: Stream | None, resources: Dictionary | None, budget: _core._OperationBudget
+) -> Iterator[Stream]:
+    xobjects = _sub(resources, "XObject")
+    if xobjects is None:
+        return
+    source = page.obj if stream is None else stream
+    if source.xref is None or source.generation is None:
+        return
+    names = _core.object_reference_xobjects(page.document._core(), (source.xref, source.generation), stream is None)  # noqa: SLF001
+    for name in names:
+        budget.poll()
+        item = xobjects.get(_name_text(name))
+        if isinstance(item, Stream):
+            yield item
+
+
+def _page_xobjects(page: Page, resources: Dictionary | None, budget: _core._OperationBudget) -> Iterator[Stream]:
+    yield from _drawn_xobjects(page, None, resources, budget)
+    annotations = page.obj.get("Annots")
+    if isinstance(annotations, Array):
+        for annotation in annotations:
+            budget.poll()
+            appearances = _sub(annotation, "AP") if isinstance(annotation, Dictionary) else None
+            if appearances is None:
+                continue
+            for kind in ("N", "R", "D"):
+                entry = appearances.get(kind)
+                if isinstance(entry, Stream):
+                    yield entry
+                elif isinstance(entry, Dictionary):
+                    for name in entry:
+                        budget.poll()
+                        state = entry[name]
+                        if isinstance(state, Stream):
+                            yield state
+
+
+def _page_uses_xobject(page: Page, target: Stream, budget: _core._OperationBudget) -> bool:
+    """Follow actual Do operands and annotation appearances, retaining each Form's resource scope."""
+    resources = _resources(page)
+    seen: set[tuple[Stream, Dictionary | None]] = set()
+    frames = [(_page_xobjects(page, resources, budget), resources)]
+    while frames:
+        items, inherited = frames[-1]
+        item = next(items, None)
+        if item is None:
+            frames.pop()
+            continue
+        if item == target:
+            return True
+        if item.get("Subtype") != "Form":
+            continue
+        own = item.get("Resources")
+        scope = inherited if own is None else own if isinstance(own, Dictionary) else None
+        if scope is None or (item, scope) in seen:
+            continue
+        budget.charge("memory_size", 512)
+        seen.add((item, scope))
+        frames.append((_drawn_xobjects(page, item, scope, budget), scope))
+    return False
+
+
+def _target_references(kids: list[object], target: Dictionary) -> list[tuple[int, Dictionary]]:
+    _reserve(target._document, len(kids))  # noqa: SLF001
+    return [
+        (i, kid)
+        for i, kid in enumerate(kids)
+        if isinstance(kid, Dictionary) and kid.get("Type") == "OBJR" and kid.get("Obj") == target
+    ]
+
+
+def _existing_parent_key(element: StructureElement, target: Dictionary) -> int:
+    key = target.get("StructParent")
+    if type(key) is not int or key < 0:
+        msg = "the target needs an existing structure parent key"
+        raise ValueError(msg)
+    _verify_parent_key(element, key)
+    return key
+
+
+def _replace_reference(
+    element: StructureElement, kids: list[object], previous: Dictionary, target: Dictionary, page: Dictionary
+) -> int:
+    doc = element.document
+    if not isinstance(previous, Dictionary) or previous._document is not doc or not previous.is_indirect:  # noqa: SLF001
+        msg = "replacement requires an indirect object of this document"
+        raise ValueError(msg)
+    matches = _target_references(kids, previous)
+    transfer_key = len(matches) == 1
+    if not transfer_key:
+        default_page = element.obj.get("Pg")
+        matches = [(i, kid) for i, kid in matches if kid.get("Pg", default_page) == page]
+    if len(matches) != 1:
+        msg = "the replaced target needs one object reference in this element or one on the specified page"
+        raise ValueError(msg)
+    key = _existing_parent_key(element, previous)
+    index, old = matches[0]
+    if old.is_indirect:
+        old["Obj"], old["Pg"] = target, page
+    else:
+        kids[index] = {**_fields(doc, old), "Obj": target, "Pg": page}
+    if transfer_key:
+        del previous["StructParent"]
+        return key
+    return _core.parent_tree_append(doc._core(), _encode(doc, element.obj, 1))  # noqa: SLF001
+
+
 def object_reference(
     element: StructureElement, target: Dictionary, page: Page | int, replace: Dictionary | None
 ) -> ObjectReference:
@@ -317,7 +434,9 @@ def object_reference(
     if not isinstance(target, Dictionary) or not target.is_indirect or target._document is not doc:  # noqa: SLF001
         msg = "an object reference requires an indirect object of this document"
         raise ValueError(msg)
-    if "StructParent" in target or "StructParents" in target:
+    if "StructParents" in target or (
+        "StructParent" in target and (not isinstance(target, Stream) or replace is not None)
+    ):
         msg = "target already has a structure parent"
         raise ValueError(msg)
     if not isinstance(target, Stream):
@@ -328,29 +447,23 @@ def object_reference(
     elif target.get("Subtype") not in ("Form", "Image"):
         msg = "the target stream is not a Form or Image XObject"
         raise ValueError(msg)
+    elif not _core.read_operation(doc._core(), lambda budget: _page_uses_xobject(source, target, budget)):  # noqa: SLF001
+        msg = "the XObject must be drawn on the specified page or used in one of its annotation appearances"
+        raise ValueError(msg)
     kids = _entries(doc, element.obj.get("K"))
-    entry = {"Type": Name("OBJR"), "Obj": target, "Pg": source.obj}
-    if replace is None:
-        key = _core.parent_tree_append(doc._core(), _encode(doc, element.obj, 1))  # noqa: SLF001
-        kids.append(entry)
+    if replace is not None:
+        target["StructParent"] = _replace_reference(element, kids, replace, target, source.obj)
     else:
-        if not isinstance(replace, Dictionary) or replace._document is not doc or not replace.is_indirect:  # noqa: SLF001
-            msg = "replacement requires an indirect object of this document"
-            raise ValueError(msg)
-        matches = [
-            i
-            for i, kid in enumerate(kids)
-            if isinstance(kid, Dictionary) and kid.get("Type") == "OBJR" and kid.get("Obj") == replace
-        ]
-        key = replace.get("StructParent")
-        if len(matches) != 1 or type(key) is not int or key < 0:
-            msg = "the replaced target needs one object reference in this element and an existing parent key"
-            raise ValueError(msg)
-        _verify_parent_key(element, key)
-        old = cast("Dictionary", kids[matches[0]])
-        kids[matches[0]] = {**_fields(doc, old), **entry}
-        del replace["StructParent"]
-    target["StructParent"] = key
+        if "StructParent" in target:
+            existing = _target_references(kids, target)
+            default_page = element.obj.get("Pg")
+            if not existing or any(kid.get("Pg", default_page) in (None, source.obj) for _, kid in existing):
+                msg = "target already has a structure parent or an object reference on the specified page"
+                raise ValueError(msg)
+            _existing_parent_key(element, target)
+        else:
+            target["StructParent"] = _core.parent_tree_append(doc._core(), _encode(doc, element.obj, 1))  # noqa: SLF001
+        kids.append({"Type": Name("OBJR"), "Obj": target, "Pg": source.obj})
     element.obj["K"] = kids
     assert target.xref is not None  # noqa: S101 - is_indirect checked before mutating
     return ObjectReference(xref=target.xref, page=source.index)

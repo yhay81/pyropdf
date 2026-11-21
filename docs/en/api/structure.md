@@ -376,7 +376,11 @@ StructureElement.set_object_reference(
 ) -> ObjectReference
 ```
 
-Attach an annotation or XObject and its parent-tree entry, or replace an existing target in place.
+Attach an annotation or a drawn XObject to the specified page and its structure parent.
+
+A whole XObject drawn on several pages can have one reference per page in the same element.
+To retarget a reference, supply an untagged replacement and the page where it is drawn.
+When the old target has several references, this replaces the one on that page.
 
 ### `StructureElement.move`
 
