@@ -75,6 +75,16 @@ impl Document {
     #[must_use]
     pub fn new(base: Arc<dyn Base>, history_limit: Option<u64>) -> Self {
         let first = Arc::new(Version::first(Arc::new(Origin::new(base))));
+        Self::from_version(first, history_limit)
+    }
+
+    /// An isolated writer for save-time declarations. Its next number and history
+    /// are private, while unchanged objects are shared with the source version.
+    pub(crate) fn for_save(version: &Version) -> Transaction {
+        Self::from_version(Arc::new(version.draft()), Some(0)).begin()
+    }
+
+    fn from_version(first: Arc<Version>, history_limit: Option<u64>) -> Self {
         Self {
             shared: Arc::new(Shared {
                 current: RwLock::new(Arc::clone(&first)),
