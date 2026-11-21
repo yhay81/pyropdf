@@ -26,6 +26,7 @@ import tempfile
 from pathlib import Path
 
 import pyropdf
+from pyropdf._objects import _direct_value
 
 ROOT = Path(__file__).resolve().parent.parent
 # The preservation harness imports its sibling test modules.
@@ -454,19 +455,86 @@ def profile_saves(directory: Path) -> dict[Path, str]:
     return files
 
 
+# The same generated inputs and edits are exercised in pytest and with the pinned jars.
+ALTERNATES = runpy.run_path(str(ROOT / "tests/assets/profile_edits.py"))
+
+
+def alternate_report(doc: pyropdf.Document, case: str, operation: str, rules: dict[str, set[str]]) -> dict:
+    """Apply the edit or its control and identify each newly failing claim's owner."""
+    if operation == "edit":
+        owner = ALTERNATES["edit"](doc, case)
+        return {claim_name(f): (owner,) for f in rules if rules[f]}
+    doc.pages[0].rotation = 90
+    if case == "nested-cmyk" and operation == "existing-control":
+        # Removing the RGB intent cannot introduce the CMYK rule it already failed.
+        del doc.catalog["OutputIntents"]
+    return {}
+
+
+def alternate_saves(source: Path, flavour: str, directory: Path) -> dict[Path, str]:
+    """Check the report on each original/edited pair before writing the independent validator inputs."""
+    files = {}
+    dual = source.stem == DUAL
+    profiles = (flavour, "4") if dual else (flavour,)
+    for case in ALTERNATES["cases"](flavour, dual=dual):
+        stem = f"{source.stem}-{case}"
+        with pyropdf.open(source) as original:
+            data = ALTERNATES["prepare"](original, case)
+        baseline = directory / f"{stem}-input.pdf"
+        baseline.write_bytes(data)
+        files[baseline] = flavour
+        rules = {f: ALTERNATES["failed_rules"](f, case) for f in profiles}
+        for operation in ("edit", "valid-control", "existing-control"):
+            if operation == "existing-control" and not any(rules.values()):
+                continue
+            start = directory / f"{stem}-edit-full.pdf" if operation == "existing-control" else baseline
+            with pyropdf.open(start) as doc:
+                expected = alternate_report(doc, case, operation, rules)
+                for incremental in (False, True):
+                    changes = doc.changes(incremental=incremental).claims
+                    if {c.claim for c in changes} != expected.keys() or any(
+                        c.objects != expected[c.claim] or not c.reason for c in changes
+                    ):
+                        msg = f"{stem} {operation}, incremental={incremental}: expected {expected}, got {changes}"
+                        raise ValueError(msg)
+                    mode = "incremental" if incremental else "full"
+                    path = directory / f"{stem}-{operation}-{mode}.pdf"
+                    doc.save(path, incremental=incremental)
+                    with pyropdf.open(path) as reopened:
+                        if reopened.profiles != doc.profiles or reopened.pages[0].rotation != doc.pages[0].rotation:
+                            msg = f"{path.name}: lost the claim identification or the control edit"
+                            raise ValueError(msg)
+                    files[path] = flavour
+                    for f in profiles:
+                        if operation != "valid-control" and rules[f]:
+                            EXPECTED[f"{f} {path.name}"] = ("#932", rules[f])
+    return files
+
+
+def declares_pades(extensions: object) -> bool:
+    """Recognize the PDF 1.7 declarations registered for PAdES signatures."""
+    if not isinstance(extensions, pyropdf.Dictionary) or extensions.is_indirect:
+        return False
+    for prefix, required in (("ESIC", PADES_LEVEL), ("ADBE", 8)):
+        entry = extensions.get(prefix)
+        if (
+            isinstance(entry, pyropdf.Dictionary)
+            and not entry.is_indirect
+            and _direct_value(entry, "BaseVersion") == "1.7"
+        ):
+            level = _direct_value(entry, "ExtensionLevel")
+            if type(level) is int and level >= required:
+                return True
+    return False
+
+
 def arlington(path: Path, flavour: str) -> str:
     """Validate the effective version, including a catalog promotion in a later revision."""
     with path.open("rb") as source:
         header = source.read(8)[5:8].decode("ascii")
     with pyropdf.open(path) as doc:
         declared = doc.catalog.get("Version")
-        extensions = doc.catalog.get("Extensions")
-        pades = extensions.get("ETSI_PAdES") if isinstance(extensions, pyropdf.Dictionary) else None
-        declares_pades = (
-            isinstance(pades, pyropdf.Dictionary)
-            and pades.get("BaseVersion") == pyropdf.Name("1.7")
-            and pades.get("ExtensionLevel") == PADES_LEVEL
-        )
+        pades = declares_pades(doc.catalog.get("Extensions"))
     # Valid PDF version names are ordered by their one-digit components.
     effective = (
         max(header, str(declared))
@@ -475,7 +543,7 @@ def arlington(path: Path, flavour: str) -> str:
     )
     version = "arlington" + effective
     names = [EXTENSIONS[flavour]] if flavour in EXTENSIONS else []
-    if declares_pades:
+    if pades:
         names.append("ETSI_PAdES")
     return f"{version}+{','.join(names)}" if names else version
 
@@ -758,6 +826,8 @@ def main() -> int:
         files.update(language_saves(Path(directory)))
         files.update(remove_signature_saves(Path(directory) / "pdfa-2b-sign_revision-incremental.pdf", Path(directory)))
         targeted = profile_saves(Path(directory))
+        for source, flavour in FIXTURES.items():
+            targeted.update(alternate_saves(source, flavour, Path(directory)))
         failures = run(args.jar.resolve(), targeted)
         failures += run(args.jar.resolve(), dual_archival(targeted))
         failures += run(args.jar.resolve(), files)

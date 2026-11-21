@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 39 | 33 | 759 |
-| interpret | 9 | 19 | 0 | 35 | 41 | 727 |
-| create | 0 | 0 | 21 | 26 | 61 | 723 |
-| edit | 0 | 0 | 0 | 47 | 54 | 730 |
-| preserve | 0 | 0 | 0 | 26 | 38 | 767 |
+| read | 0 | 0 | 0 | 40 | 31 | 760 |
+| interpret | 9 | 19 | 0 | 21 | 40 | 742 |
+| create | 0 | 0 | 21 | 27 | 54 | 729 |
+| edit | 0 | 0 | 0 | 31 | 49 | 751 |
+| preserve | 0 | 0 | 0 | 11 | 35 | 785 |
 
 ## Clauses
 
@@ -42,14 +42,14 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 7.2 | Lexical conventions | `lexical-conventions` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.3 | Objects | `basic-objects` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
-| 7.4.2 | ASCIIHexDecode filter | `asciihex-filter` | 1 done | 1 n/a | 1 planned | 1 partial | 1 done |
-| 7.4.3 | ASCII85Decode filter | `ascii85-filter` | 1 done | 1 n/a | 1 planned | 1 planned | 1 planned |
-| 7.4.4 | LZWDecode and FlateDecode filters | `flate-filter`, `lzw-filter` | 1 done, 1 planned | 1 n/a, 1 planned | 1 done, 1 planned | 2 planned | 1 done, 1 planned |
-| 7.4.5 | RunLengthDecode filter | `run-length-filter` | 1 planned | 1 n/a | 1 planned | 1 planned | 1 planned |
-| 7.4.6 | CCITTFaxDecode filter | `ccitt-fax-filter` | 1 done | 1 n/a | 1 planned | 1 partial | 1 done |
-| 7.4.7 | JBIG2Decode filter | `jbig2-filter` | 1 done | 1 n/a | 1 planned | 1 planned | 1 done |
+| 7.4.2 | ASCIIHexDecode filter | `asciihex-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.3 | ASCII85Decode filter | `ascii85-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.4 | LZWDecode and FlateDecode filters | `flate-filter`, `lzw-filter` | 1 done, 1 partial | 1 n/a, 1 partial | 1 done, 1 partial | 2 partial | 2 done |
+| 7.4.5 | RunLengthDecode filter | `run-length-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.6 | CCITTFaxDecode filter | `ccitt-fax-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
+| 7.4.7 | JBIG2Decode filter | `jbig2-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.4.8 | DCTDecode filter | `dct-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
-| 7.4.9 | JPXDecode filter | `jpx-filter` | 1 done | 1 done | 1 planned | 1 partial | 1 done |
+| 7.4.9 | JPXDecode filter | `jpx-filter` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.4.10 | Crypt filter | `crypt-filter` | 1 partial | 1 n/a | 1 partial | 1 partial | 1 partial |
 | 7.5.2 | File header | `file-header` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.4 | Cross-reference table | `xref-table` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
@@ -232,10 +232,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex L | Allowed structure children | `structure-children` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex Q | Page transparency detection | `page-transparency` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 partial | 3 partial | 3 planned | 3 partial | 3 partial |
+| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 partial | 3 done | 3 planned | 3 done | 3 done |
 | ISO 15930 | PDF/X | `pdfx` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 partial | 12 partial | 12 planned | 12 partial | 12 partial |
+| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 partial | 12 done | 12 planned | 12 done | 12 done |
 | ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-409 unfinished cells in 831 features: 9 engine, 173 partial, 227 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+348 unfinished cells in 831 features: 9 engine, 130 partial, 209 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -353,12 +353,9 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - create, edit — `signature-fields`, `digital-signatures`.
 - [#993](https://github.com/yhay81/pyropdf/issues/993) Render explicit legacy crypt filters and independently keyed recipient streams from the store. Interpret explicit legacy password filters and an independently keyed page stream through the authenticated version, including correct refusal for an unauthorized page.
     - interpret — `crypt-filters`.
-- [#891](https://github.com/yhay81/pyropdf/issues/891) Complete stream filter read, rewrite and preservation cases. Round-trip encoded and decoded streams across the listed filter chains and parameters. Cover ASCIIHex re-encoding, Group 3 fax and JPX output gaps, and retain untouched encoded data. Account for unsupported encoder paths explicitly.
-    - read — `lzw-filter`, `run-length-filter`.
-    - interpret — `lzw-filter`.
-    - create — `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
-    - edit — `flate-filter`, `asciihex-filter`, `ascii85-filter`, `lzw-filter`, `run-length-filter`, `ccitt-fax-filter`, `jbig2-filter`, `jpx-filter`.
-    - preserve — `ascii85-filter`, `lzw-filter`, `run-length-filter`.
+- [#982](https://github.com/yhay81/pyropdf/issues/982) Round-trip packed and wide predictor rows after adopting the hayro fix. Adopt the released row-local decoder through #603, then verify partially filled TIFF rows, externally filtered partial PNG pixel strides and predictor pixels wider than 255 bits in independent save and render controls.
+    - read, interpret, create — `lzw-filter`.
+    - edit — `flate-filter`, `lzw-filter`.
 
 ### 253 Understanding
 
@@ -389,8 +386,6 @@ Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 - [#910](https://github.com/yhay81/pyropdf/issues/910) Validate PDF/X and PDF/VT profile rules through a print exchange round trip. Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour.
     - read, interpret, preserve — `pdfx`, `pdfvt`.
     - create, edit — `pdfx`, `pdfvt`, `output-intents`.
-- [#932](https://github.com/yhay81/pyropdf/issues/932) Verify profile edit effects on nested resources and alternate structure encodings. Extend the checked edit matrix to nested resources, alternate structure relationships, and font representations with positive and negative controls.
-    - interpret, edit, preserve — `pdfa`, `pdfua`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f`, `pdfua-1`, `pdfua-2`.
 
 ### 256 Specification completion
 
@@ -418,19 +413,19 @@ The machine and human checks are documented in the [corpus review](https://githu
 
 | Profile | read | interpret | create | edit | preserve |
 | --- | --- | --- | --- | --- | --- |
-| `pdfa-1a` | partial | partial | planned | partial | partial |
-| `pdfa-1b` | partial | partial | planned | partial | partial |
-| `pdfa-2a` | partial | partial | planned | partial | partial |
-| `pdfa-2b` | partial | partial | planned | partial | partial |
-| `pdfa-2u` | partial | partial | planned | partial | partial |
-| `pdfa-3a` | partial | partial | planned | partial | partial |
-| `pdfa-3b` | partial | partial | planned | partial | partial |
-| `pdfa-3u` | partial | partial | planned | partial | partial |
-| `pdfa-4` | partial | partial | planned | partial | partial |
-| `pdfa-4e` | partial | partial | planned | partial | partial |
-| `pdfa-4f` | partial | partial | planned | partial | partial |
-| `pdfua-1` | partial | partial | planned | partial | partial |
-| `pdfua-2` | partial | partial | planned | partial | partial |
+| `pdfa-1a` | partial | done | planned | done | done |
+| `pdfa-1b` | partial | done | planned | done | done |
+| `pdfa-2a` | partial | done | planned | done | done |
+| `pdfa-2b` | partial | done | planned | done | done |
+| `pdfa-2u` | partial | done | planned | done | done |
+| `pdfa-3a` | partial | done | planned | done | done |
+| `pdfa-3b` | partial | done | planned | done | done |
+| `pdfa-3u` | partial | done | planned | done | done |
+| `pdfa-4` | partial | done | planned | done | done |
+| `pdfa-4e` | partial | done | planned | done | done |
+| `pdfa-4f` | partial | done | planned | done | done |
+| `pdfua-1` | partial | done | planned | done | done |
+| `pdfua-2` | partial | done | planned | done | done |
 
 ## Specification baseline
 
