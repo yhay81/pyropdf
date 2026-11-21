@@ -43,6 +43,9 @@ pub const DEFAULT_HISTORY_LIMIT: u64 = 256 * 1024 * 1024;
 pub struct State {
     open: Mutex<Option<Open>>,
     steps: Mutex<Steps>,
+    /// Catalog reads on a foreign import's private source view charge the
+    /// same operation as the copied graph, also observing the source limits.
+    import_read: Option<SharedBudget>,
 }
 
 /// An open transaction, with the savepoints of its nested transactions.
@@ -213,6 +216,13 @@ pub fn read_operation<'py>(
 }
 
 impl State {
+    pub(crate) fn import_view(operation: SharedBudget) -> Self {
+        Self {
+            import_read: Some(operation),
+            ..Self::default()
+        }
+    }
+
     /// Forgets the open transaction and the step names.
     pub fn clear(&self) {
         lock(&self.open).take();
@@ -224,6 +234,7 @@ impl State {
         owned(&mut lock(&self.open))
             .and_then(|open| open.operation.clone())
             .or_else(|| read_budget(self))
+            .or_else(|| self.import_read.clone())
     }
 }
 
