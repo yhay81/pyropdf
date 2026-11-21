@@ -10,7 +10,7 @@ from functools import cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Literal
 
-from pyropdf._errors import LimitError, PasswordError
+from pyropdf._errors import LimitError, MalformedPdfError, PasswordError
 
 if TYPE_CHECKING:
     from asn1crypto import cms, core
