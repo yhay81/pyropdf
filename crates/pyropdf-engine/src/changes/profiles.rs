@@ -667,8 +667,12 @@ fn invisible_widget_changes<'b>(
     found: &mut Reasons<'b>,
     budget: &'b Budget,
 ) -> Result<()> {
+    let current = widget_rules(current, written, budget)?;
+    if !current.iter().any(|rule| rule.has_invisible_widget) {
+        return Ok(());
+    }
     let previous = widget_rules(opened, written, budget)?;
-    for rule in widget_rules(current, written, budget)?.iter() {
+    for rule in current.iter() {
         if rule.has_invisible_widget
             && previous
                 .binary_search_by_key(&(rule.reason, rule.subject), |r| (r.reason, r.subject))
@@ -681,8 +685,8 @@ fn invisible_widget_changes<'b>(
 }
 
 /// The before and after sets distinguish a newly broken rule from a page or widget
-/// which already failed it. A page which already had annotations required Tabs
-/// before adding an invisible widget, too.
+/// which already failed it. A page with annotations already required Tabs, and
+/// an undescribed widget already lacked Contents before it was resized to zero.
 fn widget_rules<'b>(
     version: &Version,
     written: &[u32],
@@ -714,10 +718,11 @@ fn widget_rules<'b>(
                 continue;
             };
             has_annotation = true;
-            if !zero_size_widget(version, widget, budget)? {
+            if !named(widget, "Subtype", b"Widget") {
                 continue;
             }
-            has_invisible_widget = true;
+            let invisible = zero_size_widget(version, widget, budget)?;
+            has_invisible_widget |= invisible;
             // An untagged artifact has no Lbl structure element. The field's T
             // identifies the field and is not an accessible widget description.
             if widget.get("StructParent").is_none()
@@ -734,7 +739,7 @@ fn widget_rules<'b>(
                     reason: WIDGET_DESCRIPTION,
                     subject: reference_number(Some(item)).unwrap_or(holder),
                     cause,
-                    has_invisible_widget: true,
+                    has_invisible_widget: invisible,
                 })?;
             }
         }

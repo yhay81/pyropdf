@@ -345,6 +345,17 @@ def test_adding_a_described_widget_does_not_reintroduce_an_existing_page_tab_def
         assert doc.changes(incremental=True).claims == ()
 
 
+def test_resizing_an_already_undescribed_widget_does_not_report_a_new_description_loss() -> None:
+    with pyropdf.open(ASSETS.parent / "profile-sources/ua2-pass.pdf") as source:
+        field = source.prepare_signature("Review")
+        source.objects[field]["Rect"] = [14, 17, 48, 31]
+        saved = source.to_bytes()
+    with pyropdf.open(saved) as doc:
+        doc.objects[field]["Rect"] = [14, 17, 14, 17]
+        for incremental in (False, True):
+            assert doc.changes(incremental=incremental).claims == ()
+
+
 def test_invisible_widget_reports_the_changed_indirect_description_or_annotation_array() -> None:
     with pyropdf.open(ASSETS.parent / "profile-sources/ua2-pass.pdf") as doc:
         page = doc.pages[0].obj

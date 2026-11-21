@@ -720,35 +720,47 @@ def signature_widget_controls(jar: Path, directory: Path) -> list[tuple[str, Pat
     signing = runpy.run_path(str(ROOT / "tests/test_preservation_operations.py"))["local_pki"]()
     files = {}
     outcomes = {}
-    for tabs in (True, False):
-        for described in (True, False):
-            with pyropdf.open(source) as doc:
-                number = doc.prepare_signature("Review")
-                if described:
-                    doc.objects[number]["Contents"] = "Approval by the reviewer"
-                if not tabs:
-                    del doc.pages[0].obj["Tabs"]
-                saves = {"full": doc.to_bytes(), "incremental": doc.to_bytes(incremental=True)}
-            with pyropdf.open(saves["incremental"]) as prepared:
-                saves["signed"] = prepared.sign("Review", signing.signer)
-                if (
-                    not saves["signed"].startswith(saves["incremental"])
-                    or prepared.form["Review"].xref != number
-                    or not prepared.signatures[-1].verify(signing.trust)
-                ):
-                    msg = "signing the prepared widget changed the original revision or failed verification"
-                    raise ValueError(msg)
-            rules = set()
+    cases = (
+        (True, True, set()),
+        (True, False, {"8.10.2.3-1"}),
+        (False, True, {"8.9.3.3-1"}),
+        (False, False, {"8.9.3.3-1", "8.10.2.3-1"}),
+    )
+    for tabs, described, rules in cases:
+        with pyropdf.open(source) as doc:
+            number = doc.prepare_signature("Review")
+            if described:
+                doc.objects[number]["Contents"] = "Approval by the reviewer"
             if not tabs:
-                rules.add("8.9.3.3-1")
-            if not described:
-                rules.add("8.10.2.3-1")
-            for mode, data in saves.items():
-                path = directory / f"signature-widget-tabs-{tabs}-described-{described}-{mode}.pdf"
-                path.write_bytes(data)
-                files[path] = "ua2"
-                if rules:
-                    outcomes[f"ua2 {path.name}"] = ("#1094", rules)
+                del doc.pages[0].obj["Tabs"]
+            saves = {"full": doc.to_bytes(), "incremental": doc.to_bytes(incremental=True)}
+        with pyropdf.open(saves["incremental"]) as prepared:
+            saves["signed"] = prepared.sign("Review", signing.signer)
+            if (
+                not saves["signed"].startswith(saves["incremental"])
+                or prepared.form["Review"].xref != number
+                or not prepared.signatures[-1].verify(signing.trust)
+            ):
+                msg = "signing the prepared widget changed the original revision or failed verification"
+                raise ValueError(msg)
+        for mode, data in saves.items():
+            path = directory / f"signature-widget-tabs-{tabs}-described-{described}-{mode}.pdf"
+            path.write_bytes(data)
+            files[path] = "ua2"
+            if rules:
+                outcomes[f"ua2 {path.name}"] = ("#1094", rules)
+    with pyropdf.open(source) as doc:
+        number = doc.prepare_signature("Review")
+        doc.objects[number]["Rect"] = [14, 17, 48, 31]
+        visible = doc.to_bytes()
+    with pyropdf.open(visible) as doc:
+        doc.objects[number]["Rect"] = [14, 17, 14, 17]
+        sizes = {"visible": visible, "zero-full": doc.to_bytes(), "zero-incremental": doc.to_bytes(incremental=True)}
+    for size, data in sizes.items():
+        path = directory / f"signature-widget-undescribed-{size}.pdf"
+        path.write_bytes(data)
+        files[path] = "ua2"
+        outcomes[f"ua2 {path.name}"] = ("#1094", {"8.10.2.3-1"})
     return run(jar, files, outcomes=outcomes)
 
 
