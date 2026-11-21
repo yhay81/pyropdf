@@ -3,23 +3,26 @@
 //!
 //! A copy is a new page object that shares the original's content streams
 //! and resources. Its annotations are new objects whose `/P` names the copy,
-//! with `/Popup`, a popup's `/Parent`, and `/IRT` remapped among them; a
-//! widget becomes another widget of its field, so both pages show and edit
+//! with their popup, reply, action and 3D measurement targets remapped.
+//! Action and media containers with changed links are copied once per page.
+//! A widget becomes another widget of its field, so both pages show and edit
 //! one value. In a tagged document, the elements that own the page's marked
 //! content and annotations, with their ancestors up to the root or its
 //! `Document` element, are copied for the copy, which gets parent tree keys
 //! of its own. Ported from pylopdf's `rust/src/document/page_copy.rs` at
 //! ebb01d3c4c742046e8ce7fd72957cd15a2933321.
 
-use std::collections::HashMap;
+mod relationships;
+
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_map};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_map, try_insert_set};
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::tree::{append_parent_tree, number_tree_pairs};
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
-use pyropdf_store::version::Transaction;
+use pyropdf_store::version::{Object, Transaction};
 use pyropdf_store::{Error, LimitExceeded, Result};
 
 /// Hash table keys, values, slack, and rehash space share the operation budget.
@@ -178,18 +181,20 @@ impl<'b> Copies<'b> {
             )
             .into());
         }
-        // New numbers for the annotations other than widgets, which their
-        // fields number as they take them.
+        // Reserve all annotation identities before following links, including forward
+        // references to widgets whose fields will gain a new child.
         let mut numbers: HashMap<Reference, Reference> = HashMap::new();
         for entry in entries.iter() {
-            if let Some((Value::Dict(annotation), Some(old))) =
-                located(transaction, Some(entry), budget)?
-                && !is_widget(&annotation)
+            if let Value::Reference(reference) = entry
+                && let Some((old, object)) = locate_reference(transaction, *reference, budget)?
+                && matches!(&**object.value(), Value::Dict(_))
                 && !numbers.contains_key(&old)
             {
                 map_put(&mut numbers, old, transaction.allocate()?, budget)?;
             }
         }
+        let mut links = relationships::Links::new(&numbers, budget);
+        let mut written = HashSet::new();
         let mut annots = BudgetVec::new(budget);
         annots.try_reserve_exact(entries.len())?;
         let mut copied: BudgetVec<'_, Copied> = BudgetVec::new(budget);
@@ -200,6 +205,17 @@ impl<'b> Copies<'b> {
                     annots.try_push(copy_for_edit(entry, budget)?)?;
                     continue;
                 }
+            };
+            let new = match old {
+                Some(old) => {
+                    let new = numbers[&old];
+                    if !try_insert_set(&mut written, old, budget)? {
+                        annots.try_push(Value::Reference(new))?;
+                        continue;
+                    }
+                    new
+                }
+                None => transaction.allocate()?,
             };
             editable(&annotation)?;
             if old.is_none() && annotation.get("StructParent").is_some() {
@@ -212,7 +228,7 @@ impl<'b> Copies<'b> {
                 _ => None,
             };
             annotation.remove("StructParent");
-            let new = if is_widget(&annotation) {
+            if is_widget(&annotation) {
                 // A kid widget joins its field; a merged field and widget
                 // becomes a field with both widgets.
                 let merged = annotation.get("T").is_some() || annotation.get("Parent").is_none();
@@ -229,9 +245,7 @@ impl<'b> Copies<'b> {
                 for key in FIELD_KEYS {
                     annotation.remove(key);
                 }
-                if let Some(Value::Dict(mut actions)) =
-                    resolve(transaction, annotation.get("AA"), budget)?
-                {
+                if let Some(mut actions) = actions_to_split(transaction, &annotation, budget)? {
                     for trigger in FIELD_TRIGGERS {
                         actions.remove(trigger);
                     }
@@ -246,17 +260,12 @@ impl<'b> Copies<'b> {
                     }
                 }
                 annotation.remove("Parent");
-                remap_annotation(transaction, &mut annotation, &numbers, copy, budget)?;
-                join(transaction, field, annotation, budget)?
+                links.annotation(transaction, &mut annotation, copy)?;
+                join(transaction, field, new, annotation, budget)?;
             } else {
-                remap_annotation(transaction, &mut annotation, &numbers, copy, budget)?;
-                let new = match old {
-                    Some(old) => numbers[&old],
-                    None => transaction.allocate()?,
-                };
+                links.annotation(transaction, &mut annotation, copy)?;
                 transaction.write(new.number(), &Value::Dict(annotation), budget)?;
-                new
-            };
+            }
             annots.try_push(Value::Reference(new))?;
             if let Some(old) = old {
                 copied.try_push((old, new, key))?;
@@ -272,6 +281,7 @@ impl<'b> Copies<'b> {
                 Value::Array(Array::from(annots.into_vec())),
             );
         }
+        links.page_actions(transaction, &mut page)?;
         let page_key = match page.remove("StructParents") {
             Some(Value::Integer(key)) => Some(key),
             _ => None,
@@ -665,15 +675,33 @@ impl<'b> Structure<'b> {
     }
 }
 
-/// Adds `widget` as another widget of field `field` and returns it. A
+/// Only a merged action dictionary needs splitting. Otherwise both original holders
+/// keep sharing the original /AA, and both copied holders can share its replacement.
+fn actions_to_split(
+    transaction: &Transaction,
+    annotation: &Dict,
+    budget: &Budget,
+) -> Result<Option<Dict>> {
+    match resolve(transaction, annotation.get("AA"), budget)? {
+        Some(Value::Dict(actions))
+            if FIELD_TRIGGERS.iter().any(|key| actions.get(*key).is_some()) =>
+        {
+            Ok(Some(actions))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Adds `widget` at its reserved identity as another kid of field `field`. A
 /// merged field and widget becomes a widget of a new parent field, which
 /// takes its place in the form, so that both widgets are kids of one field.
 fn join(
     transaction: &mut Transaction,
     field: Reference,
+    new: Reference,
     mut widget: Dict,
     budget: &Budget,
-) -> Result<Reference> {
+) -> Result<()> {
     let Some((Value::Dict(old), Some(field))) =
         located(transaction, Some(&Value::Reference(field)), budget)?
     else {
@@ -701,10 +729,7 @@ fn join(
         }
         // A merged dictionary owns both field and widget actions. Only
         // field triggers move to the parent.
-        let mut widget_actions = match resolve(transaction, old.get("AA"), budget)? {
-            Some(Value::Dict(actions)) => Some(actions),
-            _ => None,
-        };
+        let mut widget_actions = actions_to_split(transaction, &old, budget)?;
         if let Some(actions) = &mut widget_actions {
             let mut field_actions = Dict::new();
             for trigger in FIELD_TRIGGERS {
@@ -716,13 +741,11 @@ fn join(
                     field_actions.insert(Name::from(trigger), action);
                 }
             }
-            if !field_actions.is_empty() {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "the new parent grows by one entry at most"
-                )]
-                parent.insert(Name::from("AA"), Value::Dict(field_actions));
-            }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the new parent grows by one entry at most"
+            )]
+            parent.insert(Name::from("AA"), Value::Dict(field_actions));
         }
         let grand = match old.get("Parent") {
             Some(&Value::Reference(grand)) => Some(grand),
@@ -770,10 +793,9 @@ fn join(
         reason = "the widget grows by one entry at most"
     )]
     widget.insert(Name::from("Parent"), Value::Reference(parent));
-    let new = transaction.allocate()?;
     transaction.write(new.number(), &Value::Dict(widget), budget)?;
     let Some(mut dict) = dict_at(transaction, parent, budget)? else {
-        return Ok(new);
+        return Ok(());
     };
     editable(&dict)?;
     extend_entry(
@@ -785,7 +807,7 @@ fn join(
         budget,
     )?;
     transaction.write(parent.number(), &Value::Dict(dict), budget)?;
-    Ok(new)
+    Ok(())
 }
 
 /// Puts field `new` where field `old` was: in the `/Kids` of `grand`, or
@@ -895,34 +917,6 @@ fn replaced(
     }
 }
 
-/// Preserve annotation relationships while resolving aliases to their actual identity.
-fn remap_annotation(
-    transaction: &Transaction,
-    annotation: &mut Dict,
-    numbers: &HashMap<Reference, Reference>,
-    page: Reference,
-    budget: &Budget,
-) -> Result<()> {
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the annotation grows by one entry at most"
-    )]
-    annotation.insert(Name::from("P"), Value::Reference(page));
-    for key in ["Popup", "Parent", "IRT"] {
-        if let Some(value @ Value::Reference(_)) = annotation.get(key)
-            && let Some((_, Some(old))) = located(transaction, Some(value), budget)?
-            && let Some(&new) = numbers.get(&old)
-        {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "the annotation already has the key, which this replaces"
-            )]
-            annotation.insert(Name::from(key), Value::Reference(new));
-        }
-    }
-    Ok(())
-}
-
 /// A required structure owner must resolve to a distinct editable identity.
 fn structure_node(
     transaction: &Transaction,
@@ -976,11 +970,25 @@ fn located(
     value: Option<&Value>,
     budget: &Budget,
 ) -> Result<Option<(Value, Option<Reference>)>> {
-    let mut reference = match value {
+    let reference = match value {
         None => return Ok(None),
         Some(Value::Reference(reference)) => *reference,
         Some(value) => return Ok(Some((copy_for_edit(value, budget)?, None))),
     };
+    let Some((reference, object)) = locate_reference(transaction, reference, budget)? else {
+        return Ok(None);
+    };
+    Ok(Some((
+        copy_for_edit(object.value(), budget)?,
+        Some(reference),
+    )))
+}
+
+fn locate_reference(
+    transaction: &Transaction,
+    mut reference: Reference,
+    budget: &Budget,
+) -> Result<Option<(Reference, Object)>> {
     for _ in 0..MAX_CHAIN {
         budget.poll()?;
         let Some(object) = transaction
@@ -992,7 +1000,7 @@ fn located(
         };
         match &**object.value() {
             Value::Reference(next) => reference = *next,
-            value => return Ok(Some((copy_for_edit(value, budget)?, Some(reference)))),
+            _ => return Ok(Some((reference, object))),
         }
     }
     Err(Error::malformed(format!(
