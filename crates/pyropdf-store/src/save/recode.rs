@@ -38,7 +38,12 @@ const DECODED: [&[u8]; 5] = [
 
 /// Returns `value` with its stream recoded as `streams` asks, or `None`
 /// when it leaves `value` as it is.
-pub(super) fn recoded(value: &Value, streams: Streams, budget: &Budget) -> Result<Option<Value>> {
+pub(super) fn recoded(
+    value: &Value,
+    streams: Streams,
+    lookup: &crate::value::FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<Option<Value>> {
     let Value::Stream(stream) = value else {
         return Ok(None);
     };
@@ -49,7 +54,14 @@ pub(super) fn recoded(value: &Value, streams: Streams, budget: &Budget) -> Resul
     let recoded = match streams {
         Streams::Keep => None,
         Streams::Compress(level) => compressed(stream, level, budget)?,
-        Streams::Decompress => decompressed(stream, budget)?,
+        Streams::Decompress => {
+            match crate::value::filters::resolved(stream.dict(), lookup, budget)? {
+                std::borrow::Cow::Borrowed(_) => decompressed(stream, budget)?,
+                std::borrow::Cow::Owned(dict) => {
+                    decompressed(&Stream::new(dict, stream.data().clone()), budget)?
+                }
+            }
+        }
     };
     Ok(recoded.map(|stream| Value::Stream(Box::new(stream))))
 }

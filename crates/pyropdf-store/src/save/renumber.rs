@@ -77,6 +77,32 @@ impl<'a> Renumbering<'a> {
         }
     }
 
+    /// Read a filter referenced by an already renumbered stream dictionary.
+    pub(super) fn lookup(
+        &self,
+        version: &Version,
+        reference: Reference,
+        budget: &Budget,
+    ) -> crate::Result<Option<Value>> {
+        let original = if self.consecutive {
+            let Some(&(number, generation)) = reference
+                .number()
+                .checked_sub(1)
+                .and_then(|n| self.written.get(n as usize))
+            else {
+                return Ok(None);
+            };
+            Reference::new(number, generation)
+        } else {
+            reference
+        };
+        let Some(mut value) = version.filter_object(original, budget)? else {
+            return Ok(None);
+        };
+        self.rewrite(&mut value, budget)?;
+        Ok(Some(value))
+    }
+
     /// Returns the new reference of the object `number`, which the save
     /// writes.
     pub(super) fn number(&self, number: u32) -> Result<Reference> {
@@ -119,7 +145,7 @@ impl<'a> Renumbering<'a> {
     /// an object that the save does not write with null, as ISO 32000-2
     /// section 7.3.10 reads it. The walk keeps a stack of the values still
     /// to visit, whatever their depth.
-    pub(super) fn rewrite(&self, value: &mut Value, budget: &Budget) -> Result<()> {
+    pub(super) fn rewrite(&self, value: &mut Value, budget: &Budget) -> crate::Result<()> {
         let mut stack = BudgetVec::new(budget);
         stack.try_push(value)?;
         while let Some(value) = stack.pop() {
@@ -159,9 +185,10 @@ impl<'a> Renumbering<'a> {
         version: &Version,
         reference: Reference,
         streams: Streams,
+        clear: bool,
         budget: &Budget,
     ) -> Result<Bytes> {
-        self.read(version, reference, streams, budget)
+        self.read(version, reference, streams, clear, budget)
             .map_err(|error| {
                 error.context(format!(
                     "saving object {} {}",
@@ -176,6 +203,7 @@ impl<'a> Renumbering<'a> {
         version: &Version,
         reference: Reference,
         streams: Streams,
+        clear: bool,
         budget: &Budget,
     ) -> Result<Bytes> {
         let base = version.base();
@@ -186,11 +214,21 @@ impl<'a> Renumbering<'a> {
         let mut value = Value::parse_with_lengths(&source, budget, &|reference| {
             base.object(reference, budget)
         })?;
+        if clear {
+            crate::security::filters::remove_explicit(
+                &mut value,
+                &|r, b| version.filter_object(r, b),
+                budget,
+            )?;
+        } else {
+            version.check_stream_filters(&value, budget)?;
+        }
         self.rewrite(&mut value, budget)?;
         let mut plain = BudgetVec::new(budget);
         write::value(&mut plain, &value)?;
         if streams != Streams::Keep
-            && let Some(recoded) = recode::recoded(&value, streams, budget)?
+            && let Some(recoded) =
+                recode::recoded(&value, streams, &|r, b| self.lookup(version, r, b), budget)?
         {
             let mut bytes = BudgetVec::new(budget);
             write::value(&mut bytes, &recoded)?;

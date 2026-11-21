@@ -217,7 +217,13 @@ impl Base for FileBase {
         // is never encrypted, so the index gives its bytes as they are.
         let fetch = |length| self.index.object(length, budget);
         let value = Value::parse_with_lengths(&bytes, budget, &fetch)?;
-        let plain = security::decrypt_value(handler, reference, &value, budget)?;
+        let plain = security::decrypt_value_with(
+            handler,
+            reference,
+            &value,
+            &|r, b| crate::value::filters::indexed_filter(&self.index, r, b),
+            budget,
+        )?;
         let mut out = BudgetVec::new(budget);
         write::value(&mut out, &plain)?;
         Ok(Some(Bytes::new(out.into_vec())))

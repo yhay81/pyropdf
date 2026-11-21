@@ -54,7 +54,10 @@ python-source = "python"
 module-name = "pyropdf._core"
 
 [dependency-groups]
+# Build-time DEFLATE encoder; native wheels contain no dependency on it.
+wheel = ["zopflipy==1.14"]
 dev = [
+    { include-group = "wheel" },
     # pikepdf reads saved documents through its own parser in the consistency
     # harness.
     "pikepdf>=10.18.2",

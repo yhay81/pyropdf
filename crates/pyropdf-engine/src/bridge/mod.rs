@@ -387,6 +387,12 @@ fn update(
         Some(file) => out.try_extend_from_slice(file.bytes())?,
         None => out.try_extend_from_slice(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n")?,
     }
+    let changed_streams = match (file, handler) {
+        (Some(file), Some(handler)) if version.has_changes() => {
+            handler.changed_streams(version, file, handler, false, budget)?
+        }
+        _ => Vec::new(),
+    };
     let original = out.len();
     out.try_extend_from_slice(b"\n")?;
     let next = extra
@@ -442,15 +448,28 @@ fn update(
             .map(|at| &extra[at]);
         let entry = match (stand_in, version.slot(number)) {
             (Some((reference, value)), _) => {
-                object(&mut out, *reference, Body::Value(value), handler)?
+                object(&mut out, *reference, Body::Value(value), handler, version)?
             }
             (None, Some(Slot::Written(written))) => object(
                 &mut out,
                 Reference::new(number, written.generation()),
                 Body::Serialized(written.bytes()),
                 handler,
+                version,
             )?,
             (None, Some(Slot::Free(_))) => row(0, 0, 0),
+            (None, None) if changed_streams.binary_search(&number).is_ok() => {
+                let obj = version
+                    .get(number, budget)?
+                    .ok_or_else(|| pyropdf_store::Error::malformed("changed stream is missing"))?;
+                object(
+                    &mut out,
+                    Reference::new(number, obj.generation()),
+                    Body::Value(obj.value()),
+                    handler,
+                    version,
+                )?
+            }
             (None, None) => base_row(version, number, &mut out, budget)?,
         };
         rows.try_push(entry)?;
@@ -538,6 +557,7 @@ fn object(
     reference: Reference,
     body: Body<'_>,
     handler: Option<&Handler>,
+    version: &Version,
 ) -> Result<[u8; 13]> {
     let offset = out.len() as u64;
     header(out, reference.number(), reference.generation())?;
@@ -553,7 +573,13 @@ fn object(
                     &parsed
                 }
             };
-            let encrypted = security::encrypt_value(handler, reference, value, out.budget())?;
+            let encrypted = security::encrypt_value_with(
+                handler,
+                (reference, reference),
+                value,
+                &|r, b| version.filter_object(r, b),
+                out.budget(),
+            )?;
             write::value(out, &encrypted)?;
         }
     }
@@ -582,6 +608,7 @@ fn base_row(
             Reference::new(number, generation),
             Body::Serialized(&bytes),
             None,
+            version,
         );
     };
     let Some(entry) = file.get(number) else {
