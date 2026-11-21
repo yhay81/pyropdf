@@ -245,15 +245,21 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Round-trip encoded and decoded streams across the listed filter chains and parameters. Cover ASCIIHex re-encoding, Group 3 fax and JPX output gaps, and retain untouched encoded data. Account for unsupported encoder paths explicitly."
 
-[families.tagged-reading]
+[families.tagged-form-reading]
 tracker = 253
-issue = 907
-title = "Interpret standard structure roles, children, and abbreviation expansion in document order"
-features = [
-    "logical-structure", "tagged-pdf", "accessibility", "structure-children",
-]
-dimensions = ["read", "interpret", "preserve"]
-behavior = "Walk standard/custom roles and parent-child multiplicities, order content using structure references and expose abbreviation expansion in extracted output. Compare with hand-verified tagged documents."
+issue = 989
+title = "Resolve tagged form text using the originating content stream"
+features = ["logical-structure", "tagged-pdf"]
+dimensions = ["interpret"]
+behavior = "Resolve external Form stream MCIDs and text enclosed by page-level Form invocations once hayro supplies stream provenance."
+
+[families.contextual-structure-children]
+tracker = 253
+issue = 990
+title = "Resolve contextual Annex L rules and namespace-mapped structure children"
+features = ["structure-children"]
+dimensions = ["interpret"]
+behavior = "Resolve cross-namespace roles, use as a grouping element and role-specific content for the remaining conditional Annex L verdicts."
 
 [families.display-space]
 tracker = 254
