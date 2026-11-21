@@ -855,10 +855,6 @@ description = "Sound annotations."
 objects = ["AnnotSound"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
 
 [features.movie-annotations]
 clause = "12.5.6.17"
@@ -866,10 +862,6 @@ description = "Movie annotations."
 objects = ["AnnotMovie", "Movie", "MovieActivation"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
 
 [features.screen-annotations]
 clause = "12.5.6.18"
@@ -966,10 +958,6 @@ description = "Sound actions."
 objects = ["ActionSound"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
 
 [features.movie-actions]
 clause = "12.6.4.10"
@@ -977,10 +965,6 @@ description = "Movie actions."
 objects = ["ActionMovie"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
 
 [features.hide-actions]
 clause = "12.6.4.11"
@@ -1131,10 +1115,6 @@ description = "Sound objects."
 objects = ["SoundObject"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
 
 [features.movies]
 clause = "13.4"
@@ -1142,10 +1122,6 @@ description = "Movie dictionaries."
 objects = []
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
 
 [features.alternate-presentations]
 clause = "13.5"
@@ -1153,10 +1129,6 @@ description = "Alternate presentations: slide shows."
 objects = ["SlideShow"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
 
 [features.3d-artwork]
 clause = "13.6"

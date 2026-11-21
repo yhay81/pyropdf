@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from pyropdf._document import Document
+    from pyropdf._page import Page
 
 
 class RenditionOperation(enum.IntEnum):
@@ -475,3 +476,142 @@ def read_media_action(action: Dictionary) -> MediaAction | None:  # noqa: PLR091
         )
     except (TypeError, ValueError):
         return None
+
+
+class MovieAction:
+    """An existing Movie action interpreted on its destination page (ISO 32000-1 §12.6.4.9).
+
+    Pass the destination page of the link or outline, or the page associated
+    with the action. Titles identify movie annotations on that page.
+    """
+
+    __slots__ = ("_action", "_page")
+
+    def __init__(self, page: Page, action: typed.ActionMovie) -> None:
+        """Bind the action dictionary to the page on which it selects its movie."""
+        if not isinstance(action, typed.ActionMovie) or action.obj.get("S") != Name("Movie"):
+            msg = "expected an existing Movie action"
+            raise TypeError(msg)
+        if action.obj._document is not page.document:  # noqa: SLF001
+            msg = "the action and its destination page belong to different documents"
+            raise ValueError(msg)
+        self._action = action
+        self._page = page
+
+    def _find(self, value: str | Dictionary) -> typed.AnnotMovie:
+        def resolve(budget: _core._OperationBudget) -> typed.AnnotMovie:
+            annots = self._page.obj.get("Annots")
+            result = None
+            if isinstance(annots, Array):
+                _bounded(annots)
+                for annot in annots:
+                    budget.poll()
+                    if not isinstance(annot, Dictionary) or annot.get("Subtype") != Name("Movie"):
+                        continue
+                    title = annot.get("T")
+                    if annot == value or (isinstance(value, str) and isinstance(title, String) and title.text == value):
+                        if result is not None:
+                            msg = "the movie title is ambiguous on the destination page"
+                            raise ValueError(msg)
+                        result = typed.AnnotMovie(annot)
+            if result is None:
+                msg = "the movie target does not exist on the destination page"
+                raise ValueError(msg)
+            return result
+
+        return _core.read_operation(self._page.obj._core(), resolve)  # noqa: SLF001
+
+    @property
+    def target(self) -> typed.AnnotMovie:
+        """Resolve the action's unique title or direct annotation reference on the destination page.
+
+        Assign a title to write a title-based target, or an indirect movie
+        annotation view to write a reference. Both forms replace the previous
+        target in one transaction.
+        """
+        ref, title = self._action.obj.get("Annotation"), self._action.obj.get("T")
+        if ref is None and isinstance(title, String):
+            return self._find(title.text)
+        if title is None and isinstance(ref, Dictionary) and ref.is_indirect:
+            return self._find(ref)
+        msg = "a movie action requires exactly one title or indirect annotation reference"
+        raise ValueError(msg)
+
+    @target.setter
+    def target(self, value: str | typed.AnnotMovie) -> None:
+        if isinstance(value, str) and not isinstance(value, Name):
+            if value:
+                _text(value)
+            key, retired, target = "T", "Annotation", value
+        elif isinstance(value, typed.AnnotMovie) and value.obj.is_indirect:
+            key, retired, target = "Annotation", "T", value.obj
+        else:
+            msg = "expected a movie title or an indirect movie annotation"
+            raise TypeError(msg)
+        with self._page.document.transaction("retarget movie action"):
+            self._find(target)
+            if retired in self._action.obj:
+                del self._action.obj[retired]
+            self._action.obj[key] = target
+
+    def _time(self, key: str) -> tuple[int, int | None] | None:
+        activation = self.target.obj.get("A")
+        fallback = activation.get(key) if isinstance(activation, Dictionary) else None
+        value = self._action.obj.get(key)
+        if value is None:
+            value = fallback
+        if value is None:
+            return None
+        scale = None
+        if isinstance(value, Array):
+            if len(value) != 2:  # noqa: PLR2004 - [time, time scale].
+                msg = f"movie /{key} time array requires a time and a scale"
+                raise ValueError(msg)
+            value, scale = value
+            if type(scale) is not int or scale <= 0:
+                msg = f"movie /{key} time scale must be a positive integer"
+                raise ValueError(msg)
+        if isinstance(value, String) and len(value) == 8:  # noqa: PLR2004 - signed 64-bit PDF time.
+            value = int.from_bytes(value, "big", signed=True)
+        if type(value) is not int or value < (1 if key == "Duration" else 0):
+            msg = f"invalid movie /{key} time"
+            raise ValueError(msg)
+        return value, scale
+
+    def _set_time(self, key: str, value: tuple[int, int | None] | None) -> None:
+        if value is None:
+            self._action.obj.pop(key, None)
+            return
+        if not isinstance(value, tuple) or len(value) != 2:  # noqa: PLR2004 - ticks and optional scale.
+            msg = "movie time requires a pair of ticks and an optional time scale"
+            raise TypeError(msg)
+        ticks, scale = value
+        if type(ticks) is not int or ticks < (1 if key == "Duration" else 0) or ticks >= 1 << 63:
+            msg = f"movie /{key} ticks are outside the signed 64-bit time range"
+            raise ValueError(msg)
+        if scale is not None and (type(scale) is not int or scale <= 0):
+            msg = "movie time scale must be a positive integer"
+            raise ValueError(msg)
+        encoded = ticks if ticks < 1 << 31 else ticks.to_bytes(8, "big")
+        self._action.obj[key] = encoded if scale is None else [encoded, scale]
+
+    @property
+    def start(self) -> tuple[int, int | None]:
+        """Effective start as (ticks, ticks per second), using the movie's time scale when the second value is None.
+
+        Assign a pair to override the annotation or None to inherit its setting.
+        """
+        return self._time("Start") or (0, None)
+
+    @start.setter
+    def start(self, value: tuple[int, int | None] | None) -> None:
+        self._set_time("Start", value)
+
+    @property
+    def duration(self) -> tuple[int, int | None] | None:
+        """Effective (ticks, ticks per second), or None to play to the end. Assign None to inherit the annotation."""
+        return self._time("Duration")
+
+    @duration.setter
+    def duration(self, value: tuple[int, int | None] | None) -> None:
+        self._set_time("Duration", value)
