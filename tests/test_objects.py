@@ -822,3 +822,24 @@ def test_unsupported_predictor_layout_leaves_existing_stream_untouched() -> None
             decode_parms={"Predictor": 12, "Colors": 16, "Columns": 1, "BitsPerComponent": 16},
         )
     assert doc.to_bytes() == before
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_repeated_dictionary_keys_keep_the_first_position_and_last_value_on_save(*, incremental: bool) -> None:
+    original = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Extra 3 0 R >>",
+            2: "<< /Type /Pages /Kids [] /Count 0 >>",
+            3: "<< /#41 1 /B 2 /A 3 >>",
+        }
+    )
+    doc = pyropdf.open(original)
+    extra = doc.objects[3]
+    assert isinstance(extra, Dictionary)
+    assert list(extra.items()) == [("A", 3), ("B", 2)]
+    assert doc.to_bytes(incremental=True) == original
+    extra["B"] = 4
+    saved = pyropdf.open(doc.to_bytes(incremental=incremental))
+    reopened = saved.objects[3]
+    assert isinstance(reopened, Dictionary)
+    assert list(reopened.items()) == [("A", 3), ("B", 4)]
