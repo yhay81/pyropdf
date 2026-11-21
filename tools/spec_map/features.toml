@@ -1307,7 +1307,6 @@ objects = []
 clause = "ISO 19005"
 description = "Shared PDF/A claim mechanisms. Consult the level-specific rows for conformance evidence."
 objects = []
-read = { status = "partial", missing = "Shared claim readers have examples; each part and level has its own coverage row.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "Nested colour resources, output intents and font representations need additional archival edit controls.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "Nested colour resources, output intents and font representations need additional archival edit controls.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Nested colour resources, output intents and font representations need additional archival edit controls.", milestone = "Phase 4: Specification" }
@@ -1316,124 +1315,110 @@ preserve = { status = "partial", missing = "Nested colour resources, output inte
 clause = "ISO 14289"
 description = "Shared PDF/UA claim mechanisms. Consult the part-specific rows for conformance evidence."
 objects = []
-read = { status = "partial", missing = "Shared claim readers have examples; each part and level has its own coverage row.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "Alternate marked-content properties, structure associations and fonts need additional accessibility edit controls.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "Alternate marked-content properties, structure associations and fonts need additional accessibility edit controls.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Alternate marked-content properties, structure associations and fonts need additional accessibility edit controls.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-1a]
 clause = "ISO 19005"
-description = "PDF/A-1a profile evidence for a generated single-page fixture."
+description = "PDF/A-1a profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-1b]
 clause = "ISO 19005"
-description = "PDF/A-1b profile evidence for a generated single-page fixture."
+description = "PDF/A-1b profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-2a]
 clause = "ISO 19005"
-description = "PDF/A-2a profile evidence for a generated single-page fixture."
+description = "PDF/A-2a profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-2b]
 clause = "ISO 19005"
-description = "PDF/A-2b profile evidence for a generated single-page fixture."
+description = "PDF/A-2b profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-2u]
 clause = "ISO 19005"
-description = "PDF/A-2u profile evidence for a generated single-page fixture."
+description = "PDF/A-2u profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-3a]
 clause = "ISO 19005"
-description = "PDF/A-3a profile evidence for a generated single-page fixture."
+description = "PDF/A-3a profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-3b]
 clause = "ISO 19005"
-description = "PDF/A-3b profile evidence for a generated single-page fixture."
+description = "PDF/A-3b profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-3u]
 clause = "ISO 19005"
-description = "PDF/A-3u profile evidence for a generated single-page fixture."
+description = "PDF/A-3u profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-4]
 clause = "ISO 19005"
-description = "PDF/A-4 profile evidence for a generated single-page fixture."
+description = "PDF/A-4 profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-4e]
 clause = "ISO 19005"
-description = "PDF/A-4e profile evidence for a generated single-page fixture."
+description = "PDF/A-4e profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-4f]
 clause = "ISO 19005"
-description = "PDF/A-4f profile evidence for a generated single-page fixture."
+description = "PDF/A-4f profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfua-1]
 clause = "ISO 14289"
-description = "PDF/UA-1 profile evidence for a generated single-page fixture."
+description = "PDF/UA-1 profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfua-2]
 clause = "ISO 14289"
-description = "PDF/UA-2 profile evidence for a generated single-page fixture."
+description = "PDF/UA-2 profile evidence from controlled and independently sourced files."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
 edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
 preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
