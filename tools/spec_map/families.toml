@@ -118,16 +118,6 @@ features = [
 dimensions = ["interpret"]
 behavior = "Apply and verify redaction annotations over text, paths and images, using item provenance for destructive removal."
 
-[families.arlington-reference-rules]
-tracker = 251
-issue = 889
-title = "Settle required links and inbound roles when creating or editing typed objects"
-features = [
-    "@arlington",
-]
-dimensions = ["create", "edit"]
-behavior = "Generate a role inventory from the pinned descriptors. For each applicable role, construct the required references and settle or reject replacements and removals atomically. Exercise already-implemented page, form and structure rules before adding missing rules."
-
 [families.name-tree-navigation]
 tracker = 251
 issue = 895
