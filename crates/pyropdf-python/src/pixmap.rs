@@ -1188,22 +1188,94 @@ pub fn pixmap_png<'py>(
     })?
 }
 
+/// A bounded PDF function retained for one recolouring operation.
+#[pyclass(frozen, name = "_DeviceCurve", module = "pyropdf._core")]
+pub struct DeviceCurve(pixel_ops::DeviceCurve);
+
+#[pymethods]
+impl DeviceCurve {
+    fn evaluate(&self, k: f32) -> PyResult<Option<f32>> {
+        crate::errors::boundary(|| self.0.evaluate(k))
+    }
+}
+
+/// Resolves a scalar output-device function through the same bridge as rendering.
+#[pyfunction]
+pub(crate) fn device_curve(
+    document: &_Document,
+    root: (u32, u16),
+    path: Vec<crate::objects::Step>,
+) -> PyResult<Option<DeviceCurve>> {
+    crate::errors::boundary(|| {
+        if path.len() > 32 {
+            return Ok(None);
+        }
+        let (version, index, budget) = crate::pages::index(document)?;
+        let bridged = document
+            .bridge
+            .get(&version, &index, &budget)
+            .map_err(|e| bridge_error(&e))?;
+        let steps = path.iter().map(|step| match step {
+            crate::objects::Step::Key(key) => pixel_ops::CurveStep::Key(key),
+            crate::objects::Step::Index(index) => pixel_ops::CurveStep::Index(*index),
+        });
+        // Checking an encrypted stream can allocate its decrypted bytes even if
+        // its declared length is wrong. The bridge length bounds the largest
+        // temporary plaintext buffer; regular unencrypted streams are borrowed.
+        let scratch = if version.trailer().get("Encrypt").is_some() {
+            bridged.pdf().data().as_ref().len() as u64
+        } else {
+            0
+        };
+        budget
+            .charge(LimitCode::MemorySize, scratch)
+            .map_err(|e| limit_error(&e))?;
+        let curve =
+            pixel_ops::DeviceCurve::load(&bridged, Reference::new(root.0, root.1), steps, &budget);
+        budget.release(LimitCode::MemorySize, scratch);
+        curve
+            .map(|curve| curve.map(DeviceCurve))
+            .map_err(|e| limit_error(&e))
+    })?
+}
+
 /// Returns the colors of `pixmap` without its alpha, as the samples of an
 /// image in 1 (gray), 3 (RGB), or 4 (CMYK) `components` (`page.recolor`),
 /// or as a JPEG at `quality` when it is given, for gray or RGB.
 #[pyfunction]
-#[pyo3(signature = (pixmap, components, quality=None))]
+#[pyo3(signature = (document, pixmap, components, quality=None, tables=None))]
 pub fn recolor_samples<'py>(
     py: Python<'py>,
+    document: &_Document,
     pixmap: &Pixmap,
     components: usize,
     quality: Option<u8>,
+    tables: Option<([u8; 256], [i16; 256])>,
 ) -> PyResult<Bound<'py, PyBytes>> {
     crate::errors::boundary(|| {
         let layout = pixmap.layout();
-        let out = py
-            .detach(|| pixel_ops::recolor_samples(&pixmap.data, layout, components, quality))
-            .map_err(PyValueError::new_err)?;
+        let budget = document.budget();
+        if tables.is_some() {
+            if components != 4 || quality.is_some() {
+                return Err(PyValueError::new_err(
+                    "device curves require raw CMYK output",
+                ));
+            }
+            // The native sample buffer and the new Python bytes coexist.
+            let pixels = u64::from(layout.width) * u64::from(layout.height);
+            budget
+                .charge(LimitCode::MemorySize, pixels.saturating_mul(8))
+                .map_err(|e| limit_error(&e))?;
+        }
+        let out = py.detach(|| -> PyResult<_> {
+            let mut data = pixel_ops::recolor_samples(&pixmap.data, layout, components, quality)
+                .map_err(PyValueError::new_err)?;
+            if let Some((black, removal)) = tables {
+                pixel_ops::apply_black_tables(&mut data, &black, &removal, &budget)
+                    .map_err(|e| limit_error(&e))?;
+            }
+            Ok(data)
+        })?;
         Ok(PyBytes::new(py, &out))
     })?
 }

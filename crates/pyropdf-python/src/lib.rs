@@ -128,7 +128,9 @@ mod _core {
         set_page_box, set_page_rotation, set_pages, snapshot_pages,
     };
     #[pymodule_export]
-    use super::pixmap::{Pixmap, pixmap_png, recolor_samples, render_page, render_pages};
+    use super::pixmap::{
+        DeviceCurve, Pixmap, device_curve, pixmap_png, recolor_samples, render_page, render_pages,
+    };
     #[pymodule_export]
     use super::render::render_page_svg;
     #[pymodule_export]
