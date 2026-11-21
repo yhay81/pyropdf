@@ -176,9 +176,10 @@ from pyropdf._media import (
     ProjectionAnnotation,
     RichMedia,
     Screen,
+    SlideShow,
     ThreeD,
 )
-from pyropdf._media_actions import GoTo3DView, RenditionAction, RenditionOperation, RichMediaExecute
+from pyropdf._media_actions import GoTo3DView, MovieAction, RenditionAction, RenditionOperation, RichMediaExecute
 from pyropdf._metadata import (
     METADATA_KEYS,
     Duplex,
@@ -247,12 +248,14 @@ _PUBLIC_MODULE_EXPORTS = (
     MediaKind,
     ModelFormat,
     ModelView,
+    MovieAction,
     ProjectionAnnotation,
     RenditionAction,
     RenditionOperation,
     RichMedia,
     RichMediaExecute,
     Screen,
+    SlideShow,
     ThreeD,
     Attachment,
     Attachments,
@@ -471,6 +474,7 @@ __all__ = [
     "ModelFormat",
     "ModelView",
     "MoveTo",
+    "MovieAction",
     "Name",
     "NamedAction",
     "NamedPages",
@@ -560,6 +564,7 @@ __all__ = [
     "SignaturePermission",
     "SignatureVerification",
     "Signer",
+    "SlideShow",
     "SoftMask",
     "SoftMaskType",
     "Sound",
