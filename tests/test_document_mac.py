@@ -17,6 +17,10 @@ from pyropdf import Encryption, MalformedPdfError, PdfError
 
 ASSETS = Path(__file__).parent / "assets" / "encrypted" / "integrity"
 GIL_BUILD = not sysconfig.get_config_var("Py_GIL_DISABLED")
+if GIL_BUILD:
+    # Load the timestamp oracle before other readers cache asn1crypto's CMS object identifiers.
+    from test_signing import _context, _pem_signer, _timestamper, make_pki
+
 requires_pyhanko = pytest.mark.skipif(not GIL_BUILD, reason="pyHanko enables the GIL on free-threaded builds")
 
 
@@ -209,7 +213,6 @@ def test_all_six_published_digest_algorithms(algorithm: str) -> None:
 def test_sign_protected_revision_with_attached_mac(kind: str) -> None:
     from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
     from pyhanko.sign.validation import validate_pdf_signature, validate_pdf_timestamp  # noqa: PLC0415
-    from test_signing import _context, _pem_signer, _timestamper, make_pki  # noqa: PLC0415
 
     pki = make_pki()
     source = (ASSETS / "standalone-stream.pdf").read_bytes()
@@ -294,7 +297,6 @@ def test_reject_removal_of_catalog_declaration() -> None:
 def test_document_mac_and_aes_gcm(producer: str) -> None:
     from pyhanko.pdf_utils import generic  # noqa: PLC0415
     from pyhanko.pdf_utils.writer import PageObject, PdfFileWriter  # noqa: PLC0415
-    from test_signing import _pem_signer, make_pki  # noqa: PLC0415
 
     owner = recipient("owner") if producer == "recipient" else None
     if producer == "pyhanko":
@@ -337,7 +339,6 @@ def test_document_mac_and_aes_gcm(producer: str) -> None:
 @pytest.mark.spec("integrity-protection", "create", "edit", "preserve")
 @pytest.mark.parametrize("packed", [False, True])
 def test_every_hybrid_revision_has_its_own_mac(*, packed: bool) -> None:
-    from test_signing import _pem_signer, make_pki  # noqa: PLC0415
 
     protected = Encryption(user_password="userpw", owner_password="ownerpw", integrity=True)
     with pyropdf.Document() as doc:
