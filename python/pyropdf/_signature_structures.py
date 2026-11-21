@@ -44,6 +44,7 @@ from pyropdf._objects import (
     Stream,
     String,
     _catalog,
+    _direct_value,
     _encode,
 )
 
@@ -874,25 +875,45 @@ def build_reference_entries(
     return refs
 
 
-def ensure_pades_version(document: Document) -> None:
-    """Ensure ``document`` is at least PDF 1.7 and declares ``ETSI_PAdES`` when below PDF 2.0."""
-    from pyropdf._attachments import _version  # noqa: PLC0415
+def _extension_level(value: object) -> int:
+    if (
+        isinstance(value, Dictionary)
+        and not isinstance(value, Stream)
+        and not value.is_indirect
+        and _direct_value(value, "BaseVersion") == "1.7"
+    ):
+        level = _direct_value(value, "ExtensionLevel")
+        if type(level) is int and level > 0:
+            return level
+    return 0
 
+
+def ensure_pades_version(document: Document) -> None:
+    """Declare the PAdES signature extension in PDF editions before 2.0 (ETSI EN 319 142-1, 5.6)."""
+    if _version(document) >= (2, 0):
+        return
     catalog = _catalog(document)
     _require_version(document, catalog, (1, 7))
-    if _version(document) < (2, 0):
-        pades_ext: dict[str, object] = {
-            "Type": Name("DeveloperExtensions"),
-            "BaseVersion": Name("1.7"),
-            "ExtensionLevel": 2,
-        }
-        raw_ext = catalog.get("Extensions")
-        if _is_dict(raw_ext) and not cast("Dictionary", raw_ext).is_indirect:
-            ext_dict = cast("Dictionary", raw_ext)
-            if "ETSI_PAdES" not in ext_dict:
-                ext_dict["ETSI_PAdES"] = pades_ext
-        elif raw_ext is None:
-            catalog["Extensions"] = {"Type": Name("Extensions"), "ETSI_PAdES": pades_ext}
+    extensions = catalog.get("Extensions")
+    if extensions is None:
+        catalog["Extensions"] = {"Type": Name("Extensions")}
+        extensions = catalog["Extensions"]
+    if not isinstance(extensions, Dictionary) or isinstance(extensions, Stream) or extensions.is_indirect:
+        msg = "a PDF 1.7 catalog Extensions entry must be a direct dictionary"
+        raise PdfError(msg)
+    esic = _extension_level(extensions.get("ESIC"))
+    adobe = _extension_level(extensions.get("ADBE"))
+    if esic >= 2 or adobe >= 8:  # noqa: PLR2004 - registered PAdES signature extension levels.
+        return
+    # Retain a level-1 ESIC declaration for DSS and document timestamps. Adobe level 8 covers both uses.
+    prefix, target = ("ADBE", 8) if esic == 1 else ("ESIC", 2)
+    if extensions.get(prefix) is None:
+        extensions[prefix] = {"Type": Name("DeveloperExtensions"), "BaseVersion": Name("1.7"), "ExtensionLevel": target}
+    elif prefix == "ADBE" and adobe:
+        extensions[prefix]["ExtensionLevel"] = target
+    else:
+        msg = f"the existing {prefix} entry must declare a direct PDF 1.7 developer extension with a positive level"
+        raise PdfError(msg)
 
 
 def write_perms_doc_mdp(document: Document, signature: Dictionary) -> None:

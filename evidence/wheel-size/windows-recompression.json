@@ -1,0 +1,17 @@
+{
+  "source": "https://github.com/yhay81/pyropdf/actions/runs/44783558184/artifacts/14654361426",
+  "wheel": "pyropdf-0.3.1-cp311-abi3-win_amd64.whl",
+  "original": {
+    "bytes": 9090201,
+    "sha256": "dd4d0af2d5907ce426fa2273aacf1507c24c9b31f05e317c14526fa2784a928a",
+    "extension_bytes": 8584640,
+    "record_entries": 68
+  },
+  "delivered": {
+    "bytes": 8847599,
+    "sha256": "f45660b4855e10b8f7fb26e90cb49f12e97b51fe9662a6510c270eedc8a4eb20",
+    "extension_bytes": 8363068,
+    "record_entries": 68
+  },
+  "saved_bytes": 242602
+}

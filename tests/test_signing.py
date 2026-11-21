@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import pikepdf
 import pytest
 
 if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
@@ -174,6 +175,104 @@ def _assert_whole_file(status: Any) -> None:  # noqa: ANN401 - pyHanko's status 
 
 def _document() -> pyropdf.Document:
     return pyropdf.open(DOCUMENT.read_bytes())
+
+
+def _blank_pdf(version: str) -> bytes:
+    data = io.BytesIO()
+    with pikepdf.new() as pdf:
+        pdf.add_blank_page()
+        pdf.save(data, force_version=version)
+    return data.getvalue()
+
+
+@pytest.mark.parametrize("version", ["1.4", "1.7", "2.0"])
+@pytest.mark.parametrize("certified", [False, True], ids=["approval", "certification"])
+def test_signing_declares_its_subfilter_in_the_effective_pdf_edition(
+    pki: Pki, version: str, *, certified: bool
+) -> None:
+    data = _blank_pdf(version)
+    with pyropdf.open(data) as doc:
+        if certified:
+            doc.pages[0].widgets.add(SignatureField("Approval", (10, 10, 100, 50)))
+        signed = doc.sign(
+            "Approval",
+            _pem_signer(pki),
+            doc_mdp=pyropdf.DocMdpPermission.FORM_FILLING_AND_SIGNATURES if certified else None,
+        )
+    assert signed.startswith(data)
+    _assert_whole_file(_statuses(pki, signed)[0])
+    with pikepdf.open(io.BytesIO(signed)) as pdf:
+        assert pdf.Root.AcroForm.Fields[0].V.SubFilter == pikepdf.Name("/ETSI.CAdES.detached")
+        if version == "2.0":
+            assert "/Extensions" not in pdf.Root
+        else:
+            assert pdf.pdf_version == version
+            if version == "1.4":
+                assert pdf.Root.Version == pikepdf.Name("/1.7")
+            extension = pdf.Root.Extensions.ESIC
+            assert extension.BaseVersion == pikepdf.Name("/1.7")
+            assert extension.ExtensionLevel == 2
+            assert "/ETSI_PAdES" not in pdf.Root.Extensions
+
+
+@pytest.mark.parametrize(
+    ("previous", "expected"),
+    [
+        ({"ESIC": 4}, {"ESIC": 4}),
+        ({"ADBE": 8}, {"ADBE": 8}),
+        ({"ESIC": 1}, {"ESIC": 1, "ADBE": 8}),
+        ({"ESIC": 1, "ADBE": 3}, {"ESIC": 1, "ADBE": 8}),
+        ({"ETSI_PAdES": 2}, {"ETSI_PAdES": 2, "ESIC": 2}),
+    ],
+)
+def test_signing_preserves_existing_developer_extensions(
+    pki: Pki, previous: dict[str, int], expected: dict[str, int]
+) -> None:
+    with pyropdf.open(_blank_pdf("1.7")) as doc:
+        doc.catalog["Extensions"] = {
+            key: {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": level, "XXNote": b"keep"}
+            for key, level in {**previous, "XXVendor": 7}.items()
+        }
+        signed = doc.sign("Approval", _pem_signer(pki))
+    with pikepdf.open(io.BytesIO(signed)) as pdf:
+        extensions = pdf.Root.Extensions
+        assert set(extensions.keys()) == {"/" + key for key in {*expected, "XXVendor"}}
+        for key, level in {**expected, "XXVendor": 7}.items():
+            assert extensions["/" + key].ExtensionLevel == level
+            if key in previous or key == "XXVendor":
+                assert bytes(extensions["/" + key].XXNote) == b"keep"
+
+
+@pytest.mark.parametrize("existing", [None, {"ESIC": None}])
+def test_a_null_extension_entry_is_equivalent_to_an_absent_entry(pki: Pki, existing: dict[str, None] | None) -> None:
+    with pyropdf.open(_blank_pdf("1.7")) as doc:
+        doc.catalog["Extensions"] = existing
+        signed = doc.sign("Approval", _pem_signer(pki))
+    with pikepdf.open(io.BytesIO(signed)) as pdf:
+        assert pdf.Root.Extensions.ESIC.BaseVersion == pikepdf.Name("/1.7")
+        assert pdf.Root.Extensions.ESIC.ExtensionLevel == 2
+
+
+@pytest.mark.parametrize("malformed", ["catalog", "indirect", "indirect-entry", "level", "base"])
+def test_a_bad_extension_declaration_refuses_signing_without_mutating_the_input(pki: Pki, malformed: str) -> None:
+    with pyropdf.open(_blank_pdf("1.4")) as doc:
+        entry = {"BaseVersion": pyropdf.Name("1.7" if malformed != "base" else "2.0"), "ExtensionLevel": 2}
+        if malformed == "level":
+            entry["ExtensionLevel"] = True
+        if malformed == "catalog":
+            doc.catalog["Extensions"] = 0
+        elif malformed == "indirect":
+            doc.catalog["Extensions"] = doc.objects[doc.objects.add({"ESIC": entry})]
+        elif malformed == "indirect-entry":
+            doc.catalog["Extensions"] = {"ESIC": doc.objects[doc.objects.add(entry)]}
+        else:
+            doc.catalog["Extensions"] = {"ESIC": entry}
+        before = doc.to_bytes(incremental=True)
+        with pytest.raises(PdfError, match=r"Extensions|ESIC"):
+            doc.sign("Approval", _pem_signer(pki))
+        assert doc.to_bytes(incremental=True) == before
+        assert "Version" not in doc.catalog
+        assert "Approval" not in doc.form
 
 
 @pytest.mark.spec("digital-signatures", "create")
