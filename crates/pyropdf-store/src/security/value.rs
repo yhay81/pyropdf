@@ -96,7 +96,15 @@ fn walk(
             }
         }
         Value::Dict(dict) => {
-            for (_, item) in dict.iter_mut() {
+            // ISO 32000-2 §7.6.2 excludes the byte string holding a signature.
+            let signature = matches!(dict.get("Type"), Some(Value::Name(n)) if matches!(n.as_bytes(), b"Sig" | b"DocTimeStamp"))
+                || (dict.get("Type").is_none()
+                    && dict.get("ByteRange").is_some()
+                    && dict.get("Filter").is_some());
+            for (key, item) in dict.iter_mut() {
+                if signature && key.as_bytes() == b"Contents" {
+                    continue;
+                }
                 walk(handler, reference, item, budget, encrypt, depth + 1)?;
             }
         }

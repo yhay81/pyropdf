@@ -11,6 +11,10 @@ use crate::{Error, Result};
 
 /// Declare a PDF 2.0 ISO extension on an isolated save version. Leave other
 /// registered extensions intact, including their indirect references.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "adds at most one extension of five fixed-width fields and updates the catalog and two bounded containers"
+)]
 pub(super) fn declare(
     version: &Version,
     level: i64,

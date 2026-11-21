@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from pyropdf import _core
 from pyropdf._core import _Signer
 from pyropdf._errors import PdfError
-from pyropdf._fallback_fonts import _set_fallback
 from pyropdf._form import FieldType
 from pyropdf._metadata import pdf_date
 from pyropdf._objects import Array, Dictionary, Name, Stream, _catalog
@@ -286,8 +285,10 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
     location_text = _optional_text("location", location)
     contact_text = _optional_text("contact", contact)
     document._ensure_open()  # noqa: SLF001
-    if document.encryption_method is not None or document.needs_password:
-        msg = "pyropdf does not sign encrypted documents"
+    if document.needs_password or (
+        document.encryption_method is not None and document.verify_integrity().status != "valid"
+    ):
+        msg = "pyropdf does not sign encrypted documents without valid PDF MAC protection"
         raise ValueError(msg)
     core = document._core()  # noqa: SLF001
     _core.begin_signing(core)
@@ -321,11 +322,12 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
         if effective_mdp is not None or effective_lock is not None:
             ensure_pades_version(document)
             entries["Reference"] = build_reference_entries(document, effective_mdp, effective_lock)
-        signature = document.objects[document.objects.add(entries)]
+        signature_number = document.objects.add(entries)
+        signature = document.objects[signature_number]
         _signature_field(document, field, signature)
         if effective_mdp is not None:
             write_perms_doc_mdp(document, signature)
-        signed = _core.sign_document(core, reserve, signer._core, timestamper)  # noqa: SLF001
+        signed = _core.sign_document(core, signature_number, reserve, signer._core, timestamper)  # noqa: SLF001
     except BaseException:
         # Signing ends its transaction only once it replaced the document.
         _core.end_transaction(core, False)  # noqa: FBT003 - the core's flag
@@ -366,7 +368,6 @@ def _fill_timestamp(
     saved_bytes: bytes,
     reserve: int,
     timestamper: Timestamper,
-    unchanged: Callable[[], bool],
 ) -> bytes:
     """Patch ``/ByteRange`` and ``/Contents`` with an RFC 3161 ``TimeStampToken`` over ``saved_bytes``."""
     import hashlib  # noqa: PLC0415
@@ -386,9 +387,6 @@ def _fill_timestamp(
 
     digest = hashlib.sha256(bytes(data[:c_start]) + bytes(data[c_end:])).digest()
     raw_token = timestamper(digest, "sha256")
-    if not unchanged():
-        msg = "the document changed while it was being timestamped"
-        raise PdfError(msg)
     if not isinstance(raw_token, (bytes, bytearray, memoryview)):
         msg = f"the timestamper must return bytes: {type(raw_token).__name__}"
         raise TypeError(msg)
@@ -428,8 +426,10 @@ def timestamp(
         raise TypeError(msg)
     reserve = _validate_reserve(reserve)
     document._ensure_open()  # noqa: SLF001
-    if document.encryption_method is not None or document.needs_password:
-        msg = "pyropdf does not timestamp encrypted documents"
+    if document.needs_password or (
+        document.encryption_method is not None and document.verify_integrity().status != "valid"
+    ):
+        msg = "pyropdf does not timestamp encrypted documents without valid PDF MAC protection"
         raise ValueError(msg)
     core = document._core()  # noqa: SLF001
     _core.begin_signing(core)
@@ -444,25 +444,16 @@ def timestamp(
                 "ByteRange": list(_BYTE_RANGE_PLACEHOLDER),
                 "Contents": b"0" * (2 * reserve),
             }
-            sig_obj = document.objects[document.objects.add(entries)]
+            signature_number = document.objects.add(entries)
+            sig_obj = document.objects[signature_number]
             _signature_field(document, field, sig_obj)
-            incremental_args = (True, None, None, False, None, False, False, None, False, False, False, False)
-            saved_bytes = bytes(core.to_bytes(*incremental_args))
-            stamped = _fill_timestamp(
-                saved_bytes,
-                reserve,
-                timestamper,
-                lambda: bytes(core.to_bytes(*incremental_args)) == saved_bytes,
-            )
-            max_history = document.history.max_size
-            new_core = _core._Document.open_buffer(stamped, document._limits, None)  # noqa: SLF001
-            _core.set_history_limit(new_core, max_history)
-    finally:
-        _core.end_transaction(core, False)  # noqa: FBT003 - release the previous base's transaction lock.
-    fallback = document._fallback  # noqa: SLF001
-    document._doc = new_core  # noqa: SLF001
+        stamped = _core.timestamp_document(
+            core, signature_number, reserve, lambda data: _fill_timestamp(data, reserve, timestamper)
+        )
+    except BaseException:
+        _core.end_transaction(core, False)  # noqa: FBT003 - release the failed signing transaction.
+        raise
     document._drawn = None  # noqa: SLF001
-    _set_fallback(document, fallback)
     return stamped
 
 

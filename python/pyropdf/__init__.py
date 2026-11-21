@@ -113,7 +113,14 @@ from pyropdf._content import (
 )
 from pyropdf._core import __version__
 from pyropdf._document import Document, Probe, open, probe  # noqa: A004 - pyropdf.open is the entry point.
-from pyropdf._encryption import Access, Encryption, Permissions, RecipientCredential, RecipientEncryption
+from pyropdf._encryption import (
+    Access,
+    Encryption,
+    IntegrityReport,
+    Permissions,
+    RecipientCredential,
+    RecipientEncryption,
+)
 from pyropdf._errors import (
     DocumentClosedError,
     EncryptedDocumentError,
@@ -432,6 +439,7 @@ __all__ = [
     "ImportDataAction",
     "Ink",
     "InlineImage",
+    "IntegrityReport",
     "InternalError",
     "JavaScriptAction",
     "Launch",

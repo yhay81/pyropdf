@@ -6,6 +6,9 @@
 //! never changes the version, its base, or its object allocation state.
 
 mod base;
+mod extensions;
+mod integrity;
+pub(crate) use base::encryption_dict;
 mod linear;
 mod merge;
 mod pack;
@@ -57,6 +60,12 @@ pub enum Refusal {
     Encryption,
     /// A recipient must hold Table 24 bit 2 to change the handler.
     RecipientPermissions,
+    /// A protected revision must retain its integrity protection.
+    IntegrityProtection,
+    /// Linearized byte-range signing is not implemented.
+    MacLinearization,
+    /// An attached MAC is bound to the existing signature's exact bytes.
+    SignedMacRevision,
     /// Pruning, decompressing, another cross-reference form, object
     /// streams, and renumbering rewrite the original file, whose objects,
     /// numbers, and cross-reference form an incremental save keeps.
@@ -107,6 +116,9 @@ impl fmt::Display for Error {
                 Refusal::RepairedBase => "incremental save is unavailable for a repaired base",
                 Refusal::Encryption => "saving encrypted documents requires the security handler",
                 Refusal::RecipientPermissions => "the recipient lacks permission to change encryption; keep the encryption or unlock with an authorized recipient",
+                Refusal::IntegrityProtection => "a PDF MAC protected document requires retained encryption or a replacement with integrity protection",
+                Refusal::SignedMacRevision => "use an incremental save to preserve the existing signature and its attached PDF MAC",
+                Refusal::MacLinearization => "linearization of a PDF MAC protected document is not supported",
                 Refusal::FullSaveOption => {
                     "prune, decompress, a new cross-reference form, object streams, renumbering, and linearization require a full save"
                 }
@@ -280,7 +292,23 @@ pub fn full_with(
         )
         .into());
     }
+    let declared = if matches!(
+        encryption,
+        Some(Encryption::PasswordWithMac(_) | Encryption::RecipientWithMac(_))
+    ) {
+        Some(extensions::declare(
+            version,
+            32004,
+            ":2024",
+            "https://www.iso.org/standard/45877.html",
+            budget,
+        )?)
+    } else {
+        None
+    };
+    let version = declared.as_deref().unwrap_or(version);
     let mut mode = Mode::of(version, encryption, budget)?;
+    let mac = integrity::plan(version, &mode, true, options.linearize, budget)?;
     if options.linearize {
         if options.object_streams
             || options.dedupe
@@ -356,6 +384,7 @@ pub fn full_with(
     let renumbering = renumbering.as_ref();
     let stream = options.object_streams || options.cross_reference.stream(version);
     let mut out = Output::new(target, budget, 0, options.renew_id);
+    out.mac = mac.map(integrity::MacOutput::new);
     let header = version
         .base()
         .file()
@@ -363,7 +392,9 @@ pub fn full_with(
         .filter(|bytes| bytes.starts_with(b"%PDF-"))
         .unwrap_or(b"%PDF-1.7");
     // Cross-reference streams and object streams are of PDF 1.5.
-    if stream
+    if out.mac.is_some() && header < b"%PDF-2.0" {
+        out.bytes(b"%PDF-2.0")?;
+    } else if stream
         && header
             .get(5..)
             .is_some_and(|number| number < b"1.5".as_slice())
@@ -456,6 +487,9 @@ pub fn full_with(
         renumbering: renumbering.filter(|_| options.renumber),
     };
     finish(version, &mut rows, &mut out, &mode, ending)?;
+    if let Some(mac) = out.mac.take() {
+        mac.finish(out.target, budget)?;
+    }
     Ok(out.position)
 }
 
@@ -483,6 +517,29 @@ pub fn incremental_with(
     budget: &Budget,
     options: Options,
 ) -> Result<u64> {
+    write_incremental(version, target, budget, options, None).map(|(size, _)| size)
+}
+
+/// Write an incremental signing revision and, for a MAC-protected source,
+/// reserve the trailer link to the signature object. The caller embeds the
+/// returned MAC in its signed CMS container before publishing the bytes.
+pub fn incremental_signature(
+    version: &Version,
+    target: &mut dyn Write,
+    budget: &Budget,
+    signature: Reference,
+) -> Result<Option<security::integrity::Writer>> {
+    write_incremental(version, target, budget, Options::default(), Some(signature))
+        .map(|(_, mac)| mac)
+}
+
+fn write_incremental(
+    version: &Version,
+    target: &mut dyn Write,
+    budget: &Budget,
+    options: Options,
+    signature: Option<Reference>,
+) -> Result<(u64, Option<security::integrity::Writer>)> {
     if options.prune
         || options.streams == Streams::Decompress
         || options.cross_reference != CrossReference::Base
@@ -501,6 +558,7 @@ pub fn incremental_with(
         return Err(Error::Refused(Refusal::RepairedBase));
     }
     let mode = Mode::of(version, None, budget)?;
+    let mut mac = integrity::plan(version, &mode, false, false, budget)?;
     let previous = file
         .revisions()
         .last()
@@ -508,9 +566,16 @@ pub fn incremental_with(
         .and_then(|s| s.offset().checked_sub(file.origin()))
         .ok_or_else(|| StoreError::malformed("the original file has no cross-reference offset"))?;
     let mut out = Output::new(target, budget, file.origin() as u64, options.renew_id);
+    if version.has_changes() && mac.is_some() {
+        if let Some(reference) = signature {
+            out.attached = Some(reference);
+        } else {
+            out.mac = mac.take().map(integrity::MacOutput::new);
+        }
+    }
     out.bytes(file.bytes())?;
     if !version.has_changes() {
-        return Ok(out.position);
+        return Ok((out.position, None));
     }
     out.bytes(b"\n")?;
     let mut rows = BudgetVec::new(budget);
@@ -545,7 +610,10 @@ pub fn incremental_with(
         renumbering: None,
     };
     finish(version, &mut rows, &mut out, &mode, ending)?;
-    Ok(out.position)
+    if let Some(mac) = out.mac.take() {
+        mac.finish(out.target, budget)?;
+    }
+    Ok((out.position, mac))
 }
 
 /// How a save treats encryption.
@@ -832,6 +900,15 @@ fn finish(
     if let Some(previous) = ending.previous {
         out.display(format_args!(" /Prev {previous}"))?;
     }
+    if let Some(r) = out.attached {
+        out.display(format_args!(
+            " /AuthCode << /MACLocation /AttachedToSig /SigObjRef {} {} R >>",
+            r.number(),
+            r.generation()
+        ))?;
+    } else {
+        integrity::MacOutput::reserve(out)?;
+    }
     if let Some((number, level)) = ending.stream {
         let own = Row {
             number,
@@ -993,7 +1070,9 @@ fn trailer(
     renumbering: Option<&Renumbering<'_>>,
 ) -> Result<()> {
     for (name, value) in dict.iter() {
-        if replaced.contains(&name.as_bytes()) {
+        if replaced.contains(&name.as_bytes())
+            || ((out.mac.is_some() || out.attached.is_some()) && name.as_bytes() == b"AuthCode")
+        {
             continue;
         }
         if !trailer_key(name.as_bytes()) {
@@ -1028,6 +1107,8 @@ struct Output<'a> {
     /// Whether the bytes count against the output size: not those of a
     /// pass that only measures.
     charge: bool,
+    mac: Option<integrity::MacOutput<'a>>,
+    attached: Option<Reference>,
 }
 
 impl<'a> Output<'a> {
@@ -1039,6 +1120,8 @@ impl<'a> Output<'a> {
             origin,
             digest: digest.then(Md5::new),
             charge: true,
+            mac: None,
+            attached: None,
         }
     }
 
@@ -1062,7 +1145,11 @@ impl<'a> Output<'a> {
                 self.budget
                     .charge(LimitCode::PdfOutputSize, chunk.len() as u64)?;
             }
-            self.target.write_all(chunk)?;
+            if let Some(mac) = &mut self.mac {
+                mac.write(chunk, self.target)?;
+            } else {
+                self.target.write_all(chunk)?;
+            }
             if let Some(digest) = &mut self.digest {
                 digest.update(chunk);
             }

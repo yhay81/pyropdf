@@ -19,6 +19,7 @@ Members: `USER`, `OWNER`.
 ```python
 Encryption(
     *,
+    integrity: bool = False,
     user_password: str = '',
     owner_password: str | None = None,
     permissions: Permissions = Permissions.ALL,
@@ -39,6 +40,9 @@ encryption that the document was opened with, copying its untouched
 encrypted bytes. Without `encryption`, a full save writes the document
 decrypted, and an incremental save keeps its encryption.
 
+With `integrity=True`, a 256-bit method creates an ISO/TS 32004:2024
+document MAC. Subsequent edits renew it when the encryption is kept.
+
 ### `Encryption.KEEP`
 
 ```python
@@ -46,6 +50,22 @@ Encryption.KEEP: Encryption
 ```
 
 Keep the encryption that the document was opened with.
+
+## `IntegrityReport`
+
+```python
+IntegrityReport(
+    status: Literal['absent', 'locked', 'valid', 'invalid'],
+    location: Literal['standalone', 'attached'] | None,
+    reason: str | None,
+)
+```
+
+Result of verifying the ISO/TS 32004:2024 MAC of an opened PDF revision.
+
+`status` is `"valid"`, `"invalid"`, `"absent"` or `"locked"`. A valid
+result identifies the standalone or signature-attached token. An invalid
+result includes a reason. Digital signatures have their own verification.
 
 ## `Permissions`
 
@@ -77,6 +97,7 @@ authenticated file key. The private key stays with the caller.
 ```python
 RecipientEncryption(
     *,
+    integrity: bool = False,
     recipients: Mapping[Certificate, Permissions | None],
     encrypt_metadata: bool = True,
     method: Literal['aes-256', 'aes-128'] = 'aes-256',
@@ -93,6 +114,7 @@ store operations including saving, while the engine needs a decrypted input for 
 Both an incremental save and a full save with
 `Encryption.KEEP` preserve untouched ciphertext.
 
-Map each X.509 certificate to its permission flags. A value of `None` gives the recipient
-permission to change encryption and implies all other permissions (ISO 32000-2 Table 24 bit 2).
+Map each X.509 certificate to its permission flags. A value of `None` grants owner access.
+Set `integrity=True` to protect AES-256 output with a document MAC.
+Owner access gives permission to change encryption and implies all other permissions (ISO 32000-2 Table 24 bit 2).
 Other recipients must keep the encryption when saving.

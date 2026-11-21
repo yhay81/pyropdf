@@ -11,6 +11,7 @@
 //! beyond ASCII.
 
 mod crypto;
+pub mod integrity;
 mod recipient;
 pub use recipient::RecipientEncryption;
 #[cfg(test)]
@@ -670,6 +671,10 @@ pub enum Encryption {
     Password(PasswordEncryption),
     /// A public-key handler with CMS envelopes for the authorized recipients.
     Recipient(RecipientEncryption),
+    /// Password encryption with an ISO/TS 32004:2024 MAC on every revision.
+    PasswordWithMac(PasswordEncryption),
+    /// Recipient envelopes whose permission bit 13 is clear, with a document MAC.
+    RecipientWithMac(RecipientEncryption),
 }
 
 impl Encryption {
@@ -678,6 +683,16 @@ impl Encryption {
         match self {
             Self::Password(password) => password.build(id, budget),
             Self::Recipient(recipient) => recipient.build(id, budget),
+            Self::PasswordWithMac(password) => {
+                let (mut dict, id, mut handler) = password.build(id, budget)?;
+                integrity::enable(&mut dict, &mut handler)?;
+                Ok((dict, id, handler))
+            }
+            Self::RecipientWithMac(recipient) => {
+                let (mut dict, id, mut handler) = recipient.build(id, budget)?;
+                integrity::enable(&mut dict, &mut handler)?;
+                Ok((dict, id, handler))
+            }
         }
     }
 }

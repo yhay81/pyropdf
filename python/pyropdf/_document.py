@@ -43,6 +43,7 @@ from pyropdf._core import probe as _probe
 from pyropdf._encryption import (
     Access,
     Encryption,
+    IntegrityReport,
     Permissions,
     RecipientCredential,
     RecipientEncryption,
@@ -942,6 +943,15 @@ class Document:
         self._ensure_open()
         return _core.security_state(self._doc)[4]
 
+    def verify_integrity(self) -> IntegrityReport:
+        """Verify the document MAC over the selected revision's original bytes.
+
+        The result reports ISO/TS 32004:2024 integrity independently of password
+        access and signature trust. Unsaved edits receive their MAC when saved.
+        """
+        self._ensure_open()
+        return IntegrityReport(*_core.verify_integrity(self._doc))
+
     @property
     def permissions(self) -> Permissions:
         """Return what the document permits, as :class:`Permissions` flags.
@@ -1275,8 +1285,8 @@ class Document:
 
         Signing runs as one transaction, which other threads' edits wait
         for. Signing inside a transaction raises :class:`PdfError`, as does
-        a callback that edits the document. An encrypted document raises
-        :class:`ValueError`.
+        a callback that edits the document. An encrypted document requires a valid
+        document MAC, which the new signature renews as an unsigned attribute.
         """
         return _sign(
             self,

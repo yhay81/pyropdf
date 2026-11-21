@@ -122,6 +122,20 @@ with pyropdf.open("locked.pdf", password="reader") as doc:
     print(doc.encryption_method, doc.permissions)
 ```
 
+A 256-bit password or recipient encryption option accepts `integrity=True`
+to add an ISO/TS 32004:2024 document MAC. Open the output and call
+`doc.verify_integrity()` to check the original bytes. Its status is
+`"valid"`, `"invalid"`, `"absent"` or `"locked"`. A valid result identifies
+a standalone token or a token attached to a signature or document timestamp.
+Signature trust is reported by `signature.verify()`.
+
+With a valid MAC, an incremental edit writes a new standalone token and
+retains the original revision. Signing and timestamping attach the new token
+to the signature. A full save with `Encryption.KEEP` renews standalone
+protection, and a replacement 256-bit encryption can request a new MAC.
+Full saves of signed MAC revisions, removal of protection, and linearization
+of MAC-protected output are refused before writing.
+
 ## Signing
 
 `Signer.from_pem` and `Signer.from_pkcs12` load ECDSA P-256 or P-384 keys with

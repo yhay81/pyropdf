@@ -136,13 +136,13 @@ mod _core {
     #[pymodule_export]
     use super::schema::{schema_names, schema_object};
     #[pymodule_export]
-    use super::security::{security_state, unlock};
+    use super::security::{security_state, unlock, verify_integrity};
     #[pymodule_export]
     use super::shadings::{CanvasShadings, canvas_gradient, canvas_gradient_pattern};
     #[pymodule_export]
     use super::sign::{
         _Signer, begin_signing, certificate_read, document_file, sign_document, signature_read,
-        verify_ecdsa,
+        timestamp_document, verify_ecdsa,
     };
     #[pymodule_export]
     use super::text::{

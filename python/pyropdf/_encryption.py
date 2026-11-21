@@ -64,6 +64,20 @@ def _password_bytes(password: object, label: str = "password") -> bytes:
     return password.encode()
 
 
+@dataclass(frozen=True, slots=True)
+class IntegrityReport:
+    """Result of verifying the ISO/TS 32004:2024 MAC of an opened PDF revision.
+
+    ``status`` is ``"valid"``, ``"invalid"``, ``"absent"`` or ``"locked"``. A valid
+    result identifies the standalone or signature-attached token. An invalid
+    result includes a reason. Digital signatures have their own verification.
+    """
+
+    status: Literal["absent", "locked", "valid", "invalid"]
+    location: Literal["standalone", "attached"] | None
+    reason: str | None
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Encryption:
     """How :meth:`Document.save` and :meth:`Document.to_bytes` encrypt a full save.
@@ -78,11 +92,15 @@ class Encryption:
     encryption that the document was opened with, copying its untouched
     encrypted bytes. Without ``encryption``, a full save writes the document
     decrypted, and an incremental save keeps its encryption.
+
+    With ``integrity=True``, a 256-bit method creates an ISO/TS 32004:2024
+    document MAC. Subsequent edits renew it when the encryption is kept.
     """
 
     #: Keep the encryption that the document was opened with.
     KEEP: ClassVar[Encryption]
 
+    integrity: bool = False
     user_password: str = ""
     owner_password: str | None = None
     permissions: Permissions = Permissions.ALL
@@ -103,6 +121,12 @@ class Encryption:
         if self.method not in ("aes-256", "aes-128", "keep"):
             msg = f"method must be 'aes-256' or 'aes-128': {self.method!r}"
             raise ValueError(msg)
+        if not isinstance(self.integrity, bool):
+            msg = "integrity must be a bool"
+            raise TypeError(msg)
+        if self.integrity and self.method in ("aes-128", "keep"):
+            msg = "new PDF MAC protection requires a 256-bit encryption method"
+            raise ValueError(msg)
         defaults = (self.user_password, self.owner_password, self.permissions) == ("", None, Permissions.ALL)
         if self.method == "keep" and not defaults:
             msg = "Encryption.KEEP takes the passwords and permissions of the document; pass none"
@@ -112,9 +136,10 @@ class Encryption:
         """Return ``Encryption.KEEP`` for the constant, else the fields without the passwords."""
         if self.method == "keep":
             return "Encryption.KEEP"
-        return f"Encryption(permissions={self.permissions!r}, method={self.method!r})"
+        mac = ", integrity=True" if self.integrity else ""
+        return f"Encryption(permissions={self.permissions!r}, method={self.method!r}{mac})"
 
-    def _core(self) -> str | tuple[bytes, bytes, int, bool, bytes]:
+    def _core(self) -> str | tuple[bytes, bytes, int, bool, bytes, bool]:
         """Return what the core takes: ``"keep"``, or the passwords, flags, method, and 64 random bytes."""
         if self.method == "keep":
             return "keep"
@@ -125,6 +150,7 @@ class Encryption:
             int(self.permissions),
             self.method == "aes-256",
             os.urandom(64),
+            self.integrity,
         )
 
 
@@ -205,17 +231,25 @@ class RecipientEncryption:
     Both an incremental save and a full save with
     ``Encryption.KEEP`` preserve untouched ciphertext.
 
-    Map each X.509 certificate to its permission flags. A value of ``None`` gives the recipient
-    permission to change encryption and implies all other permissions (ISO 32000-2 Table 24 bit 2).
+    Map each X.509 certificate to its permission flags. A value of ``None`` grants owner access.
+    Set ``integrity=True`` to protect AES-256 output with a document MAC.
+    Owner access gives permission to change encryption and implies all other permissions (ISO 32000-2 Table 24 bit 2).
     Other recipients must keep the encryption when saving.
     """
 
+    integrity: bool = False
     recipients: Mapping[Certificate, Permissions | None]
     encrypt_metadata: bool = True
     method: Literal["aes-256", "aes-128"] = "aes-256"
 
     def __post_init__(self) -> None:
         """Validate the recipients and retain their order for file-key derivation."""
+        if not isinstance(self.integrity, bool):
+            msg = "integrity must be a bool"
+            raise TypeError(msg)
+        if self.integrity and self.method != "aes-256":
+            msg = "new PDF MAC protection requires a 256-bit encryption method"
+            raise ValueError(msg)
         if not isinstance(self.recipients, Mapping) or not self.recipients:
             msg = "recipients must map 1 to 128 certificates to permissions"
             raise ValueError(msg)
@@ -246,15 +280,21 @@ class RecipientEncryption:
             flags = 2 | int(Permissions.ALL) if permissions is None else int(permissions & Permissions.ALL)
             groups.setdefault(flags, []).append(cert)
         for flags, certificates in groups.items():
-            payload = seed + (flags | 0xFFFF_F0C1).to_bytes(4, "big")
+            reserved = 0xFFFF_E0C1 if self.integrity else 0xFFFF_F0C1
+            payload = seed + (flags | reserved).to_bytes(4, "big")
             builder = pkcs7.PKCS7EnvelopeBuilder().set_data(payload).set_content_encryption_algorithm(AES256)
             for cert in certificates:
                 builder = builder.add_recipient(cert)
             yield builder.encrypt(serialization.Encoding.DER, [pkcs7.PKCS7Options.Binary])
 
-    def _core(self) -> tuple[bytes, bytes, tuple[bool, bool], Iterator[bytes]]:
+    def _core(self) -> tuple[bytes, bytes, tuple[bool, bool, bool], Iterator[bytes]]:
         seed = os.urandom(20)
-        return seed, os.urandom(16), (self.encrypt_metadata, self.method == "aes-256"), self._envelopes(seed)
+        return (
+            seed,
+            os.urandom(16),
+            (self.encrypt_metadata, self.method == "aes-256", self.integrity),
+            self._envelopes(seed),
+        )
 
 
 def _open_credentials(
@@ -281,7 +321,7 @@ def _encryption_arg(encryption: object) -> object:
     return encryption._core()  # noqa: SLF001
 
 
-for _public in (Permissions, Access, Encryption, RecipientEncryption, RecipientCredential):
+for _public in (IntegrityReport, Permissions, Access, Encryption, RecipientEncryption, RecipientCredential):
     _public.__module__ = "pyropdf"
 
-__all__ = ["Access", "Encryption", "Permissions", "RecipientCredential", "RecipientEncryption"]
+__all__ = ["Access", "Encryption", "IntegrityReport", "Permissions", "RecipientCredential", "RecipientEncryption"]

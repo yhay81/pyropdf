@@ -62,6 +62,32 @@ pub fn security_state(document: &_Document) -> PyResult<State> {
     })?
 }
 
+/// Verify the MAC over the opened revision, independently of the unlocking
+/// and signature reports. The source bytes stay in the store.
+#[pyfunction]
+pub fn verify_integrity(
+    py: Python<'_>,
+    document: &_Document,
+) -> PyResult<(&'static str, Option<&'static str>, Option<String>)> {
+    use pyropdf_store::security::integrity::{self, Report};
+    crate::errors::boundary(|| {
+        let version = document.current()?;
+        let budget = document.budget();
+        let report = py
+            .detach(|| match version.base().file() {
+                Some(index) => integrity::verify(index, &budget),
+                None => Ok(Report::Absent),
+            })
+            .map_err(|e| store_error(&e))?;
+        Ok(match report {
+            Report::Absent => ("absent", None, None),
+            Report::Locked => ("locked", None, None),
+            Report::Valid(location) => ("valid", Some(location), None),
+            Report::Invalid(reason) => ("invalid", None, Some(reason)),
+        })
+    })?
+}
+
 /// Call the CMS provider only for envelopes validated by the store and
 /// preserve a provider exception across the native operation.
 pub(crate) fn recipient_base(
@@ -155,12 +181,11 @@ pub(crate) fn prepare(
                 ));
             }
             if value.len()? == 4 {
-                let (seed, id, (encrypt_metadata, aes256), wrapped): (
-                    [u8; 20],
-                    [u8; 16],
-                    (bool, bool),
-                    Bound<'_, PyAny>,
-                ) = value.extract()?;
+                type RecipientRequest<'py> =
+                    ([u8; 20], [u8; 16], (bool, bool, bool), Bound<'py, PyAny>);
+                let (seed, id, (encrypt_metadata, aes256, integrity), wrapped): RecipientRequest<
+                    '_,
+                > = value.extract()?;
                 let budget = document.budget();
                 let mut envelopes = BudgetVec::new(&budget);
                 for item in wrapped.try_iter()? {
@@ -180,29 +205,43 @@ pub(crate) fn prepare(
                         .try_push(der.into())
                         .map_err(|e| crate::errors::limit_error(&e))?;
                 }
-                return Ok((
-                    saved(py, document, false)?,
-                    Some(Encryption::Recipient(RecipientEncryption {
-                        seed,
-                        id,
-                        encrypt_metadata,
-                        aes256,
-                        envelopes: envelopes.into_vec(),
-                    })),
-                ));
+                let request = RecipientEncryption {
+                    seed,
+                    id,
+                    encrypt_metadata,
+                    aes256,
+                    envelopes: envelopes.into_vec(),
+                };
+                let encryption = if integrity {
+                    Encryption::RecipientWithMac(request)
+                } else {
+                    Encryption::Recipient(request)
+                };
+                return Ok((saved(py, document, false)?, Some(encryption)));
             }
-            let (user, owner, permissions, aes256, random): (Vec<u8>, Vec<u8>, u32, bool, Vec<u8>) =
-                value.extract()?;
+            let (user, owner, permissions, aes256, random, integrity): (
+                Vec<u8>,
+                Vec<u8>,
+                u32,
+                bool,
+                Vec<u8>,
+                bool,
+            ) = value.extract()?;
             let random: [u8; 64] = random
                 .try_into()
                 .map_err(|_| PyValueError::new_err("encryption needs 64 random bytes"))?;
-            let encryption = Encryption::Password(pyropdf_store::security::PasswordEncryption {
+            let request = pyropdf_store::security::PasswordEncryption {
                 user,
                 owner,
                 permissions,
                 aes256,
                 random,
-            });
+            };
+            let encryption = if integrity {
+                Encryption::PasswordWithMac(request)
+            } else {
+                Encryption::Password(request)
+            };
             return Ok((saved(py, document, false)?, Some(encryption)));
         }
         Some(_) => return Err(PyTypeError::new_err("encryption must be 'keep' or a tuple")),

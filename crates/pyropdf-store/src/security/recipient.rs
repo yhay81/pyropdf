@@ -289,11 +289,6 @@ impl Handler {
         }
         let payload = payload.ok_or(Password::Recipient)?;
         let permissions = u32::from_be_bytes(payload[20..].try_into().expect("four bytes"));
-        if profile.version == 5 && permissions & (1 << 12) == 0 {
-            return Err(Error::malformed(
-                "public-key encryption requires unsupported PDF MAC validation",
-            ));
-        }
         let permissions = if profile.subfilter == "adbe.pkcs7.s3" {
             permissions & 0x3f
         } else {

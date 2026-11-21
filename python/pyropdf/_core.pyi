@@ -234,10 +234,14 @@ class _Signer:
 def begin_signing(document: _Document, /) -> None: ...
 def sign_document(
     document: _Document,
+    signature: int,
     reserve: int,
     signer: _Signer,
     timestamper: Callable[[bytes, str], bytes] | None = None,
     /,
+) -> bytes: ...
+def timestamp_document(
+    document: _Document, signature: int, reserve: int, stamp: Callable[[bytes], bytes], /
 ) -> bytes: ...
 
 _Check: TypeAlias = tuple[bytes, str, str, bytes, bytes | None]
@@ -852,6 +856,9 @@ _SchemaKey: TypeAlias = tuple[str, bool, str, list[_SchemaType]]
 
 def schema_names() -> list[str]: ...
 def schema_object(name: str, /) -> list[_SchemaKey] | None: ...
+def verify_integrity(
+    document: _Document, /
+) -> tuple[Literal["absent", "locked", "valid", "invalid"], Literal["standalone", "attached"] | None, str | None]: ...
 def security_state(document: _Document, /) -> tuple[bool, bool, str | None, int | None, str | None]: ...
 def unlock(
     document: _Document, password: bytes | None, recipient: Callable[[bytes], bytes | None] | None = None, /

@@ -672,6 +672,17 @@ The security handler of an unlocked encrypted document, such as `"Standard V5 R6
 
 `None` for an unencrypted or locked document.
 
+### `Document.verify_integrity`
+
+```python
+Document.verify_integrity() -> IntegrityReport
+```
+
+Verify the document MAC over the selected revision's original bytes.
+
+The result reports ISO/TS 32004:2024 integrity independently of password
+access and signature trust. Unsaved edits receive their MAC when saved.
+
 ### `Document.permissions`
 
 ```python
@@ -956,8 +967,8 @@ undo history starts anew. A failure leaves the document as it was.
 
 Signing runs as one transaction, which other threads' edits wait
 for. Signing inside a transaction raises `PdfError`, as does
-a callback that edits the document. An encrypted document raises
-`ValueError`.
+a callback that edits the document. An encrypted document requires a valid
+document MAC, which the new signature renews as an unsigned attribute.
 
 ### `Document.timestamp`
 

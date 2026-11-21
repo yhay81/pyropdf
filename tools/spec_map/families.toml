@@ -201,16 +201,6 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Verify and create each specified hash/signature algorithm against independent vectors, including Ed25519 and Ed448."
 
-[families.integrity-protection]
-tracker = 252
-issue = 866
-title = "Verify and maintain document integrity protection for encrypted PDFs under ISO/TS 32004"
-features = [
-    "integrity-protection",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Verify and maintain integrity protection during encrypted saves and refuse tampered data."
-
 [families.public-key-encryption]
 tracker = 252
 issue = 936

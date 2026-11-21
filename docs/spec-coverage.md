@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 45 | 43 | 743 |
-| interpret | 1 | 13 | 0 | 41 | 663 | 113 |
-| create | 0 | 0 | 9 | 646 | 79 | 97 |
-| edit | 0 | 0 | 0 | 672 | 66 | 93 |
-| preserve | 0 | 0 | 0 | 29 | 663 | 139 |
+| read | 0 | 0 | 0 | 45 | 42 | 744 |
+| interpret | 1 | 13 | 0 | 41 | 662 | 114 |
+| create | 0 | 0 | 9 | 646 | 78 | 98 |
+| edit | 0 | 0 | 0 | 672 | 65 | 94 |
+| preserve | 0 | 0 | 0 | 29 | 662 | 140 |
 
 ## Clauses
 
@@ -218,13 +218,13 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32007 | RichMedia glTF assets | `gltf-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 
 ## Unfinished work by milestone
 
-2,948 unfinished cells in 831 features: 1 engine, 1,433 partial, 1,514 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,943 unfinished cells in 831 features: 1 engine, 1,433 partial, 1,509 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -326,8 +326,6 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 - [#867](https://github.com/yhay81/pyropdf/issues/867) Complete the PDF hash and signature algorithm coverage for ISO/TS 32001 and 32002. Verify and create each specified hash/signature algorithm against independent vectors, including Ed25519 and Ed448.
     - read, interpret, create, edit — `sha3-hashes`, `ecc-signatures`.
     - preserve — `sha3-hashes`.
-- [#866](https://github.com/yhay81/pyropdf/issues/866) Verify and maintain document integrity protection for encrypted PDFs under ISO/TS 32004. Verify and maintain integrity protection during encrypted saves and refuse tampered data.
-    - read, interpret, create, edit, preserve — `integrity-protection`.
 - [#936](https://github.com/yhay81/pyropdf/issues/936) Extend CMS algorithm coverage for public-key PDF recipients. Verify and extend additional CMS provider algorithms for recipient access, creation, editing and preservation.
     - read, create, edit, preserve — `public-key-security-handler`.
 - [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
