@@ -3325,3 +3325,33 @@ fn free_unreferenced_frees_seeds_and_orphaned_candidates_in_a_transaction() {
         );
     }
 }
+
+#[test]
+fn nominated_retirement_keeps_outside_objects_and_their_shared_targets() {
+    let objects = vec![
+        (1, dict(vec![("Keep", reference(2))])),
+        (2, dict(vec![("Child", reference(3))])),
+        (3, Value::Integer(3)),
+        (
+            4,
+            dict(vec![("Shared", reference(2)), ("Indirect", reference(5))]),
+        ),
+        (5, dict(vec![("Back", reference(6))])),
+        (6, dict(vec![("Back", reference(5))])),
+        (
+            7,
+            dict(vec![("Private", reference(8)), ("Other", reference(9))]),
+        ),
+        (8, Value::Integer(8)),
+        (9, Value::Integer(9)),
+        (10, dict(vec![("Cycle", reference(11))])),
+        (11, dict(vec![("Cycle", reference(10))])),
+    ];
+    let trailer = [(Name::from("Root"), reference(1))].into_iter().collect();
+    let doc = document_of(&objects, trailer);
+    let budget = Budget::default();
+    let index = build(&doc.current(), &budget).unwrap();
+    let targets =
+        nominated_unreferenced(&index, &[1, 2, 3, 5, 6, 7, 8, 8, 10, 11], &budget).unwrap();
+    assert_eq!(&*targets, &[7, 8, 10, 11]);
+}
