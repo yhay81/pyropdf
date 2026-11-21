@@ -1,0 +1,8 @@
+[package]
+name = "svg-selection-probe"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+hayro-syntax = { path = "../hayro/hayro-syntax" }
+hayro-interpret = { path = "../hayro/hayro-interpret" }
+hayro-svg = { path = "../hayro/hayro-svg" }
