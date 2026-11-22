@@ -135,7 +135,7 @@ fn plan(reader: &Reader<'_>, reference: Reference) -> Result<Option<(Dict, Strea
     let Some(subtype) = reader.name(dict, "Subtype")? else {
         return Ok(None);
     };
-    if !draws(&subtype) || has_normal_appearance(reader, dict)? {
+    if (!draws(&subtype) && &*subtype != b"Redact") || has_normal_appearance(reader, dict)? {
         return Ok(None);
     }
     let Some(drawn) = appearance_for_render(reader, dict)? else {
