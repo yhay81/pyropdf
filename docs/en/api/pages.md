@@ -538,7 +538,7 @@ The finite rectangle is in display space and must intersect the page. A glyph is
 when its layout box intersects the rectangle. A show spanning both sides, a dependent
 show, a composite or Type 3 font, and other painting such as images, paths and Forms
 raise `PdfError` before any edit. The operation changes this page's contents
-in one undo step. Other uses of shared streams retain their content. Full saves may
+in one undo step. Annotations and other uses of shared streams retain their content. Full saves may
 retain unused objects, and earlier incremental revisions still contain the original data.
 
 ### `Page.clean_contents`

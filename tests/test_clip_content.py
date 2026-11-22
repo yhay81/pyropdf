@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import shutil
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pikepdf
@@ -51,6 +52,45 @@ def test_direct_clip_detaches_shared_content_and_is_one_undo_step(rotation: int)
         assert page.obj["Contents"].xref == sibling.obj["Contents"].xref
         doc.history.redo()
         assert page.text().strip() == "Keep"
+
+
+@pytest.mark.parametrize("tail", ["\n% End of text", "\r% first\r% second\n\x00\t% last\r\n"])
+def test_trailing_pdf_comments_survive_the_rewrite(tail: str) -> None:
+    with pyropdf.open(content_pdf(BOTH + tail)) as doc:
+        page = doc.pages[0]
+        keep = next(word for word in page.words() if word.text == "Keep")
+        assert page.clip_to_rect(keep.bbox) == 4
+        with pyropdf.open(doc.to_bytes()) as saved:
+            assert saved.pages[0].words() == [keep]
+            assert saved.pages[0].operations.tail == tail.encode()
+
+
+def test_annotation_text_is_independent_of_an_identical_removed_page_show() -> None:
+    with pyropdf.open(content_pdf(BOTH)) as doc:
+        page = doc.pages[0]
+        keep = next(word for word in page.words() if word.text == "Keep")
+        note = page.annotations.add(pyropdf.FreeText((30, 30, 115, 92), "Gone"))
+        appearance = note.obj["AP"]["N"].read()
+        assert [word.text for word in page.words()].count("Gone") == 2
+        assert page.clip_to_rect(keep.bbox) == 4
+        data = doc.to_bytes()
+        with pyropdf.open(data) as saved, pikepdf.open(io.BytesIO(data)) as parsed:
+            assert [word.text for word in saved.pages[0].words()] == ["Gone", "Keep"]
+            assert parsed.pages[0].Annots[0].AP.N.read_bytes() == appearance
+            assert b"Gone" not in parsed.pages[0].Contents.read_bytes()
+
+
+def test_unlocated_direct_glyph_still_refuses_atomically(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pyropdf.open(content_pdf(BOTH)) as doc:
+        page = doc.pages[0]
+        keep = next(word for word in page.words() if word.text == "Keep")
+        chars = [replace(c, stream=None, operation=None) if c.text == "G" else c for c in page.chars()]
+        monkeypatch.setattr(pyropdf.Page, "chars", lambda _page, **_options: chars)
+        original = doc.to_bytes()
+        with pytest.raises(pyropdf.PdfError, match="located glyphs"):
+            page.clip_to_rect(keep.bbox)
+        assert not doc.history.steps
+        assert doc.to_bytes() == original
 
 
 @pytest.mark.skipif(not shutil.which("pdftoppm") or not shutil.which("pdftotext"), reason="Poppler is unavailable")
@@ -145,6 +185,7 @@ def test_clip_reserves_the_retained_stream_before_editing() -> None:
         ("BT /F1 18 Tf 7 Tr (Clip) Tj ET", "text operation"),
         ("q", "unbalanced"),
         (" ".join(["1"] * 34) + " cm", "unparsed content"),
+        ("% ignored\r34", "unparsed content"),
     ],
 )
 def test_unsupported_paint_refuses_every_edit_including_earlier_outside_text(extra: str, message: str) -> None:

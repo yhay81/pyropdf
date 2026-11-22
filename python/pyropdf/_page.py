@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, overload
@@ -220,6 +221,7 @@ def _show_size(operator: str, operands: tuple[object, ...], budget: _core._Opera
     _cannot_clip(f"invalid {operator} operands")
 
 
+_CLIP_TAIL_TOKENS = re.compile(rb"%[^\r\n]*|[^\x00\t\n\f\r ]")
 _CLIP_COLORS = {"g": 1, "rg": 3, "k": 4}
 _CLIP_POSITIONING = {"Tm": 6, "Td": 2, "TD": 2, "T*": 0}
 _CLIP_TEXT_STATE = {"Tc", "Tw", "Tz", "TL", "Ts"}
@@ -269,8 +271,10 @@ def _clip_graphics(item: Operation | InlineImage, index: int, saved_fonts: list[
 
 def _clip_shows(page: Page, operations: Operations, budget: _core._OperationBudget) -> dict[int, _ClipShow]:
     """Prove that skipping any one show cannot move another or change a clipping path."""
-    if operations.tail.strip(b"\x00\t\n\x0c\r "):
-        _cannot_clip("unparsed content after the last operation")
+    for token in _CLIP_TAIL_TOKENS.finditer(operations.tail):
+        budget.poll()
+        if operations.tail[token.start()] != ord("%"):
+            _cannot_clip("unparsed content after the last operation")
     text = _ClipText(_sub(_resources(page), "Font"), budget)
     saved_fonts: list[bool] = []
     shows = {}
@@ -324,7 +328,9 @@ def _clip_page(page: Page, rect: Rect, budget: _core._OperationBudget) -> int:
     shows = _clip_shows(page, operations, budget)
     for char in page.chars(clipped=True, unmapped="replacement"):
         budget.poll()
-        if char.is_synthetic:
+        # Annotation appearances have no page operation. Every direct show still
+        # needs one located glyph per source byte, even if its provenance was lost.
+        if char.is_synthetic or (char.operation is None and char.stream is None):
             continue
         show = shows.get(char.operation) if char.operation is not None and char.stream is not None else None
         if show is None or char.bbox.is_empty or char.bbox.is_infinite:
@@ -867,7 +873,7 @@ class Page:
         when its layout box intersects the rectangle. A show spanning both sides, a dependent
         show, a composite or Type 3 font, and other painting such as images, paths and Forms
         raise :class:`PdfError` before any edit. The operation changes this page's contents
-        in one undo step. Other uses of shared streams retain their content. Full saves may
+        in one undo step. Annotations and other uses of shared streams retain their content. Full saves may
         retain unused objects, and earlier incremental revisions still contain the original data.
         """
         box = Rect(_clip_box(rect, name="rect"))
