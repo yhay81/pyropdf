@@ -304,7 +304,12 @@ fn read_version(before: &Version, input: &mut In<'_>, budget: &Budget) -> Result
                 Value::parse(&bytes, budget)
                     .map_err(|error| error.context(format!("object {number} {generation}")))?;
                 budget.charge(LimitCode::MemorySize, Written::OVERHEAD)?;
-                Slot::Written(Arc::new(Written::new(generation, bytes)))
+                // A journal contains PDF bytes, not live handle identities. A
+                // replaced root must be distinct from an opened base slot.
+                Slot::Written(Arc::new(Written {
+                    name_slots: super::name_slots::NameSlots::replaced()?,
+                    ..Written::new(generation, bytes)
+                }))
             }
             [1] => Slot::Free(u16::from_le_bytes(input.array()?)),
             _ => return Err(corrupt("an object kind is neither 0 nor 1")),

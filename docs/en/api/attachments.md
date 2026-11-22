@@ -18,9 +18,12 @@ A handle on one embedded file of a document, as `doc.attachments[name]` returns 
 
 Properties read the document on every access, and assigning
 `filename`, `description`, `created`, or `modified` edits the
-file specification at once; `del` removes all but the file name. A
-handle raises
-`StaleObjectError` once its attachment has been deleted.
+file specification at once; `del` removes all but the file name.
+A handle identifies the original file specification. An inline entry
+also has to remain in its original array slot. Removing or replacing
+the entry, or moving an inline entry, makes access raise
+`StaleObjectError`. Look up `doc.attachments[name]` again
+to access the current entry. Undo can restore the original handle.
 
 ### `Attachment.name`
 

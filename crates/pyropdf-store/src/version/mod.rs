@@ -29,6 +29,7 @@
 mod base;
 mod document;
 mod journal;
+mod name_slots;
 mod stale;
 mod stamps;
 pub(crate) mod table;
@@ -48,6 +49,7 @@ pub(crate) use stale::Stale;
 
 pub use base::{Base, MemoryBase};
 pub use document::{Document, HistoryStatus, RestoredHistory};
+pub use name_slots::{NameEdit, NameStep};
 pub use stamps::ObjectStamps;
 pub use transaction::{Savepoint, Transaction};
 
@@ -115,6 +117,7 @@ pub enum Slot {
 /// An object that a transaction wrote: its generation and the bytes of its
 /// value, which its first read parses.
 pub struct Written {
+    name_slots: name_slots::NameSlots,
     generation: u16,
     bytes: Bytes,
     /// The value parsed from the bytes, once a read has parsed it.
@@ -352,10 +355,11 @@ impl Written {
         (4 * size_of::<usize>() + size_of::<Self>() + size_of::<Box<[u8]>>()) as u64;
 
     /// Returns an object of `generation` whose value `bytes` hold.
-    const fn new(generation: u16, bytes: Bytes) -> Self {
+    fn new(generation: u16, bytes: Bytes) -> Self {
         Self {
             generation,
             bytes,
+            name_slots: name_slots::NameSlots::default(),
             value: OnceLock::new(),
         }
     }
@@ -390,7 +394,9 @@ impl Written {
     /// Returns the bytes that the object holds, which the history counts.
     /// The value parsed from them is not counted.
     fn size(&self) -> u64 {
-        Self::OVERHEAD.saturating_add(u64::try_from(self.bytes.len()).unwrap_or(u64::MAX))
+        Self::OVERHEAD
+            .saturating_add(self.name_slots.size())
+            .saturating_add(u64::try_from(self.bytes.len()).unwrap_or(u64::MAX))
     }
 }
 
@@ -456,11 +462,17 @@ fn difference(
     let unshared = first
         .table
         .diff(&second.table, Slot::same, |number, a, b| {
+            let shared = match (a, b) {
+                (Some(Slot::Written(a)), Some(Slot::Written(b))) => {
+                    a.name_slots.shared_size(&b.name_slots)
+                }
+                _ => 0,
+            };
             if let Some(Slot::Written(object)) = a {
-                first_bytes = first_bytes.saturating_add(object.size());
+                first_bytes = first_bytes.saturating_add(object.size() - shared);
             }
             if let Some(Slot::Written(object)) = b {
-                second_bytes = second_bytes.saturating_add(object.size());
+                second_bytes = second_bytes.saturating_add(object.size() - shared);
             }
             steps = steps.wrapping_add(1);
             if steps.is_multiple_of(POLL_INTERVAL) {
