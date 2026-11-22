@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 15 | 25 | 797 |
-| interpret | 9 | 19 | 0 | 32 | 34 | 743 |
-| create | 0 | 0 | 25 | 23 | 33 | 756 |
-| edit | 0 | 0 | 0 | 36 | 35 | 766 |
-| preserve | 0 | 0 | 0 | 17 | 27 | 793 |
+| read | 0 | 0 | 0 | 15 | 22 | 800 |
+| interpret | 16 | 19 | 0 | 27 | 31 | 744 |
+| create | 0 | 0 | 25 | 21 | 30 | 761 |
+| edit | 0 | 0 | 0 | 35 | 30 | 772 |
+| preserve | 0 | 0 | 0 | 17 | 24 | 796 |
 
 ## Clauses
 
@@ -57,7 +57,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.5.7 | Object streams | `object-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 2 done, 5 partial | 3 done, 4 non-goal | 7 done | 7 done |
+| 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 2 done, 5 engine | 3 done, 4 non-goal | 7 done | 7 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 7.6.6 | Crypt filters | `crypt-filters` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -127,11 +127,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 10.6 | Halftones | `halftones` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 10.7 | Scan conversion details | `scan-conversion` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 10.8 | Rendering of colour separations | `separation-rendering` | 1 done | 1 engine | 1 done | 1 done | 1 done |
-| 11.3 | Alpha compositing | `alpha-compositing` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 11.3.5 | Blend mode | `blend-modes` | 1 done | 1 done | 1 done | 1 planned | 1 done |
-| 11.5 | Soft masks | `soft-masks` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
-| 11.6.6 | Transparency group XObjects | `transparency-groups` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
-| 11.7 | Colour and transparency | `transparency-color` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 11.3 | Alpha compositing | `alpha-compositing` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 11.3.5 | Blend mode | `blend-modes` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 11.5 | Soft masks | `soft-masks` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 11.6.6 | Transparency group XObjects | `transparency-groups` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 11.7 | Colour and transparency | `transparency-color` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 12.2 | Viewer preferences | `viewer-preferences` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.3.2 | Destinations | `destinations` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | 12.3.3 | Document outline | `outline` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -231,7 +231,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex K | XFA packets | `xfa` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
 | Annex L | Allowed structure children | `structure-children` | 1 done | 1 partial | 1 planned | 1 planned | 1 done |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| Annex Q | Page transparency detection | `page-transparency` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| Annex Q | Page transparency detection | `page-transparency` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 done | 3 partial | 2 done, 1 planned | 3 partial | 3 partial |
 | ISO 15930 | PDF/X | `pdfx` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-286 unfinished cells in 837 features: 9 engine, 123 partial, 154 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+268 unfinished cells in 837 features: 16 engine, 115 partial, 137 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -279,10 +279,8 @@ Milestone [#248](https://github.com/yhay81/pyropdf/issues/248).
     - edit — `device-color-conversion`.
 - [#372](https://github.com/yhay81/pyropdf/issues/372) hayro: evaluate optional content visibility expressions and annotation /OC. Adopt engine evaluation of visibility expressions and annotation OC. Track the upstream issue directly. #373 owns local adoption.
     - interpret — `optional-content`.
-- [#899](https://github.com/yhay81/pyropdf/issues/899) Complete transparency group, soft-mask and compositing coverage. Exercise non-isolated and knockout groups, group masks, blending colour spaces, alpha composition and Annex Q resource traversal. Verify isolated and nested results with independent rendered references.
-    - read, interpret, preserve — `transparency-color`, `alpha-compositing`, `page-transparency`.
-    - create — `soft-masks`, `transparency-groups`, `transparency-color`, `alpha-compositing`, `page-transparency`.
-    - edit — `blend-modes`, `soft-masks`, `transparency-groups`, `transparency-color`, `alpha-compositing`, `page-transparency`.
+- [#1024](https://github.com/yhay81/pyropdf/issues/1024) hayro: render non-isolated, knockout and blending-space group boundaries. Render groups against their initial backdrop, honor knockout shape, and convert into the selected group space at the boundary. Verify explicit output-device samples after upstream adoption.
+    - interpret — `transparency-color`, `alpha-compositing`.
 
 ### 249 Writing
 
@@ -346,7 +344,7 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 - [#982](https://github.com/yhay81/pyropdf/issues/982) Round-trip packed and wide predictor rows after adopting the hayro fix. Adopt the released row-local decoder through #603, then verify partially filled TIFF rows, externally filtered partial PNG pixel strides and predictor pixels wider than 255 bits in independent save and render controls.
     - read, interpret, create — `lzw-filter`.
     - edit — `flate-filter`, `lzw-filter`.
-- [#974](https://github.com/yhay81/pyropdf/issues/974) Render owner-authenticated standard-handler PDF revisions 2 to 4. Render authenticated R2 to R4 versions with the owner credentials before and after edits.
+- [#1043](https://github.com/yhay81/pyropdf/issues/1043) Interpret legacy encrypted PDFs with byte-encoded credentials in hayro-syntax. Interpret an owner-authenticated R2 to R4 document whose effective user credential is not UTF-8.
     - interpret — `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`.
 
 ### 253 Understanding

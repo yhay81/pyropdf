@@ -35,40 +35,40 @@ objects = ["PageObject", "PageTreeNode", "PageTreeNodeRoot"]
 
 [features.standard-security-handler]
 clause = "7.6.4"
-description = "Standard password authentication, owner and user permissions, and changing or removing encryption. A claim for this handler includes the following revision-specific operations."
+description = "Standard password authentication, owner and user permissions, and changing or removing encryption. A claim for this handler includes the following revision-specific operations. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
 objects = ["EncryptionStandard"]
-interpret = { status = "partial", missing = "Direct rendering of revisions 2 through 4 succeeds with the user password. Under the owner password the store can decrypt, but the pinned renderer declines the original and edited page (#974).", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 1043 }
 includes = ["standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4", "standard-aes-r4", "standard-aes-r5", "standard-aes-r6"]
 
 [features.standard-rc4-r2]
 clause = "7.6.4"
-description = "V1 R2 40-bit RC4."
+description = "V1 R2 40-bit RC4. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
 objects = ["EncryptionStandard"]
-interpret = { status = "partial", missing = "Direct rendering of revisions 2 through 4 succeeds with the user password. Under the owner password the store can decrypt, but the pinned renderer declines the original and edited page (#974).", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 1043 }
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content." }
 
 [features.standard-rc4-r3]
 clause = "7.6.4"
-description = "V2 R3 RC4 with a 128-bit key."
+description = "V2 R3 RC4 with a 128-bit key. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
 objects = ["EncryptionStandard"]
-interpret = { status = "partial", missing = "Direct rendering of revisions 2 through 4 succeeds with the user password. Under the owner password the store can decrypt, but the pinned renderer declines the original and edited page (#974).", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 1043 }
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content." }
 
 [features.standard-rc4-r4]
 clause = "7.6.4"
-description = "V4 R4 with the V2 RC4 crypt filter."
+description = "V4 R4 with the V2 RC4 crypt filter. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
 objects = ["EncryptionStandard"]
-interpret = { status = "partial", missing = "Direct rendering of revisions 2 through 4 succeeds with the user password. Under the owner password the store can decrypt, but the pinned renderer declines the original and edited page (#974).", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 1043 }
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content." }
 
 [features.standard-aes-r4]
 clause = "7.6.4"
-description = "V4 R4 AES-128 CBC with an AESV2 crypt filter."
+description = "V4 R4 AES-128 CBC with an AESV2 crypt filter. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
 objects = ["EncryptionStandard"]
-interpret = { status = "partial", missing = "Direct rendering of revisions 2 through 4 succeeds with the user password. Under the owner password the store can decrypt, but the pinned renderer declines the original and edited page (#974).", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 1043 }
 
 [features.standard-aes-r5]
 clause = "7.6.4"
@@ -754,19 +754,17 @@ objects = ["ArrayOfBlendModes"]
 clause = "11.5"
 description = "Soft masks from luminosity, alpha, and images."
 objects = ["SoftMaskAlpha", "SoftMaskLuminosity", "XObjectImageSoftMask"]
-create = { status = "partial", missing = "PNG alpha images and translucent gradients create image and luminosity soft masks, without general group soft-mask scopes on Canvas.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Image replacement and rewriting update, resample, and synthesize image `/SMask` streams, without editing soft-mask dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.transparency-groups]
 clause = "11.6.6"
 description = "Transparency groups: isolated and knockout groups."
 objects = ["GroupAttributes"]
-create = { status = "partial", missing = "Canvas opacity scopes create isolated transparency groups, without knockout group options.", milestone = "Phase 4: Specification" }
 
 [features.transparency-color]
 clause = "11.7"
 description = "Color spaces of groups and overprint with transparency."
 objects = []
+interpret = { status = "engine", upstream = 1024 }
 
 [features.viewer-preferences]
 clause = "12.2"
@@ -1466,6 +1464,7 @@ interpret = { status = "engine", upstream = 1001 }
 clause = "11.3"
 description = "Combine source, backdrop, opacity and shape when painting overlapping content."
 objects = []
+interpret = { status = "engine", upstream = 1024 }
 
 [features.geospatial]
 clause = "12.10"
