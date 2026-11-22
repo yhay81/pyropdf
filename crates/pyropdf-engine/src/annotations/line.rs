@@ -2,15 +2,14 @@
 
 use std::fmt::Write as _;
 
-use pyropdf_store::budget::LimitCode;
-use pyropdf_store::value::{Dict, Value};
+use pyropdf_store::value::Dict;
 use pyropdf_store::{Error, Result};
 
+use super::line_caption::Caption;
 use super::shapes::draw_ending;
-use super::text::{FontResource, resource};
+use super::text::{TextFit, TextFont};
 use super::{Canvas, Paint, Reader, fmt};
-use crate::forms::text_string;
-use crate::standard::{single_line, text_width, winansi_byte};
+use crate::forms::face::FaceText;
 
 type Point = (f64, f64);
 
@@ -21,9 +20,8 @@ pub(super) struct Dimension {
     offset: f64,
     height: f64,
     extension: f64,
-    caption: String,
+    caption: Caption,
     font_size: f64,
-    text_width: f64,
     text_center: Point,
     inline: bool,
 }
@@ -33,10 +31,12 @@ impl Dimension {
         reader: &Reader<'_>,
         dict: &Dict,
         vertices: &[Point],
+        face: Option<&FaceText<'_>>,
     ) -> Result<Option<Self>> {
-        if !["LL", "LLE", "LLO", "Cap"]
-            .iter()
-            .any(|k| dict.get(*k).is_some())
+        if face.is_none()
+            && !["LL", "LLE", "LLO", "Cap", "RC"]
+                .iter()
+                .any(|k| dict.get(*k).is_some())
         {
             return Ok(None);
         }
@@ -76,25 +76,8 @@ impl Dimension {
         } else {
             direction * extension
         };
-        let mut caption = String::new();
-        if matches!(
-            reader.entry(dict, "Cap")?.as_deref(),
-            Some(Value::Boolean(true))
-        ) && let Some(Value::String(value)) = reader.entry(dict, "Contents")?.as_deref()
-        {
-            let size = value.as_bytes().len() as u64;
-            reader.budget.check(LimitCode::AnnotationTextSize, size)?;
-            reader
-                .budget
-                .charge(LimitCode::MemorySize, size.saturating_mul(12))?;
-            caption = single_line(&text_string(value.as_bytes()), reader.budget)?.into_owned();
-        }
+        let caption = Caption::read(reader, dict, face)?;
         let font_size = 10.0 / reader.unit;
-        let width =
-            resource("Helvetica").and_then(|(font, _)| text_width(&caption, font, font_size));
-        if width.is_none() {
-            caption.clear();
-        }
         let inline = reader.name(dict, "CP")?.as_deref() != Some(b"Top");
         let co = reader.numbers(dict, "CO", 2)?;
         let [along, across] = co
@@ -108,14 +91,19 @@ impl Dimension {
             offset,
             height,
             extension,
-            caption,
             font_size,
-            text_width: width.unwrap_or(0.0),
             text_center: (
                 length / 2.0 + along,
-                height + across + if inline { 0.0 } else { font_size * 0.8 },
+                height
+                    + across
+                    + if inline {
+                        0.0
+                    } else {
+                        caption.height / 2.0 + font_size * 0.2
+                    },
             ),
             inline,
+            caption,
         }))
     }
 
@@ -138,9 +126,9 @@ impl Dimension {
             include(self.at(x, self.offset));
             include(self.at(x, self.height + self.extension));
         }
-        if !self.caption.is_empty() {
-            for x in [-self.text_width / 2.0, self.text_width / 2.0] {
-                for y in [-self.font_size * 0.6, self.font_size * 0.6] {
+        if self.caption.height > 0.0 {
+            for x in [-self.caption.width / 2.0, self.caption.width / 2.0] {
+                for y in [-self.caption.height / 2.0, self.caption.height / 2.0] {
                     include(self.at(self.text_center.0 + x, self.text_center.1 + y));
                 }
             }
@@ -153,7 +141,8 @@ impl Dimension {
         paint: &Paint,
         endings: [usize; 2],
         rect: [f64; 4],
-    ) -> Result<Option<FontResource>> {
+        face: Option<&mut FaceText<'_>>,
+    ) -> Result<(TextFit, Option<TextFont>)> {
         let to_canvas = |(x, y): Point| (x - rect[0], rect[3] - y);
         if let Some(stroke) = paint.stroke(0, 1) {
             let mut segment = |a: Point, b: Point| {
@@ -170,12 +159,12 @@ impl Dimension {
                     );
                 }
             }
-            let gap = self.text_width / 2.0 + self.font_size * 0.25;
+            let gap = self.caption.width / 2.0 + self.font_size * 0.25;
             let left = (self.text_center.0 - gap).clamp(0.0, self.length);
             let right = (self.text_center.0 + gap).clamp(0.0, self.length);
             if self.inline
-                && !self.caption.is_empty()
-                && (self.text_center.1 - self.height).abs() < self.font_size * 0.6
+                && self.caption.height > 0.0
+                && (self.text_center.1 - self.height).abs() < self.caption.height / 2.0
             {
                 if left > 0.0 {
                     segment(self.at(0.0, self.height), self.at(left, self.height));
@@ -194,26 +183,14 @@ impl Dimension {
         let end = self.at(self.length, self.height);
         draw_ending(canvas, paint, endings[0], start, end, to_canvas)?;
         draw_ending(canvas, paint, endings[1], end, start, to_canvas)?;
-        if self.caption.is_empty() {
-            return Ok(None);
+        if self.caption.fit != TextFit::Fits {
+            return Ok((self.caption.fit, None));
         }
-        let Some((_, font)) = resource("Helvetica") else {
-            return Ok(None);
-        };
-        let (x, y) = self.at(
-            self.text_center.0 - self.text_width / 2.0,
-            self.text_center.1 - self.font_size * 0.32,
-        );
+        let (x, y) = self.at(self.text_center.0, self.text_center.1);
         let (a, b) = self.axis;
-        let (r, g, blue) = paint.stroke.unwrap_or((0.0, 0.0, 0.0));
-        let _ = write!(
+        let _ = writeln!(
             canvas.out,
-            "q {} {} {} rg BT /{} {} Tf {} {} {} {} {} {} Tm <",
-            fmt(r),
-            fmt(g),
-            fmt(blue),
-            font.0,
-            fmt(self.font_size),
+            "q {} {} {} {} {} {} cm",
             fmt(a),
             fmt(b),
             fmt(-b),
@@ -221,12 +198,8 @@ impl Dimension {
             fmt(x - rect[0]),
             fmt(y - rect[1])
         );
-        for ch in self.caption.chars() {
-            if let Some(byte) = winansi_byte(ch) {
-                let _ = write!(canvas.out, "{byte:02X}");
-            }
-        }
-        canvas.out.push_str("> Tj ET Q\n");
-        Ok(Some(font))
+        let font = self.caption.draw(canvas, face)?;
+        canvas.out.push_str("Q\n");
+        Ok((TextFit::Fits, font))
     }
 }

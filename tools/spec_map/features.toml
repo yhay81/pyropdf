@@ -819,10 +819,6 @@ objects = ["AnnotFreeText"]
 clause = "12.5.6.7"
 description = "Line annotations, with their endings, leaders, and captions."
 objects = ["AnnotLine"]
-read = { status = "partial", missing = "Oriented leaders, extensions and caption positioning are supported. Rich-text and shaped Unicode line captions still require #1025.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Oriented leaders, extensions and caption positioning are supported. Rich-text and shaped Unicode line captions still require #1025.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Oriented leaders, extensions and caption positioning are supported. Rich-text and shaped Unicode line captions still require #1025.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Oriented leaders, extensions and caption positioning are supported. Rich-text and shaped Unicode line captions still require #1025.", milestone = "Phase 4: Specification" }
 
 [features.square-circle-annotations]
 clause = "12.5.6.8"
