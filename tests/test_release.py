@@ -177,6 +177,14 @@ def test_compressed_wheel_limits_and_pr_justification(
     with pytest.raises(ValueError, match="9 MiB"):
         tool()
 
+    # A repair must be able to bring an already oversized release back under the cap.
+    capsys.readouterr()
+    _size_fixture(base, 9 * mib + 128 * 1024)
+    _size_fixture(head, 9 * mib - 64 * 1024)
+    monkeypatch.delenv("PR_BODY")
+    tool()
+    assert json.loads(capsys.readouterr().out)["growth_bytes"] == -192 * 1024
+
     (other_platform,) = base.glob("*.whl")
     other_platform.rename(other_platform.with_name(other_platform.name.replace("win_amd64", "macosx_11_0_arm64")))
     with pytest.raises(ValueError, match="incomparable wheel tags"):
