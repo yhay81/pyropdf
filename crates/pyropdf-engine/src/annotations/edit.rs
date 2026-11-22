@@ -988,14 +988,6 @@ impl PageAnnots<'_> {
     ) -> Result<(u32, u16)> {
         let budget = self.budget;
         budget.check(LimitCode::AnnotationCount, (self.items.len() + 1) as u64)?;
-        if !matches!(
-            self.resolved(self.page().dict().get("Annots"))?,
-            None | Some(Value::Array(_))
-        ) {
-            return Err(AnnotationError::Pdf(
-                "the page's /Annots is not an array".to_owned(),
-            ));
-        }
         let minimum = spec.minimum_version();
         let current = effective_version(transaction.version(), budget)?;
         let auto_version = automatic_version(transaction.version(), current, minimum, budget)?;
@@ -1016,17 +1008,32 @@ impl PageAnnots<'_> {
         spec.embed_for_version(transaction, &mut dict, auto_version, budget)?;
         let reference = transaction.allocate()?;
         transaction.write(reference.number(), &Value::Dict(dict), budget)?;
+        self.attach(transaction, reference)?;
+        if !face {
+            transaction.mark(Structure::Appearance, reference.number(), budget)?;
+        }
+        Ok((reference.number(), reference.generation()))
+    }
+
+    /// Append a freshly written annotation to the correct page-local array.
+    pub fn attach(&self, transaction: &mut Transaction, reference: Reference) -> Result<()> {
+        let budget = self.budget;
+        budget.check(LimitCode::AnnotationCount, (self.items.len() + 1) as u64)?;
+        if !matches!(
+            self.resolved(self.page().dict().get("Annots"))?,
+            None | Some(Value::Array(_))
+        ) {
+            return Err(AnnotationError::Pdf(
+                "the page's /Annots is not an array".to_owned(),
+            ));
+        }
         let mut items = BudgetVec::new(budget);
         items.try_reserve_exact(self.items.len() + 1)?;
         for item in self.items.iter() {
             items.try_push(copy_for_edit(item, budget)?)?;
         }
         items.try_push(Value::Reference(reference))?;
-        self.write_items(transaction, Array::from(items.into_vec()), budget)?;
-        if !face {
-            transaction.mark(Structure::Appearance, reference.number(), budget)?;
-        }
-        Ok((reference.number(), reference.generation()))
+        self.write_items(transaction, Array::from(items.into_vec()), budget)
     }
 
     /// Applies `patch` to handle `(index, id)` on this page.

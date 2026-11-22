@@ -766,6 +766,27 @@ def _require_version(document: Document, catalog: Dictionary, minimum: tuple[int
         catalog["Version"] = Name(f"{target[0]}.{target[1]}")
 
 
+def _require_pdf20(document: Document, catalog: Dictionary, feature: str) -> None:
+    """Refuse a PDF 2.0 promotion that introduces structural defects in existing objects."""
+    from pyropdf._attachments import _version  # noqa: PLC0415
+    from pyropdf._collections import _require_collection_version  # noqa: PLC0415
+
+    before = document.check() if _version(document) < (2, 0) else None
+    _require_collection_version(document, catalog, (2, 0))
+    if before is None:
+        return
+    after = document.check()
+    if after.truncated:
+        msg = f"cannot promote the document to PDF 2.0 for {feature}: structural defect report is truncated"
+        raise PdfError(msg)
+    existing = set(before.defects)
+    for defect in after.defects:
+        if defect not in existing:
+            location = "trailer" if defect.xref is None else f"object {defect.xref}"
+            msg = f"cannot promote the document to PDF 2.0 for {feature}: {location}, {defect.clause}: {defect.message}"
+            raise PdfError(msg)
+
+
 def _catalog_enum(kind: type[PageMode | PageLayout], value: object, name: str) -> str:
     """Return the catalog name of a page mode or layout, given as a member or its exact value."""
     if isinstance(value, str):

@@ -143,8 +143,9 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "content_element_count": (
             "`Page.content`, `Page.paths`, or `Page.images` reads more glyphs, path and clip segments, dash lengths, "
             "and items than `max_elements` (or `Document.subset_fonts` counts more than 262,144 elements), `Canvas` "
-            "holds more than 1,048,576 path points or gradient stops or repeats a gradient more than 4,096 cycles, or "
-            "`Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image."
+            "holds more than 1,048,576 path points or gradient stops or repeats a gradient more than 4,096 cycles, "
+            "`Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image, or "
+            "`Document.image_for_output` reads an image with more than 4,096 alternate entries."
         ),
         "text_glyph_count": (
             "`Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the "
@@ -244,7 +245,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "shaped_glyph_count": (
             "Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit."
         ),
-        "font_input_size": "The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB.",
+        "font_input_size": (
+            "The font that `Font.from_file` or `Font.from_bytes` loads, or the Type 1 program that "
+            "`Document.subset_fonts` reads, is larger than 64 MiB."
+        ),
         "page_fonts_tree": (
             "`Page.fonts` follows more than 64 `/Parent` links when looking up inherited page resources."
         ),
@@ -297,8 +301,9 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "The prefixes that setting `Document.page_labels` writes are longer than 1 MiB in UTF-8 together."
         ),
         "optional_content_count": (
-            "The document's `/OCGs`, `/Configs`, or an optional-content configuration array holds, or `Layers.add` or "
-            "`LayerMembership` would give it, more than 4,096 entries."
+            "A document group list, membership group list, or optional-content configuration array holds more than "
+            "4,096 entries, or `Layers.add` or `LayerMembership` would exceed that limit. A usage lookup counts its application entries "
+            "and the group entries of applications for the requested event together."
         ),
         "optional_content_expression": (
             "`Layers.visible` evaluates a `/VE` visibility expression deeper than 32 levels or with more than 4,096 "

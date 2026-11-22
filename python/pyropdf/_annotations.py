@@ -336,9 +336,9 @@ class Sound:
     """
 
     data: bytes
-    """The sample data."""
-    rate: float
-    """Samples per second per channel, ``/R``."""
+    """Embedded samples, or empty bytes when the sound is in an external file."""
+    rate: float | None
+    """Samples per second per channel, or None when an external file defines its own rate."""
     channels: int
     """The sound channels, ``/C``: 1 when absent."""
     bits: int
@@ -347,6 +347,53 @@ class Sound:
     """The encoding of the sample values, ``/E``: :attr:`SoundEncoding.RAW` when absent."""
     compression: str | None
     """The sound compression format, ``/CO``, or ``None`` for uncompressed samples."""
+    compression_parameters: Array | Dictionary | None = None
+    """Live parameters for the sound compression format, including stream parameters."""
+    external_file: String | Dictionary | None = None
+    """The external file specification, if present. Reading sound metadata never opens it."""
+
+    @classmethod
+    def from_stream(
+        cls, stream: Stream, *, decode: bool = True, max_size: int | None = _DEFAULT_MAX_STREAM_DATA_SIZE
+    ) -> Sound:
+        """Read a sound stream's samples and metadata, including streams referenced by Sound actions."""
+        _validate_optional_positive_int("max_size", max_size)
+        if not isinstance(decode, bool):
+            msg = f"decode must be a bool: {decode!r}"
+            raise TypeError(msg)
+        if not isinstance(stream, Stream):
+            msg = "expected a sound stream"
+            raise TypeError(msg)
+        external = stream.get("F")
+        if external is not None and (not isinstance(external, (String, Dictionary)) or isinstance(external, Stream)):
+            msg = "the sound's /F must be a file specification"
+            raise MalformedPdfError(msg)
+        raw_rate = stream.get("R")
+        rate = None if external is not None and raw_rate is None else _sound_number(raw_rate, "R", integer=False)
+        channels = int(_sound_number(stream.get("C", 1), "C", integer=True))
+        bits = int(_sound_number(stream.get("B", 8), "B", integer=True))
+        encoding = stream.get("E", Name("Raw"))
+        if not isinstance(encoding, Name) or encoding not in SoundEncoding._value2member_map_:
+            msg = f"the sound's /E must be Raw, Signed, muLaw, or ALaw: {encoding!r}"
+            raise MalformedPdfError(msg)
+        compression = stream.get("CO")
+        if compression is not None and not isinstance(compression, Name):
+            msg = f"the sound's /CO must be a name: {compression!r}"
+            raise MalformedPdfError(msg)
+        parameters = stream.get("CP")
+        if parameters is not None and not isinstance(parameters, (Array, Dictionary)):
+            msg = "the sound's /CP must be an array, dictionary, or stream"
+            raise MalformedPdfError(msg)
+        return cls(
+            data=stream.read(decode=decode, max_size=max_size) if external is None else b"",
+            rate=rate,
+            channels=channels,
+            bits=bits,
+            encoding=SoundEncoding(encoding),
+            compression=None if compression is None else str(compression),
+            compression_parameters=parameters,
+            external_file=external,
+        )
 
 
 def _sound_number(value: object, name: str, *, integer: bool) -> float:
@@ -1611,25 +1658,7 @@ class Annotation(_AppearanceOwner):
         if not isinstance(stream, Stream):
             msg = f"the sound annotation's /Sound must be a stream: {stream!r}"
             raise MalformedPdfError(msg)
-        rate = _sound_number(stream.get("R"), "R", integer=False)
-        channels = int(_sound_number(stream.get("C", 1), "C", integer=True))
-        bits = int(_sound_number(stream.get("B", 8), "B", integer=True))
-        encoding = stream.get("E", Name("Raw"))
-        if not isinstance(encoding, Name) or encoding not in SoundEncoding._value2member_map_:
-            msg = f"the sound's /E must be Raw, Signed, muLaw, or ALaw: {encoding!r}"
-            raise MalformedPdfError(msg)
-        compression = stream.get("CO")
-        if compression is not None and not isinstance(compression, Name):
-            msg = f"the sound's /CO must be a name: {compression!r}"
-            raise MalformedPdfError(msg)
-        return Sound(
-            data=stream.read(decode=decode, max_size=max_size),
-            rate=float(rate),
-            channels=channels,
-            bits=bits,
-            encoding=SoundEncoding(encoding),
-            compression=None if compression is None else str(compression),
-        )
+        return Sound.from_stream(stream, decode=decode, max_size=max_size)
 
     def __eq__(self, other: object) -> bool:
         """Compare the page and the annotation: its object, or its position for a direct dictionary."""

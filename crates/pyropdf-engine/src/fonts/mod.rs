@@ -19,6 +19,7 @@ mod sfnt;
 pub mod shape;
 #[cfg(test)]
 mod tests;
+pub mod type1;
 pub mod type3;
 
 /// A subset font program.

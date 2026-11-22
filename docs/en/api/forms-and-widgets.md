@@ -214,6 +214,30 @@ Field.widgets: list[Widget]
 
 The widgets that show the field, in page order, each a `Widget` handle.
 
+### `Field.rich_text`
+
+```python
+Field.rich_text: str | None
+```
+
+Read or replace the terminal text field's XHTML value (`/RV`).
+
+Writing XHTML derives the plain `/V` and regenerates the widgets' appearances.
+An existing stream remains a stream. Assigning `None` removes the XHTML and
+leaves the plain value available. A plain value assignment also clears stale XHTML.
+
+Settable.
+
+### `Field.default_style`
+
+```python
+Field.default_style: str | None
+```
+
+Read or replace the field's default inline CSS (`/DS`); `None` removes it.
+
+Settable.
+
 ### `Field.value`
 
 ```python
@@ -308,6 +332,49 @@ number. A document without a form is an empty mapping. Reads refuse
 more than 4,096 fields or tree nodes, 8,192 edges, 64 levels, 4,096
 widgets, 1 MiB of names or values, or 4,096 value items with
 `PdfError` rather than return part of the form.
+
+### `Form.xfa_packet_names`
+
+```python
+Form.xfa_packet_names: tuple[str, ...]
+```
+
+The names of existing XFA packets in document order, including repeated names.
+
+An XDP stream exposes its direct child element names. A packet array exposes
+its stored names, including the opening and closing XDP wrapper packets.
+
+### `Form.xfa_packet`
+
+```python
+Form.xfa_packet(index: int) -> bytes
+```
+
+Return the original decoded XML bytes of an existing XFA packet by index.
+
+### `Form.replace_xfa_packet`
+
+```python
+Form.replace_xfa_packet(index: int, data: bytes)
+```
+
+Replace an existing XFA packet with XML bytes in the resource's encoding.
+
+### `Form.remove_xfa_packet`
+
+```python
+Form.remove_xfa_packet(index: int)
+```
+
+Remove an existing packet if the remaining document is a well-formed XDP resource.
+
+### `Form.remove_xfa`
+
+```python
+Form.remove_xfa() -> bool
+```
+
+Remove the existing XFA resource, returning whether one was present.
 
 ### `Form.repair_radio_groups`
 
@@ -713,6 +780,8 @@ TextField(
     rect: Sequence[float],
     *,
     value: str | None = None,
+    rich_text: str | None = None,
+    default_style: str | None = None,
     default_value: str | None = None,
     max_length: int | None = None,
     font: Font | None = None,
@@ -735,7 +804,8 @@ Helvetica by default, at `font_size` points (0 fits the text; written
 to `/DA` in the page's user space), in `text_color`, aligned by
 `align`. `flags` adds `FieldFlags` such as `MULTILINE`,
 `PASSWORD`, `COMB`, `REQUIRED`, or `READ_ONLY`; `max_length`
-bounds the text.
+bounds the text. `rich_text` supplies XHTML and derives the plain value;
+`default_style` supplies the default CSS declaration.
 
 ## `Widget`
 
