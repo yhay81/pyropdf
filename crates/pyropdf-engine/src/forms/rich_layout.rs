@@ -569,6 +569,7 @@ pub(super) fn draw(
             size: (widget.width, widget.height),
             matrix: widget.matrix,
             font: None,
+            icon: None,
         },
         fonts.into_vec(),
         embedded.into_vec(),
