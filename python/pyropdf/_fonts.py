@@ -309,7 +309,8 @@ def _program(descriptor: object) -> tuple[Stream, str] | None:
             return stream, "sfnt"
         if subtype in _CFF:
             return stream, "cff"
-    return None
+    stream = descriptor.get("FontFile")
+    return (stream, "type1") if isinstance(stream, Stream) else None
 
 
 def _descriptors(font: Dictionary) -> Iterator[Dictionary]:
@@ -458,6 +459,27 @@ def _kept_glyphs(programs: dict[int, _Program], used: Iterator[list[int]]) -> di
     return keep
 
 
+def _rewrite_program(document: Document, program: _Program, keep: list[int]) -> tuple[bytes, int, int, int] | None:
+    """Update the program and its format-specific segment lengths, or keep it intact."""
+    data = program.stream.read()
+    lengths = None
+    if program.format == "type1":
+        clear, encrypted = program.stream.get("Length1"), program.stream.get("Length2")
+        if type(clear) is not int or type(encrypted) is not int or min(clear, encrypted) < 0:
+            return None
+        lengths = (clear, encrypted)
+    subset = _core.subset_font_program(data, program.format, keep, lengths, document._core())  # noqa: SLF001
+    if subset is None or len(subset[0]) >= len(data):
+        return None
+    new, glyphs, kept = subset
+    program.stream.write(new)
+    if lengths is not None:
+        program.stream["Length2"] = lengths[1] - (len(data) - len(new))
+    elif "Length1" in program.stream:
+        program.stream["Length1"] = len(new)
+    return new, len(data), glyphs, kept
+
+
 def subset_fonts(document: Document) -> tuple[SubsetFont, ...]:
     """Subset each embedded program to the glyphs drawn, in one transaction, and report what changed."""
     report: list[SubsetFont] = []
@@ -468,14 +490,10 @@ def subset_fonts(document: Document) -> tuple[SubsetFont, ...]:
         for xref, program in programs.items():
             if xref not in keep:
                 continue
-            data = program.stream.read()
-            subset = _core.subset_font_program(data, program.format, keep[xref])
-            if subset is None or len(subset[0]) >= len(data):
+            result = _rewrite_program(document, program, keep[xref])
+            if result is None:
                 continue
-            new, glyphs, kept = subset
-            program.stream.write(new)
-            if "Length1" in program.stream:
-                program.stream["Length1"] = len(new)
+            new, before, glyphs, kept = result
             tag = _tag(new)
             for descriptor in program.descriptors:
                 _rename(descriptor, "FontName", tag)
@@ -493,7 +511,7 @@ def subset_fonts(document: Document) -> tuple[SubsetFont, ...]:
                     name=str(name or ""),
                     glyphs=glyphs,
                     kept=kept,
-                    size_before=len(data),
+                    size_before=before,
                     size_after=len(new),
                 )
             )
@@ -1013,7 +1031,7 @@ def _flags(font: _core._Font) -> int:
     return flags
 
 
-def _type0(document: Document, face: Font) -> int:
+def _type0(document: Document, face: Font, *, editable: bool = False) -> int:
     """Write the Type0 font of an embedded face, its program provisional with all its glyphs."""
     font = face._font  # noqa: SLF001 - the package's own face.
     if not font.outlines:
@@ -1023,7 +1041,7 @@ def _type0(document: Document, face: Font) -> int:
     program = cast("bytes", font.program())
     cff = font.cff
     file_key = "FontFile3" if cff else "FontFile2"
-    file_entries: dict[str, object] = {"Subtype": Name("OpenType")} if cff else {}
+    file_entries: dict[str, object] = {"Subtype": Name("OpenType")} if cff else {"Length1": len(program)}
     program_xref = objects.add_stream(program, file_entries)
     x0, y0, x1, y1 = font.bbox
     cap_height, italic_angle = font.descriptor_metrics
@@ -1064,7 +1082,8 @@ def _type0(document: Document, face: Font) -> int:
             "ToUnicode": objects[to_unicode],
         }
     )
-    _core.mark_font_subset(document._core(), xref)  # noqa: SLF001 - the package's own core.
+    if not editable:
+        _core.mark_font_subset(document._core(), xref)  # noqa: SLF001 - the package's own core.
     return xref
 
 
@@ -1082,13 +1101,16 @@ def _type0_parts(document: Document, xref: int) -> tuple[Dictionary, Stream] | N
     return descendant, to_unicode
 
 
-def embedded_font(document: Document, face: Font, cache: dict[bytes, int]) -> int:
+def embedded_font(document: Document, face: Font, cache: dict[bytes, int], *, editable: bool = False) -> int:
     """Return the Type0 font of ``face`` in ``document``, written on first use.
 
     ``cache`` maps the digests of programs to the fonts written for them; an
     entry that an undo removed or another write replaced is written again.
     """
     key = face._key()  # noqa: SLF001 - the package's own face.
+    if editable:
+        # Keep the full font for new caption text after reopening the document.
+        key = b"editable:" + key
     xref = cache.get(key)
     if xref is not None and _type0_parts(document, xref) is not None:
         base = document.objects[xref].get("BaseFont")
@@ -1097,7 +1119,7 @@ def embedded_font(document: Document, face: Font, cache: dict[bytes, int]) -> in
         # A save renames the font with a subset tag.
         if text == name or (_TAG.match(text) is not None and text[7:] == name):
             return xref
-    xref = _type0(document, face)
+    xref = _type0(document, face, editable=editable)
     cache[key] = xref
     return xref
 
@@ -1161,7 +1183,9 @@ def _cmap(mapped: dict[int, str]) -> bytes:
     return b"".join(lines)
 
 
-def add_glyphs(document: Document, xref: int, face: Font, glyphs: Sequence[tuple[int, str]]) -> dict[int, str]:
+def add_glyphs(
+    document: Document, xref: int, face: Font, glyphs: Sequence[tuple[int, str]], *, editable: bool = False
+) -> dict[int, str]:
     """Record the widths and texts of ``glyphs`` in the Type0 font ``xref`` and return the texts that the CMap maps.
 
     Each glyph maps to its text in the ToUnicode CMap unless the CMap
@@ -1194,7 +1218,8 @@ def add_glyphs(document: Document, xref: int, face: Font, glyphs: Sequence[tuple
     if new:
         descendant["W"] = _w_array(widths)
         # A save subsets the program to the glyphs of ``W``.
-        _core.mark_font_subset(document._core(), xref)  # noqa: SLF001 - the package's own core.
+        if not editable:
+            _core.mark_font_subset(document._core(), xref)  # noqa: SLF001 - the package's own core.
     if added:
         stream.write(_cmap(mapped))
     return {glyph: mapped[glyph] for glyph, _ in glyphs if glyph in mapped}

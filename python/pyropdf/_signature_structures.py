@@ -35,6 +35,7 @@ from pyropdf._collections import (
 )
 from pyropdf._errors import LimitError, MalformedPdfError, PdfError
 from pyropdf._fonts import Font
+from pyropdf._metadata import _require_pdf20 as require_signature_pdf20
 from pyropdf._metadata import _require_version, pdf_date
 from pyropdf._objects import (
     _DEFAULT_MAX_STREAM_DATA_SIZE,
@@ -44,8 +45,10 @@ from pyropdf._objects import (
     Stream,
     String,
     _catalog,
+    _direct_value,
     _encode,
 )
+from pyropdf._prepress import append_annotation
 
 if TYPE_CHECKING:
     from pyropdf._document import Document
@@ -53,6 +56,7 @@ if TYPE_CHECKING:
 
 #: Maximum field names in a ``FieldLock``, streams in a ``DSS`` array, or keys in ``/VRI``.
 _MAX_LOCK_FIELDS = 4096
+_MAX_SEED_ENTRIES = 16
 _MAX_DSS_ENTRIES = 4096
 _MAX_SIG_REFS = 64
 #: Uppercase 40-character SHA-1 hexadecimal key required by ``VRIMap`` (ISO 32000-2 Table 261).
@@ -69,6 +73,10 @@ _DIGEST_OIDS: Mapping[str, str] = {
     "2.16.840.1.101.3.4.2.1": "sha256",
     "2.16.840.1.101.3.4.2.2": "sha384",
     "2.16.840.1.101.3.4.2.3": "sha512",
+    "2.16.840.1.101.3.4.2.8": "sha3_256",
+    "2.16.840.1.101.3.4.2.9": "sha3_384",
+    "2.16.840.1.101.3.4.2.10": "sha3_512",
+    "2.16.840.1.101.3.4.2.12": "shake256",
 }
 _DER_SEQUENCE = 0x30
 _DER_OCTET_STRING = 0x04
@@ -171,15 +179,19 @@ class FieldLock:
 
     ``FieldMdpAction.ALL`` locks every field and forbids ``fields``;
     ``INCLUDE`` and ``EXCLUDE`` require one to 4,096 non-empty field names.
+    ``permission`` sets the PDF 2.0 document access level in a field lock (``/P``).
     """
 
     action: FieldMdpAction
     fields: tuple[str, ...]
+    permission: DocMdpPermission | None
 
     def __init__(
         self,
         action: FieldMdpAction = FieldMdpAction.ALL,
         fields: Sequence[str] = (),
+        *,
+        permission: DocMdpPermission | None = None,
     ) -> None:
         """Validate ``action`` and ``fields``."""
         if not isinstance(action, str):
@@ -189,6 +201,9 @@ class FieldLock:
         checked_fields = _validate_lock_fields(checked_action, fields)
         object.__setattr__(self, "action", checked_action)
         object.__setattr__(self, "fields", checked_fields)
+        object.__setattr__(
+            self, "permission", None if permission is None else _validate_doc_mdp(permission, "permission")
+        )
 
 
 def _buffer_bytes(value: object, label: str, max_size: int | None = None, *, embedded_file: bool = False) -> bytes:
@@ -676,7 +691,7 @@ def _signed_file_xrefs(document: Document) -> set[int]:
     return {number for _, numbers in found[2] for number in numbers}
 
 
-def _parse_field_lock_dict(raw: object) -> FieldLock | None:
+def _parse_field_lock_dict(raw: object, *, transform: bool = False) -> FieldLock | None:
     """Parse a ``SigFieldLock`` or ``FieldMDPTransformParameters`` dictionary into a :class:`FieldLock`."""
     if not _is_dict(raw):
         return None
@@ -686,10 +701,14 @@ def _parse_field_lock_dict(raw: object) -> FieldLock | None:
         action = FieldMdpAction(str(raw_action)) if isinstance(raw_action, Name) else None
     except ValueError:
         action = None
-    if action is None:
+    p = None if transform else lock_dict.get("P")
+    if action is None or (
+        p is not None and (isinstance(p, bool) or not isinstance(p, (int, float)) or p not in (1, 2, 3))
+    ):
         return None
+    permission = None if p is None else DocMdpPermission(int(p))
     if action is FieldMdpAction.ALL:
-        return FieldLock(FieldMdpAction.ALL)
+        return FieldLock(FieldMdpAction.ALL, permission=permission)
     raw_fields = lock_dict.get("Fields")
     if not isinstance(raw_fields, Array) or len(raw_fields) == 0:
         return None
@@ -699,7 +718,7 @@ def _parse_field_lock_dict(raw: object) -> FieldLock | None:
         raise LimitError(code, msg)
     if any(not isinstance(item, String) or not item.text for item in raw_fields):
         return None
-    return FieldLock(action, [cast("String", item).text for item in raw_fields])
+    return FieldLock(action, [cast("String", item).text for item in raw_fields], permission=permission)
 
 
 def _sig_field_lock_entries(lock: FieldLock, doc_mdp: DocMdpPermission | None = None) -> dict[str, object]:
@@ -709,8 +728,9 @@ def _sig_field_lock_entries(lock: FieldLock, doc_mdp: DocMdpPermission | None = 
     }
     if lock.fields:
         entries["Fields"] = list(lock.fields)
-    if doc_mdp is not None:
-        entries["P"] = int(doc_mdp)
+    permission = lock.permission or doc_mdp
+    if permission is not None:
+        entries["P"] = int(permission)
     return entries
 
 
@@ -721,6 +741,19 @@ def read_field_lock(field: Field) -> FieldLock | None:
     if field.type is not FieldType.SIGNATURE:
         return None
     return _parse_field_lock_dict(field.obj.get("Lock"))
+
+
+def _updated_lock(
+    document: Document, old: object, lock: FieldLock, default: DocMdpPermission | None = None
+) -> Dictionary:
+    if lock.permission is not None:
+        require_signature_pdf20(document, _catalog(document), "field lock permissions")
+    replacement = document.objects[document.objects.add(old if _is_dict(old) else {})]
+    for key, value in _sig_field_lock_entries(lock, default).items():
+        replacement[key] = value
+    if not lock.fields and "Fields" in replacement:
+        del replacement["Fields"]
+    return replacement
 
 
 def write_field_lock(field: Field, lock: FieldLock | None) -> None:
@@ -742,8 +775,7 @@ def write_field_lock(field: Field, lock: FieldLock | None) -> None:
         catalog = _catalog(document)
         _require_version(document, catalog, (1, 5))
         old_xref = _indirect_xref(holder.get("Lock"))
-        lock_xref = document.objects.add(_sig_field_lock_entries(lock))
-        holder["Lock"] = document.objects[lock_xref]
+        holder["Lock"] = _updated_lock(document, holder.get("Lock"), lock)
         if old_xref is not None and old_xref not in _signed_file_xrefs(document):
             _core.object_free_unreferenced(document._core(), [old_xref])  # noqa: SLF001
 
@@ -812,7 +844,7 @@ def read_field_locks_from_sig(sig_dict: Dictionary | None) -> tuple[FieldLock, .
             break
         if not isinstance(ref, Dictionary) or ref.get("TransformMethod") != "FieldMDP":
             continue
-        lock = _parse_field_lock_dict(ref.get("TransformParams"))
+        lock = _parse_field_lock_dict(ref.get("TransformParams"), transform=True)
         if lock is not None:
             locks.append(lock)
     return tuple(locks)
@@ -874,25 +906,45 @@ def build_reference_entries(
     return refs
 
 
-def ensure_pades_version(document: Document) -> None:
-    """Ensure ``document`` is at least PDF 1.7 and declares ``ETSI_PAdES`` when below PDF 2.0."""
-    from pyropdf._attachments import _version  # noqa: PLC0415
+def _extension_level(value: object) -> int:
+    if (
+        isinstance(value, Dictionary)
+        and not isinstance(value, Stream)
+        and not value.is_indirect
+        and _direct_value(value, "BaseVersion") == "1.7"
+    ):
+        level = _direct_value(value, "ExtensionLevel")
+        if type(level) is int and level > 0:
+            return level
+    return 0
 
+
+def ensure_pades_version(document: Document) -> None:
+    """Declare the PAdES signature extension in PDF editions before 2.0 (ETSI EN 319 142-1, 5.6)."""
+    if _version(document) >= (2, 0):
+        return
     catalog = _catalog(document)
     _require_version(document, catalog, (1, 7))
-    if _version(document) < (2, 0):
-        pades_ext: dict[str, object] = {
-            "Type": Name("DeveloperExtensions"),
-            "BaseVersion": Name("1.7"),
-            "ExtensionLevel": 2,
-        }
-        raw_ext = catalog.get("Extensions")
-        if _is_dict(raw_ext) and not cast("Dictionary", raw_ext).is_indirect:
-            ext_dict = cast("Dictionary", raw_ext)
-            if "ETSI_PAdES" not in ext_dict:
-                ext_dict["ETSI_PAdES"] = pades_ext
-        elif raw_ext is None:
-            catalog["Extensions"] = {"Type": Name("Extensions"), "ETSI_PAdES": pades_ext}
+    extensions = catalog.get("Extensions")
+    if extensions is None:
+        catalog["Extensions"] = {"Type": Name("Extensions")}
+        extensions = catalog["Extensions"]
+    if not isinstance(extensions, Dictionary) or isinstance(extensions, Stream) or extensions.is_indirect:
+        msg = "a PDF 1.7 catalog Extensions entry must be a direct dictionary"
+        raise PdfError(msg)
+    esic = _extension_level(extensions.get("ESIC"))
+    adobe = _extension_level(extensions.get("ADBE"))
+    if esic >= 2 or adobe >= 8:  # noqa: PLR2004 - registered PAdES signature extension levels.
+        return
+    # Retain a level-1 ESIC declaration for DSS and document timestamps. Adobe level 8 covers both uses.
+    prefix, target = ("ADBE", 8) if esic == 1 else ("ESIC", 2)
+    if extensions.get(prefix) is None:
+        extensions[prefix] = {"Type": Name("DeveloperExtensions"), "BaseVersion": Name("1.7"), "ExtensionLevel": target}
+    elif prefix == "ADBE" and adobe:
+        extensions[prefix]["ExtensionLevel"] = target
+    else:
+        msg = f"the existing {prefix} entry must declare a direct PDF 1.7 developer extension with a positive level"
+        raise PdfError(msg)
 
 
 def write_perms_doc_mdp(document: Document, signature: Dictionary) -> None:
@@ -905,32 +957,9 @@ def write_perms_doc_mdp(document: Document, signature: Dictionary) -> None:
         catalog["Perms"] = {"DocMDP": signature}
 
 
-def inherit_prepared_field_settings(
-    field_obj: Dictionary,
-    doc_mdp: DocMdpPermission | None,
-    field_lock: FieldLock | None,
-    reason: str | None,
-) -> tuple[DocMdpPermission | None, FieldLock | None, str | None]:
-    """Read ``/Lock`` and ``/SV`` seed values from an existing unsigned signature field when not overridden."""
-    if field_lock is None:
-        field_lock = _parse_field_lock_dict(field_obj.get("Lock"))
-    sv = field_obj.get("SV")
-    if _is_dict(sv):
-        sv_dict = cast("Dictionary", sv)
-        if doc_mdp is None:
-            mdp = sv_dict.get("MDP")
-            if _is_dict(mdp):
-                raw_p = cast("Dictionary", mdp).get("P")
-                if _is_non_bool_int(raw_p) and int(cast("int", raw_p)) in (1, 2, 3):
-                    doc_mdp = DocMdpPermission(int(cast("int", raw_p)))
-        if reason is None:
-            reasons = sv_dict.get("Reasons")
-            if isinstance(reasons, Array) and len(reasons) == 1 and isinstance(reasons[0], String):
-                reason = reasons[0].text
-    return doc_mdp, field_lock, reason
-
-
-def _ensure_unsigned_signature_field(document: Document, field: str) -> Dictionary:
+def ensure_unsigned_signature_field(
+    document: Document, field: str, *, signature_flags: int = _SIG_EXIST_FLAG
+) -> Dictionary:
     """Return the dictionary of an existing or newly added unsigned signature field ``field``."""
     from pyropdf._form import FieldType  # noqa: PLC0415
 
@@ -951,7 +980,7 @@ def _ensure_unsigned_signature_field(document: Document, field: str) -> Dictiona
         if len(document.pages) == 0:
             msg = "a document without pages has no page for the signature field's widget"
             raise ValueError(msg)
-        page = document.pages[0].obj
+        page = document.pages[0]
         target = document.objects[
             document.objects.add(
                 {
@@ -961,15 +990,11 @@ def _ensure_unsigned_signature_field(document: Document, field: str) -> Dictiona
                     "T": field,
                     "Rect": [0, 0, 0, 0],
                     "F": _INVISIBLE_WIDGET_FLAGS,
-                    "P": page,
+                    "P": page.obj,
                 }
             )
         ]
-        annotations = page.get("Annots")
-        if isinstance(annotations, Array):
-            annotations.append(target)
-        else:
-            page["Annots"] = [target]
+        append_annotation(page, target)
         acroform = document.catalog.get("AcroForm")
         if not isinstance(acroform, Dictionary):
             document.catalog["AcroForm"] = {"Fields": [target]}
@@ -981,7 +1006,7 @@ def _ensure_unsigned_signature_field(document: Document, field: str) -> Dictiona
                 acroform["Fields"] = [target]
     acroform = document.catalog["AcroForm"]
     flags = acroform.get("SigFlags")
-    acroform["SigFlags"] = (flags if _is_non_bool_int(flags) else 0) | _SIG_EXIST_FLAG
+    acroform["SigFlags"] = (flags if _is_non_bool_int(flags) else 0) | signature_flags
     return target
 
 
@@ -1052,6 +1077,76 @@ def _build_sv_entries(
     return entries
 
 
+def _seed_version(document: Document, catalog: Dictionary, supplied: Mapping[str, object] | None) -> None:
+    from pyropdf._signing import _declare_signature_extensions  # noqa: PLC0415
+
+    if supplied is None:
+        return
+    if not isinstance(supplied, Mapping) or len(supplied) > _MAX_SEED_ENTRIES:
+        msg = "seed_values must be a mapping of signature seed entries"
+        raise ValueError(msg)
+    cert = supplied.get("Cert")
+    if (
+        "LockDocument" in supplied
+        or "AppearanceFilter" in supplied
+        or (
+            isinstance(cert, Mapping)
+            and any(
+                key in cert
+                for key in (
+                    "SignaturePolicyOID",
+                    "SignaturePolicyHashValue",
+                    "SignaturePolicyHashAlgorithm",
+                    "SignaturePolicyCommitmentType",
+                )
+            )
+        )
+    ):
+        require_signature_pdf20(document, catalog, "PDF 2.0 signature seeds")
+    digests = supplied.get("DigestMethod")
+    if isinstance(digests, (Array, list, tuple)):
+        if len(digests) > _MAX_LOCK_FIELDS:
+            code = "object_count"
+            msg = "signature seed digest array exceeds its budget"
+            raise LimitError(code, msg)
+        if any(name in (Name("SHA3-256"), Name("SHA3-384"), Name("SHA3-512"), Name("SHAKE256")) for name in digests):
+            _declare_signature_extensions(document, hash_extension=True, curve_extension=False)
+
+
+def _update_seed(
+    document: Document, field: Dictionary, entries: dict[str, object], supplied: Mapping[str, object] | None
+) -> None:
+    from pyropdf import typed  # noqa: PLC0415
+
+    old = field.get("SV")
+    replacement = document.objects[document.objects.add(old if _is_dict(old) else {})]
+    for key, value in entries.items():
+        if key in ("Type", "Filter") and key in replacement:
+            continue
+        if key == "MDP" and _is_dict(replacement.get("MDP")) and isinstance(value, dict):
+            # Copy a shared MDP dictionary before editing its policy.
+            new_mdp = document.objects[document.objects.add(replacement[key])]
+            new_mdp["P"] = value["P"]
+            replacement[key] = new_mdp
+        else:
+            replacement[key] = value
+    if supplied is not None:
+        view = typed.SigFieldSeedValue(replacement)
+        for key, value in supplied.items():
+            if key in entries and key not in ("Type", "Filter"):
+                msg = f"/{key} was supplied both in seed_values and as a signing option"
+                raise ValueError(msg)
+            replacement[key] = value
+            # Read and write the value through the generated descriptor. This
+            # checks the key, its PDF type and the enumerated name values.
+            view[key] = view[key]
+    field["SV"] = replacement
+    if supplied is not None:
+        from pyropdf._signature_seeds import validate_seed_entries  # noqa: PLC0415
+
+        validate_seed_entries(replacement, supplied, document)
+
+
 @contextmanager
 def signature_operation(document: Document, name: str) -> Generator[None, None, None]:
     """Apply a signature edit and its structural checks under one operation budget."""
@@ -1065,30 +1160,13 @@ def signature_operation(document: Document, name: str) -> Generator[None, None, 
     _core.end_transaction(core, True)  # noqa: FBT003 - commit the operation.
 
 
-def require_signature_pdf20(document: Document, catalog: Dictionary, feature: str) -> None:
-    """Refuse a PDF 2.0 promotion that introduces structural defects in existing objects."""
-    before = document.check() if _version(document) < (2, 0) else None
-    _require_collection_version(document, catalog, (2, 0))
-    if before is None:
-        return
-    after = document.check()
-    if after.truncated:
-        msg = f"cannot promote the document to PDF 2.0 for {feature}: structural defect report is truncated"
-        raise PdfError(msg)
-    existing = set(before.defects)
-    for defect in after.defects:
-        if defect not in existing:
-            location = "trailer" if defect.xref is None else f"object {defect.xref}"
-            msg = f"cannot promote the document to PDF 2.0 for {feature}: {location}, {defect.clause}: {defect.message}"
-            raise PdfError(msg)
-
-
 def prepare_signature(  # noqa: PLR0913 - mirrors Document.prepare_signature keyword options.
     document: Document,
     field: str,
     *,
     doc_mdp: DocMdpPermission | None,
     field_lock: FieldLock | None,
+    seed_values: Mapping[str, object] | None = None,
     is_timestamp: bool,
     reason: str | None,
     location: str | None,
@@ -1108,10 +1186,10 @@ def prepare_signature(  # noqa: PLR0913 - mirrors Document.prepare_signature key
         reserve=reserve,
     )
     step = "prepare signature"
-    with signature_operation(document, step) if is_timestamp else document.transaction(step):
+    with signature_operation(document, step):
         catalog = _catalog(document)
         retired: list[int] = []
-        needs_sv = checked_mdp is not None or is_timestamp or reason is not None
+        needs_sv = checked_mdp is not None or is_timestamp or reason is not None or seed_values is not None
         if is_timestamp:
             require_signature_pdf20(document, catalog, "/DocTimeStamp")
         elif needs_sv:
@@ -1119,18 +1197,23 @@ def prepare_signature(  # noqa: PLR0913 - mirrors Document.prepare_signature key
         elif field_lock is not None:
             _require_version(document, catalog, (1, 5))
 
-        sig_field = _ensure_unsigned_signature_field(document, field)
+        _seed_version(document, catalog, seed_values)
+        sig_field = ensure_unsigned_signature_field(document, field)
         if field_lock is not None:
             if (old_lock := _indirect_xref(sig_field.get("Lock"))) is not None:
                 retired.append(old_lock)
             lock_mdp = checked_mdp if catalog.get("Version") == "2.0" else None
-            sig_field["Lock"] = document.objects[document.objects.add(_sig_field_lock_entries(field_lock, lock_mdp))]
+            sig_field["Lock"] = _updated_lock(document, sig_field.get("Lock"), field_lock, lock_mdp)
 
         if needs_sv:
             if (old_sv := _indirect_xref(sig_field.get("SV"))) is not None:
                 retired.append(old_sv)
-            sv_entries = _build_sv_entries(is_timestamp=is_timestamp, checked_mdp=checked_mdp, reason=reason)
-            sig_field["SV"] = document.objects[document.objects.add(sv_entries)]
+            _update_seed(
+                document,
+                sig_field,
+                _build_sv_entries(is_timestamp=is_timestamp, checked_mdp=checked_mdp, reason=reason),
+                seed_values,
+            )
 
         candidates = sorted(set(retired) - _signed_file_xrefs(document))
         if candidates:

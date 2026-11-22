@@ -49,7 +49,7 @@ use hayro_syntax::object::{self as syntax, FromBytes};
 
 use crate::budget::{Budget, BudgetVec, LimitCode, StreamKind};
 use crate::security::Handler;
-use crate::value::{Bytes, Dict, Reference};
+use crate::value::{Bytes, Dict, Reference, Value};
 use crate::{Error, LimitExceeded, Password, Result};
 
 pub use objstm::ObjectStream;
@@ -514,16 +514,44 @@ impl Index {
     pub fn unlock(&mut self, handler: Handler, budget: &Budget) -> Result<()> {
         if let Some(repair) = &self.repair {
             let rebuilt = scan::rebuild(&self.bytes, Some(&handler), budget)?;
-            *self = Self::from_rebuilt(
+            let mut candidate = Self::from_rebuilt(
                 self.bytes.clone(),
                 self.origin,
                 rebuilt,
                 repair.damage.clone(),
                 budget,
             )?;
+            candidate.install_handler(handler, budget)?;
+            *self = candidate;
+            return Ok(());
         }
-        self.security = Some(handler);
-        Ok(())
+        self.install_handler(handler, budget)
+    }
+
+    fn install_handler(&mut self, handler: Handler, budget: &Budget) -> Result<()> {
+        if !handler.distinguishes_embedded_files() {
+            self.security = Some(handler);
+            return Ok(());
+        }
+        // Role discovery may need a compressed Filespec. Publish neither its
+        // decoded members nor the new credential if discovery subsequently fails.
+        let fresh = objstm::Streams::new(&self.entries, budget)?;
+        let old_streams = std::mem::replace(&mut self.streams, fresh);
+        let old_handler = self.security.replace(handler);
+        match crate::security::embedded::discover(self, None, budget) {
+            Ok(roles) => {
+                self.security
+                    .as_mut()
+                    .expect("the staged handler")
+                    .remember_file_roles(roles);
+                Ok(())
+            }
+            Err(error) => {
+                self.security = old_handler;
+                self.streams = old_streams;
+                Err(error)
+            }
+        }
     }
 
     /// Returns the security handler that [`Index::unlock`] gave.
@@ -551,6 +579,15 @@ impl Index {
     /// Refuses as [`Index::object_stream`] does when the object is a member
     /// of an object stream.
     pub fn object(&self, reference: Reference, budget: &Budget) -> Result<Option<Bytes>> {
+        self.object_with_path(reference, budget, &[])
+    }
+
+    fn object_with_path(
+        &self,
+        reference: Reference,
+        budget: &Budget,
+        path: &[u32],
+    ) -> Result<Option<Bytes>> {
         let Some(entry) = self.get(reference.number()) else {
             return Ok(None);
         };
@@ -560,9 +597,56 @@ impl Index {
         Ok(match entry.location {
             Location::Offset(_) => self.source().uncompressed(reference),
             Location::Member { stream, index } => self
-                .object_stream(stream, budget)?
+                .object_stream_with_path(stream, budget, path)?
                 .and_then(|objects| objects.member(index, reference.number())),
         })
+    }
+
+    /// Parse only a stream's dictionary when comparing its security selectors.
+    pub(crate) fn stream_dictionary(
+        &self,
+        reference: Reference,
+        include_direct: bool,
+        budget: &Budget,
+    ) -> Result<Option<Dict>> {
+        let Some(bytes) = self.source().uncompressed(reference) else {
+            return Ok(None);
+        };
+        // An untouched image can be much larger than the object parse limit.
+        // Inspect just its dictionary when deciding whether its ciphertext changes.
+        let limit = budget
+            .limit(LimitCode::ObjectParseSize)
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(usize::MAX);
+        let view = &bytes[..limit.min(bytes.len())];
+        let start = lex::skip_space(view, 0);
+        if view.len().saturating_sub(start) < 2 && bytes.len() > view.len() {
+            budget.check(LimitCode::ObjectParseSize, bytes.len() as u64)?;
+        }
+        if !view[start..].starts_with(b"<<") {
+            return Ok(None);
+        }
+        let Some(dict) = guard(|| syntax::Dict::from_bytes(&view[start..])) else {
+            budget.check(LimitCode::ObjectParseSize, bytes.len() as u64)?;
+            return Ok(None);
+        };
+        if !dict.data().ends_with(b">>") {
+            budget.check(LimitCode::ObjectParseSize, bytes.len() as u64)?;
+            return Err(Error::malformed("unterminated stream filter dictionary"));
+        }
+        let end = start + dict.data().len();
+        if lex::keyword(&bytes, lex::skip_space(&bytes, end), b"stream").is_none()
+            || !include_direct && (!dict.contains_key(b"Filter") || !dict.data().contains(&b'R'))
+        {
+            return Ok(None);
+        }
+        let raw = bytes
+            .slice(start..end)
+            .expect("the dictionary was parsed from these bytes");
+        match Value::parse(&raw, budget)? {
+            Value::Dict(dict) => Ok(Some(dict)),
+            _ => Err(Error::malformed("invalid stream dictionary")),
+        }
     }
 
     /// Returns object stream `number`, decoded, if an entry names it as the
@@ -577,19 +661,63 @@ impl Index {
     /// streams of an encrypted document that [`Index::unlock`] has not
     /// unlocked.
     pub fn object_stream(&self, number: u32, budget: &Budget) -> Result<Option<&ObjectStream>> {
+        self.object_stream_with_path(number, budget, &[])
+    }
+
+    fn object_stream_with_path(
+        &self,
+        number: u32,
+        budget: &Budget,
+        path: &[u32],
+    ) -> Result<Option<&ObjectStream>> {
         let Some(container) = self.streams.container(number) else {
             return Ok(None);
         };
-        if let Some(outcome) = container.outcome() {
-            return outcome.as_ref().map(Some).map_err(Clone::clone);
-        }
         if self.is_encrypted() && self.security.is_none() {
             return Err(Error::from(Password::Required).context(format!("object stream {number}")));
         }
-        let decoded = objstm::decode(&self.source(), number, self.security.as_ref(), budget)
-            .and_then(|decoded| ObjectStream::new(decoded, self.streams.named(container), budget));
+        if let Some(outcome) = container.outcome() {
+            return outcome.as_ref().map(Some).map_err(Clone::clone);
+        }
+        if path.contains(&number) {
+            return Err(Error::malformed("cyclic object-stream filter dependency"));
+        }
+        let depth = path.len() as u64 + 1;
+        budget.check(LimitCode::ObjectDepth, depth)?;
+        if depth > crate::value::MAX_NESTING as u64 {
+            return Err(crate::LimitExceeded::over(
+                LimitCode::ObjectDepth,
+                crate::value::MAX_NESTING as u64,
+                depth,
+            )
+            .into());
+        }
+        let lookup = |reference, b: &Budget| {
+            let mut active = BudgetVec::new(b);
+            active.try_extend_from_slice(path)?;
+            active.try_push(number)?;
+            self.object_with_path(reference, b, &active)?
+                .map(|bytes| {
+                    b.check(LimitCode::ObjectParseSize, bytes.len() as u64)?;
+                    Value::parse(&bytes, b)
+                })
+                .transpose()
+        };
+        let decoded = objstm::decode(
+            &self.source(),
+            number,
+            self.security.as_ref(),
+            &lookup,
+            budget,
+        )
+        .and_then(|decoded| ObjectStream::new(decoded, self.streams.named(container), budget));
         let computed = match decoded {
-            Err(error) if error.limit().is_some() => return Err(error),
+            Err(error)
+                if error.limit().is_some()
+                    || matches!(error.kind(), crate::ErrorKind::Password(_)) =>
+            {
+                return Err(error);
+            }
             decoded => decoded.map_err(|error| error.context(format!("object stream {number}"))),
         };
         container

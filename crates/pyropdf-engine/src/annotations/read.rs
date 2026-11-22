@@ -631,9 +631,10 @@ impl<'b> PageAnnots<'b> {
     pub fn write_items(
         &self,
         transaction: &mut Transaction,
-        items: Array,
+        mut items: Array,
         budget: &Budget,
     ) -> Result<()> {
+        keep_trap_last(&self.version, &self.items, &mut items, budget)?;
         if let Some(array) = self.array
             && !self.shared()
         {
@@ -655,6 +656,24 @@ impl<'b> PageAnnots<'b> {
         transaction.write(object.number(), &Value::Dict(dict), budget)?;
         Ok(())
     }
+}
+
+/// Appending annotations preserves the trap network's required last position.
+/// Its /Version and /AnnotStates remain the snapshot of the page when trapped.
+pub(crate) fn keep_trap_last(
+    version: &Version,
+    original: &Array,
+    items: &mut Array,
+    budget: &Budget,
+) -> pyropdf_store::Result<()> {
+    if items.len() > original.len()
+        && let Some(last) = original.len().checked_sub(1)
+        && let Some(Value::Dict(dict)) = crate::pages::resolve(version, original.get(last), budget)?
+        && matches!(crate::pages::resolve(version, dict.get("Subtype"), budget)?, Some(Value::Name(name)) if name.as_bytes() == b"TrapNet")
+    {
+        items.iter_mut().into_slice()[last..].rotate_left(1);
+    }
+    Ok(())
 }
 
 pub(super) fn copy_page_dict(
@@ -774,7 +793,7 @@ pub fn annotation_read(
 }
 
 /// Returns the object number of the Type0 font named [`FACE_RESOURCE`] in a
-/// free-text annotation's normal appearance resources, or `None` when none is
+/// free-text or line annotation's normal appearance resources, or `None` when none is
 /// used or the page is gone.
 pub fn annotation_face(
     version: Arc<Version>,
@@ -789,7 +808,10 @@ pub fn annotation_face(
         return Ok(None);
     };
     let (_, dict) = annots.find(index, id)?;
-    if annots.name(&dict, "Subtype")?.as_deref() != Some(b"FreeText".as_slice()) {
+    if !matches!(
+        annots.name(&dict, "Subtype")?.as_deref(),
+        Some(b"FreeText" | b"Line")
+    ) {
         return Ok(None);
     }
     let Some(Value::Dict(appearances)) = annots.resolved(dict.get("AP"))? else {

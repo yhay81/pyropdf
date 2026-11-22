@@ -214,6 +214,30 @@ Field.widgets: list[Widget]
 
 The widgets that show the field, in page order, each a `Widget` handle.
 
+### `Field.rich_text`
+
+```python
+Field.rich_text: str | None
+```
+
+Read or replace the terminal text field's XHTML value (`/RV`).
+
+Writing XHTML derives the plain `/V` and regenerates the widgets' appearances.
+An existing stream remains a stream. Assigning `None` removes the XHTML and
+leaves the plain value available. A plain value assignment also clears stale XHTML.
+
+Settable.
+
+### `Field.default_style`
+
+```python
+Field.default_style: str | None
+```
+
+Read or replace the field's default inline CSS (`/DS`); `None` removes it.
+
+Settable.
+
 ### `Field.value`
 
 ```python
@@ -308,6 +332,49 @@ number. A document without a form is an empty mapping. Reads refuse
 more than 4,096 fields or tree nodes, 8,192 edges, 64 levels, 4,096
 widgets, 1 MiB of names or values, or 4,096 value items with
 `PdfError` rather than return part of the form.
+
+### `Form.xfa_packet_names`
+
+```python
+Form.xfa_packet_names: tuple[str, ...]
+```
+
+The names of existing XFA packets in document order, including repeated names.
+
+An XDP stream exposes its direct child element names. A packet array exposes
+its stored names, including the opening and closing XDP wrapper packets.
+
+### `Form.xfa_packet`
+
+```python
+Form.xfa_packet(index: int) -> bytes
+```
+
+Return the original decoded XML bytes of an existing XFA packet by index.
+
+### `Form.replace_xfa_packet`
+
+```python
+Form.replace_xfa_packet(index: int, data: bytes)
+```
+
+Replace an existing XFA packet with XML bytes in the resource's encoding.
+
+### `Form.remove_xfa_packet`
+
+```python
+Form.remove_xfa_packet(index: int)
+```
+
+Remove an existing packet if the remaining document is a well-formed XDP resource.
+
+### `Form.remove_xfa`
+
+```python
+Form.remove_xfa() -> bool
+```
+
+Remove the existing XFA resource, returning whether one was present.
 
 ### `Form.repair_radio_groups`
 
@@ -481,6 +548,23 @@ Form.__len__() -> int
 ```
 
 Return the number of distinct field names.
+
+## `IconFit`
+
+```python
+IconFit(
+    *,
+    when: Literal['always', 'larger', 'smaller', 'never'] = 'always',
+    proportional: bool = True,
+    anchor: tuple[float, float] = (0.5, 0.5),
+    fit_bounds: bool = False,
+)
+```
+
+Pushbutton icon scaling and alignment, shared by its three display modes.
+
+Anchor coordinates select the fraction of unused space on the left and
+bottom. A true fit_bounds includes the border in the available rectangle.
 
 ## `ListBox`
 
@@ -696,6 +780,8 @@ TextField(
     rect: Sequence[float],
     *,
     value: str | None = None,
+    rich_text: str | None = None,
+    default_style: str | None = None,
     default_value: str | None = None,
     max_length: int | None = None,
     font: Font | None = None,
@@ -718,7 +804,8 @@ Helvetica by default, at `font_size` points (0 fits the text; written
 to `/DA` in the page's user space), in `text_color`, aligned by
 `align`. `flags` adds `FieldFlags` such as `MULTILINE`,
 `PASSWORD`, `COMB`, `REQUIRED`, or `READ_ONLY`; `max_length`
-bounds the text.
+bounds the text. `rich_text` supplies XHTML and derives the plain value;
+`default_style` supplies the default CSS declaration.
 
 ## `Widget`
 
@@ -735,6 +822,48 @@ raises `StaleObjectError` while the widget is not on its page and
 `StalePageError` while the page is gone, and it works again if
 undo restores them.
 
+### `Widget.obj`
+
+```python
+Widget.obj: Dictionary
+```
+
+The widget dictionary as a live low-level handle.
+
+### `Widget.appearance_stream`
+
+```python
+Widget.appearance_stream(
+    mode: Mode = 'normal',
+    *,
+    state: str | None = None,
+) -> Stream | None
+```
+
+Return the displayed Form for a normal, rollover or down appearance.
+
+A missing interaction appearance falls back to normal. An appearance
+dictionary selects the named state or the annotation's current /AS.
+
+### `Widget.set_appearance`
+
+```python
+Widget.set_appearance(
+    mode: Mode,
+    source: Stream | bytes,
+    *,
+    state: str | None = None,
+    bbox: Sequence[float] | None = None,
+    resources: Mapping[str, object] | None = None,
+) -> Stream
+```
+
+Attach a Form or build it from PDF drawing commands in the given local bounding box.
+
+Byte sources use the owner's rectangle size when bbox is omitted. A named
+state updates one member of a state dictionary. Other interaction modes,
+state names and shared appearance objects retain their values.
+
 ### `Widget.page`
 
 ```python
@@ -750,14 +879,6 @@ Widget.xref: int
 ```
 
 The widget's object number, or 0 for a dictionary stored in `/Annots` itself.
-
-### `Widget.obj`
-
-```python
-Widget.obj: Dictionary
-```
-
-The widget dictionary as a live low-level handle.
 
 ### `Widget.scripts`
 
@@ -838,6 +959,43 @@ Widget.background_color: Color | None
 The background color, `/MK /BG`; `del` removes it.
 
 Settable.
+
+### `Widget.icon`
+
+```python
+Widget.icon(mode: Mode = 'normal') -> Stream | None
+```
+
+Return the explicit icon Form for normal, rollover or down.
+
+### `Widget.icon_fit`
+
+```python
+Widget.icon_fit: IconFit
+```
+
+Read or replace the shared pushbutton icon fit dictionary.
+
+Settable.
+
+### `Widget.set_icon`
+
+```python
+Widget.set_icon(
+    mode: Mode,
+    icon: Stream,
+    *,
+    fit: IconFit | None = None,
+    position: int | None = None,
+)
+```
+
+Set an interaction icon and redraw the pushbutton in one transaction.
+
+An indirect Form from this document supplies the icon. The first icon
+defaults to an icon-only layout. An explicit position selects the PDF
+caption layout (0 caption, 1 icon, 2 below, 3 above, 4 right, 5 left,
+6 overlaid). Existing explicit positions and other modes are retained.
 
 ### `Widget.caption`
 

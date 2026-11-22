@@ -42,7 +42,8 @@ jobs:
 
   python:
     name: Python ${{ matrix.python }}
-    timeout-minutes: 20
+    # The floor interpreter also runs both validator jars and the pdf.js corpus.
+    timeout-minutes: ${{ matrix.python == '3.11' && 30 || 20 }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -92,17 +93,8 @@ jobs:
         # runner's Java runs the jars, pinned by their SHA-256; the Arlington
         # build checks each file against the Arlington PDF Model.
         if: matrix.python == '3.11'
-        env:
-          VERAPDF_URL: https://repo1.maven.org/maven2/org/verapdf/apps/greenfield-apps/1.28.2/greenfield-apps-1.28.2.jar
-          VERAPDF_SHA256: 687d4d8bcfec48c9f7e931cf78ed061f1eeccfba55d4cdc000ba9b4d8aa46ce6
-          ARLINGTON_URL: https://repo1.maven.org/maven2/org/verapdf/apps/greenfield-apps-arlington/1.28.2/greenfield-apps-arlington-1.28.2.jar
-          ARLINGTON_SHA256: a780142be33c9ce00a0fd075c6d7b706074a01e87aa5c7d7328db4ff345a4464
         run: |
-          mkdir -p target/verapdf
-          curl --fail --silent --show-error --location --output target/verapdf/greenfield-apps.jar "$VERAPDF_URL"
-          curl --fail --silent --show-error --location --output target/verapdf/greenfield-apps-arlington.jar "$ARLINGTON_URL"
-          echo "$VERAPDF_SHA256  target/verapdf/greenfield-apps.jar" | sha256sum --check --strict
-          echo "$ARLINGTON_SHA256  target/verapdf/greenfield-apps-arlington.jar" | sha256sum --check --strict
+          python3 tools/fetch_verapdf.py
           uv run --no-sync python tools/verapdf.py --jar target/verapdf/greenfield-apps.jar \
             --arlington target/verapdf/greenfield-apps-arlington.jar
       - name: Read every save of the corpus with pdf.js

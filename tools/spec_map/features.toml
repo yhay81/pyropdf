@@ -5,7 +5,6 @@
 
 # Every object of the Arlington PDF Model is a feature of the map.
 [arlington]
-preserve = { status = "planned", milestone = "Phase 4: Specification" }
 
 [[arlington.rule]]
 objects = [
@@ -27,7 +26,7 @@ clause = "7.4.4"
 description = "The FlateDecode filter: zlib-compressed stream data."
 objects = []
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "planned", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The current decoder cannot round-trip TIFF Predictor 2 rows ending in a partial byte or predictor pixels wider than 255 bits.", milestone = "Phase 4: Specification" }
 
 [features.page-tree]
 clause = "7.7.3"
@@ -36,7 +35,50 @@ objects = ["PageObject", "PageTreeNode", "PageTreeNodeRoot"]
 
 [features.standard-security-handler]
 clause = "7.6.4"
-description = "The standard security handler: user and owner passwords, permissions, and RC4 and AES encryption."
+description = "Standard password authentication, owner and user permissions, and changing or removing encryption. A claim for this handler includes the following revision-specific operations. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
+objects = ["EncryptionStandard"]
+interpret = { status = "engine", upstream = 1043 }
+includes = ["standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4", "standard-aes-r4", "standard-aes-r5", "standard-aes-r6"]
+
+[features.standard-rc4-r2]
+clause = "7.6.4"
+description = "V1 R2 40-bit RC4. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
+objects = ["EncryptionStandard"]
+interpret = { status = "engine", upstream = 1043 }
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content." }
+
+[features.standard-rc4-r3]
+clause = "7.6.4"
+description = "V2 R3 RC4 with a 128-bit key. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
+objects = ["EncryptionStandard"]
+interpret = { status = "engine", upstream = 1043 }
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content." }
+
+[features.standard-rc4-r4]
+clause = "7.6.4"
+description = "V4 R4 with the V2 RC4 crypt filter. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
+objects = ["EncryptionStandard"]
+interpret = { status = "engine", upstream = 1043 }
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content." }
+
+[features.standard-aes-r4]
+clause = "7.6.4"
+description = "V4 R4 AES-128 CBC with an AESV2 crypt filter. Direct rendering and text extraction support either role with UTF-8 reader credentials; a non-UTF-8 effective legacy user password requires #1043."
+objects = ["EncryptionStandard"]
+interpret = { status = "engine", upstream = 1043 }
+
+[features.standard-aes-r5]
+clause = "7.6.4"
+description = "V5 R5 AES-256 CBC with legacy password derivation."
+objects = ["EncryptionStandard"]
+create = { status = "non-goal", decision = "https://github.com/yhay81/pyropdf/blob/main/DESIGN.md#45-encryption", reason = "New AES-256 password encryption uses revision 6. The legacy revision 5 handler can be opened and kept while editing." }
+
+[features.standard-aes-r6]
+clause = "7.6.4"
+description = "V5 R6 AES-256 CBC with hardened password derivation."
 objects = ["EncryptionStandard"]
 
 # The statuses of the dimensions that a feature below does not declare.
@@ -228,6 +270,7 @@ preserve = { status = "planned", milestone = "Phase 4: Specification" }
 "14.9" = "Accessibility support"
 "14.10" = "Web capture"
 "14.11.2" = "Page boundaries"
+"14.11.3" = "Printer's marks"
 "14.11.4" = "Separation dictionaries"
 "14.11.5" = "Output intents"
 "14.11.6" = "Trapping support"
@@ -271,7 +314,6 @@ clause = "7.4.2"
 description = "The ASCIIHexDecode filter: stream data as hexadecimal digits."
 objects = []
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "partial", missing = "Decompressed saves remove ASCIIHexDecode, without re-encoding streams in hexadecimal.", milestone = "Phase 4: Specification" }
 
 [features.ascii85-filter]
 clause = "7.4.3"
@@ -283,6 +325,10 @@ interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a
 clause = "7.4.4"
 description = "The LZWDecode filter: LZW-compressed stream data, with its predictors."
 objects = ["FilterLZWDecode"]
+read = { status = "partial", missing = "The pinned reader misreads packed TIFF row boundaries, some externally filtered partial PNG pixel strides, and pixels wider than 255 bits.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Content with ordinary LZW data renders, but the pinned decoder cannot supply correct samples for the remaining packed or wide predictor layouts.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "The stream writer refuses TIFF Predictor 2 rows ending in a partial byte or predictor pixels wider than 255 bits until they round-trip in the pinned reader.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "The stream editor refuses TIFF Predictor 2 rows ending in a partial byte or predictor pixels wider than 255 bits until they round-trip in the pinned reader.", milestone = "Phase 4: Specification" }
 
 [features.run-length-filter]
 clause = "7.4.5"
@@ -295,7 +341,6 @@ clause = "7.4.6"
 description = "The CCITTFaxDecode filter: Group 3 and Group 4 fax encoding of monochrome images."
 objects = ["FilterCCITTFaxDecode"]
 interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
-edit = { status = "partial", missing = "Image rewriting encodes monochrome images with Group 4 CCITTFaxDecode, without Group 3 encoding.", milestone = "Phase 4: Specification" }
 
 [features.jbig2-filter]
 clause = "7.4.7"
@@ -313,7 +358,6 @@ interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a
 clause = "7.4.9"
 description = "The JPXDecode filter: JPEG 2000 images, with their own color and transparency."
 objects = []
-edit = { status = "partial", missing = "Image rewriting transcodes JPEG 2000 images to JPEG or Flate, without encoding new JPX streams.", milestone = "Phase 4: Specification" }
 
 [features.crypt-filter]
 clause = "7.4.10"
@@ -358,21 +402,13 @@ objects = []
 clause = "7.6.5"
 description = "Public-key security: recipients, their certificates, and their permissions."
 objects = ["EncryptionPublicKey"]
-read = { status = "partial", missing = "RSA PKCS#1 v1.5 with CMS AES-CBC opens s3, s4 and s5, including RC4, AESV2 and AESV3 file data. Additional CMS algorithms remain unverified.", milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "AESV3 renders from the authenticated store version. Pre-V5 file keys require the engine object source for direct interpretation.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Writes RSA recipient groups with AESV2 or AESV3 file encryption and CMS AES-256-CBC. Additional interoperable CMS algorithms remain unverified.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Edits and reopens AESV2 and AESV3 recipients. Envelopes using other CMS key transport or content ciphers remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes preserve the tested recipient envelopes and untouched AES ciphertext. Preservation with additional CMS algorithms remains unverified.", milestone = "Phase 4: Specification" }
 
 [features.crypt-filters]
 clause = "7.6.6"
 description = "Named crypt filters and their methods: RC4, AES-128, and AES-256."
 objects = ["CryptFilter", "CryptFilterMap", "CryptFilterPublicKey", "CryptFilterPublicKeyMap"]
-read = { status = "partial", missing = "Standard and recipient default string/stream filters are read. Distinct EFF and per-stream named selection remain unfinished.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Standard filters and AESV3 recipient defaults render. Distinct EFF and named per-stream selection remain unfinished.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Saves write AES defaults for password and recipient handlers. Separate embedded-file and per-stream filters remain unfinished.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Encrypted saves replace or remove standard and recipient defaults. Separate embedded-file and per-stream filters remain unfinished.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "KEEP and incremental saves preserve standard and recipient defaults. Separate embedded-file and per-stream recipient filters remain unsupported.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The store interprets explicit filters and EFF, including independent recipient keys. Direct rendering of explicit legacy filters and a second recipient page key requires the authenticated store source (#993).", milestone = "Phase 4: Specification" }
 
 [features.document-catalog]
 clause = "7.7.2"
@@ -388,9 +424,6 @@ objects = []
 clause = "7.7.4"
 description = "The name dictionary: the name trees of destinations, attachments, scripts, and other named objects."
 objects = ["Name"]
-interpret = { status = "partial", missing = "Destination, embedded-file, page, and JavaScript name trees are resolved, without Appearance, Templates, IDS, URLS, or Renditions trees.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Attachments, named pages, and document scripts create `/Names` entries for embedded files, pages, and JavaScript, without high-level creation for other `/Names` trees.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Attachments, named pages, document scripts, page cleanup, and sanitize edit `/Names` entries for destinations, embedded files, pages, and JavaScript, without high-level APIs for other trees.", milestone = "Phase 4: Specification" }
 
 [features.content-streams]
 clause = "7.8"
@@ -506,12 +539,11 @@ objects = ["IndexedColorSpace"]
 clause = "8.6.6.2"
 description = "Pattern: painting with a tiling or shading pattern."
 objects = ["PatternColorSpace"]
-create = { status = "partial", missing = "Canvas paints gradients in Pattern color space, without creating tiling or uncolored pattern spaces.", milestone = "Phase 4: Specification" }
 
 [features.separation-color-space]
 clause = "8.6.6.4"
 description = "Separation: one colorant with its alternate space and tint transform."
-objects = ["SeparationColorSpace", "Separation"]
+objects = ["SeparationColorSpace"]
 
 [features.devicen-color-space]
 clause = "8.6.6.5"
@@ -579,9 +611,7 @@ objects = ["XObjectMap"]
 clause = "8.9.5"
 description = "Image XObjects: samples, decoding, interpolation, and alternates."
 objects = ["XObjectImage", "AlternateImage"]
-read = { status = "partial", missing = "Image XObjects and their stored bytes and masks are extracted, without reading `/Alternates`.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Canvas and image pages embed JPEG, JPEG 2000, and Flate image XObjects, without writing `/Alternates`.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Images are replaced, resampled, recompressed, and recolored, without editing `/Alternates`.", milestone = "Phase 4: Specification" }
+interpret = { status = "engine", upstream = 947 }
 
 [features.image-masks]
 clause = "8.9.6"
@@ -607,10 +637,7 @@ objects = ["Reference"]
 clause = "8.11"
 description = "Optional content groups, memberships, configurations, and their usage."
 objects = ["OptContentGroup", "OptContentMembership", "OptContentConfig", "OptContentProperties", "OptContentUsage", "OptContentUsageApplication"]
-read = { status = "partial", missing = "Optional content groups, configurations, memberships, and visibility expressions are read, without `/Usage` dictionaries.", milestone = "Phase 4: Specification" }
 interpret = { status = "engine", upstream = 372 }
-create = { status = "partial", missing = "Canvas creates optional content groups and membership dictionaries, without `/Usage` or `/AS` usage application dictionaries.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Layer states and configurations are switched, without editing `/Usage` or `/AS` dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.text-state]
 clause = "9.3"
@@ -626,7 +653,6 @@ objects = []
 clause = "9.6.2"
 description = "Type 1 fonts, the standard 14 fonts, and multiple master fonts."
 objects = ["FontType1", "FontMultipleMaster", "FontDescriptorType1"]
-create = { status = "partial", missing = "Canvas, annotations, and forms create Standard 14 Type 1 font dictionaries, without embedding custom Type 1 or Multiple Master font programs.", milestone = "Phase 4: Specification" }
 
 [features.truetype-fonts]
 clause = "9.6.3"
@@ -642,7 +668,6 @@ objects = ["FontType3", "FontDescriptorType3", "CharProcMap"]
 clause = "9.6.5"
 description = "Encodings of simple fonts: base encodings and differences."
 objects = ["Encoding"]
-create = { status = "partial", missing = "Standard 14 text and form fields write `/WinAnsiEncoding` and built-in symbolic encodings, without constructing custom `/Differences` arrays.", milestone = "Phase 4: Specification" }
 
 [features.cid-fonts]
 clause = "9.7.4"
@@ -653,7 +678,6 @@ objects = ["FontCIDType0", "FontCIDType2", "CIDSystemInfo", "FontDescriptorCIDTy
 clause = "9.7.5"
 description = "CMaps: predefined and embedded maps from codes to CIDs."
 objects = ["CMapStream"]
-create = { status = "partial", missing = "Embedded Type 0 fonts and OCR layers write `/Identity-H`, without generating custom embedded code-to-CID CMap streams.", milestone = "Phase 4: Specification" }
 
 [features.type0-fonts]
 clause = "9.7.6"
@@ -669,8 +693,6 @@ objects = []
 clause = "9.9"
 description = "Embedded font programs: Type 1, TrueType, CFF, and OpenType."
 objects = ["FontFile", "FontFile2", "FontFile3Type1", "FontFile3CIDType0", "FontFile3OpenType", "FontFileType1"]
-create = { status = "partial", missing = "TrueType, CFF, and OpenType font programs are embedded, without embedding Type 1 font programs.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Embedded TrueType, CFF, and OpenType CIDFont programs are subset, without subsetting Type 1 font programs.", milestone = "Phase 4: Specification" }
 
 [features.text-extraction]
 clause = "9.10"
@@ -716,19 +738,17 @@ objects = ["ArrayOfBlendModes"]
 clause = "11.5"
 description = "Soft masks from luminosity, alpha, and images."
 objects = ["SoftMaskAlpha", "SoftMaskLuminosity", "XObjectImageSoftMask"]
-create = { status = "partial", missing = "PNG alpha images and translucent gradients create image and luminosity soft masks, without general group soft-mask scopes on Canvas.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Image replacement and rewriting update, resample, and synthesize image `/SMask` streams, without editing soft-mask dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.transparency-groups]
 clause = "11.6.6"
 description = "Transparency groups: isolated and knockout groups."
 objects = ["GroupAttributes"]
-create = { status = "partial", missing = "Canvas opacity scopes create isolated transparency groups, without knockout group options.", milestone = "Phase 4: Specification" }
 
 [features.transparency-color]
 clause = "11.7"
 description = "Color spaces of groups and overprint with transparency."
 objects = []
+interpret = { status = "engine", upstream = 1024 }
 
 [features.viewer-preferences]
 clause = "12.2"
@@ -739,10 +759,6 @@ objects = ["ViewerPreferences"]
 clause = "12.3.2"
 description = "Explicit and named destinations."
 objects = ["DestDict", "DestsMap", "Dest0Array", "Dest1Array", "Dest4Array", "DestXYZArray", "Dest0StructArray", "Dest1StructArray", "Dest4StructArray", "DestXYZStructArray"]
-read = { status = "partial", missing = "Page-based explicit and named destinations are read, without structure-element destinations.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Page-based explicit and named destinations resolve to display coordinates, without structure-element destinations.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Links and outline items create page-based destinations, without structure-element destinations.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Links, outline items, and page edits update page-based destinations, without structure-element destinations.", milestone = "Phase 4: Specification" }
 
 [features.outline]
 clause = "12.3.3"
@@ -783,8 +799,6 @@ objects = ["BorderStyle", "BorderEffect"]
 clause = "12.5.5"
 description = "Appearance streams of annotations: normal, rollover, and down."
 objects = ["Appearance", "AppearanceSubDict"]
-create = { status = "partial", missing = "Normal appearances and button state sub-dictionaries are generated, without generating rollover or down appearances.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Normal appearances are regenerated, cleaned, and recolored, without generating rollover or down appearances.", milestone = "Phase 4: Specification" }
 
 [features.text-annotations]
 clause = "12.5.6.4"
@@ -805,10 +819,6 @@ objects = ["AnnotFreeText"]
 clause = "12.5.6.7"
 description = "Line annotations, with their endings, leaders, and captions."
 objects = ["AnnotLine"]
-read = { status = "partial", missing = "Line endpoints and endings are read, without leader lines or captions.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Line endpoints, endings, and interior colors render, without leader lines or captions.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Line annotations with endpoints and endings are created, without leader lines or captions.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Line endpoints, endings, and styles are edited, without leader lines or captions.", milestone = "Phase 4: Specification" }
 
 [features.square-circle-annotations]
 clause = "12.5.6.8"
@@ -856,10 +866,6 @@ description = "Sound annotations."
 objects = ["AnnotSound"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
 
 [features.movie-annotations]
 clause = "12.5.6.17"
@@ -867,10 +873,6 @@ description = "Movie annotations."
 objects = ["AnnotMovie", "Movie", "MovieActivation"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
 
 [features.screen-annotations]
 clause = "12.5.6.18"
@@ -881,23 +883,22 @@ objects = ["AnnotScreen"]
 clause = "12.5.6.19"
 description = "Widget annotations: the appearance and characteristics of form fields."
 objects = ["AnnotWidget", "AppearanceCharacteristics", "IconFit"]
-read = { status = "partial", missing = "Widget rectangles, flags, borders, rotation, colors, and captions are read, without button icon streams or `/IF` icon fit dictionaries.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Form field creation writes widget annotations and `/MK` appearance characteristics, without button icon streams or `/IF` icon fit dictionaries.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Widget geometry, styles, captions, and appearances are edited, without button icon streams or `/IF` icon fit dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.printer-mark-annotations]
 clause = "12.5.6.20"
-description = "Printer's mark annotations."
+description = "Printer's marks, flags, active normal Form and its colorants (also 14.11.3). Press output belongs to #248 and #7."
 objects = ["AnnotPrinterMark", "AppearancePrinterMark", "AppearancePrinterMarkSubDict", "XObjectFormPrinterMark"]
 
 [features.trap-network-annotations]
 clause = "12.5.6.21"
-description = "Trap network annotations."
+description = "Stored trap network appearance states and last position on the page. Trap rendering belongs to #248 and #7."
 objects = ["AnnotTrapNetwork", "AppearanceTrapNet", "AppearanceTrapNetSubDict", "XObjectFormTrapNet"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated features is excluded by the specification completion milestone." }
 
 [features.watermark-annotations]
 clause = "12.5.6.22"
-description = "Watermark annotations, with their fixed print placement."
+description = "Watermark Form and fixed print transform and media fractions. Physical output belongs to #248 and #7."
 objects = ["AnnotWatermark", "FixedPrint"]
 
 [features.redaction-annotations]
@@ -944,9 +945,6 @@ objects = ["ActionGoToDp"]
 clause = "12.6.4.6"
 description = "Launch actions: opening a file or application."
 objects = ["ActionLaunch", "MicrosoftWindowsLaunchParam"]
-read = { status = "partial", missing = "File launch actions on links and outline items are read, without Windows launch parameter dictionaries.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Links and outline items create file launch actions, without Windows launch parameter dictionaries.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Links, outline items, and sanitize edit or remove launch actions, without Windows launch parameter dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.thread-actions]
 clause = "12.6.4.7"
@@ -957,9 +955,6 @@ objects = ["ActionThread"]
 clause = "12.6.4.8"
 description = "URI actions and the document's base URI."
 objects = ["ActionURI", "URI"]
-read = { status = "partial", missing = "Link and outline URI actions are read, without resolving the catalog's base URI dictionary or `/IsMap`.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Links and outline items create URI actions, without a high-level API for the catalog's base URI dictionary or `/IsMap`.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Links, outline items, and sanitize edit or remove URI actions, without a high-level API for the catalog's base URI dictionary.", milestone = "Phase 4: Specification" }
 
 [features.sound-actions]
 clause = "12.6.4.9"
@@ -967,10 +962,6 @@ description = "Sound actions."
 objects = ["ActionSound"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
 
 [features.movie-actions]
 clause = "12.6.4.10"
@@ -978,10 +969,6 @@ description = "Movie actions."
 objects = ["ActionMovie"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
 
 [features.hide-actions]
 clause = "12.6.4.11"
@@ -1027,10 +1014,6 @@ objects = ["ActionRichMediaExecute"]
 clause = "12.7.4.3"
 description = "Variable text: default appearance, quadding, and rich text of fields."
 objects = []
-read = { status = "partial", missing = "Default appearance strings and quadding are read and inherited, without rich text (`/RV` and `/DS`).", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Default appearance strings and quadding shape and align field text, without rendering rich text (`/RV` and `/DS`).", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Field creation writes `/DA` and `/Q`, without rich text (`/RV` and `/DS`).", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Widget and field edits update `/DA`, `/Q`, and embedded font resources, without rich text (`/RV` and `/DS`).", milestone = "Phase 4: Specification" }
 
 [features.interactive-form]
 clause = "12.7.3"
@@ -1046,9 +1029,6 @@ objects = ["FieldBtnPush", "FieldBtnCheckbox", "FieldBtnRadio"]
 clause = "12.7.5.3"
 description = "Text fields: single line, multiline, password, file select, and comb."
 objects = ["FieldTx"]
-interpret = { status = "partial", missing = "Single-line, multiline, and comb text fields render, without masking glyphs in password fields.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Single-line, multiline, and comb text fields and password and file-select flags are written, without password glyph masking.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Text field values, flags, and max lengths are edited, without password glyph masking in generated appearances.", milestone = "Phase 4: Specification" }
 
 [features.choice-fields]
 clause = "12.7.5.4"
@@ -1059,10 +1039,6 @@ objects = ["FieldChoice"]
 clause = "12.7.5.5"
 description = "Signature fields, their locks, and seed values."
 objects = ["FieldSig", "SigFieldLock", "SigFieldSeedValue", "CertSeedValue"]
-read = { status = "partial", missing = "Signature fields and their values are read, without field lock (`/Lock`) or seed value (`/SV`) dictionaries.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Signature fields are verified and checked for byte-range changes, without evaluating `/Lock` or `/SV` constraints.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Signing creates signature fields and widgets, without writing `/Lock` or `/SV` dictionaries.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Signing fills existing unsigned signature fields, without enforcing `/Lock` or `/SV` dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.form-actions]
 clause = "12.7.6"
@@ -1083,8 +1059,6 @@ objects = []
 clause = "12.8"
 description = "Signature dictionaries, byte ranges, and their PKCS#7 and CAdES encodings."
 objects = ["Signature", "SignatureBuildPropDict", "SignatureBuildDataDict", "SignatureBuildDataAppDict", "SignatureBuildDataSigQDict"]
-create = { status = "partial", missing = "Incremental CAdES and PKCS#7 signing with RSA, ECDSA, callbacks, and RFC 3161 timestamps works, without `/Prop_Build` dictionaries.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Signing fills existing signature fields and appends incremental signatures, without `/Prop_Build` dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.signature-transforms]
 clause = "12.8.2"
@@ -1132,10 +1106,6 @@ description = "Sound objects."
 objects = ["SoundObject"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
 
 [features.movies]
 clause = "13.4"
@@ -1143,10 +1113,6 @@ description = "Movie dictionaries."
 objects = []
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
 
 [features.alternate-presentations]
 clause = "13.5"
@@ -1154,20 +1120,11 @@ description = "Alternate presentations: slide shows."
 objects = ["SlideShow"]
 deprecated = true
 create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
-read = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
 
 [features.3d-artwork]
 clause = "13.6"
 description = "3D streams, views, nodes, lighting, and render modes."
-objects = ["3DStream", "3DView", "3DNode", "3DActivation", "3DLightingScheme", "3DRenderMode", "3DBackground", "3DCrossSection", "3DReference"]
-read = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+objects = ["3DStream", "3DView", "3DNode", "3DActivation", "3DLightingScheme", "3DRenderMode", "3DBackground", "3DCrossSection", "3DReference", "3DMeasure3DC", "3DMeasureAD3", "3DMeasureLD3", "3DMeasurePD3", "3DMeasureRD3", "ExDataProjection"]
 
 [features.rich-media]
 clause = "13.7"
@@ -1204,8 +1161,7 @@ objects = []
 clause = "14.7"
 description = "The structure tree, its elements, parent tree, attributes, and class map."
 objects = ["StructTreeRoot", "StructElem", "MarkedContentReference", "ObjectReference", "ClassMap", "RoleMap", "StructureAttributesDict", "UserProperty"]
-interpret = { status = "partial", missing = "Page import, copy, and deletion resolve MCIDs, object references, and role and class maps, without structure-driven text extraction.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Structure trees, elements, parent trees, role maps, and list and table attributes are created, without creating `ClassMap`, `ObjectReference`, or `UserProperty`.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Logical reading follows mixed child and cross-page references. Form-stream glyph origins still require #104.", milestone = "Phase 4: Specification" }
 
 [features.structure-namespaces]
 clause = "14.7.4"
@@ -1216,31 +1172,32 @@ objects = ["Namespace", "RoleMapNS"]
 clause = "14.8"
 description = "Tagged PDF: the mark information and the standard structure types and attributes."
 objects = ["MarkInfo"]
-interpret = { status = "partial", missing = "Profile checks and page operations interpret `MarkInfo` and standard roles, without structure-driven text extraction.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Canvas tags create `MarkInfo` and standard block, list, table, inline, figure, and artifact structures, without full standard attribute coverage.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Structure-driven extraction reads page content, element replacements and object references. Glyphs inside a referenced Form await stream provenance (#104).", milestone = "Phase 4: Specification" }
 
 [features.accessibility]
 clause = "14.9"
 description = "Natural language, alternate descriptions, replacement text, and abbreviations."
 objects = []
-interpret = { status = "partial", missing = "Text extraction and profile checks interpret `/ActualText` and `/Lang`, without `/E` abbreviation expansion.", milestone = "Phase 4: Specification" }
 
 [features.web-capture]
 clause = "14.10"
-description = "Web capture: content sets, source information, and commands."
+description = "Web Capture content sets, source information, commands and URL/ID indexes. Registration targets PDF 1.3–1.7; existing PDF 2.0 entries remain editable under #256."
 objects = ["WebCaptureInfo", "WebCapturePageSet", "WebCaptureImageSet", "SourceInformation", "WebCaptureCommand", "WebCaptureCommandSettings"]
 
 [features.page-boundaries]
 clause = "14.11.2"
 description = "Media, crop, bleed, trim, and art boxes, and box color information."
 objects = ["BoxColorInfo", "BoxStyle"]
-read = { status = "partial", missing = "Media, crop, bleed, trim, and art boxes are read with inheritance and clipping, without a high-level reader for `/BoxColorInfo`.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Media, crop, bleed, trim, and art boxes are set in display space, without a high-level API for `/BoxColorInfo`.", milestone = "Phase 4: Specification" }
+
+[features.printer-marks]
+clause = "14.11.3"
+description = "Resolve named printer's marks to the normal Form, mark style, shared resources and separation colorants. Device marks on press belong to #248 and #7."
+objects = []
 
 [features.separation-dictionaries]
 clause = "14.11.4"
-description = "Separation dictionaries of pre-separated pages."
-objects = []
+description = "Ordered plate pages, device colorants and optional Separation or DeviceN preview spaces."
+objects = ["Separation", "ArrayOfPages"]
 
 [features.output-intents]
 clause = "14.11.5"
@@ -1249,13 +1206,17 @@ objects = ["OutputIntents", "DestOutputProfileRef"]
 
 [features.trapping]
 clause = "14.11.6"
-description = "Trap networks and their regions."
+description = "Stored trapping process, zones, parameter names and Form resources. Trap generation and rendering belong to #248 and #7."
 objects = ["TrapRegion"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated features is excluded by the specification completion milestone." }
 
 [features.opi]
 clause = "14.11.7"
-description = "Open prepress interface dictionaries."
+description = "Resolve and preserve legacy OPI source file descriptions and image parameters. Device substitution belongs to #248 and #7."
 objects = ["OPIVersion13", "OPIVersion13Dict", "OPIVersion20", "OPIVersion20Dict"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated features is excluded by the specification completion milestone." }
 
 [features.document-parts]
 clause = "14.12"
@@ -1277,26 +1238,23 @@ objects = ["LinearizationParameterDict"]
 
 [features.sha3-hashes]
 clause = "ISO/TS 32001"
-description = "SHA-3 and SHA-512 hash algorithms in PDF."
+description = "SHA3-256, SHA3-384, SHA3-512 and fixed 512-bit SHAKE256 document digests."
 objects = []
 
 [features.ecc-signatures]
 clause = "ISO/TS 32002"
 description = "ECDSA and EdDSA signature algorithms in PDF."
 objects = []
-read = { status = "partial", missing = "ECDSA P-256 and P-384 signatures are parsed, without Ed25519 or Ed448.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "ECDSA P-256 and P-384 signatures are verified, without Ed25519 or Ed448.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Signing produces ECDSA P-256 and P-384 signatures, without Ed25519 or Ed448.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Signing fills existing signature fields with ECDSA P-256 and P-384 signatures, without Ed25519 or Ed448.", milestone = "Phase 4: Specification" }
 
 [features.aes-gcm]
 clause = "ISO/TS 32003"
 description = "AES-GCM encryption in PDF."
 objects = []
+interpret = { status = "partial", missing = "Standard and recipient AESV4 strings and streams are authenticated before use. Direct page rendering and extraction await the engine's authenticated object source (#968).", milestone = "Phase 4: Specification" }
 
 [features.integrity-protection]
 clause = "ISO/TS 32004"
-description = "Integrity protection of encrypted documents with a message authentication code."
+description = "ISO/TS 32004:2024 standalone and signature-attached PDF MAC verification, with standalone MACs on unsigned revisions and attached MACs on signing and timestamping."
 objects = []
 
 [features.namespace-inclusion]
@@ -1306,138 +1264,78 @@ objects = []
 
 [features.pdfa]
 clause = "ISO 19005"
-description = "Shared PDF/A claim mechanisms. Consult the level-specific rows for conformance evidence."
+description = "Shared PDF/A claim mechanisms, including per-rule edit effects on nested colour and font resources."
 objects = []
-read = { status = "partial", missing = "Shared claim readers have examples; each part and level has its own coverage row.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Nested colour resources, output intents and font representations need additional archival edit controls.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Nested colour resources, output intents and font representations need additional archival edit controls.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Nested colour resources, output intents and font representations need additional archival edit controls.", milestone = "Phase 4: Specification" }
 
 [features.pdfua]
 clause = "ISO 14289"
-description = "Shared PDF/UA claim mechanisms. Consult the part-specific rows for conformance evidence."
+description = "Shared PDF/UA claim mechanisms, including per-rule edit effects on embedded fonts and structure associations."
 objects = []
-read = { status = "partial", missing = "Shared claim readers have examples; each part and level has its own coverage row.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Alternate marked-content properties, structure associations and fonts need additional accessibility edit controls.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Alternate marked-content properties, structure associations and fonts need additional accessibility edit controls.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Alternate marked-content properties, structure associations and fonts need additional accessibility edit controls.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-1a]
 clause = "ISO 19005"
-description = "PDF/A-1a profile evidence for a generated single-page fixture."
+description = "PDF/A-1a evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-1b]
 clause = "ISO 19005"
-description = "PDF/A-1b profile evidence for a generated single-page fixture."
+description = "PDF/A-1b evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-2a]
 clause = "ISO 19005"
-description = "PDF/A-2a profile evidence for a generated single-page fixture."
+description = "PDF/A-2a evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-2b]
 clause = "ISO 19005"
-description = "PDF/A-2b profile evidence for a generated single-page fixture."
+description = "PDF/A-2b evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-2u]
 clause = "ISO 19005"
-description = "PDF/A-2u profile evidence for a generated single-page fixture."
+description = "PDF/A-2u evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-3a]
 clause = "ISO 19005"
-description = "PDF/A-3a profile evidence for a generated single-page fixture."
+description = "PDF/A-3a evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-3b]
 clause = "ISO 19005"
-description = "PDF/A-3b profile evidence for a generated single-page fixture."
+description = "PDF/A-3b evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-3u]
 clause = "ISO 19005"
-description = "PDF/A-3u profile evidence for a generated single-page fixture."
+description = "PDF/A-3u evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-4]
 clause = "ISO 19005"
-description = "PDF/A-4 profile evidence for a generated single-page fixture."
+description = "PDF/A-4 evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-4e]
 clause = "ISO 19005"
-description = "PDF/A-4e profile evidence for a generated single-page fixture."
+description = "PDF/A-4e evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfa-4f]
 clause = "ISO 19005"
-description = "PDF/A-4f profile evidence for a generated single-page fixture."
+description = "PDF/A-4f evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfua-1]
 clause = "ISO 14289"
-description = "PDF/UA-1 profile evidence for a generated single-page fixture."
+description = "PDF/UA-1 evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfua-2]
 clause = "ISO 14289"
-description = "PDF/UA-2 profile evidence for a generated single-page fixture."
+description = "PDF/UA-2 evidence covers controlled and independently sourced files, the shared edit matrix and the alternate representations in tests/assets/profile-edits.md."
 objects = []
-read = { status = "partial", missing = "The claim and a vector fixture are read; the full range of conforming documents is untested.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "The report detects effects in the shared fixture matrix. Alternate resource and structure representations need independent checks.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "The shared editing operations have explicit profile outcomes. Edits to nested resources and alternate structure representations remain unverified.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Both save modes have per-rule machine checks on the shared matrix. Preservation on alternate resource and structure encodings needs evidence.", milestone = "Phase 4: Specification" }
 
 [features.pdfx]
 clause = "ISO 15930"
@@ -1482,6 +1380,7 @@ interpret = { status = "engine", upstream = 1001 }
 clause = "11.3"
 description = "Combine source, backdrop, opacity and shape when painting overlapping content."
 objects = []
+interpret = { status = "engine", upstream = 1024 }
 
 [features.geospatial]
 clause = "12.10"
@@ -1519,7 +1418,7 @@ create = { status = "non-goal", decision = "#256", reason = "Creation of depreca
 
 [features.structure-children]
 clause = "Annex L"
-description = "Check parent and child standard roles and their allowed multiplicities in the PDF 2.0 namespace."
+description = "Evaluate the July 2024 Annex L multiplicities, transparent containers, grouping usage and Ruby or Warichu content after namespace role mapping. Report an indeterminate result when a condition cannot be established."
 objects = []
 
 [features.fragment-identifiers]

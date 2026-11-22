@@ -23,3 +23,302 @@ location_url = "https://pdf-issues.pdfa.org/"
 directories = ["32000-2-2020", "32001-2022", "32002-2022", "32003-2023", "32005-2023", "32007-2024", "14289-1-2014", "19005-4-2020"]
 # The published clause marks 422, but the corresponding upstream issue returns HTTP 404.
 page_only = [422]
+
+# Reviewed behavior-level obligations. The pinned correction register records the source section digest.
+
+[[behaviors]]
+id = "alphabetic-page-labels"
+edition = "ISO 32000-2:2020"
+provision = "12.4.2, Table 161, S entry"
+features = ["page-labels"]
+dimensions = ["interpret"]
+summary = "For styles A and a, number successive groups of 26 pages with repeated copies of the same uppercase or lowercase letter."
+correction = 593
+reviewed_sha256 = "1005f7873c0be0cf44a9211dbdd44cb9f3bf9ad07e2366639616415119525a97"
+tests = ["tests/test_page_labels.py::test_alphabetic_labels_repeat_letters_in_blocks_of_26[uppercase]", "tests/test_page_labels.py::test_alphabetic_labels_repeat_letters_in_blocks_of_26[lowercase]"]
+
+[[behaviors]]
+id = "permissions-r5"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.3.3, 7.6.4.4.9 and 7.6.4.4.12"
+features = ["standard-aes-r5"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Decrypt the 16-byte permissions value using the document key; compare the permission bits and metadata indicator."
+correction = 24
+reviewed_sha256 = "1a427b3fae6040cd36ad05219220210900a2832019f376e2ab4ba32edf8ee69c"
+references = ["FIPS PUB 197 (2001), AES-256", "NIST SP 800-38A (2001), ECB"]
+tests = ["tests/test_security_corrections.py::test_permissions_are_one_ecb_block_under_the_document_key[read-r5]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "permissions-r6"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.3.3, 7.6.4.4.9 and 7.6.4.4.12"
+features = ["standard-aes-r6"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Decrypt the 16-byte permissions value using the document key; compare the permission bits and metadata indicator."
+correction = 24
+reviewed_sha256 = "1a427b3fae6040cd36ad05219220210900a2832019f376e2ab4ba32edf8ee69c"
+references = ["FIPS PUB 197 (2001), AES-256", "NIST SP 800-38A (2001), ECB"]
+tests = ["tests/test_security_corrections.py::test_permissions_are_one_ecb_block_under_the_document_key[read-r6]", "tests/test_security_corrections.py::test_permissions_are_one_ecb_block_under_the_document_key[write-r6]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "password-hash-user"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.3.4"
+features = ["standard-aes-r6"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Check 64 repetitions of the password and hash with no user entry."
+correction = 325
+reviewed_sha256 = "1dd872e18d6932dbb2e0015a55470a7ab3bf9576be0a59ec007150305f9f4c09"
+references = ["FIPS 180-4 (2015), SHA-256/384/512", "FIPS PUB 197 (2001), AES-128"]
+tests = ["tests/test_security_corrections.py::test_revision_six_uses_the_correct_password_hash_sequence[user]"]
+tools = ["pikepdf", "pyhanko"]
+
+[[behaviors]]
+id = "legacy-padding-user"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.4.2"
+features = ["standard-aes-r4", "standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4"]
+dimensions = ["read", "interpret", "edit", "preserve"]
+summary = "Authenticate the user role with both a short password and a 32-byte truncation boundary."
+correction = 643
+reviewed_sha256 = "8bf3a62bc750c1c39c7c3ec9bbb44909ca6f174c19c0de6c1d18b31d14ba34b8"
+tests = ["tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[2-user]", "tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[3-user]", "tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[4-user]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "password-hash-owner"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.3.4"
+features = ["standard-aes-r6"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Check 64 repetitions with the entire user entry included for the owner."
+correction = 325
+reviewed_sha256 = "1dd872e18d6932dbb2e0015a55470a7ab3bf9576be0a59ec007150305f9f4c09"
+references = ["FIPS 180-4 (2015), SHA-256/384/512", "FIPS PUB 197 (2001), AES-128"]
+tests = ["tests/test_security_corrections.py::test_revision_six_uses_the_correct_password_hash_sequence[owner]"]
+tools = ["pikepdf", "pyhanko"]
+
+[[behaviors]]
+id = "legacy-padding-owner"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.4.2"
+features = ["standard-aes-r4", "standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4"]
+dimensions = ["read", "interpret", "edit", "preserve"]
+summary = "Authenticate the owner role with both a short password and a 32-byte truncation boundary."
+correction = 643
+reviewed_sha256 = "8bf3a62bc750c1c39c7c3ec9bbb44909ca6f174c19c0de6c1d18b31d14ba34b8"
+tests = ["tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[2-owner]", "tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[3-owner]", "tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[4-owner]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "standard-filter-r4"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.1"
+features = ["standard-aes-r4"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "The newly written standard dictionary selects a single StdCF with the proper content cipher and DocOpen event."
+correction = 89
+reviewed_sha256 = "4ab433a3c50a594fb3f69ba2a1e28c033dcc78b7440dbb41afb7be52b28e97b9"
+references = ["ISO 32000-2:2020, 7.6.6"]
+tests = ["tests/test_security_corrections.py::test_standard_handler_authoring_selects_one_named_docopen_filter[4]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "standard-filter-r6"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.1"
+features = ["standard-aes-r6"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "The newly written standard dictionary selects a single StdCF with the proper content cipher and DocOpen event."
+correction = 89
+reviewed_sha256 = "4ab433a3c50a594fb3f69ba2a1e28c033dcc78b7440dbb41afb7be52b28e97b9"
+references = ["ISO 32000-2:2020, 7.6.6"]
+tests = ["tests/test_security_corrections.py::test_standard_handler_authoring_selects_one_named_docopen_filter[6]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "standard-filter-read-legacy"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.1"
+features = ["standard-rc4-r4", "standard-aes-r5"]
+dimensions = ["read", "interpret", "edit", "preserve"]
+summary = "Read the existing single named filter of an R4 RC4 or R5 AES file."
+correction = 89
+reviewed_sha256 = "4ab433a3c50a594fb3f69ba2a1e28c033dcc78b7440dbb41afb7be52b28e97b9"
+tests = ["tests/test_security_corrections.py::test_existing_standard_handler_retains_a_single_docopen_crypt_filter[standard-rc4-r4]", "tests/test_security_corrections.py::test_existing_standard_handler_retains_a_single_docopen_crypt_filter[standard-aes-r5]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "legacy-id-note"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.3.2 and 7.6.4.3.3"
+features = ["standard-aes-r4", "standard-aes-r5", "standard-aes-r6", "standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Correct the explanatory notes about which algorithm uses the first trailer identifier."
+correction = 53
+reviewed_sha256 = "ff441fd24ffb86a06fd0bcaa0a71ad651b38b7c5d146fdb9158bcb12ac356051"
+rationale = "The corrected notes describe an existing algorithm dependency; they introduce no new processor step."
+
+[[behaviors]]
+id = "standard-table-typo"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.2"
+features = ["standard-aes-r4", "standard-aes-r5", "standard-aes-r6", "standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Correct a word in the encryption dictionary description."
+correction = 674
+reviewed_sha256 = "804065bc7c5a2b970571193c68af5f50b847174c58bc3580bbb5f5315b4805b9"
+rationale = "The word spacing changes no key, value or algorithm."
+
+[[behaviors]]
+id = "hash-modulo-note"
+edition = "ISO 32000-2:2020"
+provision = "4.1.1 and 7.6.4.3.4"
+features = ["standard-aes-r6"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Explain the equivalent arithmetic for the selector in the R6 password hash."
+correction = 792
+reviewed_sha256 = "b8a55505ddbf12f0eb2bd4749b727882190825371c4764f1c6258e39f1d7c967"
+rationale = "The implementation note permits an equivalent modulo-three calculation; the existing wire output is identical."
+
+[[behaviors]]
+id = "credentials-and-saves-standard-aes-r4"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.2 and 7.6.4.4"
+features = ["standard-aes-r4"]
+dimensions = ["read", "edit", "preserve"]
+summary = "Match both access roles and retained ciphertext after editing and reopening this handler revision."
+tests = ["tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-aes-r4]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "credentials-and-saves-standard-aes-r5"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.2 and 7.6.4.4"
+features = ["standard-aes-r5"]
+dimensions = ["read", "edit", "preserve"]
+summary = "Match both access roles and retained ciphertext after editing and reopening this handler revision."
+tests = ["tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-aes-r5]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "credentials-and-saves-standard-aes-r6"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.2 and 7.6.4.4"
+features = ["standard-aes-r6"]
+dimensions = ["read", "edit", "preserve"]
+summary = "Match both access roles and retained ciphertext after editing and reopening this handler revision."
+tests = ["tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-aes-r6]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "credentials-and-saves-standard-rc4-r2"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.2 and 7.6.4.4"
+features = ["standard-rc4-r2"]
+dimensions = ["read", "edit", "preserve"]
+summary = "Match both access roles and retained ciphertext after editing and reopening this handler revision."
+tests = ["tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-rc4-r2]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "credentials-and-saves-standard-rc4-r3"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.2 and 7.6.4.4"
+features = ["standard-rc4-r3"]
+dimensions = ["read", "edit", "preserve"]
+summary = "Match both access roles and retained ciphertext after editing and reopening this handler revision."
+tests = ["tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-rc4-r3]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "credentials-and-saves-standard-rc4-r4"
+edition = "ISO 32000-2:2020"
+provision = "7.6.4.2 and 7.6.4.4"
+features = ["standard-rc4-r4"]
+dimensions = ["read", "edit", "preserve"]
+summary = "Match both access roles and retained ciphertext after editing and reopening this handler revision."
+tests = ["tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-rc4-r4]"]
+tools = ["pikepdf"]
+
+[[behaviors]]
+id = "archival-xmp-id"
+edition = "ISO 19005-4:2020"
+provision = "6.7.3"
+features = ["pdfa-4"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Use the PDF/A identification namespace, revision 2020 and the absence of an optional E/F identification on plain PDF/A-4."
+correction = 123
+reviewed_sha256 = "ba1add91ac66e69bb3e7b530e1e821838506421cd155d3c0f0ffb6e5658cff52"
+references = ["ISO 16684-1:2019, XMP data model and serialization", "ISO 32000-2:2020, 14.3.2"]
+tests = ["tests/test_pdfa_corpus.py::test_part_four_records_the_identification_namespace_revision_and_specific_flavour[pdfa-4.pdf]"]
+tools = ["verapdf"]
+
+[[behaviors]]
+id = "archival-77"
+edition = "ISO 19005-4:2020"
+provision = "6.2.10.3.1"
+features = ["pdfa-4"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Compare a predefined CMap supplement with the descendant CIDFont."
+correction = 77
+reviewed_sha256 = "65f06bb53369c81f9e7c072fefd708af6ffb6e9d79a7aa2597e5c7c49d7f9bc8"
+references = ["ISO 32000-2:2020"]
+issue = 902
+
+[[behaviors]]
+id = "archival-104"
+edition = "ISO 19005-4:2020"
+provision = "6.2.9"
+features = ["pdfa-4"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Determine annotation transparency from opacity, blend mode and appearance under Annex Q."
+correction = 104
+reviewed_sha256 = "d7d1c616cd3a86c5bf80977cf9cae2e3fc9dbc57a0c3da2ee226d9679221b7ca"
+references = ["ISO 32000-2:2020"]
+issue = 911
+
+[[behaviors]]
+id = "archival-391"
+edition = "ISO 19005-4:2020"
+provision = "6.9 and ISO 32000-2:2020, 7.11.3"
+features = ["pdfa-4"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Distinguish associated files from file attachment annotations and verify relationship requirements."
+correction = 391
+reviewed_sha256 = "f2173ddb696b8eebeec249cbd20a1c90a05da81a3139071347b6923fd66ce85d"
+references = ["ISO 32000-2:2020"]
+issue = 911
+
+[[behaviors]]
+id = "archival-428"
+edition = "ISO 19005-4:2020"
+provision = "6.2 and ISO 32000-2:2020, 8.7.3.1"
+features = ["pdfa-4"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Refuse or report an overlapping tile whose result depends on renderer order."
+correction = 428
+reviewed_sha256 = "3d2cc6195243691da5126829d89b211bce9db59e51a352616380690b1da8857a"
+references = ["ISO 32000-2:2020"]
+issue = 896
+
+[[behaviors]]
+id = "archival-renderer-role"
+edition = "ISO 19005-4:2020"
+provision = "2 and 6.2"
+features = ["pdfa-4"]
+dimensions = ["create", "edit", "preserve"]
+summary = "Identify obligations that apply only to a conforming presentation processor."
+rationale = "Writing and preserving a file do not exercise a conforming presentation processor. The separate interpret dimension retains rendering obligations."
+
+[[behaviors]]
+id = "archival-full-ruleset"
+edition = "ISO 19005-4:2020"
+provision = "6"
+features = ["pdfa-4"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+summary = "Review the remaining independently observable archival constraints before making a flavour-wide claim."
+issue = 911

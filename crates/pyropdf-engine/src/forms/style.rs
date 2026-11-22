@@ -76,11 +76,23 @@ pub(super) struct WidgetStyle {
     pub(super) matrix: Option<[f64; 6]>,
     background: Option<Color>,
     border: Option<Color>,
-    border_width: f64,
+    pub(super) border_width: f64,
     pub(super) unit: f64,
 }
 
 impl WidgetStyle {
+    pub(super) fn undecorated(&self, width: f64, height: f64) -> Self {
+        Self {
+            width,
+            height,
+            matrix: None,
+            background: None,
+            border: None,
+            border_width: 0.0,
+            unit: self.unit,
+        }
+    }
+
     /// Reads a widget's `/Rect`, its `/MK` rotation and colours, and its
     /// border width from `/BS` or the legacy `/Border`.
     pub(super) fn read(reader: &Reader<'_>, widget: &Dict) -> Result<Self, WidgetError> {
@@ -265,13 +277,13 @@ impl WidgetStyle {
 
 /// The text style of a widget's `/DA`.
 pub(super) struct TextStyle {
-    font: Base14Font,
+    pub(super) font: Base14Font,
     /// The font's resource name.
     pub(super) resource: String,
     pub(super) base_font: &'static str,
     /// The size in points; 0 fits the text to the widget.
-    size: f64,
-    color: (f64, f64, f64),
+    pub(super) size: f64,
+    pub(super) color: (f64, f64, f64),
 }
 
 impl TextStyle {
