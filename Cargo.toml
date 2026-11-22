@@ -43,8 +43,11 @@ strip = "symbols"
 # PyO3 converts Rust panics into Python exceptions only when they unwind.
 panic = "unwind"
 
-# Size-optimize the PDF engine, font code and RTen operator implementations.
+# Size-optimize the PDF store, engine, font code and RTen operator implementations.
 # The rasterizer, matrix-multiplication kernels and binding retain speed optimization.
+[profile.release.package.pyropdf-store]
+opt-level = "s"
+
 [profile.release.package.pyropdf-engine]
 opt-level = "s"
 
