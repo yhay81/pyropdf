@@ -61,7 +61,7 @@ impl SourcePage {
         let content = PageContent::read(&mut Reads::new(&self.version, budget), self.entry())?;
         Ok(Captured {
             page: self,
-            layers: None,
+            retained_layers: None,
             content: content.operations().data().clone(),
         })
     }
@@ -108,18 +108,16 @@ impl SourcePage {
 
 /// The decoded operations and page geometry of one canvas source version.
 pub struct Captured {
-    layers: Option<Arc<States>>,
+    retained_layers: Option<Arc<States>>,
     page: SourcePage,
     content: Bytes,
 }
 
 impl Captured {
     /// Preserve the default visibility of groups reached by a retained page.
-    pub fn retain_layers(&mut self, budget: &Budget) -> Result<()> {
+    pub fn retain_appearance(&mut self, budget: &Budget) -> Result<()> {
         let layers = States::read(&self.page.version, budget)?;
-        if !layers.empty() || self.page.entry().dict().get("Group").is_some() {
-            self.layers = Some(Arc::new(layers));
-        }
+        self.retained_layers = Some(Arc::new(layers));
         Ok(())
     }
 
@@ -150,7 +148,7 @@ const PAGE_FORMS: usize = 64;
 /// A placed page's Form and the source and target objects it depends on.
 /// Stamps keep no version alive.
 struct PageForm {
-    layers: Option<Arc<States>>,
+    retained_layers: Option<Arc<States>>,
     copied_groups: Vec<(Reference, bool)>,
     group: Option<Value>,
     page: Reference,
@@ -193,9 +191,12 @@ impl PageForms {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         for at in 0..entries.len() {
             let form = &entries[at];
-            if form.layers == source.layers
+            if form.retained_layers == source.retained_layers
                 && form.group.as_ref()
-                    == source.layers.as_ref().and(page.entry().dict().get("Group"))
+                    == source
+                        .retained_layers
+                        .as_ref()
+                        .and(page.entry().dict().get("Group"))
                 && form.page == page.reference
                 && form.bbox == bbox
                 && form.contents.as_ref() == contents
@@ -231,7 +232,7 @@ impl PageForms {
         let resources = page.resources();
         let bbox = display_box(page.entry());
         let group = captured
-            .layers
+            .retained_layers
             .as_ref()
             .and(page.entry().dict().get("Group"));
         let reached = sources::reachable(
@@ -250,7 +251,9 @@ impl PageForms {
             .transpose()?;
         let resources = copy_for_edit(resources, budget)?;
         let entry = with_savepoint(transaction, |transaction| {
-            let copied = if let Some(layers) = &captured.layers {
+            let copied = if let Some(layers) = &captured.retained_layers
+                && (!layers.empty() || group.is_some())
+            {
                 layers.copy(transaction, &page.version, page.resources(), group, budget)?
             } else {
                 FormResources {
@@ -268,11 +271,19 @@ impl PageForms {
                 copied.group,
                 budget,
             )?;
-            let target = transaction
-                .version()
-                .stamps(&[form, dictionary.number()], budget)?;
+            let version = transaction.version();
+            let target = if captured.retained_layers.is_some() {
+                // Only the retained source owns these pixels. If an editor changes
+                // even a nested destination resource, leave that edit in place
+                // and make the next placement from the captured version again.
+                let root = Value::Reference(Reference::new(form, 0));
+                let copied = sources::reachable(version, &[&root], budget)?;
+                version.stamps(&copied, budget)?
+            } else {
+                version.stamps(&[form, dictionary.number()], budget)?
+            };
             Ok(PageForm {
-                layers: captured.layers.clone(),
+                retained_layers: captured.retained_layers.clone(),
                 copied_groups: copied.layers,
                 group: group
                     .map(|value| copy_for_edit(value, budget))

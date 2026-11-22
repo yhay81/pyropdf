@@ -240,3 +240,27 @@ def test_retained_layer_registration_detaches_shared_configuration_arrays() -> N
     assert not target.objects[empty]
     assert reopened.catalog["Version"] == "1.5"
     assert reopened.pages[0].pixmap().pixel(16, 16) == (255, 255, 255)
+
+
+@pytest.mark.parametrize("same_document", [False, True])
+def test_a_repeat_placement_uses_the_capture_after_a_destination_descendant_changes(*, same_document: bool) -> None:
+    source, original, original_paint = _painted_page()
+    capture = original.content()
+    target = source if same_document else pyropdf.Document()
+    placed = target.pages.new((128, 48))
+    with placed.draw() as draw:
+        draw.page((0, 0, 64, 48), capture)
+    (first,) = _forms(placed)
+    copied_paint = target.objects[first]["Resources"]["XObject"]["Paint"]
+    copied_paint.write(b"0 0 1 rg 8 12 36 24 re f")
+    original_paint.write(b"0 1 0 rg 8 12 36 24 re f")
+    assert original.pixmap().pixel(20, 20) == (0, 255, 0)
+    with placed.draw() as draw:
+        draw.page((64, 0, 128, 48), capture)
+    reread = pyropdf.open(target.to_bytes())
+    last = reread.pages[-1]
+    first, second = _forms(last)
+    assert first != second
+    pixels = last.pixmap()
+    assert [pixels.pixel(x, 20) for x in (20, 84)] == [(0, 0, 255), (255, 0, 0)]
+    assert capture.pixmap().pixel(20, 20) == (255, 0, 0)

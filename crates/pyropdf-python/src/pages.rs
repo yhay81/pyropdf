@@ -406,7 +406,7 @@ pub fn canvas_source_page<'py>(
             .detach(|| {
                 let mut captured = source_page.capture(&budget)?;
                 if retained {
-                    captured.retain_layers(&budget)?;
+                    captured.retain_appearance(&budget)?;
                 }
                 Ok(captured)
             })
