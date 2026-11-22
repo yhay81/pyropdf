@@ -1,5 +1,6 @@
 """Raster and vector playback of the version captured by a complete Content."""
 
+import dataclasses
 import pickle
 import shutil
 from pathlib import Path
@@ -130,11 +131,14 @@ def test_captured_annotation_appearance_policy_applies_to_raster_and_placement(*
 def test_filtered_manual_and_unpickled_values_refuse_replay_without_mutating_the_target() -> None:
     _, page, _ = _painted_page()
     captured = page.content()
+    assert [field.name for field in dataclasses.fields(captured)] == ["items"]
+    assert dataclasses.asdict(pyropdf.Content(items=())) == {"items": ()}
     pickled = pickle.loads(pickle.dumps(captured))  # noqa: S301 - a value pickled here.
     for content in (
         page.content(paths=False),
         page.content(clip=(0, 0, 10, 10)),
         pyropdf.Content(items=captured.items),
+        dataclasses.replace(captured, items=()),
         pickled,
     ):
         with pytest.raises(ValueError, match="complete, unfiltered"):

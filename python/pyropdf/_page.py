@@ -1525,9 +1525,6 @@ class _RetainedPage(Page):
     def _reader(self) -> _core._PageSnapshot:
         return self._snapshot
 
-    def __reduce__(self) -> tuple[type[None], tuple[()]]:
-        return type(None), ()
-
 
 class _ExportPage(Page):
     """The page at a fixed index in the version captured for a document export."""

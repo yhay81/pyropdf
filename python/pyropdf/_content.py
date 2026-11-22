@@ -594,27 +594,26 @@ class Image:
 ContentItem: TypeAlias = TextRun | Path | Image
 
 
+class _ContentOrigin:
+    """Keep playback provenance outside the public dataclass fields and pickle."""
+
+    __slots__ = ("_page",)
+    _page: _RetainedPage
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
-class Content(Sequence[ContentItem]):
+class Content(_ContentOrigin, Sequence[ContentItem]):
     """The items that a page paints, in paint order."""
 
     items: tuple[ContentItem, ...]
-    _page: _RetainedPage | None = field(default=None, init=False, repr=False, compare=False)
-
-    def __getstate__(self) -> tuple[tuple[ContentItem, ...]]:
-        """Serialize only the item sequence, as versions before retained playback did."""
-        return (self.items,)
-
-    def __setstate__(self, state: Sequence[tuple[ContentItem, ...]]) -> None:
-        object.__setattr__(self, "items", state[0])
-        object.__setattr__(self, "_page", None)
 
     def _retained_page(self) -> _RetainedPage:
-        if self._page is None:
+        page = getattr(self, "_page", None)
+        if page is None:
             msg = "replay requires complete, unfiltered content captured from a page"
             raise ValueError(msg)
-        self._page.document._ensure_open()  # noqa: SLF001 - a captured result follows its source lifetime.
-        return self._page
+        page.document._ensure_open()  # noqa: SLF001 - a captured result follows its source lifetime.
+        return page
 
     def pixmap(  # noqa: PLR0913 - the same keyword rendering options as Page.pixmap.
         self,
