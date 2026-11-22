@@ -122,16 +122,6 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Follow named resources and structure destinations, resolve base URI/IsMap, Windows launch and remote/named targets as data, and round-trip fragment selection and navigation options. Expose unresolved targets without executing actions."
 
-[families.tagged-authoring]
-tracker = 251
-issue = 908
-title = "Author standard tagged attributes, class maps and legal structure children"
-features = [
-    "logical-structure", "tagged-pdf", "structure-children",
-]
-dimensions = ["create", "edit"]
-behavior = "Author and edit class maps, object references, user properties and standard structure attributes. Validate child multiplicities and relationships through page operations and independent checks."
-
 [families.aes-gcm-interpretation]
 tracker = 252
 issue = 968
@@ -205,7 +195,7 @@ tracker = 253
 issue = 990
 title = "Resolve contextual Annex L rules and namespace-mapped structure children"
 features = ["structure-children"]
-dimensions = ["interpret"]
+dimensions = ["interpret", "create", "edit"]
 behavior = "Resolve cross-namespace roles, use as a grouping element and role-specific content for the remaining conditional Annex L verdicts."
 
 [families.display-space]

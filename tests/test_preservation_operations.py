@@ -714,6 +714,34 @@ def check_structure(doc: pyropdf.Document) -> None:
     assert elem.actual_text == MARKER
 
 
+def edit_structure_attributes(doc: pyropdf.Document) -> set[int]:
+    root = doc.structure.obj
+    assert root is not None
+    elem = doc.structure[0].children[-1].children[0]
+    touched = {number(doc.catalog), number(root), elem.xref}
+    with doc.structure.edit() as tree:
+        tree.set_class_attributes("PreservationClass", "Layout", {"Placement": "Block"})
+        elem.add_class("PreservationClass")
+        elem.set_attributes("Layout", {"TextAlign": "Center"})
+        if pdf_version(doc) >= (1, 6):
+            elem.set_user_property("PreservationProperty", MARKER)
+    return touched
+
+
+def check_structure_attributes(doc: pyropdf.Document) -> None:
+    root = doc.structure.obj
+    assert root is not None
+    elem = doc.structure[0].children[-1].children[0]
+    assert elem.obj.get("C") == pyropdf.Name("PreservationClass")
+    assert root["ClassMap"]["PreservationClass"]["Placement"] == pyropdf.Name("Block")
+    attributes = elem.obj["A"]
+    if pdf_version(doc) >= (1, 6):
+        attributes, user = attributes
+        assert user["P"][0]["V"].text == MARKER
+        assert doc.catalog["MarkInfo"]["UserProperties"]
+    assert attributes["TextAlign"] == pyropdf.Name("Center")
+
+
 def prepare_actions(doc: pyropdf.Document) -> None:
     # Two holders share the indirect action. Removing the page trigger must
     # keep the action alive while the catalog still opens the same destination.
@@ -2133,6 +2161,9 @@ FAMILY_EDITS = {
     "shared_action_trigger": Edit(prepare=prepare_actions, apply=edit_actions, check=check_actions),
     "sign_revision": Edit(prepare=prepare_signature, apply=sign_revision, check=check_signed_revision),
     "signature_field": Edit(prepare=prepare_signature, apply=edit_signature, check=check_signature),
+    "structure_attributes": Edit(
+        prepare=prepare_structure, apply=edit_structure_attributes, check=check_structure_attributes
+    ),
     "structure_membership": Edit(
         prepare=prepare_structure_membership, apply=change_structure_membership, check=check_structure_membership
     ),
