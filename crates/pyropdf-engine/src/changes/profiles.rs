@@ -3,16 +3,17 @@
 
 mod widgets;
 
+use super::resources::{Device, Use};
 use super::*;
 use crate::content::PageContent;
 use pyropdf_store::memo::Reads;
-use pyropdf_store::pages::PageIndex;
+use pyropdf_store::pages::{Page, PageIndex};
 
-fn named(dict: &Dict, key: &str, expected: &[u8]) -> bool {
+pub(super) fn named(dict: &Dict, key: &str, expected: &[u8]) -> bool {
     matches!(dict.get(key), Some(Value::Name(name)) if name.as_bytes() == expected)
 }
 
-fn entry<'a>(
+pub(super) fn entry<'a>(
     version: &Version,
     dict: &'a Dict,
     key: &str,
@@ -93,8 +94,8 @@ fn local_rules(
     version: &Version,
     dict: &Dict,
     budget: &Budget,
-) -> Result<[Option<&'static str>; 8]> {
-    let mut reasons = [None; 8];
+) -> Result<[Option<&'static str>; 9]> {
+    let mut reasons = [None; 9];
     match claim {
         Claim::A(part, level) => {
             reasons[0] = widget_action(claim, dict)
@@ -102,6 +103,13 @@ fn local_rules(
             reasons[1] =
                 (part > 1 && named(dict, "Type", b"Page") && dict.get("PresSteps").is_some())
                     .then_some("the page contains forbidden presentation steps");
+            if is_annotation_dict(dict)
+                && let Some(appearance) = entry(version, dict, "AP", budget)?
+                && let Value::Dict(modes) = &*appearance
+                && modes.keys().any(|name| name.as_bytes() != b"N")
+            {
+                reasons[8] = Some("PDF/A permits only the normal annotation appearance");
+            }
             if part == 1 {
                 reasons[2] = (named(dict, "Type", b"Catalog")
                     && dict.get("OCProperties").is_some())
@@ -173,7 +181,7 @@ pub(super) fn object_changes<'b>(
     let before = old
         .map(|d| local_rules(claim, opened, d, budget))
         .transpose()?
-        .unwrap_or([None; 8]);
+        .unwrap_or([None; 9]);
     for reason in local_rules(claim, version, dict, budget)?
         .into_iter()
         .flatten()
@@ -204,7 +212,7 @@ pub(super) fn object_changes<'b>(
         && ["FontFile", "FontFile2", "FontFile3"]
             .iter()
             .all(|k| dict.get(k).is_none())
-        && uses_page_font(version, number, budget)?
+        && Use::Descriptor(number).in_document(version, budget)?
     {
         record(
             found,
@@ -212,6 +220,50 @@ pub(super) fn object_changes<'b>(
             Some(number),
             budget,
         )?;
+    }
+    // A Type 3 font embeds a procedure per character code. Only a
+    // removed procedure selected by a shown glyph affects the claim.
+    let (old_procs, procs) = if named(dict, "Subtype", b"Type3") {
+        (
+            old.get("CharProcs").and_then(value_dict),
+            dict.get("CharProcs").and_then(value_dict),
+        )
+    } else {
+        (Some(old), Some(dict))
+    };
+    if let Some(old_procs) = old_procs {
+        for (name, previous) in old_procs.iter() {
+            if procs.is_some_and(|d| d.get(name.as_bytes()) == Some(previous)) {
+                continue;
+            }
+            if matches!(previous, Value::Reference(_))
+                && matches!(
+                    resolved(opened, previous, budget)?.as_deref(),
+                    Some(Value::Stream(_))
+                )
+                && !matches!(
+                    procs
+                        .and_then(|d| d.get(name.as_bytes()))
+                        .map(|v| resolved(version, v, budget))
+                        .transpose()?
+                        .flatten()
+                        .as_deref(),
+                    Some(Value::Stream(_))
+                )
+                && (Use::Procedure {
+                    owner: number,
+                    name: name.as_bytes(),
+                })
+                .in_document(version, budget)?
+            {
+                record(
+                    found,
+                    "the Type 3 font lost the procedure for a shown glyph",
+                    Some(number),
+                    budget,
+                )?;
+            }
+        }
     }
     if claim == Claim::Ua(2)
         && named(dict, "Type", b"Catalog")
@@ -230,20 +282,20 @@ pub(super) fn object_changes<'b>(
 
 // Follow only the specified catalog relationships and remember every indirect
 // owner. Comparing the two versions excludes defects already present at open.
-struct PathReads<'a> {
-    version: &'a Version,
-    budget: &'a Budget,
-    owners: BudgetVec<'a, u32>,
+pub(super) struct PathReads<'a> {
+    pub(super) version: &'a Version,
+    pub(super) budget: &'a Budget,
+    pub(super) owners: BudgetVec<'a, u32>,
 }
 impl<'a> PathReads<'a> {
-    fn new(version: &'a Version, budget: &'a Budget) -> Self {
+    pub(super) fn new(version: &'a Version, budget: &'a Budget) -> Self {
         Self {
             version,
             budget,
             owners: BudgetVec::new(budget),
         }
     }
-    fn resolve<'v>(&mut self, value: Option<&'v Value>) -> Result<Option<Resolved<'v>>> {
+    pub(super) fn resolve<'v>(&mut self, value: Option<&'v Value>) -> Result<Option<Resolved<'v>>> {
         let Some(value) = value else {
             return Ok(None);
         };
@@ -255,6 +307,44 @@ impl<'a> PathReads<'a> {
         }
         resolved(self.version, value, self.budget)
     }
+    /// PageIndex exposes resolved resources. Keep the owning page-tree path
+    /// too, so a changed inherited resource can be named in the report.
+    pub(super) fn resources<'p>(&mut self, page: &'p Page) -> Result<Option<Resolved<'p>>> {
+        let mut next = reference_number(page.dict().get("Parent"));
+        if let Some(r) = page.object() {
+            self.owners.try_push(r.number())?;
+        }
+        if let Some(resources) = page.dict().get("Resources") {
+            return self.resolve(Some(resources));
+        }
+        let mut depth = 0;
+        while let Some(n) = next {
+            depth += 1;
+            if depth > MAX_DEPTH {
+                return Err(LimitExceeded::over(
+                    LimitCode::ObjectDepth,
+                    MAX_DEPTH as u64,
+                    depth as u64,
+                )
+                .into());
+            }
+            self.owners.try_push(n)?;
+            let Some(parent) = object(self.version, n, self.budget)? else {
+                break;
+            };
+            let Some(dict) = value_dict(&parent) else {
+                break;
+            };
+            if let Some(resource) = dict.get("Resources") {
+                if let Value::Reference(r) = resource {
+                    self.owners.try_push(r.number())?;
+                }
+                break;
+            }
+            next = reference_number(dict.get("Parent"));
+        }
+        Ok(page.resources().map(Resolved::Borrowed))
+    }
     fn root(&mut self) -> Result<Option<Resolved<'a>>> {
         self.resolve(self.version.trailer().get("Root"))
     }
@@ -262,29 +352,30 @@ impl<'a> PathReads<'a> {
 
 type Rule = fn(&mut PathReads<'_>) -> Result<bool>;
 
-fn output_intent(reads: &mut PathReads<'_>) -> Result<bool> {
-    let root = reads.root()?;
-    let intents = reads.resolve(
-        root.as_deref()
-            .and_then(value_dict)
-            .and_then(|d| d.get("OutputIntents")),
-    )?;
+/// Return the data colour space signature from the destination ICC header.
+fn intent_space(reads: &mut PathReads<'_>, owner: Option<&Dict>) -> Result<Option<[u8; 4]>> {
+    let intents = reads.resolve(owner.and_then(|dict| dict.get("OutputIntents")))?;
     let Some(Value::Array(items)) = intents.as_deref() else {
-        return Ok(false);
+        return Ok(None);
     };
     for item in items.iter() {
         let item = reads.resolve(Some(item))?;
         if let Some(dict) = item.as_deref().and_then(value_dict)
             && named(dict, "S", b"GTS_PDFA1")
-            && matches!(
-                reads.resolve(dict.get("DestOutputProfile"))?.as_deref(),
-                Some(Value::Stream(_))
-            )
+            && let Some(Value::Stream(profile)) =
+                reads.resolve(dict.get("DestOutputProfile"))?.as_deref()
         {
-            return Ok(true);
+            let data = match profile.decoded(reads.budget) {
+                Ok(data) => data,
+                Err(e) if e.limit().is_none() => continue,
+                Err(e) => return Err(e.into()),
+            };
+            if let Some(space) = data.get(16..20).and_then(|s| s.try_into().ok()) {
+                return Ok(Some(space));
+            }
         }
     }
-    Ok(false)
+    Ok(None)
 }
 
 fn structure(reads: &mut PathReads<'_>) -> Result<bool> {
@@ -343,7 +434,7 @@ fn lost<'b>(
     Ok(true)
 }
 
-fn font_points_to(
+pub(super) fn font_points_to(
     version: &Version,
     font: &Value,
     descriptor: u32,
@@ -373,56 +464,39 @@ fn font_points_to(
     Ok(false)
 }
 
-/// Embedding applies to a font used to show glyphs. A font left in Resources
-/// after its text is removed does not make the profile fail.
-fn uses_page_font(version: &Version, descriptor: u32, budget: &Budget) -> Result<bool> {
-    let mut reads = Reads::new(version, budget);
-    for page in PageIndex::build(&mut reads)?.pages() {
-        let Some(resources) = page.resources() else {
-            continue;
-        };
-        let resources = resolved(version, resources, budget)?;
-        let Some(dict) = resources.as_deref().and_then(value_dict) else {
-            continue;
-        };
-        let fonts = entry(version, dict, "Font", budget)?;
-        let Some(fonts) = fonts.as_deref().and_then(value_dict) else {
-            continue;
-        };
-        let content = PageContent::read(&mut reads, page)?;
-        let ops = content.operations();
-        let mut selected = false;
-        let mut saved = BudgetVec::new(budget);
-        for op in ops.operations() {
-            budget.poll()?;
-            match ops.operator(op) {
-                b"q" => saved.try_push(selected)?,
-                b"Q" => selected = saved.pop().unwrap_or(false),
-                b"Tf" => {
-                    selected = match ops.operands(op).first() {
-                        Some(Value::Name(name)) => match fonts.get(name.as_bytes()) {
-                            Some(font) => font_points_to(version, font, descriptor, budget)?,
-                            None => false,
-                        },
-                        _ => false,
-                    };
-                }
-                b"Tj" | b"TJ" | b"'" | b"\"" if selected => return Ok(true),
-                _ => {}
-            }
+fn mcid(path: &mut PathReads<'_>, page: &Page, operand: Option<&Value>) -> Result<Option<usize>> {
+    let number = |dict: &Dict| match dict.get("MCID") {
+        Some(Value::Integer(n)) => usize::try_from(*n).ok(),
+        _ => None,
+    };
+    match operand {
+        Some(Value::Dict(d)) => Ok(number(d)),
+        Some(Value::Name(name)) => {
+            let resources = path.resources(page)?;
+            let props = path.resolve(
+                resources
+                    .as_deref()
+                    .and_then(value_dict)
+                    .and_then(|d| d.get("Properties")),
+            )?;
+            let entry = path.resolve(
+                props
+                    .as_deref()
+                    .and_then(value_dict)
+                    .and_then(|d| d.get(name.as_bytes())),
+            )?;
+            Ok(entry.as_deref().and_then(value_dict).and_then(number))
         }
+        _ => Ok(None),
     }
-    Ok(false)
 }
 
-fn tagged_operands(operands: &[Value]) -> bool {
-    operands
-        .get(1)
-        .and_then(value_dict)
-        .is_some_and(|d| d.get("MCID").is_some())
-}
-
-fn untagged_text<'b>(content: &PageContent, budget: &'b Budget) -> Result<BudgetVec<'b, u32>> {
+fn untagged_text<'b>(
+    content: &PageContent,
+    page: &Page,
+    version: &Version,
+    budget: &'b Budget,
+) -> Result<BudgetVec<'b, u32>> {
     let ops = content.operations();
     let mut marked = BudgetVec::new(budget);
     let mut untagged = BudgetVec::new(budget);
@@ -433,7 +507,12 @@ fn untagged_text<'b>(content: &PageContent, budget: &'b Budget) -> Result<Budget
             b"BMC" | b"BDC" => {
                 let inherited = marked.last().copied().unwrap_or(false);
                 let artifact = matches!(operands.first(), Some(Value::Name(tag)) if tag.as_bytes() == b"Artifact");
-                marked.try_push(inherited || artifact || tagged_operands(operands))?;
+                marked.try_push(
+                    inherited
+                        || artifact
+                        || mcid(&mut PathReads::new(version, budget), page, operands.get(1))?
+                            .is_some(),
+                )?;
             }
             b"EMC" => {
                 marked.pop();
@@ -479,7 +558,7 @@ fn page_effects<'b>(
         {
             continue;
         }
-        let current = untagged_text(&PageContent::read(&mut reads, page)?, budget)?;
+        let current = untagged_text(&PageContent::read(&mut reads, page)?, page, version, budget)?;
         if current.is_empty() {
             continue;
         }
@@ -490,7 +569,7 @@ fn page_effects<'b>(
             .as_ref()
             .and_then(|pages| pages.get(pages.index_of(page.object()?)?))
         {
-            Some(p) => untagged_text(&PageContent::read(&mut old_reads, p)?, budget)?,
+            Some(p) => untagged_text(&PageContent::read(&mut old_reads, p)?, p, opened, budget)?,
             None => BudgetVec::new(budget),
         };
         for &n in current
@@ -521,48 +600,312 @@ fn uses_structure_content(version: &Version, budget: &Budget) -> Result<bool> {
     for page in pages.pages() {
         let content = PageContent::read(&mut reads, page)?;
         let ops = content.operations();
-        if ops
-            .operations()
-            .iter()
-            .any(|op| ops.operator(op) == b"BDC" && tagged_operands(ops.operands(op)))
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn has_device_colour(version: &Version, budget: &Budget) -> Result<bool> {
-    let mut reads = Reads::new(version, budget);
-    let pages = PageIndex::build(&mut reads)?;
-    for page in pages.pages() {
-        let content = PageContent::read(&mut reads, page)?;
-        let ops = content.operations();
-        let resources = page
-            .resources()
-            .map(|v| resolved(version, v, budget))
-            .transpose()?
-            .flatten();
-        let spaces = match resources.as_deref().and_then(value_dict) {
-            Some(dict) => entry(version, dict, "ColorSpace", budget)?,
-            None => None,
-        };
         for op in ops.operations() {
-            let default = match ops.operator(op) {
-                b"rg" | b"RG" => "DefaultRGB",
-                b"k" | b"K" => "DefaultCMYK",
-                _ => continue,
-            };
-            if !spaces
-                .as_deref()
-                .and_then(value_dict)
-                .is_some_and(|dict| dict.get(default).is_some())
+            if ops.operator(op) == b"BDC"
+                && mcid(
+                    &mut PathReads::new(version, budget),
+                    page,
+                    ops.operands(op).get(1),
+                )?
+                .is_some()
             {
                 return Ok(true);
             }
         }
     }
     Ok(false)
+}
+
+/// Resolve one MCID through the page's StructParents key in its number tree.
+/// The path includes indirect Kids, Nums and the array indexed by the MCID.
+fn slot(
+    path: &mut PathReads<'_>,
+    value: &Value,
+    key: i64,
+    index: usize,
+    depth: usize,
+) -> Result<bool> {
+    path.budget.charge(LimitCode::InterpretationFuel, 1)?;
+    if depth > MAX_DEPTH {
+        return Err(
+            LimitExceeded::over(LimitCode::ObjectDepth, MAX_DEPTH as u64, depth as u64).into(),
+        );
+    }
+    let node = path.resolve(Some(value))?;
+    let Some(dict) = node.as_deref().and_then(value_dict) else {
+        return Ok(false);
+    };
+    if let Some(Value::Array(limits)) = dict.get("Limits")
+        && let [Value::Integer(lo), Value::Integer(hi)] = limits.as_slice()
+        && !(*lo..=*hi).contains(&key)
+    {
+        return Ok(false);
+    }
+    let nums = path.resolve(dict.get("Nums"))?;
+    if let Some(Value::Array(pairs)) = nums.as_deref() {
+        for pair in pairs.as_slice().as_chunks::<2>().0 {
+            path.budget.poll()?;
+            if pair[0] != Value::Integer(key) {
+                continue;
+            }
+            let entries = path.resolve(Some(&pair[1]))?;
+            let Some(Value::Array(entries)) = entries.as_deref() else {
+                return Ok(false);
+            };
+            let target = path.resolve(entries.get(index))?;
+            return Ok(target.as_deref().and_then(value_dict).is_some());
+        }
+    }
+    let kids = path.resolve(dict.get("Kids"))?;
+    if let Some(Value::Array(kids)) = kids.as_deref() {
+        for child in kids.iter() {
+            if slot(path, child, key, index, depth + 1)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn associated(path: &mut PathReads<'_>, page: &Page, operand: Option<&Value>) -> Result<bool> {
+    let Some(index) = mcid(path, page, operand)? else {
+        return Ok(false);
+    };
+    let Some(Value::Integer(key)) = page.dict().get("StructParents") else {
+        return Ok(false);
+    };
+    if let Some(r) = page.object() {
+        path.owners.try_push(r.number())?;
+    }
+    let root = path.root()?;
+    let tree = path.resolve(
+        root.as_deref()
+            .and_then(value_dict)
+            .and_then(|d| d.get("StructTreeRoot")),
+    )?;
+    let Some(parent_tree) = tree
+        .as_deref()
+        .and_then(value_dict)
+        .and_then(|d| d.get("ParentTree"))
+    else {
+        return Ok(false);
+    };
+    slot(path, parent_tree, *key, index, 0)
+}
+
+/// A page or catalog on the path can also have an unrelated edit, e.g.
+/// rotation on the same save as the loss of an indirect property dictionary.
+fn record_path<'b>(
+    old: &PathReads<'_>,
+    new: &PathReads<'_>,
+    written: &[u32],
+    keys: &[&str],
+    reason: &'static str,
+    found: &mut Reasons<'b>,
+    budget: &'b Budget,
+) -> Result<()> {
+    for &n in old
+        .owners
+        .iter()
+        .chain(new.owners.iter())
+        .filter(|n| written.binary_search(n).is_ok())
+    {
+        let before = object(old.version, n, budget)?;
+        let after = object(new.version, n, budget)?;
+        if let (Some(Value::Dict(a)), Some(Value::Dict(b))) = (before.as_deref(), after.as_deref())
+            && [
+                b"Catalog".as_slice(),
+                b"Page",
+                b"Pages",
+                b"StructElem",
+                b"StructTreeRoot",
+            ]
+            .iter()
+            .any(|ty| named(a, "Type", ty))
+            && keys.iter().all(|key| a.get(key) == b.get(key))
+        {
+            continue;
+        }
+        record(found, reason, Some(n), budget)?;
+    }
+    Ok(())
+}
+
+/// Metadata and unrelated page/catalog edits cannot change a content
+/// resource. Keep them within the same budget even on a large painted page.
+fn paths_changed(
+    opened: &Version,
+    version: &Version,
+    written: &[u32],
+    keys: &[&str],
+    budget: &Budget,
+) -> Result<bool> {
+    for &n in written {
+        let before = object(opened, n, budget)?;
+        let after = object(version, n, budget)?;
+        match (before.as_deref(), after.as_deref()) {
+            (Some(Value::Dict(a)), Some(Value::Dict(b)))
+                if a.get("Type") == b.get("Type")
+                    && [b"Catalog".as_slice(), b"Page", b"Pages"]
+                        .iter()
+                        .any(|ty| named(a, "Type", ty)) =>
+            {
+                if keys.iter().any(|k| a.get(k) != b.get(k)) {
+                    return Ok(true);
+                }
+            }
+            (Some(Value::Stream(a)), Some(Value::Stream(b)))
+                if named(a.dict(), "Type", b"Metadata") && named(b.dict(), "Type", b"Metadata") => {
+            }
+            _ => return Ok(true),
+        }
+    }
+    Ok(false)
+}
+
+const ASSOCIATIONS: &[&str] = &[
+    "StructTreeRoot",
+    "ParentTree",
+    "StructParents",
+    "Resources",
+    "Parent",
+    "Kids",
+    "Type",
+];
+const COLOUR: &[&str] = &[
+    "OutputIntents",
+    "Resources",
+    "Contents",
+    "Parent",
+    "Kids",
+    "Type",
+];
+
+fn association_changes<'b>(
+    opened: &Version,
+    version: &Version,
+    written: &[u32],
+    found: &mut Reasons<'b>,
+    budget: &'b Budget,
+) -> Result<()> {
+    if !paths_changed(opened, version, written, ASSOCIATIONS, budget)? {
+        return Ok(());
+    }
+    let mut reads = Reads::new(version, budget);
+    let pages = PageIndex::build(&mut reads)?;
+    let old_pages = PageIndex::build(&mut Reads::new(opened, budget))?;
+    for page in pages.pages() {
+        let Some(old_page) = page
+            .object()
+            .and_then(|r| old_pages.index_of(r))
+            .and_then(|i| old_pages.get(i))
+        else {
+            continue;
+        };
+        let content = PageContent::read(&mut reads, page)?;
+        let ops = content.operations();
+        for op in ops
+            .operations()
+            .iter()
+            .filter(|op| ops.operator(op) == b"BDC")
+        {
+            let operand = ops.operands(op).get(1);
+            let mut now = PathReads::new(version, budget);
+            if associated(&mut now, page, operand)? {
+                continue;
+            }
+            let mut old = PathReads::new(opened, budget);
+            if associated(&mut old, old_page, operand)? {
+                record_path(
+                    &old,
+                    &now,
+                    written,
+                    ASSOCIATIONS,
+                    "the structure tree lost its content associations",
+                    found,
+                    budget,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn page_space(
+    path: &mut PathReads<'_>,
+    page: &Page,
+    part: u32,
+    document_space: Option<[u8; 4]>,
+) -> Result<Option<[u8; 4]>> {
+    if let Some(r) = page.object() {
+        path.owners.try_push(r.number())?;
+    }
+    let local = if part == 4 {
+        intent_space(path, Some(page.dict()))?
+    } else {
+        None
+    };
+    Ok(local.or(document_space))
+}
+
+fn colour_changes<'b>(
+    opened: &Version,
+    version: &Version,
+    written: &[u32],
+    part: u32,
+    found: &mut Reasons<'b>,
+    budget: &'b Budget,
+) -> Result<()> {
+    if !paths_changed(opened, version, written, COLOUR, budget)? {
+        return Ok(());
+    }
+    let mut old_catalog = PathReads::new(opened, budget);
+    let mut catalog = PathReads::new(version, budget);
+    let old_root = old_catalog.root()?;
+    let root = catalog.root()?;
+    let old_space = intent_space(&mut old_catalog, old_root.as_deref().and_then(value_dict))?;
+    let space = intent_space(&mut catalog, root.as_deref().and_then(value_dict))?;
+    let pages = PageIndex::build(&mut Reads::new(version, budget))?;
+    let old_pages = PageIndex::build(&mut Reads::new(opened, budget))?;
+    for page in pages.pages() {
+        let mut now = PathReads::new(version, budget);
+        now.owners.try_extend_from_slice(&catalog.owners)?;
+        let effective = page_space(&mut now, page, part, space)?;
+        let previous = page
+            .object()
+            .and_then(|r| old_pages.index_of(r))
+            .and_then(|i| old_pages.get(i));
+        let mut old = PathReads::new(opened, budget);
+        old.owners.try_extend_from_slice(&old_catalog.owners)?;
+        let previous_space = previous
+            .map(|p| page_space(&mut old, p, part, old_space))
+            .transpose()?
+            .flatten();
+        let fixed_owners = (old.owners.len(), now.owners.len());
+        for device in [Device::Rgb, Device::Cmyk, Device::Gray] {
+            old.owners.truncate(fixed_owners.0);
+            now.owners.truncate(fixed_owners.1);
+            if device.covered(effective) || !Use::Colour(device).page(&mut now, page)? {
+                continue;
+            }
+            if let Some(p) = previous
+                && !device.covered(previous_space)
+                && Use::Colour(device).page(&mut old, p)?
+            {
+                continue;
+            }
+            record_path(
+                &old,
+                &now,
+                written,
+                COLOUR,
+                "device colour lost its archival output profile",
+                found,
+                budget,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn dependencies<'b>(
@@ -595,16 +938,8 @@ pub(super) fn dependencies<'b>(
             }
         }
     }
-    if matches!(claim, Claim::A(..)) {
-        lost(
-            (opened, version),
-            written,
-            output_intent,
-            has_device_colour,
-            "device colour lost its archival output profile",
-            found,
-            budget,
-        )?;
+    if let Claim::A(part, _) = claim {
+        colour_changes(opened, version, written, part, found, budget)?;
     }
     if matches!(claim, Claim::Ua(_) | Claim::A(1..=3, b'A')) {
         let root_lost = lost(
@@ -618,7 +953,7 @@ pub(super) fn dependencies<'b>(
         )?;
         if matches!(claim, Claim::Ua(_)) {
             if !root_lost {
-                lost(
+                let tree_lost = lost(
                     (opened, version),
                     written,
                     parent_tree,
@@ -627,6 +962,9 @@ pub(super) fn dependencies<'b>(
                     found,
                     budget,
                 )?;
+                if !tree_lost {
+                    association_changes(opened, version, written, found, budget)?;
+                }
             }
             page_effects(version, opened, written, found, budget)?;
         }

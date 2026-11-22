@@ -177,17 +177,22 @@ method and property of its classes with its full description.
 - [`Highlight`](annotations.md#highlight): A highlight over text, as `page.annotations.add` takes it.
 - [`Ink`](annotations.md#ink): Freehand strokes, each through one or more display points, as `page.annotations.add` takes it.
 - [`LineAnnotation`](annotations.md#lineannotation): A straight line between two display points, as `page.annotations.add` takes it.
+- [`LineDetails`](annotations.md#linedetails): Leader lengths in default user space and the caption placement of a line.
 - [`LineEnding`](annotations.md#lineending): The shape at an end of a line or polyline, `/LE` (ISO 32000-2 Table 179).
 - [`MarkupRects`](annotations.md#markuprects): Rectangles or quads that text markup covers: one, or a sequence of them.
 - [`MediaAsset`](annotations.md#mediaasset): An embedded media file shared by its file specification and media instances.
 - [`MediaKind`](annotations.md#mediakind): Base-standard RichMedia configuration and instance subtypes.
 - [`ModelFormat`](annotations.md#modelformat): Embedded base-standard 3D stream formats.
-- [`ModelView`](annotations.md#modelview): A named 3D view with optional links to existing 3D measurements.
+- [`ModelMeasurement`](annotations.md#modelmeasurement): Geometry of one 3D measurement in model coordinates.
+- [`ModelMeasurementType`](annotations.md#modelmeasurementtype): Kinds of stored 3D measurements and markups (ISO 32000-2, Tables 326–331).
+- [`ModelView`](annotations.md#modelview): A named 3D view, its camera-to-world matrix, scene settings and measurements.
 - [`Note`](annotations.md#note): A note shown as an icon, as `page.annotations.add` takes it.
 - [`NoteIcon`](annotations.md#noteicon): The icon of a note, `/Name` (ISO 32000-2 §12.5.6.4).
 - [`Polygon`](annotations.md#polygon): A closed polygon through two or more display points, as `page.annotations.add` takes it.
 - [`PolyLine`](annotations.md#polyline): An open line through two or more display points, as `page.annotations.add` takes it.
+- [`PopupInfo`](annotations.md#popupinfo): Effective markup shown in a pop-up window and its initial display state.
 - [`ProjectionAnnotation`](annotations.md#projectionannotation): A projection annotation that links back to a 3D measurement.
+- [`RedactionMark`](annotations.md#redactionmark): Mark a rectangle or quadrilaterals for later redaction.
 - [`RichMedia`](annotations.md#richmedia): A RichMedia annotation with a named asset, configuration, instance and optional 3D views.
 - [`Screen`](annotations.md#screen): A Screen annotation with an optional media clip and its rendition action.
 - [`SlideShow`](annotations.md#slideshow): An existing embedded slideshow and the UTF-8 resource names in its virtual file system.
@@ -205,12 +210,18 @@ method and property of its classes with its full description.
 
 - [`Destination`](links-and-destinations.md#destination): A place in this document: a zero-based page, a point, and a zoom.
 - [`Destinations`](links-and-destinations.md#destinations): The named destinations of a document, as `doc.destinations` returns them.
+- [`FragmentParameter`](links-and-destinations.md#fragmentparameter): One parameter of a PDF fragment, resolved in its original order.
 - [`Launch`](links-and-destinations.md#launch): Open a file with the application the viewer associates with it.
 - [`Link`](links-and-destinations.md#link): A handle on one link annotation of a page, as `page.links` lists it.
 - [`Links`](links-and-destinations.md#links): The link annotations of a page, in `/Annots` order, as `page.links` returns them.
 - [`NamedAction`](links-and-destinations.md#namedaction): A viewer action by name (ISO 32000-2 Table 213).
+- [`NamedResources`](links-and-destinations.md#namedresources): Live byte-string keys and PDF objects in one catalog resource name tree.
+- [`PdfFragment`](links-and-destinations.md#pdffragment): Ordered content selectors and viewer parameters from a PDF URI's fragment.
 - [`RemoteDestination`](links-and-destinations.md#remotedestination): A place in another PDF file: a zero-based page or a named destination.
+- [`StructureDestination`](links-and-destinations.md#structuredestination): A PDF 2.0 structure destination and its page-based fallback.
 - [`Target`](links-and-destinations.md#target): Where a link or trigger leads: a destination, a file to open, a viewer, transition, thread, script, hide, layer-state, or form action, or a URI string.
+- [`UriAction`](links-and-destinations.md#uriaction): A URI reference and the optional image-map click flag of a PDF URI action.
+- [`WindowsLaunch`](links-and-destinations.md#windowslaunch): Windows-specific fields in a launch action, retained as data (PDF 1.1 through 1.7).
 
 ## [Actions and triggers](actions-and-triggers.md)
 
@@ -249,6 +260,7 @@ method and property of its classes with its full description.
 - [`FieldSpecification`](forms-and-widgets.md#fieldspecification): The specifications that `page.widgets.add` takes.
 - [`FieldType`](forms-and-widgets.md#fieldtype_1): The kind of a form field, from its `/FT` and the flags that refine it.
 - [`Form`](forms-and-widgets.md#form): The terminal fields of a document's interactive form, as `doc.form` returns them.
+- [`IconFit`](forms-and-widgets.md#iconfit): Pushbutton icon scaling and alignment, shared by its three display modes.
 - [`ListBox`](forms-and-widgets.md#listbox): A list of choices, as `page.widgets.add` takes it.
 - [`parse_fdf`](forms-and-widgets.md#parse_fdf): Parse an FDF file or byte buffer into `FdfData` (ISO 32000-2 section 12.7.8).
 - [`parse_xfdf`](forms-and-widgets.md#parse_xfdf): Parse an XFDF file, XML string, or byte buffer into `FdfData` (ISO 19444-1).
@@ -308,6 +320,7 @@ method and property of its classes with its full description.
 - [`CollectionView`](collections.md#collectionview): Initial view of a portable collection (`/View`, ISO 32000-2 Table 153).
 - [`NamedPages`](collections.md#namedpages): The document's `/Names /Pages` name tree as a live mutable mapping (ISO 32000-2 Table 32).
 - [`Navigator`](collections.md#navigator): Navigator presentation of a portable collection (`Navigator`, ISO 32000-2 Table 160, PDF 2.0).
+- [`WebCapture`](collections.md#webcapture): The stored Web Capture database. Index lookups return writable Arlington content-set views.
 
 ## [Measurement and requirements](measurement-and-requirements.md)
 
@@ -338,8 +351,8 @@ method and property of its classes with its full description.
 - [`Encryption`](encryption.md#encryption_1): How `Document.save` and `Document.to_bytes` encrypt a full save.
 - [`IntegrityReport`](encryption.md#integrityreport): Result of verifying the ISO/TS 32004:2024 MAC of an opened PDF revision.
 - [`Permissions`](encryption.md#permissions): What an encrypted document permits the user password, combined with `|`.
-- [`RecipientCredential`](encryption.md#recipientcredential): An X.509 recipient certificate and its matching RSA private key.
-- [`RecipientEncryption`](encryption.md#recipientencryption): Encrypt a full save for RSA certificate recipients with Adobe.PubSec, adbe.pkcs7.s5 and AES.
+- [`RecipientCredential`](encryption.md#recipientcredential): An X.509 recipient certificate and its matching RSA or ECDH private key.
+- [`RecipientEncryption`](encryption.md#recipientencryption): Encrypt a full save for certificate recipients with Adobe.PubSec, adbe.pkcs7.s5 and AES.
 
 ## [Signing](signing.md)
 

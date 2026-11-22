@@ -115,7 +115,7 @@ def test_profile_structure_and_edit_reports(profile: str) -> None:
         assert list(saved.pages[0].operations) == content
         assert saved.check().defects == ()
 
-    for edit in ("action_triggers", "ocr_layer", "page_records"):
+    for edit in ("action_triggers", "edit_interaction", "ocr_layer", "page_records"):
         with pyropdf.open(path) as edited:
             case = EDITS[edit]
             case.prepare(edited)
@@ -144,6 +144,25 @@ def test_the_profile_map_names_only_the_matching_parameter_case() -> None:
                 for test in row[dimension]["tests"]
                 if "::test_profile_structure_and_edit_reports" in test
             )
+
+
+@pytest.mark.parametrize("level", ["1b", "2b", "3b", "4", "4e", "4f"])
+def test_archival_appearance_reports_only_the_annotation_with_an_alternate(level: str) -> None:
+    path = ROOT / "tests/assets/pdfa" / f"pdfa-{level}.pdf"
+    with pyropdf.open(path) as doc:
+        note = doc.pages[0].annotations.add(pyropdf.Note((4, 8), contents="Review"))
+        normal = note.appearance_stream()
+        assert normal is not None
+        note.set_appearance("normal", normal)
+        assert doc.changes(incremental=True).claims == ()
+        note.set_appearance("down", normal)
+        for incremental in (False, True):
+            (change,) = doc.changes(incremental=incremental).claims
+            assert change.claim == f"PDF/A-{level.upper()}"
+            assert change.objects == (note.xref,)
+            assert change.reason == "PDF/A permits only the normal annotation appearance"
+        del note.obj["AP"]["D"]
+        assert doc.changes(incremental=True).claims == ()
 
 
 @pytest.mark.parametrize("incremental", [False, True])
@@ -291,3 +310,87 @@ def test_arlington_summary_and_verbose_reports_retain_paths(
         VERAPDF.validate(jar, flavour, [accepted, rejected, absent])
     with pytest.raises(ValueError, match="incomplete verbose"):
         VERAPDF.detailed_reports(jar, flavour, [accepted, rejected, absent])
+
+
+@pytest.mark.spec("{profile}", "interpret", "edit", "preserve")
+@pytest.mark.parametrize(
+    "profile",
+    [
+        "pdfa-1a",
+        "pdfa-1b",
+        "pdfa-2a",
+        "pdfa-2b",
+        "pdfa-2u",
+        "pdfa-3a",
+        "pdfa-3b",
+        "pdfa-3u",
+        "pdfa-4",
+        "pdfa-4e",
+        "pdfa-4f",
+        "pdfua-1",
+        "pdfua-2",
+    ],
+)
+def test_alternate_profile_representations(profile: str, tmp_path: Path) -> None:
+    source = ROOT / "tests" / "assets" / profile.split("-", maxsplit=1)[0] / f"{profile}.pdf"
+    files = VERAPDF.alternate_saves(source, VERAPDF.FIXTURES[source], tmp_path)
+    assert files
+    for case in VERAPDF.ALTERNATES["cases"](VERAPDF.FIXTURES[source], dual=False):
+        assert tmp_path / f"{source.stem}-{case}-input.pdf" in files
+        for mode in ("full", "incremental"):
+            for operation in ("edit", "valid-control"):
+                assert tmp_path / f"{source.stem}-{case}-{operation}-{mode}.pdf" in files
+
+
+@pytest.mark.spec("pdfa", "interpret", "edit", "preserve")
+@pytest.mark.spec("pdfua", "interpret", "edit", "preserve")
+def test_dual_alternate_resources_report_only_the_claim_that_newly_fails(tmp_path: Path) -> None:
+    source = ROOT / "tests/assets/pdfua/pdfua-2-pdfa-4.pdf"
+    files = VERAPDF.alternate_saves(source, "ua2", tmp_path)
+    assert set(VERAPDF.dual_archival(files)) == set(files)
+    for mode in ("full", "incremental"):
+        for case, profiles in {
+            "page-intent": {"4"},
+            "parent-tree-slot": {"ua2"},
+            "nested-composite-font": {"4", "ua2"},
+            "nested-default-rgb": set(),
+        }.items():
+            name = f"{source.stem}-{case}-edit-{mode}.pdf"
+            assert {f for f in ("ua2", "4") if f"{f} {name}" in VERAPDF.EXPECTED} == profiles
+
+
+@pytest.mark.parametrize("case", ["inherited-default-rgb", "parent-tree-slot", "named-properties"])
+def test_unrelated_rotation_does_not_own_a_resource_failure(case: str) -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfua/pdfua-2-pdfa-4.pdf") as source:
+        data = VERAPDF.ALTERNATES["prepare"](source, case)
+    with pyropdf.open(data) as doc:
+        responsible = VERAPDF.ALTERNATES["edit"](doc, case)
+        doc.pages[0].rotation = 90
+        for incremental in (True, False):
+            (change,) = doc.changes(incremental=incremental).claims
+            assert change.objects == (responsible,)
+
+
+def test_nested_form_reads_use_the_change_reports_operation_budget() -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-4.pdf") as source:
+        data = VERAPDF.ALTERNATES["prepare"](source, "nested-rgb")
+    with pyropdf.open(data) as prepared:
+        outer = prepared.pages[0].obj["Resources"]["XObject"]["Outer"]
+        inner = outer["Resources"]["XObject"]["Inner"]
+        inner.write(inner.read() + b" " * 10_000)
+        data = prepared.to_bytes()
+    with pyropdf.open(data, limits=pyropdf.DocumentLimits(max_page_content_size=5_000)) as doc:
+        del doc.catalog["OutputIntents"]
+        with pytest.raises(pyropdf.LimitError) as failure:
+            doc.changes(incremental=True)
+        assert failure.value.code == "page_content_size"
+        doc.history.undo()
+        assert doc.changes(incremental=True).claims == ()
+
+
+def test_unrelated_catalog_edit_does_not_decode_the_nested_archival_form() -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-4.pdf") as source:
+        data = VERAPDF.ALTERNATES["prepare"](source, "nested-rgb")
+    with pyropdf.open(data, limits=pyropdf.DocumentLimits(max_page_content_size=1)) as doc:
+        doc.catalog["Unrelated"] = True
+        assert doc.changes(incremental=True).claims == ()

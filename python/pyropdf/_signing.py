@@ -10,7 +10,7 @@ pyHanko.
 from __future__ import annotations
 
 import typing
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -19,15 +19,17 @@ from pyropdf import _core
 from pyropdf._core import _Signer
 from pyropdf._errors import PdfError
 from pyropdf._form import FieldType
-from pyropdf._metadata import pdf_date
+from pyropdf._metadata import _require_version, pdf_date
 from pyropdf._objects import Array, Dictionary, Name, Stream, _catalog
+from pyropdf._signature_build import build_entries
+from pyropdf._signature_seeds import field_settings
 from pyropdf._signature_structures import (
     DocMdpPermission,
     FieldLock,
+    _updated_lock,
     _validate_doc_mdp,
     build_reference_entries,
     ensure_pades_version,
-    inherit_prepared_field_settings,
     is_timestamp_sig,
     parse_rfc3161_tst_info,
     read_certification,
@@ -307,36 +309,48 @@ def _resolve_sign_settings(  # noqa: PLR0913 - the requested field and its signi
     field_lock: FieldLock | None,
     reason_text: str | None,
     *,
-    digest_algorithm: str | None,
+    signer: Signer,
+    timestamped: bool,
 ) -> tuple[DocMdpPermission | None, FieldLock | None, str | None]:
-    effective_mdp = checked_mdp
-    effective_lock = field_lock
-    effective_reason = reason_text
+    effective_mdp, effective_lock, effective_reason = checked_mdp, field_lock, reason_text
     if field in document.form:
         existing = document.form[field]
         if existing.type is FieldType.SIGNATURE and not existing.is_signed:
-            seed = existing.obj.get("SV")
-            if (
-                digest_algorithm is not None
-                and isinstance(seed, Dictionary)
-                and isinstance(flags := seed.get("Ff"), int)
-                and flags & 64
-            ):
-                permitted = seed.get("DigestMethod")
-                pdf_name = Name(digest_algorithm.upper().replace("_", "-"))
-                if not isinstance(permitted, Array) or pdf_name not in permitted:
-                    msg = f"the {field!r} signature field requires a DigestMethod that permits {pdf_name}"
-                    raise ValueError(msg)
-            effective_mdp, effective_lock, effective_reason = inherit_prepared_field_settings(
+            effective_mdp, effective_lock, effective_reason = field_settings(
+                document,
                 existing.obj,
-                effective_mdp,
-                effective_lock,
-                effective_reason,
+                checked_mdp,
+                field_lock,
+                reason_text,
+                None if signer._core.fixed_digest else signer.digest_algorithm,  # noqa: SLF001
+                signer.certificates,
+                timestamped=timestamped,
             )
     if effective_mdp is not None and (read_certification(document) is not None or bool(document.signatures)):
         msg = "cannot add a DocMDP certification signature to a document that is already signed or certified"
         raise ValueError(msg)
     return effective_mdp, effective_lock, effective_reason
+
+
+def _apply_lock(document: Document, field: str, lock: FieldLock | None) -> None:
+    holder = document.form[field].obj
+    previous = bool(document.signatures)
+    if lock is not None and (
+        ("Lock" not in holder and not previous)
+        or (lock.permission is not None and ("Lock" not in holder or holder["Lock"].get("P") != lock.permission))
+    ):
+        # A later approval can add a FieldMDP transform without rewriting
+        # the unsigned field's previously certified structure.
+        holder["Lock"] = _updated_lock(document, holder.get("Lock"), lock)
+    if previous:
+        for verdict in document.changes(incremental=True).permissions:
+            if (
+                verdict.field == field
+                and verdict.transform.startswith(("FieldMDP", "Field lock P="))
+                and verdict.permitted is False
+            ):
+                msg = f"signing field {field!r} violates the {verdict.transform} lock from {verdict.signature!r}"
+                raise ValueError(msg)
 
 
 def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
@@ -350,6 +364,7 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
     reason: str | None,
     location: str | None,
     contact: str | None,
+    build_properties: Mapping[str, Mapping[str, object]] | None = None,
     reserve: int,
 ) -> bytes:
     """Sign ``document`` in a new revision, as :meth:`Document.sign` describes, and return the signed bytes."""
@@ -385,7 +400,14 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
             checked_mdp,
             field_lock,
             reason_text,
-            digest_algorithm=None if signer._core.fixed_digest else signer.digest_algorithm,  # noqa: SLF001
+            signer=signer,
+            timestamped=timestamper is not None,
+        )
+        build = build_entries(build_properties)
+        _require_version(
+            document,
+            _catalog(document),
+            (1, 7) if "SigQ" in build else (1, 6) if "REx" in build.get("App", {}) else (1, 5),
         )
         optional_entries = {
             key: text
@@ -404,6 +426,7 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
             "ByteRange": list(_BYTE_RANGE_PLACEHOLDER),
             "Contents": b"0" * (2 * reserve),
             "M": pdf_date(datetime.now(UTC)),
+            "Prop_Build": build,
             **optional_entries,
         }
         _declare_signature_extensions(document, *signer._core.extensions)  # noqa: SLF001
@@ -415,6 +438,7 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
         _signature_field(document, field, signature)
         if effective_mdp is not None:
             write_perms_doc_mdp(document, signature)
+        _apply_lock(document, field, effective_lock)
         signed = _core.sign_document(core, signature_number, reserve, signer._core, timestamper)  # noqa: SLF001
     except BaseException:
         # Signing ends its transaction only once it replaced the document.

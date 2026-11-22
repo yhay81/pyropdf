@@ -604,6 +604,10 @@ Page.content(
 
 Return the text runs, paths, and images that the page paints.
 
+A complete result can be rendered again with `Content.pixmap` or
+placed with `Canvas.page` while this document is open, even after a
+change to the original page. Filtering by kind or clip yields items only.
+
 Items come in paint order, in display coordinates, as hayro
 interprets the current version of the page, with optional-content
 visibility applied. Each carries its paints, its blend mode and soft
@@ -918,6 +922,19 @@ against `max_glyphs` and `max_size` as for `text`.
 Exceeding 4,096 vector rules, 4,096 cells per candidate table,
 65,536 merged-cell candidates per grid, or 32 text columns raises
 `LimitError`, with no partial table results.
+
+### `Page.uses_transparency`
+
+```python
+Page.uses_transparency() -> bool
+```
+
+Return whether the current page uses transparent imaging under ISO 32000-2 Annex Q.
+
+Check paint operations, selected Forms, images, patterns, Type 3
+character procedures and annotation appearances. The query follows only
+the resources reached by painting. Cyclic resources and exhausted
+limits raise an error.
 
 ### `Page.operations`
 

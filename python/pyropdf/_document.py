@@ -53,6 +53,7 @@ from pyropdf._encryption import (
 )
 from pyropdf._errors import DocumentClosedError, PdfError
 from pyropdf._fallback_fonts import FallbackFonts, _replace_fallback_fonts, _set_fallback
+from pyropdf._font_cmaps import write_cmap
 from pyropdf._fonts import (
     FontInfo,
     FontProgram,
@@ -100,7 +101,8 @@ from pyropdf._metadata import (
     write_viewer_preferences,
     write_xmp,
 )
-from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
+from pyropdf._name_resources import NamedResources
+from pyropdf._objects import Dictionary, Objects, Stream, _catalog, _trailer
 from pyropdf._outline import Outline, OutlineEntry, _write_outline
 from pyropdf._page import _clip_box, _ExportPage, _render_scale
 from pyropdf._page_labels import PageLabelRange, _read_page_labels, _write_page_labels
@@ -134,6 +136,7 @@ from pyropdf._signing import timestamp as _timestamp
 from pyropdf._structure import StructureTree, _delete_structure_tree
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 from pyropdf._threads import Threads, _delete_all_threads
+from pyropdf._web_capture import WebCapture
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -353,6 +356,48 @@ class Document:
         return objects
 
     @property
+    def base_uri(self) -> str | None:
+        """Return the base URI for relative URI actions in this document."""
+        from pyropdf._objects import Dictionary, String, _catalog  # noqa: PLC0415
+
+        uri = _catalog(self).get("URI")
+        value = uri.get("Base") if isinstance(uri, Dictionary) else None
+        return bytes(value).decode("utf-8", "replace") if isinstance(value, String) else None
+
+    @base_uri.setter
+    def base_uri(self, value: str) -> None:
+        from pyropdf._actions import _check_text_budget, _non_empty_str  # noqa: PLC0415
+        from pyropdf._metadata import _require_version  # noqa: PLC0415
+        from pyropdf._objects import Dictionary, _catalog  # noqa: PLC0415
+
+        _check_text_budget((_non_empty_str(value, "base_uri"),), "base URI")
+        with self.transaction("set catalog base URI"):
+            catalog = _catalog(self)
+            uri = catalog.get("URI")
+            _require_version(self, catalog, (1, 1))
+            if isinstance(uri, Dictionary):
+                uri["Base"] = value.encode()
+            else:
+                catalog["URI"] = {"Base": value.encode()}
+
+    @base_uri.deleter
+    def base_uri(self) -> None:
+        from pyropdf._objects import Dictionary, _catalog  # noqa: PLC0415
+
+        with self.transaction("remove catalog base URI"):
+            catalog = _catalog(self)
+            uri = catalog.get("URI")
+            if isinstance(uri, Dictionary) and "Base" in uri:
+                del uri["Base"]
+                if not uri:
+                    del catalog["URI"]
+
+    def named_resources(self, kind: str) -> NamedResources:
+        """Return the resource objects of a catalog name tree indexed by PDF byte-string keys."""
+        self._ensure_open()
+        return NamedResources(self, kind)
+
+    @property
     def destinations(self) -> Destinations:
         """Return the named destinations, a read-only mapping from name to :class:`Destination`."""
         self._ensure_open()
@@ -399,6 +444,12 @@ class Document:
     def structure(self) -> None:
         self._ensure_open()
         _delete_structure_tree(self)
+
+    @property
+    def web_capture(self) -> WebCapture:
+        """Return the stored Web Capture database and its URL and identifier indexes."""
+        self._ensure_open()
+        return WebCapture(self)
 
     @property
     def threads(self) -> Threads:
@@ -1249,6 +1300,7 @@ class Document:
         *,
         doc_mdp: DocMdpPermission | None = None,
         field_lock: FieldLock | None = None,
+        seed_values: Mapping[str, object] | None = None,
         is_timestamp: bool = False,
         reason: str | None = None,
         location: str | None = None,
@@ -1261,7 +1313,10 @@ class Document:
         none exists, writes ``/Lock`` for ``field_lock`` and ``/SV`` seed values
         for ``doc_mdp``, ``is_timestamp``, and ``reason``, and returns the field
         dictionary's object number so external signers such as pyHanko (or a
-        subsequent :meth:`sign` call) can fill it cleanly.
+        subsequent :meth:`sign` call) can fill it cleanly. ``seed_values``
+        adds or updates entries of the ISO seed dictionary. Use
+        :class:`Name` for PDF names and lists for PDF arrays. Other entries
+        and other fields sharing the old seed dictionary retain their values.
         """
         self._ensure_open()
         return _prepare_signature(
@@ -1269,6 +1324,7 @@ class Document:
             field,
             doc_mdp=doc_mdp,
             field_lock=field_lock,
+            seed_values=seed_values,
             is_timestamp=is_timestamp,
             reason=reason,
             location=location,
@@ -1287,6 +1343,7 @@ class Document:
         reason: str | None = None,
         location: str | None = None,
         contact: str | None = None,
+        build_properties: Mapping[str, Mapping[str, object]] | None = None,
         reserve: int = DEFAULT_RESERVE,
     ) -> bytes:
         """Sign the document as PAdES B-B, or B-T with ``timestamper``, in a new revision, and return its bytes.
@@ -1300,7 +1357,15 @@ class Document:
         ``location``, and ``contact`` become ``/Reason``, ``/Location``, and
         ``/ContactInfo``. ``doc_mdp`` certifies an unsigned document with a
         ``DocMDP`` transform and ``Catalog['Perms']['DocMDP']``, and
-        ``field_lock`` records a ``FieldMDP`` transform.
+        ``field_lock`` records a ``FieldMDP`` transform. An existing field's
+        lock and required seed values must permit the requested signature.
+        The direct ``/Prop_Build`` dictionary records pyropdf's name and version
+        by default. Supply ``build_properties`` with PDF build entries for
+        ``App``, ``Filter``, ``PubSec`` or ``SigQ`` to identify the signing components.
+        Required seed conditions that the CAdES profile cannot satisfy, including
+        a named signature appearance or an explicit CMS signature policy, raise
+        :class:`ValueError`. Checking certificate issuer, subject DN, policy OIDs
+        or key usage requires the optional ``cryptography`` package.
 
         ``timestamper`` receives the digest of the signature value and the
         name of its hash algorithm, and returns an RFC 3161 time-stamp token
@@ -1328,6 +1393,7 @@ class Document:
             reason=reason,
             location=location,
             contact=contact,
+            build_properties=build_properties,
             reserve=reserve,
         )
 
@@ -1627,7 +1693,7 @@ class Document:
         )
 
     def subset_fonts(self) -> tuple[SubsetFont, ...]:
-        """Subset each embedded TrueType, OpenType, and CFF program to the glyphs that the pages draw, as one step.
+        """Subset embedded Type 1, TrueType, OpenType and CFF programs to the glyphs that the pages draw, as one step.
 
         The glyphs are those that rendering draws with every optional
         content group on, with the glyphs that they draw as composite
@@ -1635,11 +1701,46 @@ class Document:
         empties the outlines of the others, so text, encodings, widths, and
         ToUnicode are unchanged; the font names gain a subset tag. Programs
         that annotation appearances or the form's default resources reach,
-        and Type 1 and Type 3 fonts, stay whole. Returns the programs that
-        shrank; :attr:`history` can undo the step.
+        and Type 3 fonts, stay whole. Type 1 subsets retain the clear dictionary,
+        hints, subroutines, and glyph order and update the encrypted segment
+        length. Unrecognized CMap or font layouts stay whole. The result
+        lists programs that shrank. :attr:`history` can undo the step.
         """
         self._ensure_open()
         return subset_fonts(self)
+
+    def write_cmap(  # noqa: PLR0913 - the identifiers and writing mode are PDF CMap fields.
+        self,
+        mapping: Mapping[bytes, int],
+        /,
+        *,
+        name: str,
+        registry: bytes = b"Adobe",
+        ordering: bytes = b"Identity",
+        supplement: int = 0,
+        vertical: bool = False,
+        stream: Stream | None = None,
+    ) -> Stream:
+        """Create or replace an embedded code-to-CID encoding CMap for a Type 0 font.
+
+        Map one-to-four-byte character codes to integer CIDs from 0 through
+        65535. Codes must be prefix-free, so a reader can tell their lengths.
+        Choose registry, ordering and supplement for the descendant CIDFont's
+        character collection. The stream and its dictionary share the same
+        name and writing mode. Assign the result to the font's ``/Encoding``.
+        Passing an existing CMap stream updates it in one undo step, retaining
+        its object number and clearing its previous base CMap.
+        """
+        return write_cmap(
+            self,
+            mapping,
+            name=name,
+            registry=registry,
+            ordering=ordering,
+            supplement=supplement,
+            vertical=vertical,
+            stream=stream,
+        )
 
     def font_program(self, font: int | FontInfo) -> FontProgram | None:
         """Return the embedded program of a font, by its object number or a :class:`FontInfo` from ``page.fonts()``.

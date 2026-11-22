@@ -88,6 +88,15 @@ for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
     if part not in "1234":
         continue
     edit_rules = {"action_triggers": {"6.6.1-3" if part == "1" else "6.4.1-1"}}
+    # The edit deliberately adds alternate appearances, an unembedded caption font,
+    # and a Redact annotation (which PDF/A-1 additionally forbids).
+    interaction_rules = {
+        "1": {"6.3.4-1", "6.5.2-1", "6.5.3-4"},
+        "2": {"6.2.11.4.1-1", "6.3.3-2"},
+        "3": {"6.2.11.4.1-1", "6.3.3-2"},
+        "4": {"6.2.10.4.1-1", "6.3.3-2"},
+    }
+    expect(source, profile, {"edit_interaction": interaction_rules[part]}, "#903")
     if part == "1":
         edit_rules.update(
             annotation_relations={"6.5.3-2"},
@@ -117,6 +126,14 @@ for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
             modes=("full",),
         )
 
+expect(
+    "pdfua-1",
+    "ua1",
+    {"edit_interaction": {"7.18.1-1", "7.18.1-2", "7.18.1-3", "7.18.3-1", "7.18.4-1", "7.21.4.1-1"}},
+    "#903",
+)
+for source in ("pdfua-2", DUAL):
+    expect(source, "ua2", {"edit_interaction": {"8.4.5.5.1-1", "8.9.2.3-1", "8.9.3.3-1", "8.10.2.3-1"}}, "#903")
 expect("pdfua-1", "ua1", UNTAGGED_RULES, "#794")
 expect("pdfua-1", "ua1", {"remove-language": {"7.2-22", "7.2-33"}}, "#847")
 expect(
@@ -453,6 +470,62 @@ def declares_pades(extensions: object) -> bool:
             if type(level) is int and level >= required:
                 return True
     return False
+
+
+# The same generated inputs and edits are exercised in pytest and with the pinned jars.
+ALTERNATES = runpy.run_path(str(ROOT / "tests/assets/profile_edits.py"))
+
+
+def alternate_report(doc: pyropdf.Document, case: str, operation: str, rules: dict[str, set[str]]) -> dict:
+    """Apply the edit or its control and identify each newly failing claim's owner."""
+    if operation == "edit":
+        owner = ALTERNATES["edit"](doc, case)
+        return {claim_name(f): (owner,) for f in rules if rules[f]}
+    doc.pages[0].rotation = 90
+    if case == "nested-cmyk" and operation == "existing-control":
+        # Removing the RGB intent cannot introduce the CMYK rule it already failed.
+        del doc.catalog["OutputIntents"]
+    return {}
+
+
+def alternate_saves(source: Path, flavour: str, directory: Path) -> dict[Path, str]:
+    """Check the report on each original/edited pair before writing the independent validator inputs."""
+    files = {}
+    dual = source.stem == DUAL
+    profiles = (flavour, "4") if dual else (flavour,)
+    for case in ALTERNATES["cases"](flavour, dual=dual):
+        stem = f"{source.stem}-{case}"
+        with pyropdf.open(source) as original:
+            data = ALTERNATES["prepare"](original, case)
+        baseline = directory / f"{stem}-input.pdf"
+        baseline.write_bytes(data)
+        files[baseline] = flavour
+        rules = {f: ALTERNATES["failed_rules"](f, case) for f in profiles}
+        for operation in ("edit", "valid-control", "existing-control"):
+            if operation == "existing-control" and not any(rules.values()):
+                continue
+            start = directory / f"{stem}-edit-full.pdf" if operation == "existing-control" else baseline
+            with pyropdf.open(start) as doc:
+                expected = alternate_report(doc, case, operation, rules)
+                for incremental in (False, True):
+                    changes = doc.changes(incremental=incremental).claims
+                    if {c.claim for c in changes} != expected.keys() or any(
+                        c.objects != expected[c.claim] or not c.reason for c in changes
+                    ):
+                        msg = f"{stem} {operation}, incremental={incremental}: expected {expected}, got {changes}"
+                        raise ValueError(msg)
+                    mode = "incremental" if incremental else "full"
+                    path = directory / f"{stem}-{operation}-{mode}.pdf"
+                    doc.save(path, incremental=incremental)
+                    with pyropdf.open(path) as reopened:
+                        if reopened.profiles != doc.profiles or reopened.pages[0].rotation != doc.pages[0].rotation:
+                            msg = f"{path.name}: lost the claim identification or the control edit"
+                            raise ValueError(msg)
+                    files[path] = flavour
+                    for f in profiles:
+                        if operation != "valid-control" and rules[f]:
+                            EXPECTED[f"{f} {path.name}"] = ("#932", rules[f])
+    return files
 
 
 def arlington(path: Path, flavour: str) -> str:
@@ -903,6 +976,8 @@ def main() -> int:
         files.update(language_saves(Path(directory)))
         files.update(remove_signature_saves(Path(directory) / "pdfa-2b-sign_revision-incremental.pdf", Path(directory)))
         targeted = profile_saves(Path(directory))
+        for source, flavour in FIXTURES.items():
+            targeted.update(alternate_saves(source, flavour, Path(directory)))
         failures = source_failures + archival_colour_controls(args.jar.resolve(), Path(directory))
         failures += run(args.jar.resolve(), targeted)
         failures += run(args.jar.resolve(), dual_archival(targeted))

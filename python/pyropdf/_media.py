@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import enum
+import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias
+from functools import cache
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pyropdf import _core, typed
 from pyropdf._errors import LimitError, PdfError
 from pyropdf._objects import Array, Dictionary, Name, Stream, String
 
 if TYPE_CHECKING:
-    from pyropdf._check import StructuralDefect
+    from pyropdf._check import StructuralDefect, StructuralReport
     from pyropdf._document import Document
     from pyropdf._geometry import Rect
     from pyropdf._page import Page
@@ -19,6 +21,7 @@ if TYPE_CHECKING:
 _MAX_ITEMS = 4096
 _MAX_TEXT = 1 << 20
 _MAX_ASSET = 64 << 20
+_AXES = 3
 
 
 def _text(value: str) -> None:
@@ -101,32 +104,285 @@ _MEASURES: dict[type[typed.DictionaryView], str] = {
 }
 
 
+class ModelMeasurementType(enum.StrEnum):
+    """Kinds of stored 3D measurements and markups (ISO 32000-2, Tables 326–331)."""
+
+    POINT_COMMENT = "3DC"
+    ANGLE = "AD3"
+    DISTANCE = "LD3"
+    PERPENDICULAR_DISTANCE = "PD3"
+    RADIUS = "RD3"
+
+
+_GEOMETRY_FIELDS = {
+    "A1": "anchor",
+    "TP": "text_position",
+    "AP": "annotation_plane",
+    "A2": "second_anchor",
+    "D1": "first_direction",
+    "D2": "second_direction",
+    "TX": "text_x",
+    "TY": "text_y",
+    "A3": "third_anchor",
+    "A4": "fourth_anchor",
+    "V": "value",
+    "U": "unit",
+}
+
+
+@cache
+def _geometry_keys(subtype: str) -> dict[str, bool]:
+    """Map geometry keys of one Arlington measurement descriptor to requiredness."""
+    return {
+        key: required == "TRUE"
+        for key, _, required, _ in _core.schema_object(f"3DMeasure{subtype}") or ()
+        if key in _GEOMETRY_FIELDS
+    }
+
+
+def _finite(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return -(1 << 63) <= value < 1 << 63
+    return isinstance(value, float) and math.isfinite(value)
+
+
+def _vector(value: object, size: int, key: str) -> None:
+    if not isinstance(value, (tuple, Array)) or len(value) != size or not all(_finite(n) for n in value):
+        msg = f"/{key} requires {size} finite numbers"
+        raise ValueError(msg)
+    if key in {"AP", "D1", "D2", "TX", "TY"} and not any(value):
+        msg = f"/{key} requires a nonzero direction"
+        raise ValueError(msg)
+
+
+def _tuple_vector(value: object, size: int, key: str) -> None:
+    if not isinstance(value, tuple):
+        msg = f"/{key} must be a coordinate tuple"
+        raise TypeError(msg)
+    _vector(value, size, key)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ModelMeasurement:
+    """Geometry of one 3D measurement in model coordinates.
+
+    Every kind has an anchor and text position. Dimensional kinds also
+    take the annotation plane, second anchor, text Y direction and value.
+    Distance, perpendicular distance and radius take a unit. Perpendicular
+    distance adds the first direction. Angle adds both directions and text
+    X. Radius takes text X and optionally the third and fourth anchors.
+
+    Pass the specification in `ModelView.measurements` to allocate it in
+    the model's document. Use `apply_to` on a live measurement to change
+    its geometry while keeping its projection and other references.
+    """
+
+    kind: ModelMeasurementType
+    anchor: tuple[float, float, float]
+    text_position: tuple[float, float, float]
+    annotation_plane: tuple[float, float, float] | None = None
+    second_anchor: tuple[float, float, float] | None = None
+    first_direction: tuple[float, float, float] | None = None
+    second_direction: tuple[float, float, float] | None = None
+    text_x: tuple[float, float, float] | None = None
+    text_y: tuple[float, float, float] | None = None
+    third_anchor: tuple[float, float, float] | None = None
+    fourth_anchor: tuple[float, float, float] | None = None
+    value: float | None = None
+    unit: str | None = None
+
+    def __post_init__(self) -> None:
+        """Check required and permitted coordinates against this subtype's descriptor."""
+        object.__setattr__(self, "kind", ModelMeasurementType(self.kind))
+        keys = _geometry_keys(self.kind)
+        for key, field in _GEOMETRY_FIELDS.items():
+            value = getattr(self, field)
+            if value is None:
+                if keys.get(key):
+                    msg = f"{self.kind} requires {field}"
+                    raise ValueError(msg)
+            elif key not in keys:
+                msg = f"{field} is not a geometry field of {self.kind}"
+                raise ValueError(msg)
+            elif key == "U":
+                if not isinstance(value, str) or isinstance(value, Name):
+                    msg = "unit must be a PDF text string"
+                    raise TypeError(msg)
+                if value:
+                    _text(value)
+            elif key == "V":
+                if not _finite(value):
+                    msg = "measurement value must be finite"
+                    raise ValueError(msg)
+            else:
+                _tuple_vector(value, 3, key)
+
+    def _entries(self) -> dict[str, object]:
+        return {key: value for key, field in _GEOMETRY_FIELDS.items() if (value := getattr(self, field)) is not None}
+
+    @classmethod
+    def from_view(cls, measurement: Measure) -> ModelMeasurement:
+        """Read a stored 3D measurement as immutable geometry in model coordinates."""
+        if type(measurement) not in _MEASURES:
+            msg = "expected a typed 3D measurement"
+            raise ValueError(msg)
+        # Keep the geometry and its projection on the same version throughout this read.
+        with measurement.obj._document.transaction():  # noqa: SLF001
+            obj = _measurement(measurement)
+            fields: dict[str, Any] = {}
+            for key in _geometry_keys(measurement.Subtype):
+                if key in obj:
+                    value = measurement[key]
+                    fields[_GEOMETRY_FIELDS[key]] = tuple(value.obj) if isinstance(value, typed.ArrayView) else value
+            return cls(kind=ModelMeasurementType(measurement.Subtype), **fields)
+
+    def apply_to(self, measurement: Measure) -> None:
+        """Replace geometry of the same subtype in one undo step, keeping its object identity."""
+        if type(measurement) not in _MEASURES or _MEASURES[type(measurement)] != self.kind:
+            msg = "replacement geometry must match the measurement subtype"
+            raise ValueError(msg)
+        obj = measurement.obj
+        with obj._document.transaction("edit 3D measurement geometry"):  # noqa: SLF001
+            _measurement(measurement)
+            entries = self._entries()
+            for key in _geometry_keys(self.kind):
+                if key in entries:
+                    current = measurement[key] if key in obj else None
+                    if isinstance(current, typed.ArrayView):
+                        current = tuple(current.obj)
+                    if current != entries[key]:
+                        obj[key] = entries[key]
+                elif key in obj:
+                    del obj[key]
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ModelView:
-    """A named 3D view with optional links to existing 3D measurements."""
+    """A named 3D view, its camera-to-world matrix, scene settings and measurements.
+
+    Lighting and render mode use the PDF subtype names. Background is a
+    DeviceRGB triple in [0, 1]. Supply indirect Arlington node and cross
+    section views to share their settings. Measurements may be new geometry
+    specifications or existing indirect measurement views. For example,
+    `camera_to_world=(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 5, 6)` sets an
+    identity orientation with camera position (4, 5, 6). After creation,
+    `annotation.media["3DD"].VA[0].LS.Subtype = "Day"` updates lighting.
+    """
 
     name: str
-    measurements: tuple[Measure, ...] = ()
+    measurements: tuple[ModelMeasurement | Measure, ...] = ()
+    camera_to_world: tuple[float, ...] | None = None
+    lighting: str | None = None
+    background: tuple[float, float, float] | None = None
+    render_mode: str | None = None
+    nodes: tuple[typed.ThreeDNode, ...] = ()
+    cross_sections: tuple[typed.ThreeDCrossSection, ...] = ()
 
     def __post_init__(self) -> None:
         """Validate the name and the measurement dictionary identities."""
         _text(self.name)
-        if not isinstance(self.measurements, tuple):
-            msg = "measurements must be a tuple"
+        if isinstance(self.name, Name):
+            msg = "a model view name must be a PDF text string"
             raise TypeError(msg)
-        _bounded(self.measurements)
+        if self.camera_to_world is not None:
+            _tuple_vector(self.camera_to_world, 12, "C2W")
+        if self.background is not None:
+            _tuple_vector(self.background, 3, "C")
+            if not all(0 <= n <= 1 for n in self.background):
+                msg = "3D background components must be in [0, 1]"
+                raise ValueError(msg)
+        for kind, value in (("3DLightingScheme", self.lighting), ("3DRenderMode", self.render_mode)):
+            if value is not None and value not in _subtypes(kind):
+                msg = f"invalid {kind} subtype {value!r}"
+                raise ValueError(msg)
+        self._check_relationships()
+
+    def _check_relationships(self) -> None:
+        for items in (self.measurements, self.nodes, self.cross_sections):
+            if not isinstance(items, tuple):
+                msg = "3D view relationships must be tuples"
+                raise TypeError(msg)
+            _bounded(items)
         for measure in self.measurements:
-            _measurement(measure)
+            if not isinstance(measure, ModelMeasurement):
+                _measurement(measure)
+        for node in self.nodes:
+            _node(node)
+        for section in self.cross_sections:
+            _cross_section(section)
+
+
+@cache
+def _subtypes(kind: str) -> frozenset[str]:
+    row = next(types for key, _, _, types in _core.schema_object(kind) or () if key == "Subtype")
+    return frozenset(row[0][3])
+
+
+def _resource(value: typed.DictionaryView, cls: type[typed.DictionaryView]) -> Dictionary:
+    if not isinstance(value, cls) or not value.obj.is_indirect or isinstance(value.obj, Stream):
+        msg = f"expected an indirect {cls.__name__} dictionary"
+        raise ValueError(msg)
+    return value.obj
+
+
+def _node(node: typed.ThreeDNode) -> Dictionary:
+    obj = _resource(node, typed.ThreeDNode)
+    if "M" in obj:
+        _vector(obj["M"], 12, "M")
+    return obj
+
+
+def _cross_section(section: typed.ThreeDCrossSection) -> Dictionary:
+    obj = _resource(section, typed.ThreeDCrossSection)
+    orientation = obj.get("O")
+    if (
+        not isinstance(orientation, Array)
+        or len(orientation) != _AXES
+        or orientation.count(None) != 1
+        or not all(axis is None or _finite(axis) for axis in orientation)
+    ):
+        msg = "cross section /O requires one null axis and two rotation angles"
+        raise ValueError(msg)
+    if "C" in obj:
+        _vector(obj["C"], 3, "C")
+    return obj
 
 
 def _measurement(measure: Measure) -> Dictionary:
-    if type(measure) not in _MEASURES or not measure.obj.is_indirect or measure.Subtype != _MEASURES[type(measure)]:
-        msg = "expected an indirect 3D measurement dictionary of the declared subtype"
+    if type(measure) not in _MEASURES:
+        msg = "expected a typed 3D measurement"
         raise ValueError(msg)
-    for key, _, required, _ in _core.schema_object(f"3DMeasure{measure.Subtype}") or ():
-        if required == "TRUE":
-            measure[key]
-    return measure.obj
+    obj = _resource(measure, type(measure))
+    if measure.Subtype != _MEASURES[type(measure)] or obj.get("Type", Name("3DMeasure")) != Name("3DMeasure"):
+        msg = "expected a 3D measurement dictionary of the declared subtype"
+        raise ValueError(msg)
+    for key, required in _geometry_keys(measure.Subtype).items():
+        if required or key in obj:
+            value = measure[key]
+            if key not in {"V", "U"}:
+                _vector(value.obj, 3, key)
+            elif key == "V" and not _finite(value):
+                msg = "measurement value must be finite"
+                raise ValueError(msg)
+    projection = obj.get("S")
+    if projection is not None:
+        extra = projection.get("ExData") if isinstance(projection, Dictionary) else None
+        if not (
+            isinstance(projection, Dictionary)
+            and not isinstance(projection, Stream)
+            and projection.is_indirect
+            and projection.get("Subtype") == Name("Projection")
+            and isinstance(extra, Dictionary)
+            and not isinstance(extra, Stream)
+            and extra.get("Type") == Name("ExData")
+            and extra.get("Subtype") == Name("3DM")
+            and extra.get("M3DREF") == obj
+        ):
+            msg = "measurement /S must reference its reciprocal projection annotation"
+            raise ValueError(msg)
+    return obj
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -163,7 +419,12 @@ def _views(views: tuple[ModelView, ...]) -> None:
             raise ValueError(msg)
         names.add(view.name)
         size += len(view.name.encode("utf-8"))
-        count += len(view.measurements) + 1
+        count += len(view.measurements) + len(view.nodes) + len(view.cross_sections) + 1
+        for measurement in view.measurements:
+            if isinstance(measurement, ModelMeasurement) and measurement.unit:
+                size += len(measurement.unit.encode("utf-8"))
+                if size > _MAX_TEXT:
+                    break
         if size > _MAX_TEXT or count > _MAX_ITEMS:
             msg = "view names or measurement links exceed the annotation input limit"
             code = "annotation_input_size"
@@ -174,15 +435,17 @@ def _views(views: tuple[ModelView, ...]) -> None:
 class ThreeD:
     """A 3D annotation whose stream holds an opaque U3D or PRC asset.
 
-    Each named view is stored once. Supply existing measurement views to
-    share the same geometry with a projection annotation. Viewers handle
-    3D rendering. pyropdf preserves the model bytes across edits.
+    Each named view is stored once. Supply an indirect Arlington activation
+    dictionary to set the annotation's activation conditions. Attach a
+    projection to a stored measurement from `annotation.media["3DD"].VA[0].MA`
+    to share its geometry. Viewers handle 3D rendering.
     """
 
     rect: Rect
     format: ModelFormat
     data: bytes
     views: tuple[ModelView, ...] = ()
+    activation: typed.ThreeDActivation | None = None
 
     def __post_init__(self) -> None:
         """Validate the rectangle, format, data and views."""
@@ -190,6 +453,8 @@ class ThreeD:
         _data(self.data)
         object.__setattr__(self, "format", ModelFormat(self.format))
         _views(self.views)
+        if self.activation is not None:
+            _resource(self.activation, typed.ThreeDActivation)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -274,8 +539,25 @@ def _write_views(doc: Document, views: tuple[ModelView, ...]) -> list[Dictionary
     result = []
     for view in views:
         entries: dict[str, object] = {"Type": Name("3DView"), "XN": view.name, "IN": view.name}
+        if view.camera_to_world is not None:
+            entries.update(MS=Name("M"), C2W=view.camera_to_world)
+        if view.lighting is not None:
+            entries["LS"] = {"Subtype": Name(view.lighting)}
+        if view.render_mode is not None:
+            entries["RM"] = {"Subtype": Name(view.render_mode)}
+        if view.background is not None:
+            entries["BG"] = {"C": view.background}
+        if view.nodes:
+            entries["NA"] = [_node(node) for node in view.nodes]
+        if view.cross_sections:
+            entries["SA"] = [_cross_section(section) for section in view.cross_sections]
         if view.measurements:
-            entries["MA"] = [_measurement(m) for m in view.measurements]
+            entries["MA"] = [
+                _indirect(doc, {"Type": Name("3DMeasure"), "Subtype": Name(m.kind), **m._entries()})  # noqa: SLF001
+                if isinstance(m, ModelMeasurement)
+                else _measurement(m)
+                for m in view.measurements
+            ]
         result.append(_indirect(doc, entries))
     return result
 
@@ -303,6 +585,8 @@ def _write_media(doc: Document, annot: Dictionary, spec: MediaSpecification) -> 
         rendition = _indirect(doc, {"Type": Name("Rendition"), "S": Name("MR"), "C": clip})
         annot["A"] = {"S": Name("Rendition"), "OP": 0, "AN": annot, "R": rendition}
     elif isinstance(spec, ThreeD):
+        if spec.activation is not None:
+            annot["3DA"] = spec.activation.obj
         stream: dict[str, object] = {"Type": Name("3D"), "Subtype": Name(spec.format)}
         if spec.views:
             stream["VA"] = _write_views(doc, spec.views)
@@ -334,6 +618,39 @@ def _require_media_version(doc: Document, minimum: tuple[int, int]) -> None:
     from pyropdf._measurement import _require_measurement_version  # noqa: PLC0415
 
     _require_measurement_version(doc, doc.catalog, minimum)
+
+
+def _check_edit(doc: Document, before: StructuralReport, operation: str) -> None:
+    after = doc.check()
+    if before.truncated or after.truncated:
+        msg = f"cannot verify {operation} with a truncated structural report"
+        raise PdfError(msg)
+    existing = set(before.defects)
+    for defect in after.defects:
+        # The writer settles the trailer's size at save time.
+        if defect not in existing and (operation != "3D scene" or defect.clause != "FileTrailer/Size"):
+            msg = f"{operation} would introduce a structural defect: {defect.clause}"
+            raise PdfError(msg)
+
+
+def _scene_version(doc: Document, spec: ThreeD) -> tuple[int, int]:
+    minimum = _base_or_extension(doc, 1) if spec.format is ModelFormat.PRC else (1, 6)
+    if spec.activation is not None:
+        activation = spec.activation.obj
+        if any(key in activation for key in ("Style", "Window", "Transparent")):
+            minimum = max(minimum, _base_or_extension(doc, 3))
+        if "TB" in activation or "NP" in activation:
+            minimum = max(minimum, (1, 7))
+    for view in spec.views:
+        if (
+            view.measurements
+            or any(key in node.obj for node in view.nodes for key in ("Instance", "Data", "RM"))
+            or any(key in section.obj for section in view.cross_sections for key in ("ST", "SC"))
+        ):
+            return (2, 0)
+        if view.lighting or view.render_mode or view.nodes or view.cross_sections:
+            minimum = max(minimum, (1, 7))
+    return minimum
 
 
 def finish_media_import(doc: Document, major: int, minor: int, first: int, *, contains_prc: bool) -> None:
@@ -377,13 +694,15 @@ def add_media(page: Page, spec: MediaSpecification) -> tuple[int, int]:
     }
     subtype, minimum = annotation_types[type(spec)]
     with doc.transaction("add multimedia annotation"):
-        if isinstance(spec, (RichMedia, ProjectionAnnotation)):
+        has_resources = isinstance(spec, (ThreeD, RichMedia)) and any(v.nodes or v.cross_sections for v in spec.views)
+        before = doc.check() if has_resources or (isinstance(spec, ThreeD) and spec.activation is not None) else None
+        if isinstance(spec, RichMedia) and spec.views:
+            # RichMedia's owned 3DViewAddEntries keys start at 2.0 in the pinned model.
+            minimum = (2, 0)
+        elif isinstance(spec, (RichMedia, ProjectionAnnotation)):
             minimum = _base_or_extension(doc, 3)
         elif isinstance(spec, ThreeD):
-            if any(view.measurements for view in spec.views):
-                minimum = (2, 0)
-            elif spec.format is ModelFormat.PRC:
-                minimum = _base_or_extension(doc, 1)
+            minimum = _scene_version(doc, spec)
         _require_media_version(doc, minimum)
         rect = _display_to_pdf_rect(doc, page, spec.rect)
         appearance = doc.objects.add_stream(
@@ -416,6 +735,8 @@ def add_media(page: Page, spec: MediaSpecification) -> tuple[int, int]:
             raise ValueError(msg)
         # Use the ordinary listing's limits before publishing the annotation.
         _ = len(page.annotations)
+        if before is not None:
+            _check_edit(doc, before, "3D scene")
         assert annot.xref is not None  # noqa: S101 - allocated above.
         assert annot.generation is not None  # noqa: S101 - allocated above.
         return annot.xref, annot.generation

@@ -384,7 +384,7 @@ reached = "Shaping one string in an embedded face takes more characters, or give
 message = "the font file is too large"
 unit = "bytes"
 default = 67_108_864
-reached = "The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB."
+reached = "The font that `Font.from_file` or `Font.from_bytes` loads, or the Type 1 program that `Document.subset_fonts` reads, is larger than 64 MiB."
 
 [codes.page_fonts_tree]
 message = "the page inherits its resources through too many parents"
@@ -497,7 +497,7 @@ reached = "The prefixes that setting `Document.page_labels` writes are longer th
 message = "the optional content has too many entries"
 unit = "entries"
 default = 4_096
-reached = "The document's `/OCGs`, `/Configs`, or an optional-content configuration array holds, or `Layers.add` or `LayerMembership` would give it, more than 4,096 entries."
+reached = "The document's `/OCGs`, `/Configs`, or an optional-content configuration array holds, or `Layers.add` or `LayerMembership` would give it, more than 4,096 entries. A usage lookup counts its application entries and the group entries of applications for the requested event together."
 
 [codes.optional_content_expression]
 message = "the visibility expression is too deep or has too many operands"

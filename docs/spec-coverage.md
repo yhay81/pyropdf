@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 16 | 23 | 798 |
-| interpret | 9 | 19 | 0 | 34 | 32 | 743 |
-| create | 0 | 0 | 25 | 25 | 31 | 756 |
-| edit | 0 | 0 | 0 | 38 | 33 | 766 |
-| preserve | 0 | 0 | 0 | 17 | 25 | 795 |
+| read | 0 | 0 | 0 | 8 | 15 | 814 |
+| interpret | 16 | 19 | 0 | 9 | 19 | 774 |
+| create | 0 | 0 | 25 | 5 | 21 | 786 |
+| edit | 0 | 0 | 0 | 10 | 17 | 810 |
+| preserve | 0 | 0 | 0 | 1 | 17 | 819 |
 
 ## Clauses
 
@@ -57,13 +57,13 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.5.7 | Object streams | `object-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 2 done, 5 partial | 3 done, 4 non-goal | 7 done | 7 done |
-| 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 2 done, 5 engine | 3 done, 4 non-goal | 7 done | 7 done |
+| 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 done | 1 partial | 1 partial |
 | 7.6.6 | Crypt filters | `crypt-filters` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.2 | Document catalog | `document-catalog` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.3 | Page tree | `page-tree`, `page-objects` | 2 done | 2 done | 2 done | 2 done | 2 done |
-| 7.7.4 | Name dictionary | `name-dictionary` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
+| 7.7.4 | Name dictionary | `name-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.8 | Content streams and resources | `content-streams` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.9.2 | String object types | `text-strings` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.9.4 | Dates | `dates` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -74,7 +74,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.10.4 | Type 3 stitching functions | `stitching-functions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.10.5 | Type 4 PostScript calculator functions | `calculator-functions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11 | File specifications | `file-specifications` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.11.4 | Embedded file streams | `embedded-files` | 1 done | 1 planned | 1 done | 1 done | 1 done |
+| 7.11.4 | Embedded file streams | `embedded-files` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11.4.2 | Related files arrays | `related-files` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11.6 | Collection items | `collection-items` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.12 | Extensions dictionary | `developer-extensions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -108,18 +108,18 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 8.9.7 | Inline images | `inline-images` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.10 | Form XObjects | `form-xobjects` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.10.4 | Reference XObjects | `reference-xobjects` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.11 | Optional content | `optional-content` | 1 partial | 1 engine | 1 partial | 1 partial | 1 done |
+| 8.11 | Optional content | `optional-content` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 9.3 | Text state parameters and operators | `text-state` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.4 | Text objects | `text-objects` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 9.6.2 | Type 1 fonts | `type1-fonts` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
-| 9.6.3 | TrueType fonts | `truetype-fonts` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
-| 9.6.4 | Type 3 fonts | `type3-fonts` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
-| 9.6.5 | Character encoding | `simple-font-encodings` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
+| 9.6.2 | Type 1 fonts | `type1-fonts` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 9.6.3 | TrueType fonts | `truetype-fonts` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 9.6.4 | Type 3 fonts | `type3-fonts` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 9.6.5 | Character encoding | `simple-font-encodings` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.7.4 | CIDFonts | `cid-fonts` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 9.7.5 | CMaps | `cmaps` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
+| 9.7.5 | CMaps | `cmaps` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.7.6 | Type 0 fonts | `type0-fonts` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.8 | Font descriptors | `font-descriptors` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 9.9 | Embedded font programs | `embedded-fonts` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
+| 9.9 | Embedded font programs | `embedded-fonts` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.10 | Extraction of text content | `text-extraction` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 10.3 | CIE-based colour to device colour | `color-conversion` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 10.4 | Conversions among device colour spaces | `device-color-conversion` | 1 done | 1 done | 1 done | 1 partial | 1 done |
@@ -127,13 +127,13 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 10.6 | Halftones | `halftones` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 10.7 | Scan conversion details | `scan-conversion` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 10.8 | Rendering of colour separations | `separation-rendering` | 1 done | 1 engine | 1 done | 1 done | 1 done |
-| 11.3 | Alpha compositing | `alpha-compositing` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 11.3.5 | Blend mode | `blend-modes` | 1 done | 1 done | 1 done | 1 planned | 1 done |
-| 11.5 | Soft masks | `soft-masks` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
-| 11.6.6 | Transparency group XObjects | `transparency-groups` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
-| 11.7 | Colour and transparency | `transparency-color` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 11.3 | Alpha compositing | `alpha-compositing` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 11.3.5 | Blend mode | `blend-modes` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 11.5 | Soft masks | `soft-masks` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 11.6.6 | Transparency group XObjects | `transparency-groups` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 11.7 | Colour and transparency | `transparency-color` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 12.2 | Viewer preferences | `viewer-preferences` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.3.2 | Destinations | `destinations` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 12.3.2 | Destinations | `destinations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.3.3 | Document outline | `outline` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.3.5 | Collections | `collections` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.3.5.3 | Navigators | `navigators` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -141,7 +141,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.4.3 | Articles | `articles` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.4.4 | Presentations | `presentations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.2 | Annotation dictionaries | `annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.5.5 | Appearance streams | `appearance-streams` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
+| 12.5.5 | Appearance streams | `appearance-streams` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.4 | Text annotations | `text-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.5 | Link annotations | `link-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.6 | Free text annotations | `free-text-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -152,30 +152,30 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.5.6.11 | Caret annotations | `caret-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.12 | Rubber stamp annotations | `stamp-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.13 | Ink annotations | `ink-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.5.6.14 | Popup annotations | `popup-annotations` | 1 done | 1 planned | 1 done | 1 done | 1 done |
+| 12.5.6.14 | Popup annotations | `popup-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.15 | File attachment annotations | `file-attachment-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.16 | Sound annotations | `sound-annotations` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 12.5.6.17 | Movie annotations | `movie-annotations` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 12.5.6.18 | Screen annotations | `screen-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.5.6.19 | Widget annotations | `widget-annotations` | 1 partial | 1 done | 1 partial | 1 partial | 1 done |
+| 12.5.6.19 | Widget annotations | `widget-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.20 | Printer's mark annotations | `printer-mark-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.21 | Trap network annotations | `trap-network-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.22 | Watermark annotations | `watermark-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.5.6.23 | Redaction annotations | `redaction-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.5.6.23 | Redaction annotations | `redaction-annotations` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 12.5.6.24 | Projection annotations | `projection-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.25 | 3D and RichMedia annotations | `rich-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.3 | Trigger events | `trigger-events` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.2 | Go-To actions | `goto-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.6.4.3 | Remote Go-To actions | `remote-goto-actions` | 1 done | 1 planned | 1 done | 1 done | 1 done |
+| 12.6.4.3 | Remote Go-To actions | `remote-goto-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.4 | Embedded Go-To actions | `embedded-goto-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.5 | Go-To-DPart actions | `goto-dpart-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.6.4.6 | Launch actions | `launch-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
+| 12.6.4.6 | Launch actions | `launch-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.7 | Thread actions | `thread-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.6.4.8 | URI actions | `uri-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
+| 12.6.4.8 | URI actions | `uri-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.9 | Sound actions | `sound-actions` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 12.6.4.10 | Movie actions | `movie-actions` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 12.6.4.11 | Hide actions | `hide-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.6.4.12 | Named actions | `named-actions` | 1 done | 1 planned | 1 done | 1 done | 1 done |
+| 12.6.4.12 | Named actions | `named-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.13 | Set-OCG-state actions | `set-ocg-state-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.14 | Rendition actions | `rendition-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.15 | Transition actions | `transition-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -183,15 +183,15 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.6.4.17 | ECMAScript actions | `ecmascript-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.18 | Rich media execute actions | `rich-media-execute-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.3 | Interactive form dictionary | `interactive-form` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.7.4.3 | Variable text | `variable-text` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 12.7.4.3 | Variable text | `variable-text` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 12.7.5.2 | Button fields | `button-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.7.5.3 | Text fields | `text-fields` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
+| 12.7.5.3 | Text fields | `text-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.5.4 | Choice fields | `choice-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.7.5.5 | Signature fields | `signature-fields` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 12.7.5.5 | Signature fields | `signature-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.6 | Form actions | `form-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.8 | Forms data format | `fdf` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.9 | Non-interactive forms | `non-interactive-forms` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.8 | Digital signatures | `digital-signatures` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
+| 12.8 | Digital signatures | `digital-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.2 | Transform methods | `signature-transforms` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.4.3 | Document security store | `document-security-store` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.5 | Document timestamp dictionary | `document-timestamps` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -204,7 +204,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 13.3 | Sounds | `sounds` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 13.4 | Movies | `movies` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 13.5 | Alternate presentations | `alternate-presentations` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
-| 13.6 | 3D artwork | `3d-artwork` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 13.6 | 3D artwork | `3d-artwork` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 13.7 | Rich media | `rich-media` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.2 | Legacy resource procedure sets | `procedure-sets` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 14.3.2 | Metadata streams | `xmp-metadata` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -212,11 +212,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 14.4 | File identifiers | `file-identifiers` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.5 | Page-piece dictionaries | `page-piece` | 1 planned | 1 planned | 1 planned | 1 partial | 1 planned |
 | 14.6 | Marked content | `marked-content` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 14.7 | Logical structure | `logical-structure` | 1 done | 1 partial | 1 partial | 1 done | 1 done |
+| 14.7 | Logical structure | `logical-structure` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 14.7.4 | Structure namespaces | `structure-namespaces` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 14.8 | Tagged PDF | `tagged-pdf` | 1 done | 1 partial | 1 partial | 1 done | 1 done |
+| 14.8 | Tagged PDF | `tagged-pdf` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 14.9 | Accessibility support | `accessibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 14.10 | Web capture | `web-capture` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 14.10 | Web capture | `web-capture` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.11.2 | Page boundaries | `page-boundaries` | 1 partial | 1 done | 1 done | 1 partial | 1 done |
 | 14.11.4 | Separation dictionaries | `separation-dictionaries` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.11.5 | Output intents | `output-intents` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
@@ -224,18 +224,18 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 14.11.7 | Open prepress interface | `opi` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.12 | Document parts | `document-parts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.13 | Associated files | `associated-files` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
-| Annex D | PDF character tables | `character-tables` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| Annex D | PDF character tables | `character-tables` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex E | Extension naming rules | `private-names` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex I | Compatibility across PDF versions | `version-compatibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| Annex K | XFA packets | `xfa` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
-| Annex L | Allowed structure children | `structure-children` | 1 done | 1 partial | 1 planned | 1 planned | 1 done |
-| Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| Annex Q | Page transparency detection | `page-transparency` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 done | 3 partial | 2 done, 1 planned | 3 partial | 3 partial |
+| Annex K | XFA packets | `xfa` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
+| Annex L | Allowed structure children | `structure-children` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
+| Annex O | PDF URI fragments | `fragment-identifiers` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| Annex Q | Page transparency detection | `page-transparency` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 done | 3 done | 2 done, 1 planned | 3 done | 3 done |
 | ISO 15930 | PDF/X | `pdfx` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 done | 12 partial | 11 done, 1 planned | 12 partial | 12 partial |
+| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 done | 12 done | 11 done, 1 planned | 12 done | 12 done |
 | ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-283 unfinished cells in 837 features: 9 engine, 130 partial, 144 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+138 unfinished cells in 837 features: 16 engine, 33 partial, 89 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -254,8 +254,7 @@ Find a feature in the JSON, follow its dimension's `issue`, and check that issue
 
 Milestone [#245](https://github.com/yhay81/pyropdf/issues/245).
 
-- [#901](https://github.com/yhay81/pyropdf/issues/901) Read and edit optional-content usage and usage application dictionaries. Resolve OCG Usage and configuration AS application dictionaries against their groups. Expose and modify the stored values, and verify configuration- and event-specific behavior through save/reopen.
-    - read, create, edit — `optional-content`.
+No unfinished specification-map cells assigned.
 
 ### 246 Canvas
 
@@ -279,31 +278,19 @@ Milestone [#248](https://github.com/yhay81/pyropdf/issues/248).
     - edit — `device-color-conversion`.
 - [#372](https://github.com/yhay81/pyropdf/issues/372) hayro: evaluate optional content visibility expressions and annotation /OC. Adopt engine evaluation of visibility expressions and annotation OC. Track the upstream issue directly. #373 owns local adoption.
     - interpret — `optional-content`.
-- [#899](https://github.com/yhay81/pyropdf/issues/899) Complete transparency group, soft-mask and compositing coverage. Exercise non-isolated and knockout groups, group masks, blending colour spaces, alpha composition and Annex Q resource traversal. Verify isolated and nested results with independent rendered references.
-    - read, interpret, preserve — `transparency-color`, `alpha-compositing`, `page-transparency`.
-    - create — `soft-masks`, `transparency-groups`, `transparency-color`, `alpha-compositing`, `page-transparency`.
-    - edit — `blend-modes`, `soft-masks`, `transparency-groups`, `transparency-color`, `alpha-compositing`, `page-transparency`.
+- [#1024](https://github.com/yhay81/pyropdf/issues/1024) hayro: render non-isolated, knockout and blending-space group boundaries. Render groups against their initial backdrop, honor knockout shape, and convert into the selected group space at the boundary. Verify explicit output-device samples after upstream adoption.
+    - interpret — `transparency-color`, `alpha-compositing`.
 
 ### 249 Writing
 
 Milestone [#249](https://github.com/yhay81/pyropdf/issues/249).
 
-- [#903](https://github.com/yhay81/pyropdf/issues/903) Write rollover/down and widget icon appearances and line or popup annotation details. Implement rollover/down streams, widget MK icons and IF fitting, line captions and leaders, and popup parent semantics. Check independent rendering and relationships after edit/reopen.
-    - read — `line-annotations`, `widget-annotations`.
-    - interpret — `line-annotations`, `popup-annotations`.
-    - create, edit — `appearance-streams`, `line-annotations`, `widget-annotations`.
-- [#903](https://github.com/yhay81/pyropdf/issues/903) Write rollover/down and widget icon appearances and line or popup annotation details. Inspect and edit stored redaction marks, overlay text and appearance streams. Preserve the marks through reopening before destructive application.
-    - read, create, edit, preserve — `redaction-annotations`.
-- [#902](https://github.com/yhay81/pyropdf/issues/902) Complete font program, encoding and CMap creation and editing. Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement.
-    - read, interpret, preserve — `character-tables`.
-    - create, edit — `type1-fonts`, `truetype-fonts`, `type3-fonts`, `simple-font-encodings`, `cmaps`, `embedded-fonts`, `character-tables`.
+- [#1025](https://github.com/yhay81/pyropdf/issues/1025) Shape rich and Unicode captions in line annotation appearances. Resolve and shape RC or multilingual captions, including embedded fonts, along the measured line after authoring and editing.
+    - read, interpret, create, edit — `line-annotations`.
 - [#1016](https://github.com/yhay81/pyropdf/issues/1016) hayro: offer DeviceN mixing hints to colour-proofing devices. Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked.
     - interpret — `devicen-color-space`.
-- [#904](https://github.com/yhay81/pyropdf/issues/904) Support rich variable text, password appearances and legacy XFA form data. Read and edit RV/DS field data, mask displayed password glyphs, and inspect, edit/remove and preserve existing XFA packets under the recorded creation exclusion. Verify field values and appearances independently.
-    - read — `variable-text`, `xfa`.
-    - interpret, edit — `variable-text`, `text-fields`, `xfa`.
-    - create — `variable-text`, `text-fields`.
-    - preserve — `xfa`.
+- [#1032](https://github.com/yhay81/pyropdf/issues/1032) Resolve embedded font fallbacks in rich text field appearances. Select embedded fonts from the form resources for rich text CSS families, including shaped non-WinAnsi spans, and independently verify mixed appearances.
+    - interpret — `variable-text`.
 
 ### 250 Rewriting
 
@@ -320,14 +307,7 @@ Milestone [#250](https://github.com/yhay81/pyropdf/issues/250).
 
 Milestone [#251](https://github.com/yhay81/pyropdf/issues/251).
 
-- [#895](https://github.com/yhay81/pyropdf/issues/895) Resolve catalog name trees, structure destinations and viewer action parameters. Follow named resources and structure destinations, resolve base URI/IsMap, Windows launch and remote/named targets as data, and round-trip fragment selection and navigation options. Expose unresolved targets without executing actions.
-    - read — `destinations`, `launch-actions`, `uri-actions`, `fragment-identifiers`.
-    - interpret — `name-dictionary`, `embedded-files`, `destinations`, `remote-goto-actions`, `launch-actions`, `uri-actions`, `named-actions`, `fragment-identifiers`.
-    - create, edit — `name-dictionary`, `destinations`, `launch-actions`, `uri-actions`, `fragment-identifiers`.
-    - preserve — `fragment-identifiers`.
-- [#908](https://github.com/yhay81/pyropdf/issues/908) Author standard tagged attributes, class maps and legal structure children. Author and edit class maps, object references, user properties and standard structure attributes. Validate child multiplicities and relationships through page operations and independent checks.
-    - create — `logical-structure`, `tagged-pdf`, `structure-children`.
-    - edit — `structure-children`.
+No unfinished specification-map cells assigned.
 
 ### 252 Persistence
 
@@ -335,19 +315,16 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 
 - [#968](https://github.com/yhay81/pyropdf/issues/968) Interpret AES-GCM encrypted pages through the authenticated store source. Render and extract from the authenticated AES-GCM store version without serializing untouched objects.
     - interpret — `aes-gcm`.
-- [#936](https://github.com/yhay81/pyropdf/issues/936) Extend CMS algorithm coverage for public-key PDF recipients. Verify and extend additional CMS provider algorithms for recipient access, creation, editing and preservation.
-    - read, create, edit, preserve — `public-key-security-handler`.
+- [#1014](https://github.com/yhay81/pyropdf/issues/1014) Read the remaining legacy RC2 and RC4 recipient envelope key lengths. Read and preserve older CMS RC2 effective key sizes and RC4 key lengths beyond the optional provider's defaults.
+    - read, edit, preserve — `public-key-security-handler`.
 - [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
     - interpret — `public-key-security-handler`.
-- [#905](https://github.com/yhay81/pyropdf/issues/905) Resolve signature seed constraints and build properties through signing and editing. Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification.
-    - read, interpret — `signature-fields`.
-    - create, edit — `signature-fields`, `digital-signatures`.
 - [#993](https://github.com/yhay81/pyropdf/issues/993) Render explicit legacy crypt filters and independently keyed recipient streams from the store. Interpret explicit legacy password filters and an independently keyed page stream through the authenticated version, including correct refusal for an unauthorized page.
     - interpret — `crypt-filters`.
 - [#982](https://github.com/yhay81/pyropdf/issues/982) Round-trip packed and wide predictor rows after adopting the hayro fix. Adopt the released row-local decoder through #603, then verify partially filled TIFF rows, externally filtered partial PNG pixel strides and predictor pixels wider than 255 bits in independent save and render controls.
     - read, interpret, create — `lzw-filter`.
     - edit — `flate-filter`, `lzw-filter`.
-- [#974](https://github.com/yhay81/pyropdf/issues/974) Render owner-authenticated standard-handler PDF revisions 2 to 4. Render authenticated R2 to R4 versions with the owner credentials before and after edits.
+- [#1043](https://github.com/yhay81/pyropdf/issues/1043) Interpret legacy encrypted PDFs with byte-encoded credentials in hayro-syntax. Interpret an owner-authenticated R2 to R4 document whose effective user credential is not UTF-8.
     - interpret — `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`.
 
 ### 253 Understanding
@@ -357,7 +334,7 @@ Milestone [#253](https://github.com/yhay81/pyropdf/issues/253).
 - [#989](https://github.com/yhay81/pyropdf/issues/989) Resolve tagged form text using the originating content stream. Resolve external Form stream MCIDs and text enclosed by page-level Form invocations once hayro supplies stream provenance.
     - interpret — `logical-structure`, `tagged-pdf`.
 - [#990](https://github.com/yhay81/pyropdf/issues/990) Resolve contextual Annex L rules and namespace-mapped structure children. Resolve cross-namespace roles, use as a grouping element and role-specific content for the remaining conditional Annex L verdicts.
-    - interpret — `structure-children`.
+    - interpret, create, edit — `structure-children`.
 
 ### 254 Verification
 
@@ -374,8 +351,6 @@ Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 - [#910](https://github.com/yhay81/pyropdf/issues/910) Validate PDF/X and PDF/VT profile rules through a print exchange round trip. Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour.
     - read, interpret, preserve — `pdfx`, `pdfvt`.
     - create, edit — `pdfx`, `pdfvt`, `output-intents`.
-- [#932](https://github.com/yhay81/pyropdf/issues/932) Verify profile edit effects on nested resources and alternate structure encodings. Extend the checked edit matrix to nested resources, alternate structure relationships, and font representations with positive and negative controls.
-    - interpret, edit, preserve — `pdfa`, `pdfua`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f`, `pdfua-1`, `pdfua-2`.
 
 ### 256 Specification completion
 
@@ -384,15 +359,11 @@ Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
 - [#839](https://github.com/yhay81/pyropdf/issues/839) Expose developer extensions, associated files, page-piece dictionaries, document parts, and structure namespaces. Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations.
     - read, interpret, create, edit — `developer-extensions`, `page-piece`, `associated-files`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
     - preserve — `developer-extensions`, `page-piece`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
-- [#913](https://github.com/yhay81/pyropdf/issues/913) Author 3D scene settings and dimensional measurements as PDF data. Resolve scene, camera and activation settings and each dimensional measurement geometry. Verify view, stream and measurement references after editing.
-    - read, interpret, create, edit, preserve — `3d-artwork`.
 - [#861](https://github.com/yhay81/pyropdf/issues/861) Complete prepress dictionaries and print annotation relationships. Resolve box colour, separations, trapping, OPI and print annotation relationships and preserve or edit them under the edition policy.
     - read, edit — `page-boundaries`, `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
     - interpret, create, preserve — `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
 - [#863](https://github.com/yhay81/pyropdf/issues/863) Support STEP and glTF assets in RichMedia annotations under the published PDF 2.0 extensions. Read, author and verify STEP and glTF asset relationships against the published extensions.
     - read, interpret, create, edit, preserve — `step-rich-media`, `gltf-rich-media`.
-- [#860](https://github.com/yhay81/pyropdf/issues/860) Read, edit and preserve Web Capture content sets and their indexes. Read, edit and round-trip captured content sets and their indexes.
-    - read, interpret, create, edit, preserve — `web-capture`.
 
 ## PDF/A and PDF/UA profiles
 
@@ -401,19 +372,19 @@ The machine and human checks are documented in the [corpus review](https://githu
 
 | Profile | read | interpret | create | edit | preserve |
 | --- | --- | --- | --- | --- | --- |
-| `pdfa-1a` | done | partial | done | partial | partial |
-| `pdfa-1b` | done | partial | done | partial | partial |
-| `pdfa-2a` | done | partial | done | partial | partial |
-| `pdfa-2b` | done | partial | done | partial | partial |
-| `pdfa-2u` | done | partial | done | partial | partial |
-| `pdfa-3a` | done | partial | done | partial | partial |
-| `pdfa-3b` | done | partial | done | partial | partial |
-| `pdfa-3u` | done | partial | done | partial | partial |
-| `pdfa-4` | done | partial | planned | partial | partial |
-| `pdfa-4e` | done | partial | done | partial | partial |
-| `pdfa-4f` | done | partial | done | partial | partial |
-| `pdfua-1` | done | partial | done | partial | partial |
-| `pdfua-2` | done | partial | planned | partial | partial |
+| `pdfa-1a` | done | done | done | done | done |
+| `pdfa-1b` | done | done | done | done | done |
+| `pdfa-2a` | done | done | done | done | done |
+| `pdfa-2b` | done | done | done | done | done |
+| `pdfa-2u` | done | done | done | done | done |
+| `pdfa-3a` | done | done | done | done | done |
+| `pdfa-3b` | done | done | done | done | done |
+| `pdfa-3u` | done | done | done | done | done |
+| `pdfa-4` | done | done | planned | done | done |
+| `pdfa-4e` | done | done | done | done | done |
+| `pdfa-4f` | done | done | done | done | done |
+| `pdfua-1` | done | done | done | done | done |
+| `pdfua-2` | done | done | planned | done | done |
 
 ## Specification baseline
 

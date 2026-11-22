@@ -286,7 +286,7 @@ class _OcrEngine:
     ) -> list[tuple[float, float, float, float, str, float]]: ...
 
 def render_page(
-    document: _Document,
+    document: _Document | _PageSnapshot,
     number: int,
     generation: int,
     matrix: tuple[float, float, float, float],
@@ -467,7 +467,14 @@ def type3_draw(
     shadings: _Shadings | None = None,
     painted: list[tuple[str, float, int]] = ...,
 ) -> list[tuple[int, int, str | None]]: ...
-def subset_font_program(data: bytes, format: str, keep: list[int], /) -> tuple[bytes, int, int] | None: ...  # noqa: A002
+def subset_font_program(
+    data: bytes,
+    format: str,  # noqa: A002
+    keep: list[int],
+    lengths: tuple[int, int] | None = None,
+    document: _Document | None = None,
+    /,
+) -> tuple[bytes, int, int] | None: ...
 
 class _FontFile:
     def __init__(self, path: str, max_size: int | None, /) -> None: ...
@@ -483,7 +490,12 @@ def page_space(
     document: _Document, number: int, generation: int, /
 ) -> tuple[int, tuple[float, float, float, float], float] | None: ...
 def canvas_source_page(
-    source: _Document, number: int, generation: int, operation: _OperationBudget, /
+    source: _Document | _PageSnapshot,
+    number: int,
+    generation: int,
+    operation: _OperationBudget,
+    appearances: bool = False,
+    /,
 ) -> tuple[int, tuple[float, float, float, float], float, float, float, bytes, _CanvasSourceSnapshot] | None: ...
 def canvas_page_form(
     forms: _PageForms,
@@ -582,6 +594,7 @@ def annotation_text(
     max_size: int | None,
     /,
 ) -> tuple[str, int] | None: ...
+def annotation_attach(document: _Document, number: int, generation: int, annotation: _Id, /) -> bool: ...
 def annotation_add(
     document: _Document, number: int, generation: int, spec: dict[str, object], /, *, face: bool = False
 ) -> _Id | None: ...
@@ -734,6 +747,7 @@ def object_free_unreferenced(document: _Document, candidates: list[int], /) -> l
 def object_insert(document: _Document, root: _Root, path: list[_Step], index: int, value: object, /) -> None: ...
 def object_replace(document: _Document, number: int, value: object, /) -> None: ...
 def object_add(document: _Document, value: object, /) -> tuple[int, int]: ...
+def object_reference_xobjects(document: _Document, root: tuple[int, int], page: bool, /) -> list[bytes]: ...
 def object_add_stream(document: _Document, dictionary: object, data: bytes, options: object, /) -> tuple[int, int]: ...
 def parent_tree_append(document: _Document, owners: object, /) -> int: ...
 def page_labels_write(document: _Document, entries: list[tuple[int, object]], /) -> None: ...
