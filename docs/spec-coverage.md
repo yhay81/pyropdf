@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 17 | 26 | 794 |
-| interpret | 14 | 19 | 0 | 29 | 35 | 740 |
-| create | 0 | 0 | 25 | 26 | 34 | 752 |
-| edit | 0 | 0 | 0 | 39 | 36 | 762 |
-| preserve | 0 | 0 | 0 | 17 | 28 | 792 |
+| read | 0 | 0 | 0 | 16 | 25 | 796 |
+| interpret | 14 | 19 | 0 | 28 | 34 | 742 |
+| create | 0 | 0 | 25 | 25 | 33 | 754 |
+| edit | 0 | 0 | 0 | 38 | 35 | 764 |
+| preserve | 0 | 0 | 0 | 17 | 27 | 793 |
 
 ## Clauses
 
@@ -237,8 +237,8 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 done | 12 partial | 11 done, 1 planned | 12 partial | 12 partial |
 | ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-301 unfinished cells in 837 features: 14 engine, 128 partial, 159 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+292 unfinished cells in 837 features: 14 engine, 124 partial, 154 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -335,9 +335,6 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 
 - [#865](https://github.com/yhay81/pyropdf/issues/865) Read and write AES-GCM encrypted PDFs under ISO/TS 32003. Read and write authenticated AES-GCM objects with independent positive and negative cases.
     - read, interpret, create, edit, preserve — `aes-gcm`.
-- [#867](https://github.com/yhay81/pyropdf/issues/867) Complete the PDF hash and signature algorithm coverage for ISO/TS 32001 and 32002. Verify and create each specified hash/signature algorithm against independent vectors, including Ed25519 and Ed448.
-    - read, interpret, create, edit — `sha3-hashes`, `ecc-signatures`.
-    - preserve — `sha3-hashes`.
 - [#866](https://github.com/yhay81/pyropdf/issues/866) Verify and maintain document integrity protection for encrypted PDFs under ISO/TS 32004. Verify and maintain integrity protection during encrypted saves and refuse tampered data.
     - read, interpret, create, edit, preserve — `integrity-protection`.
 - [#936](https://github.com/yhay81/pyropdf/issues/936) Extend CMS algorithm coverage for public-key PDF recipients. Verify and extend additional CMS provider algorithms for recipient access, creation, editing and preservation.
@@ -557,7 +554,7 @@ Within one month of publication, compare the official catalogues and the PDF Ass
 | Annex Q | normative annex | `page-transparency`, `transparency-groups` | Determine whether page painting requires compositing. |
 | Bibliography | references | — | Background references introduce no independent behavior. |
 | ISO/TS 24064:2023 | extension | `step-rich-media` | Connect the STEP AP242 payload, configuration and view to its RichMedia annotation. |
-| ISO/TS 32001:2022 | extension | `sha3-hashes` | SHA-3 and SHA-512 hash algorithms in PDF. |
+| ISO/TS 32001:2022 | extension | `sha3-hashes` | SHA-3 and SHAKE256 hash algorithms in PDF. |
 | ISO/TS 32002:2022 | extension | `ecc-signatures` | ECDSA and EdDSA signature algorithms in PDF. |
 | ISO/TS 32003:2023 | extension | `aes-gcm` | AES-GCM encryption in PDF. |
 | ISO/TS 32004:2024 | extension | `integrity-protection` | Integrity protection of encrypted documents with a message authentication code. |
@@ -582,6 +579,41 @@ Each record has its upstream issue number, page anchors, affected feature IDs, d
 and an original summary. Empty dimension lists identify changes to wording, cross-references or examples.
 Feature tests and release decisions remain on the feature rows. An erratum needs a targeted regression
 before a test can be cited for that specific correction. The register gives no automatic coverage credit.
+
+### Reviewed behavioral requirements
+
+Of 296 correction IDs with behavioral dimensions, 12 have a reviewed crosswalk in at least one scope. 284 await one. One correction can have several role or revision variants.
+
+5 open work, 4 reasoned disposition, 17 targeted evidence.
+
+| Behavior | Edition and provision | Correction | Requirement and evidence |
+| --- | --- | --- | --- |
+| alphabetic-page-labels | ISO 32000-2:2020 12.4.2, Table 161, S entry | [593](https://github.com/pdf-association/pdf-issues/issues/593) | For styles A and a, number successive groups of 26 pages with repeated copies of the same uppercase or lowercase letter. `tests/test_page_labels.py::test_alphabetic_labels_repeat_letters_in_blocks_of_26[uppercase]`, `tests/test_page_labels.py::test_alphabetic_labels_repeat_letters_in_blocks_of_26[lowercase]` |
+| permissions-r5 | ISO 32000-2:2020 7.6.4.3.3, 7.6.4.4.9 and 7.6.4.4.12 | [24](https://github.com/pdf-association/pdf-issues/issues/24) | Decrypt the 16-byte permissions value using the document key; compare the permission bits and metadata indicator. References: FIPS PUB 197 (2001), AES-256, NIST SP 800-38A (2001), ECB. `tests/test_security_corrections.py::test_permissions_are_one_ecb_block_under_the_document_key[read-r5]` |
+| permissions-r6 | ISO 32000-2:2020 7.6.4.3.3, 7.6.4.4.9 and 7.6.4.4.12 | [24](https://github.com/pdf-association/pdf-issues/issues/24) | Decrypt the 16-byte permissions value using the document key; compare the permission bits and metadata indicator. References: FIPS PUB 197 (2001), AES-256, NIST SP 800-38A (2001), ECB. `tests/test_security_corrections.py::test_permissions_are_one_ecb_block_under_the_document_key[read-r6]`, `tests/test_security_corrections.py::test_permissions_are_one_ecb_block_under_the_document_key[write-r6]` |
+| password-hash-user | ISO 32000-2:2020 7.6.4.3.4 | [325](https://github.com/pdf-association/pdf-issues/issues/325) | Check 64 repetitions of the password and hash with no user entry. References: FIPS 180-4 (2015), SHA-256/384/512, FIPS PUB 197 (2001), AES-128. `tests/test_security_corrections.py::test_revision_six_uses_the_correct_password_hash_sequence[user]` |
+| legacy-padding-user | ISO 32000-2:2020 7.6.4.4.2 | [643](https://github.com/pdf-association/pdf-issues/issues/643) | Authenticate the user role with both a short password and a 32-byte truncation boundary. `tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[2-user]`, `tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[3-user]`, `tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[4-user]` |
+| password-hash-owner | ISO 32000-2:2020 7.6.4.3.4 | [325](https://github.com/pdf-association/pdf-issues/issues/325) | Check 64 repetitions with the entire user entry included for the owner. References: FIPS 180-4 (2015), SHA-256/384/512, FIPS PUB 197 (2001), AES-128. `tests/test_security_corrections.py::test_revision_six_uses_the_correct_password_hash_sequence[owner]` |
+| legacy-padding-owner | ISO 32000-2:2020 7.6.4.4.2 | [643](https://github.com/pdf-association/pdf-issues/issues/643) | Authenticate the owner role with both a short password and a 32-byte truncation boundary. `tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[2-owner]`, `tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[3-owner]`, `tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[4-owner]` |
+| standard-filter-r4 | ISO 32000-2:2020 7.6.4.1 | [89](https://github.com/pdf-association/pdf-issues/issues/89) | The newly written standard dictionary selects a single StdCF with the proper content cipher and DocOpen event. References: ISO 32000-2:2020, 7.6.6. `tests/test_security_corrections.py::test_standard_handler_authoring_selects_one_named_docopen_filter[4]` |
+| standard-filter-r6 | ISO 32000-2:2020 7.6.4.1 | [89](https://github.com/pdf-association/pdf-issues/issues/89) | The newly written standard dictionary selects a single StdCF with the proper content cipher and DocOpen event. References: ISO 32000-2:2020, 7.6.6. `tests/test_security_corrections.py::test_standard_handler_authoring_selects_one_named_docopen_filter[6]` |
+| standard-filter-read-legacy | ISO 32000-2:2020 7.6.4.1 | [89](https://github.com/pdf-association/pdf-issues/issues/89) | Read the existing single named filter of an R4 RC4 or R5 AES file. `tests/test_security_corrections.py::test_existing_standard_handler_retains_a_single_docopen_crypt_filter[standard-rc4-r4]`, `tests/test_security_corrections.py::test_existing_standard_handler_retains_a_single_docopen_crypt_filter[standard-aes-r5]` |
+| legacy-id-note | ISO 32000-2:2020 7.6.4.3.2 and 7.6.4.3.3 | [53](https://github.com/pdf-association/pdf-issues/issues/53) | Correct the explanatory notes about which algorithm uses the first trailer identifier. The corrected notes describe an existing algorithm dependency; they introduce no new processor step. |
+| standard-table-typo | ISO 32000-2:2020 7.6.4.2 | [674](https://github.com/pdf-association/pdf-issues/issues/674) | Correct a word in the encryption dictionary description. The word spacing changes no key, value or algorithm. |
+| hash-modulo-note | ISO 32000-2:2020 4.1.1 and 7.6.4.3.4 | [792](https://github.com/pdf-association/pdf-issues/issues/792) | Explain the equivalent arithmetic for the selector in the R6 password hash. The implementation note permits an equivalent modulo-three calculation; the existing wire output is identical. |
+| credentials-and-saves-standard-aes-r4 | ISO 32000-2:2020 7.6.4.2 and 7.6.4.4 | — | Match both access roles and retained ciphertext after editing and reopening this handler revision. `tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-aes-r4]` |
+| credentials-and-saves-standard-aes-r5 | ISO 32000-2:2020 7.6.4.2 and 7.6.4.4 | — | Match both access roles and retained ciphertext after editing and reopening this handler revision. `tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-aes-r5]` |
+| credentials-and-saves-standard-aes-r6 | ISO 32000-2:2020 7.6.4.2 and 7.6.4.4 | — | Match both access roles and retained ciphertext after editing and reopening this handler revision. `tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-aes-r6]` |
+| credentials-and-saves-standard-rc4-r2 | ISO 32000-2:2020 7.6.4.2 and 7.6.4.4 | — | Match both access roles and retained ciphertext after editing and reopening this handler revision. `tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-rc4-r2]` |
+| credentials-and-saves-standard-rc4-r3 | ISO 32000-2:2020 7.6.4.2 and 7.6.4.4 | — | Match both access roles and retained ciphertext after editing and reopening this handler revision. `tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-rc4-r3]` |
+| credentials-and-saves-standard-rc4-r4 | ISO 32000-2:2020 7.6.4.2 and 7.6.4.4 | — | Match both access roles and retained ciphertext after editing and reopening this handler revision. `tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-rc4-r4]` |
+| archival-xmp-id | ISO 19005-4:2020 6.7.3 | [123](https://github.com/pdf-association/pdf-issues/issues/123) | Use the PDF/A identification namespace, revision 2020 and the absence of an optional E/F identification on plain PDF/A-4. References: ISO 16684-1:2019, XMP data model and serialization, ISO 32000-2:2020, 14.3.2. `tests/test_pdfa_corpus.py::test_part_four_records_the_identification_namespace_revision_and_specific_flavour[pdfa-4.pdf]` |
+| archival-77 | ISO 19005-4:2020 6.2.10.3.1 | [77](https://github.com/pdf-association/pdf-issues/issues/77) | Compare a predefined CMap supplement with the descendant CIDFont. References: ISO 32000-2:2020. #902 |
+| archival-104 | ISO 19005-4:2020 6.2.9 | [104](https://github.com/pdf-association/pdf-issues/issues/104) | Determine annotation transparency from opacity, blend mode and appearance under Annex Q. References: ISO 32000-2:2020. #911 |
+| archival-391 | ISO 19005-4:2020 6.9 and ISO 32000-2:2020, 7.11.3 | [391](https://github.com/pdf-association/pdf-issues/issues/391) | Distinguish associated files from file attachment annotations and verify relationship requirements. References: ISO 32000-2:2020. #911 |
+| archival-428 | ISO 19005-4:2020 6.2 and ISO 32000-2:2020, 8.7.3.1 | [428](https://github.com/pdf-association/pdf-issues/issues/428) | Refuse or report an overlapping tile whose result depends on renderer order. References: ISO 32000-2:2020. #896 |
+| archival-renderer-role | ISO 19005-4:2020 2 and 6.2 | — | Identify obligations that apply only to a conforming presentation processor. Writing and preserving a file do not exercise a conforming presentation processor. The separate interpret dimension retains rendering obligations. |
+| archival-full-ruleset | ISO 19005-4:2020 6 | — | Review the remaining independently observable archival constraints before making a flavour-wide claim. #911 |
 
 <details markdown="1"><summary>Corrections by upstream issue number</summary>
 
@@ -737,7 +769,7 @@ before a test can be cited for that specific correction. The register gives no a
 | [226](https://github.com/pdf-association/pdf-issues/issues/226) | [Syntax of structure attribute objects](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#H14.7.6.1) | `logical-structure`, `tagged-pdf` | read, interpret, create, edit, preserve | — |
 | [228](https://github.com/pdf-association/pdf-issues/issues/228) | [Embedding newer ICC profiles within legacy profiles](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.6.5.5) | `icc-based-color-space` | read, interpret, create, edit, preserve | — |
 | [229](https://github.com/pdf-association/pdf-issues/issues/229) | [Registered names and dictionary-specific exceptions](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexE.html#HF.3) | `private-names` | read, interpret, create, edit, preserve | — |
-| [236](https://github.com/pdf-association/pdf-issues/issues/236) | [Removal of the SHA-3 change to signature-reference DigestMethod values](https://pdf-issues.pdfa.org/32001-2022/clause05.html#H5.1.3) | `digital-signatures`, `sha3-hashes` | read, interpret, create, edit, preserve | [#867](https://github.com/yhay81/pyropdf/issues/867) |
+| [236](https://github.com/pdf-association/pdf-issues/issues/236) | [Removal of the SHA-3 change to signature-reference DigestMethod values](https://pdf-issues.pdfa.org/32001-2022/clause05.html#H5.1.3) | `digital-signatures`, `sha3-hashes` | read, interpret, create, edit, preserve | — |
 | [239](https://github.com/pdf-association/pdf-issues/issues/239) | [Meaning of a declared extension level](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.5) | `developer-extensions` | read, interpret, create, edit, preserve | — |
 | [242](https://github.com/pdf-association/pdf-issues/issues/242) | [Direct storage of the extension dictionary](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.7.2) | `document-catalog` | read, interpret, create, edit, preserve | — |
 | [246](https://github.com/pdf-association/pdf-issues/issues/246) | [Direct length in cross-reference streams](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.5.8.2) | `xref-streams` | read, interpret, create, edit, preserve | — |
@@ -845,7 +877,7 @@ before a test can be cited for that specific correction. The register gives no a
 | [399](https://github.com/pdf-association/pdf-issues/issues/399) | [Applicability of an extension's base PDF version](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.4) | `developer-extensions`, `incremental-update` | read, interpret, create, edit, preserve | — |
 | [402](https://github.com/pdf-association/pdf-issues/issues/402) | [Metadata and trailer document identifiers](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexH.html#HH.2) | `annotations`, `basic-objects`, `xmp-metadata` | read, interpret, create, edit, preserve | — |
 | [403](https://github.com/pdf-association/pdf-issues/issues/403) | [Metadata and file-association exceptions by object type](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.12.1) | `associated-files`, `developer-extensions`, `digital-signatures`, `linearization`, `xref-streams` | read, interpret, create, edit, preserve | — |
-| [404](https://github.com/pdf-association/pdf-issues/issues/404) | [Digest identifiers for SHAKE256 and the EdDSA signature profiles](https://pdf-issues.pdfa.org/32001-2022/clause05.html#H5.1.4) | `ecc-signatures`, `sha3-hashes` | read, interpret, create, edit, preserve | [#867](https://github.com/yhay81/pyropdf/issues/867) |
+| [404](https://github.com/pdf-association/pdf-issues/issues/404) | [Digest identifiers for SHAKE256 and the EdDSA signature profiles](https://pdf-issues.pdfa.org/32001-2022/clause05.html#H5.1.4) | `ecc-signatures`, `sha3-hashes` | read, interpret, create, edit, preserve | — |
 | [410](https://github.com/pdf-association/pdf-issues/issues/410) | [Typesetting in the seed certificate table](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.7.5.5) | `signature-fields` | Editorial | — |
 | [414](https://github.com/pdf-association/pdf-issues/issues/414) | [Temporary-file policy for media clips](https://pdf-issues.pdfa.org/32000-2-2020/clause13.html#H13.2.4.2) | `renditions` | read, interpret, create, edit, preserve | — |
 | [415](https://github.com/pdf-association/pdf-issues/issues/415) | [Name syntax versus operators in tagging examples](https://pdf-issues.pdfa.org/32000-2-2020/clauseAnnexH.html) | `tagged-pdf` | Editorial | — |
