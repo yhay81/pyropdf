@@ -270,6 +270,7 @@ preserve = { status = "planned", milestone = "Phase 4: Specification" }
 "14.9" = "Accessibility support"
 "14.10" = "Web capture"
 "14.11.2" = "Page boundaries"
+"14.11.3" = "Printer's marks"
 "14.11.4" = "Separation dictionaries"
 "14.11.5" = "Output intents"
 "14.11.6" = "Trapping support"
@@ -545,7 +546,7 @@ objects = ["PatternColorSpace"]
 [features.separation-color-space]
 clause = "8.6.6.4"
 description = "Separation: one colorant with its alternate space and tint transform."
-objects = ["SeparationColorSpace", "Separation"]
+objects = ["SeparationColorSpace"]
 
 [features.devicen-color-space]
 clause = "8.6.6.5"
@@ -892,17 +893,19 @@ objects = ["AnnotWidget", "AppearanceCharacteristics", "IconFit"]
 
 [features.printer-mark-annotations]
 clause = "12.5.6.20"
-description = "Printer's mark annotations."
+description = "Printer's marks, flags, active normal Form and its colorants (also 14.11.3). Press output belongs to #248 and #7."
 objects = ["AnnotPrinterMark", "AppearancePrinterMark", "AppearancePrinterMarkSubDict", "XObjectFormPrinterMark"]
 
 [features.trap-network-annotations]
 clause = "12.5.6.21"
-description = "Trap network annotations."
+description = "Stored trap network appearance states and last position on the page. Trap rendering belongs to #248 and #7."
 objects = ["AnnotTrapNetwork", "AppearanceTrapNet", "AppearanceTrapNetSubDict", "XObjectFormTrapNet"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated features is excluded by the specification completion milestone." }
 
 [features.watermark-annotations]
 clause = "12.5.6.22"
-description = "Watermark annotations, with their fixed print placement."
+description = "Watermark Form and fixed print transform and media fractions. Physical output belongs to #248 and #7."
 objects = ["AnnotWatermark", "FixedPrint"]
 
 [features.redaction-annotations]
@@ -1192,13 +1195,16 @@ objects = ["WebCaptureInfo", "WebCapturePageSet", "WebCaptureImageSet", "SourceI
 clause = "14.11.2"
 description = "Media, crop, bleed, trim, and art boxes, and box color information."
 objects = ["BoxColorInfo", "BoxStyle"]
-read = { status = "partial", missing = "Media, crop, bleed, trim, and art boxes are read with inheritance and clipping, without a high-level reader for `/BoxColorInfo`.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Media, crop, bleed, trim, and art boxes are set in display space, without a high-level API for `/BoxColorInfo`.", milestone = "Phase 4: Specification" }
+
+[features.printer-marks]
+clause = "14.11.3"
+description = "Resolve named printer's marks to the normal Form, mark style, shared resources and separation colorants. Device marks on press belong to #248 and #7."
+objects = []
 
 [features.separation-dictionaries]
 clause = "14.11.4"
-description = "Separation dictionaries of pre-separated pages."
-objects = []
+description = "Ordered plate pages, device colorants and optional Separation or DeviceN preview spaces."
+objects = ["Separation", "ArrayOfPages"]
 
 [features.output-intents]
 clause = "14.11.5"
@@ -1207,13 +1213,17 @@ objects = ["OutputIntents", "DestOutputProfileRef"]
 
 [features.trapping]
 clause = "14.11.6"
-description = "Trap networks and their regions."
+description = "Stored trapping process, zones, parameter names and Form resources. Trap generation and rendering belong to #248 and #7."
 objects = ["TrapRegion"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated features is excluded by the specification completion milestone." }
 
 [features.opi]
 clause = "14.11.7"
-description = "Open prepress interface dictionaries."
+description = "Resolve and preserve legacy OPI source file descriptions and image parameters. Device substitution belongs to #248 and #7."
 objects = ["OPIVersion13", "OPIVersion13Dict", "OPIVersion20", "OPIVersion20Dict"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated features is excluded by the specification completion milestone." }
 
 [features.document-parts]
 clause = "14.12"

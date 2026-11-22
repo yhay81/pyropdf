@@ -615,9 +615,21 @@ def _base_or_extension(doc: Document, level: int) -> tuple[int, int]:
 
 
 def _require_media_version(doc: Document, minimum: tuple[int, int]) -> None:
+    from pyropdf._annotations import _version  # noqa: PLC0415
     from pyropdf._measurement import _require_measurement_version  # noqa: PLC0415
 
+    before = doc.check() if _version(doc) < minimum < (2, 0) else None
     _require_measurement_version(doc, doc.catalog, minimum)
+    if before is not None:
+        after = doc.check()
+        if before.truncated or after.truncated:
+            msg = "cannot verify version promotion with a truncated structural report"
+            raise PdfError(msg)
+        existing = set(before.defects)
+        for defect in after.defects:
+            if defect not in existing:
+                msg = f"PDF {minimum[0]}.{minimum[1]} promotion would introduce a structural defect: {defect.clause}"
+                raise PdfError(msg)
 
 
 def _check_edit(doc: Document, before: StructuralReport, operation: str) -> None:
@@ -654,13 +666,13 @@ def _scene_version(doc: Document, spec: ThreeD) -> tuple[int, int]:
 
 
 def finish_media_import(doc: Document, major: int, minor: int, first: int, *, contains_prc: bool) -> None:
-    """Check the receiver's edition and the imported media graph before committing its new pages."""
+    """Check the receiver's edition and imported media or print relationships before committing new pages."""
     from pyropdf._annotations import _version  # noqa: PLC0415
 
     def imported_defect() -> StructuralDefect | None:
         report = doc.check()
         if report.truncated:
-            msg = "cannot verify imported media with a truncated structural report"
+            msg = "cannot verify imported page relationships with a truncated structural report"
             raise PdfError(msg)
         return next(
             (d for d in report.defects if d.xref is not None and d.xref >= first and d.clause != "FileTrailer/Size"),
@@ -677,7 +689,7 @@ def finish_media_import(doc: Document, major: int, minor: int, first: int, *, co
         _require_media_version(doc, required)
         defect = imported_defect()
     if defect is not None:
-        msg = f"importing the multimedia annotation would introduce a structural defect: {defect.clause}"
+        msg = f"importing the page relationships would introduce a structural defect: {defect.clause}"
         raise PdfError(msg)
 
 
@@ -725,16 +737,9 @@ def add_media(page: Page, spec: MediaSpecification) -> tuple[int, int]:
             },
         )
         _write_media(doc, annot, spec)
-        annots = page.obj.get("Annots")
-        if annots is None:
-            page.obj["Annots"] = [annot]
-        elif isinstance(annots, Array):
-            annots.append(annot)
-        else:
-            msg = "page /Annots must be an array"
-            raise ValueError(msg)
-        # Use the ordinary listing's limits before publishing the annotation.
-        _ = len(page.annotations)
+        from pyropdf._prepress import append_annotation  # noqa: PLC0415
+
+        append_annotation(page, annot)
         if before is not None:
             _check_edit(doc, before, "3D scene")
         assert annot.xref is not None  # noqa: S101 - allocated above.

@@ -126,6 +126,14 @@ for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
             modes=("full",),
         )
 
+# A fixed-print Watermark is unavailable in PDF/A-1. On accessible
+# documents these two deliberately untagged print annotations need tagging.
+for source in ("pdfa-1a", "pdfa-1b"):
+    expect(source, source.removeprefix("pdfa-"), {"prepress": {"6.5.2-1"}}, "#861")
+expect("pdfua-1", "ua1", {"prepress": {"7.18.1-1", "7.18.1-2", "7.18.3-1"}}, "#861")
+for source in ("pdfua-2", DUAL):
+    expect(source, "ua2", {"prepress": {"8.9.3.3-1"}}, "#861")
+
 expect(
     "pdfua-1",
     "ua1",

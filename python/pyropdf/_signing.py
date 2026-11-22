@@ -30,6 +30,7 @@ from pyropdf._signature_structures import (
     _validate_doc_mdp,
     build_reference_entries,
     ensure_pades_version,
+    ensure_unsigned_signature_field,
     is_timestamp_sig,
     parse_rfc3161_tst_info,
     read_certification,
@@ -61,8 +62,6 @@ DEFAULT_RESERVE = 16_384
 _MAX_RESERVE = 1 << 20
 #: The ``/ByteRange`` that the saved document holds until the core fills it.
 _BYTE_RANGE_PLACEHOLDER = (0, 9_999_999_999, 9_999_999_999, 9_999_999_999)
-#: The widget flags of an invisible signature: Print and Locked.
-_INVISIBLE_WIDGET_FLAGS = 132
 #: The AcroForm's ``/SigFlags``: SignaturesExist and AppendOnly.
 _SIGNATURE_FLAGS = 3
 
@@ -240,56 +239,8 @@ def _optional_text(name: str, value: object) -> str | None:
 
 def _signature_field(document: Document, field: str, signature: Dictionary) -> None:
     """Set ``signature`` as the value of the signature field ``field``, adding an invisible one when none exists."""
-    form = document.form
-    if field in form:
-        existing = form[field]
-        if existing.type is not FieldType.SIGNATURE:
-            msg = f"field {field!r} is a {existing.type.value} field, not a signature field"
-            raise ValueError(msg)
-        if existing.is_signed:
-            msg = f"field {field!r} is already signed"
-            raise ValueError(msg)
-        existing.obj["V"] = signature
-    else:
-        if not field or "." in field:
-            msg = f"a new signature field needs a name without dots: {field!r}"
-            raise ValueError(msg)
-        if len(document.pages) == 0:
-            msg = "a document without pages has no page for the signature field's widget"
-            raise ValueError(msg)
-        page = document.pages[0].obj
-        widget = document.objects[
-            document.objects.add(
-                {
-                    "Type": Name("Annot"),
-                    "Subtype": Name("Widget"),
-                    "FT": Name("Sig"),
-                    "T": field,
-                    "Rect": [0, 0, 0, 0],
-                    "F": _INVISIBLE_WIDGET_FLAGS,
-                    "P": page,
-                    "V": signature,
-                }
-            )
-        ]
-        annotations = page.get("Annots")
-        if isinstance(annotations, Array):
-            annotations.append(widget)
-        else:
-            page["Annots"] = [widget]
-        acroform = document.catalog.get("AcroForm")
-        if not isinstance(acroform, Dictionary):
-            document.catalog["AcroForm"] = {"Fields": [widget]}
-            acroform = document.catalog["AcroForm"]
-        else:
-            fields = acroform.get("Fields")
-            if isinstance(fields, Array):
-                fields.append(widget)
-            else:
-                acroform["Fields"] = [widget]
-    acroform = document.catalog["AcroForm"]
-    flags = acroform.get("SigFlags")
-    acroform["SigFlags"] = (flags if isinstance(flags, int) and not isinstance(flags, bool) else 0) | _SIGNATURE_FLAGS
+    widget = ensure_unsigned_signature_field(document, field, signature_flags=_SIGNATURE_FLAGS)
+    widget["V"] = signature
 
 
 def _validate_reserve(reserve: object) -> int:

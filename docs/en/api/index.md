@@ -76,14 +76,19 @@ method and property of its classes with its full description.
 
 ## [Pages](pages.md)
 
+- [`BoxStyle`](pages.md#boxstyle): Stored DeviceRGB guideline colour, width, solid/dashed style and dash pattern.
+- [`FixedPrint`](pages.md#fixedprint): Watermark matrix and translations as fractions of the target media width and height.
 - [`NavigationStep`](pages.md#navigationstep): One sub-page navigation step of a page's presentation sequence (`NavNode`, ISO 32000-2 Table 166).
 - [`Page`](pages.md#page): A page of a document, named by its page object.
 - [`Pages`](pages.md#pages_1): The pages of a document, in order.
+- [`PrinterMark`](pages.md#printermark): A printable, read-only printer's mark with a supplied Form XObject and optional mark name.
+- [`SeparationPlate`](pages.md#separationplate): The colorant of one pre-separated page and its optional Separation or DeviceN space.
 - [`Transition`](pages.md#transition): How a viewer transitions to a page during a presentation (`/Trans`, ISO 32000-2 Table 165).
 - [`TransitionAction`](pages.md#transitionaction): An action that updates the display using a `Transition` (`/S /Trans`, ISO 32000-2 Table 219).
 - [`TransitionDimension`](pages.md#transitiondimension): Axis along which a `Split` or `Blinds` transition runs (`/Dm`, ISO 32000-2 Table 165).
 - [`TransitionMotion`](pages.md#transitionmotion): Direction of motion for `Split`, `Box`, or `Fly` transitions (`/M`, ISO 32000-2 Table 165).
 - [`TransitionStyle`](pages.md#transitionstyle): Visual style of a page transition (`/S`, ISO 32000-2 Table 165).
+- [`Watermark`](pages.md#watermark): A printable watermark with a supplied Form and optional fixed placement on the target media.
 
 ## [Drawing](drawing.md)
 

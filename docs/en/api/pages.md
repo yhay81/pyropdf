@@ -8,6 +8,33 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 # Pages
 
+## `BoxStyle`
+
+```python
+BoxStyle(
+    *,
+    color: tuple[float, float, float] = (0, 0, 0),
+    width: float = 1,
+    dashed: bool = False,
+    dashes: tuple[float, ...] = (3,),
+)
+```
+
+Stored DeviceRGB guideline colour, width, solid/dashed style and dash pattern.
+
+## `FixedPrint`
+
+```python
+FixedPrint(
+    *,
+    matrix: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+    horizontal: float = 0,
+    vertical: float = 0,
+)
+```
+
+Watermark matrix and translations as fractions of the target media width and height.
+
 ## `NavigationStep`
 
 ```python
@@ -201,6 +228,33 @@ Assigning a `Pixmap` writes an indirect Flate-compressed
 white) in one transaction and frees any unreferenced retired thumbnail
 stream; `del page.thumbnail` removes `/Thumb` and frees its stream
 when unreferenced.
+
+Settable.
+
+### `Page.box_styles`
+
+```python
+Page.box_styles: dict[str, BoxStyle]
+```
+
+Local guideline styles keyed by CropBox, BleedBox, TrimBox or ArtBox.
+
+An absent entry leaves the display choice to the reader. Assign a mapping
+to replace the known styles or delete the property to remove them.
+
+Settable.
+
+### `Page.separations`
+
+```python
+Page.separations: dict[Page, SeparationPlate]
+```
+
+The ordered pages of this pre-separated group and their colorants.
+
+Assign a mapping including this page to create or replace the group.
+Omitted members become ordinary pages. Deleting dissolves the group
+in one transaction. A page already in another group must leave it first.
 
 Settable.
 
@@ -1133,6 +1187,22 @@ Pages.move(index: int, to: int)
 
 Move page `index` so that it ends at index `to`, in one transaction.
 
+## `PrinterMark`
+
+```python
+PrinterMark(*, rect: Rect, appearance: Stream, name: Name | None = None)
+```
+
+A printable, read-only printer's mark with a supplied Form XObject and optional mark name.
+
+## `SeparationPlate`
+
+```python
+SeparationPlate(*, colorant: Name | String, color_space: Array | None = None)
+```
+
+The colorant of one pre-separated page and its optional Separation or DeviceN space.
+
 ## `Transition`
 
 ```python
@@ -1182,3 +1252,11 @@ Members: `INWARD`, `OUTWARD`.
 Visual style of a page transition (`/S`, ISO 32000-2 Table 165).
 
 Members: `SPLIT`, `BLINDS`, `BOX`, `WIPE`, `DISSOLVE`, `GLITTER`, `REPLACE`, `FLY`, `PUSH`, `COVER`, `UNCOVER`, `FADE`.
+
+## `Watermark`
+
+```python
+Watermark(*, rect: Rect, appearance: Stream, fixed_print: FixedPrint | None = None)
+```
+
+A printable watermark with a supplied Form and optional fixed placement on the target media.

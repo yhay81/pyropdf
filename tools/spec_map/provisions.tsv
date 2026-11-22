@@ -96,7 +96,7 @@ base	14.7	clause	logical-structure structure-namespaces	Maintain the structure t
 base	14.8	clause	tagged-pdf	Express standard logical roles, attributes and artifacts in tagged content.
 base	14.9	clause	accessibility	Provide alternate text, language and replacement text.
 base	14.10	clause	web-capture	Associate captured web resources with a document.
-base	14.11	clause	page-boundaries separation-dictionaries output-intents trapping opi	Describe production geometry, colour and other press data.
+base	14.11	clause	page-boundaries printer-marks separation-dictionaries output-intents trapping opi	Describe production geometry, colour and other press data.
 base	14.12	clause	document-parts	Group pages and attach document-part metadata.
 base	14.13	clause	associated-files	Relate files to documents and objects with a declared relationship.
 base	Annex A	informative annex		Informative operator index repeats the operators defined in their respective clauses.

@@ -36,6 +36,7 @@ from pyropdf._ocr import (
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
 from pyropdf._page_labels import _label, _read_page_labels
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
+from pyropdf._prepress import BoxStyle, SeparationPlate, box_styles, separations, write_box_styles, write_separations
 from pyropdf._presentations import (
     NavigationStep,
     Transition,
@@ -361,6 +362,41 @@ class Page:
     @thumbnail.deleter
     def thumbnail(self) -> None:
         _delete_page_thumbnail(self)
+
+    @property
+    def box_styles(self) -> dict[str, BoxStyle]:
+        """Local guideline styles keyed by CropBox, BleedBox, TrimBox or ArtBox.
+
+        An absent entry leaves the display choice to the reader. Assign a mapping
+        to replace the known styles or delete the property to remove them.
+        """
+        return _core.read_operation(self.document._core(), lambda _: box_styles(self))  # noqa: SLF001
+
+    @box_styles.setter
+    def box_styles(self, styles: Mapping[str, BoxStyle]) -> None:
+        write_box_styles(self, styles)
+
+    @box_styles.deleter
+    def box_styles(self) -> None:
+        write_box_styles(self, {})
+
+    @property
+    def separations(self) -> dict[Page, SeparationPlate]:
+        """The ordered pages of this pre-separated group and their colorants.
+
+        Assign a mapping including this page to create or replace the group.
+        Omitted members become ordinary pages. Deleting dissolves the group
+        in one transaction. A page already in another group must leave it first.
+        """
+        return _core.read_operation(self.document._core(), lambda _: separations(self))  # noqa: SLF001
+
+    @separations.setter
+    def separations(self, plates: Mapping[Page, SeparationPlate]) -> None:
+        write_separations(self, plates)
+
+    @separations.deleter
+    def separations(self) -> None:
+        write_separations(self, {})
 
     @property
     def viewports(self) -> tuple[Viewport, ...]:

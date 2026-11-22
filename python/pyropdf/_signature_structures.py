@@ -48,6 +48,7 @@ from pyropdf._objects import (
     _direct_value,
     _encode,
 )
+from pyropdf._prepress import append_annotation
 
 if TYPE_CHECKING:
     from pyropdf._document import Document
@@ -956,7 +957,9 @@ def write_perms_doc_mdp(document: Document, signature: Dictionary) -> None:
         catalog["Perms"] = {"DocMDP": signature}
 
 
-def _ensure_unsigned_signature_field(document: Document, field: str) -> Dictionary:
+def ensure_unsigned_signature_field(
+    document: Document, field: str, *, signature_flags: int = _SIG_EXIST_FLAG
+) -> Dictionary:
     """Return the dictionary of an existing or newly added unsigned signature field ``field``."""
     from pyropdf._form import FieldType  # noqa: PLC0415
 
@@ -977,7 +980,7 @@ def _ensure_unsigned_signature_field(document: Document, field: str) -> Dictiona
         if len(document.pages) == 0:
             msg = "a document without pages has no page for the signature field's widget"
             raise ValueError(msg)
-        page = document.pages[0].obj
+        page = document.pages[0]
         target = document.objects[
             document.objects.add(
                 {
@@ -987,15 +990,11 @@ def _ensure_unsigned_signature_field(document: Document, field: str) -> Dictiona
                     "T": field,
                     "Rect": [0, 0, 0, 0],
                     "F": _INVISIBLE_WIDGET_FLAGS,
-                    "P": page,
+                    "P": page.obj,
                 }
             )
         ]
-        annotations = page.get("Annots")
-        if isinstance(annotations, Array):
-            annotations.append(target)
-        else:
-            page["Annots"] = [target]
+        append_annotation(page, target)
         acroform = document.catalog.get("AcroForm")
         if not isinstance(acroform, Dictionary):
             document.catalog["AcroForm"] = {"Fields": [target]}
@@ -1007,7 +1006,7 @@ def _ensure_unsigned_signature_field(document: Document, field: str) -> Dictiona
                 acroform["Fields"] = [target]
     acroform = document.catalog["AcroForm"]
     flags = acroform.get("SigFlags")
-    acroform["SigFlags"] = (flags if _is_non_bool_int(flags) else 0) | _SIG_EXIST_FLAG
+    acroform["SigFlags"] = (flags if _is_non_bool_int(flags) else 0) | signature_flags
     return target
 
 
@@ -1199,7 +1198,7 @@ def prepare_signature(  # noqa: PLR0913 - mirrors Document.prepare_signature key
             _require_version(document, catalog, (1, 5))
 
         _seed_version(document, catalog, seed_values)
-        sig_field = _ensure_unsigned_signature_field(document, field)
+        sig_field = ensure_unsigned_signature_field(document, field)
         if field_lock is not None:
             if (old_lock := _indirect_xref(sig_field.get("Lock"))) is not None:
                 retired.append(old_lock)

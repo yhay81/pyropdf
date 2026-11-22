@@ -216,6 +216,7 @@ from pyropdf._page import Page
 from pyropdf._page_labels import PageLabelRange, PageLabelStyle
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
+from pyropdf._prepress import BoxStyle, FixedPrint, PrinterMark, SeparationPlate, Watermark
 from pyropdf._presentations import (
     NavigationStep,
     Transition,
@@ -373,6 +374,7 @@ __all__ = [
     "Block",
     "Border",
     "BorderStyle",
+    "BoxStyle",
     "CancellationToken",
     "Canvas",
     "Caret",
@@ -435,6 +437,7 @@ __all__ = [
     "FieldType",
     "FileAttachment",
     "FillRule",
+    "FixedPrint",
     "Font",
     "FontInfo",
     "FontProgram",
@@ -549,6 +552,7 @@ __all__ = [
     "Polygon",
     "PopupInfo",
     "PrintScaling",
+    "PrinterMark",
     "Probe",
     "Profiles",
     "ProjectionAnnotation",
@@ -583,6 +587,7 @@ __all__ = [
     "Scripts",
     "SecurityStore",
     "Segment",
+    "SeparationPlate",
     "SetLayerStateAction",
     "ShadingPattern",
     "ShadingType",
@@ -652,6 +657,7 @@ __all__ = [
     "ViewerPreferences",
     "Viewport",
     "VisibilityPolicy",
+    "Watermark",
     "WebCapture",
     "Widget",
     "Widgets",

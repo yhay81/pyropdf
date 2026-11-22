@@ -629,6 +629,52 @@ def check_flattened_widgets(doc: pyropdf.Document) -> None:
     assert "AVA" in doc.pages[0].text(unmapped="replacement")
 
 
+def edit_prepress(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[0]
+    touched = page_annotations(page)
+    if pdf_version(doc) < (1, 6):
+        touched.add(number(doc.catalog))
+    page.box_styles = {"CropBox": pyropdf.BoxStyle()}
+    del page.box_styles
+    page.box_styles = {"TrimBox": pyropdf.BoxStyle(width=2)}
+    plate = pyropdf.SeparationPlate(colorant=pyropdf.Name("Black"))
+    page.separations = {page: plate}
+    del page.separations
+    page.separations = {page: plate}
+    stream = doc.objects[
+        doc.objects.add_stream(
+            b"",
+            {
+                "Type": pyropdf.Name("XObject"),
+                "Subtype": pyropdf.Name("Form"),
+                "BBox": [0, 0, 10, 10],
+                "Resources": {},
+            },
+        )
+    ]
+    rect = pyropdf.Rect(0, 0, 10, 10)
+    page.annotations.add(pyropdf.PrinterMark(rect=rect, appearance=stream, name=pyropdf.Name("ColorBar")))
+    watermark = page.annotations.add(pyropdf.Watermark(rect=rect, appearance=stream))
+    watermark.fixed_print = pyropdf.FixedPrint()
+    del watermark.fixed_print
+    watermark.fixed_print = pyropdf.FixedPrint(horizontal=0.5, vertical=1)
+    return touched
+
+
+def check_prepress(doc: pyropdf.Document) -> None:
+    page = doc.pages[0]
+    assert page.box_styles == {"TrimBox": pyropdf.BoxStyle(width=2)}
+    assert page.separations == {page: pyropdf.SeparationPlate(colorant=pyropdf.Name("Black"))}
+    mark, watermark = page.annotations[-2:]
+    assert mark.type is pyropdf.AnnotationType.PRINTER_MARK
+    assert mark.obj["MN"] == "ColorBar"
+    assert watermark.type is pyropdf.AnnotationType.WATERMARK
+    assert watermark.fixed_print == pyropdf.FixedPrint(horizontal=0.5, vertical=1)
+    assert mark.print_appearance is not None
+    assert watermark.print_appearance is not None
+    assert mark.print_appearance.obj == watermark.print_appearance.obj
+
+
 _CAPTURE_ID = b"pyropdf-capture!"
 _CAPTURE_URL = b"http://example.org/pyropdf-capture"
 
@@ -2360,6 +2406,7 @@ FAMILY_EDITS = {
     "page_records": Edit(prepare=prepare_page_records, apply=edit_page_records, check=check_page_records),
     "radio_groups": Edit(prepare=prepare_radio_group, apply=edit_radio_group, check=check_radio_group),
     "recolor": Edit(prepare=prepare_recolor, apply=edit_recolor, check=check_recolor, affected_pages=last_page),
+    "prepress": Edit(apply=edit_prepress, check=check_prepress, affected_pages=first_page),
     "related_files": Edit(prepare=prepare_related_files, apply=set_related_files, check=check_related_files),
     "remove_rotation": Edit(prepare=prepare_rotated_page, apply=remove_rotation, check=check_rotation_removed),
     "replace_text": Edit(
