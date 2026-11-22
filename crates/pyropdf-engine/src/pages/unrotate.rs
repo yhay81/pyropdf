@@ -404,8 +404,12 @@ impl Turn<'_> {
             Some(Value::Dict(mark)) => mark,
             _ => Dict::new(),
         };
-        let current = mark.get("R").and_then(as_number).unwrap_or(0.0) as i64;
-        let turned = (current - self.turn).rem_euclid(360);
+        let current = self
+            .resolved(mark.get("R"))?
+            .as_ref()
+            .and_then(as_number)
+            .unwrap_or(0.0) as i64;
+        let turned = (current.rem_euclid(360) - self.turn).rem_euclid(360);
         if let Some(Value::Reference(old)) = dict.get("MK") {
             self.unused.try_push(old.number())?;
         }
@@ -1220,5 +1224,49 @@ mod tests {
         let err = remove_page_rotation(&mut tx, &index, &refs_cache, &budget, Reference::new(3, 0))
             .unwrap_err();
         assert_eq!(err.limit_code(), Some(LimitCode::AnnotationCount));
+    }
+
+    #[test]
+    fn widget_rotation_resolves_indirect_r_and_avoids_extreme_overflow() {
+        let doc = open_pdf(&[
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 200] >>",
+            "<< /Type /Page /Parent 2 0 R /Rotate 90 /Annots [4 0 R 5 0 R 6 0 R] >>",
+            "<< /Type /Annot /Subtype /Widget /Rect [10 10 40 30] /MK << /R 7 0 R >> >>",
+            "<< /Type /Annot /Subtype /Widget /Rect [50 10 80 30] /MK << /R -9223372036854775808 >> >>",
+            "<< /Type /Annot /Subtype /Widget /Rect [90 10 120 30] /MK << /R -100000000000000000000.0 >> >>",
+            "180",
+        ]);
+        let budget = Budget::default();
+        let refs_cache = refs::Cache::new();
+        let index = PageIndex::memoized(&Memo::new(1), &doc.current(), &budget).unwrap();
+
+        let mut tx = doc.begin();
+        assert!(
+            remove_page_rotation(&mut tx, &index, &refs_cache, &budget, Reference::new(3, 0))
+                .unwrap()
+        );
+        let committed = tx.commit(&budget).unwrap();
+
+        let mk_r = |num: u32| -> Option<i64> {
+            let obj = committed.get(num, &budget).unwrap().unwrap();
+            let Value::Dict(dict) = obj.value().as_ref() else {
+                return None;
+            };
+            let Some(Value::Dict(mk)) = dict.get("MK") else {
+                return None;
+            };
+            match mk.get("R") {
+                Some(Value::Integer(value)) => Some(*value),
+                _ => None,
+            }
+        };
+        // Indirect /R 180 turned by -90 -> 90.
+        assert_eq!(mk_r(4), Some(90));
+        // Extreme negative values wrap cleanly into 0..360 without overflow.
+        let r5 = mk_r(5).unwrap();
+        let r6 = mk_r(6).unwrap();
+        assert!((0..360).contains(&r5));
+        assert!((0..360).contains(&r6));
     }
 }
