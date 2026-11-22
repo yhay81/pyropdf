@@ -148,6 +148,7 @@ type Keys = (Option<i64>, Vec<(Reference, i64)>);
 pub struct Copies<'b> {
     budget: &'b Budget,
     structure: Option<Structure<'b>>,
+    split_fields: HashMap<Reference, Reference>,
 }
 
 impl<'b> Copies<'b> {
@@ -156,6 +157,7 @@ impl<'b> Copies<'b> {
         Ok(Self {
             budget,
             structure: Structure::read(transaction, budget)?,
+            split_fields: HashMap::new(),
         })
     }
 
@@ -262,7 +264,9 @@ impl<'b> Copies<'b> {
                 }
                 annotation.remove("Parent");
                 links.annotation(transaction, &mut annotation, copy)?;
-                join(transaction, field, new, annotation, budget)?;
+                if let Some((old, parent)) = join(transaction, field, new, annotation, budget)? {
+                    map_put(&mut self.split_fields, old, parent, budget)?;
+                }
             } else {
                 links.annotation(transaction, &mut annotation, copy)?;
                 transaction.write(new.number(), &Value::Dict(annotation), budget)?;
@@ -312,8 +316,14 @@ impl<'b> Copies<'b> {
         Ok(copy)
     }
 
-    /// Writes the parent tree entries and the kids that the copies add.
+    /// Retargets the calculation order once for all newly split fields and
+    /// writes the parent tree entries and the kids that the copies add.
     pub fn finish(self, transaction: &mut Transaction) -> Result<()> {
+        if !self.split_fields.is_empty() {
+            edit_form(transaction, self.budget, |transaction, form| {
+                remap_calculations(transaction, form, &self.split_fields, self.budget)
+            })?;
+        }
         match self.structure {
             Some(structure) => structure.finish(transaction, self.budget),
             None => Ok(()),
@@ -702,7 +712,7 @@ fn join(
     new: Reference,
     mut widget: Dict,
     budget: &Budget,
-) -> Result<()> {
+) -> Result<Option<(Reference, Reference)>> {
     let Some((Value::Dict(old), Some(field))) =
         located(transaction, Some(&Value::Reference(field)), budget)?
     else {
@@ -796,7 +806,7 @@ fn join(
     widget.insert(Name::from("Parent"), Value::Reference(parent));
     transaction.write(new.number(), &Value::Dict(widget), budget)?;
     let Some(mut dict) = dict_at(transaction, parent, budget)? else {
-        return Ok(());
+        return Ok(None);
     };
     editable(&dict)?;
     extend_entry(
@@ -808,7 +818,7 @@ fn join(
         budget,
     )?;
     transaction.write(parent.number(), &Value::Dict(dict), budget)?;
-    Ok(())
+    Ok((parent != field).then_some((field, parent)))
 }
 
 /// Puts field `new` where field `old` was: in the `/Kids` of `grand`, or
@@ -820,51 +830,82 @@ fn replace_node(
     new: Reference,
     budget: &Budget,
 ) -> Result<()> {
-    let (holder, key) = match grand {
-        Some(grand) => (grand, "Kids"),
-        None => {
-            let root = transaction.version().trailer().get("Root");
-            let Some((Value::Dict(mut catalog_dict), Some(catalog))) =
-                located(transaction, root, budget)?
-            else {
-                return Err(Error::malformed(
-                    "the catalog is not an indirect dictionary",
-                ));
-            };
-            let Some((Value::Dict(mut form), form_object)) =
-                located(transaction, catalog_dict.get("AcroForm"), budget)?
-            else {
-                return Err(Error::malformed("the form is not a dictionary"));
-            };
-            editable(&form)?;
-            if replaced(&mut form, "Fields", old, new, transaction, budget)? {
-                match form_object {
-                    Some(object) => {
-                        transaction.write(object.number(), &Value::Dict(form), budget)?;
-                    }
-                    None => {
-                        #[expect(
-                            clippy::disallowed_methods,
-                            reason = "the catalog already has an /AcroForm, which this replaces"
-                        )]
-                        catalog_dict.insert(Name::from("AcroForm"), Value::Dict(form));
-                        transaction.write(catalog.number(), &Value::Dict(catalog_dict), budget)?;
-                    }
-                }
-            }
-            return Ok(());
+    if let Some(grand) = grand {
+        let Some((Value::Dict(mut dict), Some(holder))) =
+            located(transaction, Some(&Value::Reference(grand)), budget)?
+        else {
+            return Err(Error::malformed("the parent field is not a dictionary"));
+        };
+        editable(&dict)?;
+        if replaced(&mut dict, "Kids", old, new, transaction, budget)? {
+            transaction.write(holder.number(), &Value::Dict(dict), budget)?;
         }
-    };
-    let Some((Value::Dict(mut dict), Some(holder))) =
-        located(transaction, Some(&Value::Reference(holder)), budget)?
-    else {
-        return Err(Error::malformed("the parent field is not a dictionary"));
-    };
-    editable(&dict)?;
-    if replaced(&mut dict, key, old, new, transaction, budget)? {
-        transaction.write(holder.number(), &Value::Dict(dict), budget)?;
+    } else if !edit_form(transaction, budget, |transaction, form| {
+        replaced(form, "Fields", old, new, transaction, budget)
+    })? {
+        return Err(Error::malformed("the form is not a dictionary"));
     }
     Ok(())
+}
+
+/// Returns whether the form exists. The edit reports whether a direct entry
+/// changed and its holder needs writing, as distinct from an indirect array.
+fn edit_form(
+    transaction: &mut Transaction,
+    budget: &Budget,
+    edit: impl FnOnce(&mut Transaction, &mut Dict) -> Result<bool>,
+) -> Result<bool> {
+    let root = transaction.version().trailer().get("Root");
+    let Some((Value::Dict(mut catalog_dict), Some(catalog))) = located(transaction, root, budget)?
+    else {
+        return Err(Error::malformed(
+            "the catalog is not an indirect dictionary",
+        ));
+    };
+    let Some((Value::Dict(mut form), form_object)) =
+        located(transaction, catalog_dict.get("AcroForm"), budget)?
+    else {
+        return Ok(false);
+    };
+    editable(&form)?;
+    if edit(transaction, &mut form)? {
+        if let Some(object) = form_object {
+            transaction.write(object.number(), &Value::Dict(form), budget)?;
+        } else {
+            *catalog_dict.get_mut("AcroForm").expect("the form exists") = Value::Dict(form);
+            transaction.write(catalog.number(), &Value::Dict(catalog_dict), budget)?;
+        }
+    }
+    Ok(true)
+}
+
+/// Only calculation slots for fields split by this copy change. The order
+/// may name the old field through a reference chain.
+fn remap_calculations(
+    transaction: &mut Transaction,
+    form: &mut Dict,
+    split: &HashMap<Reference, Reference>,
+    budget: &Budget,
+) -> Result<bool> {
+    let Some((Value::Array(mut order), object)) = located(transaction, form.get("CO"), budget)?
+    else {
+        return Ok(false);
+    };
+    let mut changed = false;
+    for entry in order.iter_mut() {
+        budget.poll()?;
+        if let Value::Reference(reference) = entry
+            && let Some((old, _)) = locate_reference(transaction, *reference, budget)?
+            && let Some(&new) = split.get(&old)
+        {
+            *entry = Value::Reference(new);
+            changed = true;
+        }
+    }
+    if !changed {
+        return Ok(false);
+    }
+    store_array(transaction, form, "CO", order, object, budget)
 }
 
 /// Replaces `old` with `new` in the array at `key` of `dict`, or appends
@@ -902,19 +943,24 @@ fn replaced(
         )));
     };
     swap(&mut array)?;
-    match object {
-        Some(object) => {
-            transaction.write(object.number(), &Value::Array(array), budget)?;
-            Ok(false)
-        }
-        None => {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "the dictionary already has the array at `key`, which this replaces"
-            )]
-            dict.insert(Name::from(key), Value::Array(array));
-            Ok(true)
-        }
+    store_array(transaction, dict, key, array, object, budget)
+}
+
+/// Returns true when the holder dictionary now contains the edited array.
+fn store_array(
+    transaction: &mut Transaction,
+    dict: &mut Dict,
+    key: &str,
+    array: Array,
+    object: Option<Reference>,
+    budget: &Budget,
+) -> Result<bool> {
+    if let Some(object) = object {
+        transaction.write(object.number(), &Value::Array(array), budget)?;
+        Ok(false)
+    } else {
+        *dict.get_mut(key).expect("the array entry exists") = Value::Array(array);
+        Ok(true)
     }
 }
 
