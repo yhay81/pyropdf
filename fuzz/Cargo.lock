@@ -1218,6 +1218,7 @@ dependencies = [
  "png",
  "pyropdf-store",
  "quick-xml",
+ "read-fonts 0.46.0",
  "rten",
  "rten-tensor",
  "sha2",
@@ -1247,6 +1248,7 @@ name = "pyropdf-store"
 version = "0.3.1"
 dependencies = [
  "aes",
+ "aes-gcm",
  "flate2",
  "getrandom",
  "hayro-syntax",

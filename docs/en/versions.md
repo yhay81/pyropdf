@@ -122,6 +122,15 @@ with pyropdf.open("locked.pdf", password="reader") as doc:
     print(doc.encryption_method, doc.permissions)
 ```
 
+Use `method="aes-gcm"` on `Encryption` or `RecipientEncryption` to save
+a PDF 2.0 file with the ISO/TS 32003:2023 extension. The store authenticates
+each encrypted string and stream before returning it. A damaged authentication
+tag raises `MalformedPdfError`. Both an incremental update and a full
+`Encryption.KEEP` save preserve the ciphertext of untouched objects.
+Selecting a new method requires a full save. Direct page rendering and text
+extraction from an AES-GCM file await the authenticated object source in
+hayro. [Engine integration #968](https://github.com/yhay81/pyropdf/issues/968)
+
 ### Standard password encryption
 
 The table covers the standard password handler. `V` and `R` are the
@@ -137,8 +146,9 @@ the file. The owner password grants all permissions.
 | AES-128, AESV2 | 4 / 4 | `method="aes-128"` | User or owner password |
 | AES-256, AESV3 | 5 / 5 | Unavailable | User or owner password |
 | AES-256, AESV3 | 5 / 6 | `method="aes-256"` (default) | User or owner password |
+| AES-GCM, AESV4 | 6 / 7 | `method="aes-gcm"` | Awaiting [engine support](https://github.com/yhay81/pyropdf/issues/968) |
 
-Across these six handlers, a full save with `Encryption.KEEP` copies
+Across these seven handlers, a full save with `Encryption.KEEP` copies
 untouched ciphertext and encrypts new strings and streams with the existing
 handler. An incremental save does the same by default and retains the
 original file as its prefix. With no edits it returns the original bytes.
