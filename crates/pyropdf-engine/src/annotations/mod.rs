@@ -23,6 +23,7 @@
 pub mod edit;
 pub mod geometry;
 mod icons;
+mod line;
 mod missing;
 pub mod popup;
 pub mod read;
@@ -37,7 +38,7 @@ use std::sync::Arc;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
-use pyropdf_store::refs::copy_for_edit;
+use pyropdf_store::refs::{copy_dict_for_edit, copy_for_edit};
 use pyropdf_store::settle::Settler;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
@@ -47,11 +48,32 @@ use crate::forms;
 use crate::forms::face::FaceText;
 use shapes::{cloud_radius_in_unit, ending_size_in_unit};
 
-/// Whether this dictionary can be a multimedia annotation target.
-pub(crate) fn is_media_annotation(dict: &Dict) -> bool {
-    dict.get("Rect").is_some()
-        && matches!(dict.get("Subtype"), Some(Value::Name(kind)) if
-        matches!(kind.as_bytes(), b"3D" | b"RichMedia" | b"Screen" | b"Projection" | b"Movie" | b"Sound"))
+/// Whether this print or multimedia annotation must remain attached while targeted.
+pub(crate) fn is_linked_annotation(
+    version: &Version,
+    dict: &Dict,
+    budget: &Budget,
+) -> Result<bool> {
+    if dict.get("Rect").is_none() {
+        return Ok(false);
+    }
+    let subtype = crate::pages::resolve(version, dict.get("Subtype"), budget)?;
+    Ok(matches!(subtype, Some(Value::Name(name)) if linked_subtype(name.as_bytes())))
+}
+
+pub(crate) fn linked_subtype(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"3D"
+            | b"RichMedia"
+            | b"Screen"
+            | b"Projection"
+            | b"Movie"
+            | b"Sound"
+            | b"PrinterMark"
+            | b"TrapNet"
+            | b"Watermark"
+    )
 }
 
 /// The result of an annotation reading or editing operation.
@@ -259,7 +281,10 @@ impl Settler for AppearanceSettler {
             // An annotation that cannot be drawn still has its rectangle
             // fitted to its geometry.
             let (form, rect) = match appearance(&reader, dict)? {
-                Some(drawn) => (Some(drawn.form()), drawn.fitted.then_some(drawn.rect)),
+                Some(drawn) => {
+                    let rect = drawn.fitted.then_some(drawn.rect);
+                    (Some(drawn), rect)
+                }
                 None => (None, fitted_rect(&reader, dict)?),
             };
             if form.is_none() && rect.is_none() {
@@ -269,9 +294,10 @@ impl Settler for AppearanceSettler {
                 unreachable!("checked dictionary variant");
             };
             if let Some(form) = form {
+                let mut appearances = reader.appearances(&dict)?;
+                let form = form.stored_form(transaction, budget)?;
                 let reference = transaction.allocate()?;
                 transaction.write(reference.number(), &Value::from(form), budget)?;
-                let mut appearances = Dict::new();
                 #[expect(
                     clippy::disallowed_methods,
                     reason = "each key is a constant: the appearances hold one entry, and the annotation gains one"
@@ -535,6 +561,14 @@ impl<'b> Reader<'b> {
             .map(|value| self.resolve(value))
             .transpose()
             .map(|value| value.filter(|value| !matches!(**value, Value::Null)))
+    }
+
+    /// Detach the AP dictionary before replacing a single display state.
+    fn appearances(&self, dict: &Dict) -> Result<Dict> {
+        match self.entry(dict, "AP")?.as_deref() {
+            Some(Value::Dict(entries)) => copy_dict_for_edit(entries, self.budget),
+            _ => Ok(Dict::new()),
+        }
     }
 
     pub(crate) fn number(&self, value: &Value) -> Result<Option<f64>> {
@@ -1000,14 +1034,36 @@ impl Appearance {
         self.fit
     }
 
+    /// Use a complete Type 1 font for a persisted PDF 2.0 caption.
+    fn stored_form(&self, transaction: &mut Transaction, budget: &Budget) -> Result<Stream> {
+        let reference = match self.font {
+            Some(text::TextFont::Standard((_, base)))
+                if forms::is_pdf_2_0(transaction.version(), budget)? =>
+            {
+                Some(forms::write_standard_type1(
+                    transaction,
+                    base,
+                    true,
+                    budget,
+                )?)
+            }
+            _ => None,
+        };
+        Ok(self.form_with_font(reference))
+    }
+
     /// Returns the form XObject of the appearance, whose `/Matrix` maps its
     /// box onto the rectangle.
     #[must_use]
+    pub fn form(&self) -> Stream {
+        self.form_with_font(None)
+    }
+
     #[expect(
         clippy::disallowed_methods,
-        reason = "each key is a constant, so each dictionary of the form holds five entries at most"
+        reason = "form and resource dictionaries have a fixed set of keys"
     )]
-    pub fn form(&self) -> Stream {
+    fn form_with_font(&self, standard_font: Option<Reference>) -> Stream {
         let (width, height) = self.size;
         let mut dict = Dict::new();
         dict.insert(Name::from("Type"), Value::Name(Name::from("XObject")));
@@ -1031,7 +1087,10 @@ impl Appearance {
                     );
                 }
                 let mut fonts = Dict::new();
-                fonts.insert(Name::from(resource), Value::Dict(font));
+                fonts.insert(
+                    Name::from(resource),
+                    standard_font.map_or(Value::Dict(font), Value::Reference),
+                );
                 resources.insert(Name::from("Font"), Value::Dict(fonts));
             }
             Some(text::TextFont::Embedded(reference)) => {
@@ -1110,7 +1169,14 @@ fn fit(
         Geometry::Points(lists) => lists,
         Geometry::Rect => return Ok(None),
     };
-    let [x0, y0, x1, y1] = bounds(lists.iter().flatten());
+    let mut area = bounds(lists.iter().flatten());
+    if subtype == b"Line"
+        && let Some(vertices) = lists.first()
+        && let Some(dimension) = line::Dimension::read(reader, dict, vertices)?
+    {
+        dimension.expand(&mut area);
+    }
+    let [x0, y0, x1, y1] = area;
     if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
         return Ok(None);
     }
@@ -1322,7 +1388,18 @@ fn appearance_with(
         (_, Geometry::Points(lists)) => {
             let intensity = reader.cloud_intensity(dict)?;
             let endings = reader.line_endings(dict)?;
-            if !shapes::lines(
+            let dimension = if &*subtype == b"Line"
+                && let Some(vertices) = lists.first()
+            {
+                line::Dimension::read(reader, dict, vertices)?
+            } else {
+                None
+            };
+            if let Some(dimension) = dimension {
+                font = dimension
+                    .draw(&mut canvas, &paint, endings, rect)?
+                    .map(text::TextFont::Standard);
+            } else if !shapes::lines(
                 &mut canvas,
                 &paint,
                 &subtype,

@@ -26,7 +26,7 @@ _MAX_PASSWORD_BYTES = 127
 _MIN_RSA_BITS = 2048
 _MAX_RSA_BITS = 8192
 _MAX_RECIPIENTS = 128
-#: RC4 methods, which pyropdf reads but never writes.
+#: RC4 methods excluded from new encryption configurations.
 _RC4_METHODS = frozenset({"rc4", "rc4-40", "rc4-128"})
 
 
@@ -70,6 +70,20 @@ def _password_bytes(password: object, label: str = "password") -> bytes:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class IntegrityReport:
+    """Result of verifying the ISO/TS 32004:2024 MAC of an opened PDF revision.
+
+    ``status`` is ``"valid"``, ``"invalid"``, ``"absent"`` or ``"locked"``. A valid
+    result identifies the standalone or signature-attached token. An invalid
+    result includes a reason. Digital signatures have their own verification.
+    """
+
+    status: Literal["absent", "locked", "valid", "invalid"]
+    location: Literal["standalone", "attached"] | None
+    reason: str | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Encryption:
     """How :meth:`Document.save` and :meth:`Document.to_bytes` encrypt a full save.
 
@@ -77,21 +91,27 @@ class Encryption:
     and the owner password opens it with every right. ``owner_password``
     defaults to ``user_password``. Each password is capped at 127 UTF-8 bytes.
 
-    ``method`` is ``"aes-256"``, the AES-256 encryption of PDF 2.0 (revision
-    6), or ``"aes-128"``, AES-128 with crypt filters (revision 4). pyropdf
-    reads RC4 but never writes it. :attr:`Encryption.KEEP` keeps the
-    encryption that the document was opened with, copying its untouched
-    encrypted bytes. Without ``encryption``, a full save writes the document
+    ``method`` selects ``"aes-256"`` (revision 6), ``"aes-128"`` (revision 4),
+    or ``"aes-gcm"`` (ISO/TS 32003:2023, revision 7). AES-GCM authenticates
+    each encrypted string and stream when the store reads it.
+    :attr:`Encryption.KEEP` retains the existing handler, including legacy
+    RC4 and AES-256 revision 5. It copies untouched encrypted bytes and
+    encrypts new strings and streams with that handler. Without
+    ``encryption``, a full save writes the document
     decrypted, and an incremental save keeps its encryption.
+
+    With ``integrity=True``, a 256-bit method creates an ISO/TS 32004:2024
+    document MAC. Subsequent edits renew it when the encryption is kept.
     """
 
     #: Keep the encryption that the document was opened with.
     KEEP: ClassVar[Encryption]
 
+    integrity: bool = False
     user_password: str = ""
     owner_password: str | None = None
     permissions: Permissions = Permissions.ALL
-    method: Literal["aes-256", "aes-128", "keep"] = "aes-256"
+    method: Literal["aes-256", "aes-128", "aes-gcm", "keep"] = "aes-256"
 
     def __post_init__(self) -> None:
         """Validate the passwords, permissions, and method."""
@@ -105,8 +125,14 @@ class Encryption:
         if isinstance(self.method, str) and self.method.lower() in _RC4_METHODS:
             msg = f"pyropdf does not write {self.method} encryption, which PDF 2.0 deprecates; use 'aes-256'"
             raise ValueError(msg)
-        if self.method not in ("aes-256", "aes-128", "keep"):
-            msg = f"method must be 'aes-256' or 'aes-128': {self.method!r}"
+        if self.method not in ("aes-256", "aes-128", "aes-gcm", "keep"):
+            msg = f"method must be 'aes-256', 'aes-128' or 'aes-gcm': {self.method!r}"
+            raise ValueError(msg)
+        if not isinstance(self.integrity, bool):
+            msg = "integrity must be a bool"
+            raise TypeError(msg)
+        if self.integrity and self.method in ("aes-128", "keep"):
+            msg = "new PDF MAC protection requires a 256-bit encryption method"
             raise ValueError(msg)
         defaults = (self.user_password, self.owner_password, self.permissions) == ("", None, Permissions.ALL)
         if self.method == "keep" and not defaults:
@@ -117,9 +143,10 @@ class Encryption:
         """Return ``Encryption.KEEP`` for the constant, else the fields without the passwords."""
         if self.method == "keep":
             return "Encryption.KEEP"
-        return f"Encryption(permissions={self.permissions!r}, method={self.method!r})"
+        mac = ", integrity=True" if self.integrity else ""
+        return f"Encryption(permissions={self.permissions!r}, method={self.method!r}{mac})"
 
-    def _core(self) -> str | tuple[bytes, bytes, int, bool, bytes]:
+    def _core(self) -> str | tuple[bytes, bytes, int, str, bytes, bool]:
         """Return what the core takes: ``"keep"``, or the passwords, flags, method, and 64 random bytes."""
         if self.method == "keep":
             return "keep"
@@ -128,8 +155,9 @@ class Encryption:
             self.user_password.encode(),
             owner.encode(),
             int(self.permissions),
-            self.method == "aes-256",
+            self.method,
             os.urandom(64),
+            self.integrity,
         )
 
 
@@ -540,8 +568,9 @@ class RecipientEncryption:
     Install ``pyropdf[recipients]`` and supply up to 128 X.509 certificates.
     Recipients with the same permissions share a CMS envelope. The named filter for strings and
     streams is ``DefaultCryptFilter``. Set ``encrypt_metadata=False`` to leave
-    the metadata stream readable. AES-256 supports direct rendering. AES-128 supports
-    store operations including saving, while the engine needs a decrypted input for rendering.
+    the metadata stream readable. AES-256 supports direct rendering. AES-128 and
+    AES-GCM support store operations, including saving. Direct page rendering of
+    these methods requires the authenticated store source in the rendering engine.
     Both an incremental save and a full save with
     ``Encryption.KEEP`` preserve untouched ciphertext.
 
@@ -555,19 +584,27 @@ class RecipientEncryption:
     (RFC 5753). Certificate key usage, when present, must permit RSA
     key encipherment or EC key agreement.
 
-    Map each X.509 certificate to its permission flags. A value of ``None`` gives the recipient
-    permission to change encryption and implies all other permissions (ISO 32000-2 Table 24 bit 2).
+    Map each X.509 certificate to its permission flags. A value of ``None`` grants owner access.
+    Set ``integrity=True`` to protect AES-256 output with a document MAC.
+    Owner access gives permission to change encryption and implies all other permissions (ISO 32000-2 Table 24 bit 2).
     Other recipients must keep the encryption when saving.
     """
 
+    integrity: bool = False
     recipients: Mapping[Certificate, Permissions | None]
     encrypt_metadata: bool = True
     cms_cipher: Literal["aes-128", "aes-192", "aes-256"] = "aes-256"
     rsa_padding: Literal["pkcs1v15", "oaep"] = "pkcs1v15"
-    method: Literal["aes-256", "aes-128"] = "aes-256"
+    method: Literal["aes-256", "aes-128", "aes-gcm"] = "aes-256"
 
     def __post_init__(self) -> None:
         """Validate the recipients and retain their order for file-key derivation."""
+        if not isinstance(self.integrity, bool):
+            msg = "integrity must be a bool"
+            raise TypeError(msg)
+        if self.integrity and self.method == "aes-128":
+            msg = "new PDF MAC protection requires a 256-bit encryption method"
+            raise ValueError(msg)
         if not isinstance(self.recipients, Mapping) or not self.recipients:
             msg = "recipients must map 1 to 128 certificates to permissions"
             raise ValueError(msg)
@@ -578,8 +615,8 @@ class RecipientEncryption:
         if not isinstance(self.encrypt_metadata, bool):
             msg = "encrypt_metadata must be a bool"
             raise TypeError(msg)
-        if self.method not in ("aes-256", "aes-128"):
-            msg = "recipient method must be aes-256 or aes-128"
+        if self.method not in ("aes-256", "aes-128", "aes-gcm"):
+            msg = "recipient method must be aes-256, aes-128 or aes-gcm"
             raise ValueError(msg)
         if self.cms_cipher not in ("aes-128", "aes-192", "aes-256"):
             msg = "CMS content encryption must be aes-128, aes-192 or aes-256"
@@ -600,12 +637,18 @@ class RecipientEncryption:
             flags = 2 | int(Permissions.ALL) if permissions is None else int(permissions & Permissions.ALL)
             groups.setdefault(flags, []).append(cert)
         for flags, certificates in groups.items():
-            payload = seed + (flags | 0xFFFF_F0C1).to_bytes(4, "big")
+            reserved = 0xFFFF_E0C1 if self.integrity else 0xFFFF_F0C1
+            payload = seed + (flags | reserved).to_bytes(4, "big")
             yield _seal_envelope(payload, certificates, self.cms_cipher, self.rsa_padding)
 
-    def _core(self) -> tuple[bytes, bytes, tuple[bool, bool], Iterator[bytes]]:
+    def _core(self) -> tuple[bytes, bytes, tuple[bool, str, bool], Iterator[bytes]]:
         seed = os.urandom(20)
-        return seed, os.urandom(16), (self.encrypt_metadata, self.method == "aes-256"), self._envelopes(seed)
+        return (
+            seed,
+            os.urandom(16),
+            (self.encrypt_metadata, self.method, self.integrity),
+            self._envelopes(seed),
+        )
 
 
 def _open_credentials(
@@ -632,7 +675,7 @@ def _encryption_arg(encryption: object) -> object:
     return encryption._core()  # noqa: SLF001
 
 
-for _public in (Permissions, Access, Encryption, RecipientEncryption, RecipientCredential):
+for _public in (IntegrityReport, Permissions, Access, Encryption, RecipientEncryption, RecipientCredential):
     _public.__module__ = "pyropdf"
 
-__all__ = ["Access", "Encryption", "Permissions", "RecipientCredential", "RecipientEncryption"]
+__all__ = ["Access", "Encryption", "IntegrityReport", "Permissions", "RecipientCredential", "RecipientEncryption"]

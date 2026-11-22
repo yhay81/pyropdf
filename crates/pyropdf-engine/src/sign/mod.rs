@@ -9,6 +9,7 @@
 //! pyropdf, for RSA keys, HSMs, and PKCS#11. A time-stamp is a callback that
 //! returns an RFC 3161 token: pyropdf makes no network access.
 
+mod algorithms;
 mod key;
 mod pkcs12;
 mod signer_info;
@@ -21,13 +22,15 @@ use std::ops::Range;
 
 use der::asn1::ObjectIdentifier;
 use der::{Decode, Encode};
-use sha2::{Digest, Sha256, Sha384, Sha512};
 use x509_cert::Certificate;
 
 pub use der;
 
-pub use self::key::Key;
-pub use self::pkcs12::parse as parse_pkcs12;
+pub use self::algorithms::{DigestAlgorithm, SignatureAlgorithm, digest_named};
+pub use self::key::{Key, pem_key_material};
+pub use self::pkcs12::{
+    material as pkcs12_material, native_key as native_pkcs12_key, parse as parse_pkcs12,
+};
 
 /// The `/ByteRange` that the signature dictionary holds until [`sign`] fills
 /// it, wide enough for the offsets of any file under 10 GB. The writer writes
@@ -98,118 +101,12 @@ impl<E> From<Error> for Failure<E> {
     }
 }
 
-/// The digest algorithm of a signature, which its key's size chooses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DigestAlgorithm {
-    /// SHA-256, for P-256 and RSA keys.
-    Sha256,
-    /// SHA-384, for P-384 keys.
-    Sha384,
-}
-
-impl DigestAlgorithm {
-    /// Returns the algorithm's name, as Python's `hashlib` spells it.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Sha256 => "sha256",
-            Self::Sha384 => "sha384",
-        }
-    }
-
-    const fn oid(self) -> ObjectIdentifier {
-        match self {
-            Self::Sha256 => ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1"),
-            Self::Sha384 => ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.2"),
-        }
-    }
-
-    /// Returns the digest of the concatenated `parts`.
-    #[must_use]
-    pub fn digest(self, parts: &[&[u8]]) -> Vec<u8> {
-        match self {
-            Self::Sha256 => digest_parts::<Sha256>(parts),
-            Self::Sha384 => digest_parts::<Sha384>(parts),
-        }
-    }
-}
-
-/// Returns the digest of the concatenated `parts` with the algorithm that
-/// `hashlib` names `name`, or `None` for one other than SHA-256, -384, or
-/// -512.
-#[must_use]
-pub fn digest_named(name: &str, parts: &[&[u8]]) -> Option<Vec<u8>> {
-    match name {
-        "sha256" => Some(digest_parts::<Sha256>(parts)),
-        "sha384" => Some(digest_parts::<Sha384>(parts)),
-        "sha512" => Some(digest_parts::<Sha512>(parts)),
-        _ => None,
-    }
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "a SHA-2 digest holds 64 bytes at most"
-)]
-fn digest_parts<D: Digest>(parts: &[&[u8]]) -> Vec<u8> {
-    let mut hasher = D::new();
-    for part in parts {
-        hasher.update(part);
-    }
-    hasher.finalize().to_vec()
-}
-
-/// The signature algorithm that a certificate's public key implies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SignatureAlgorithm {
-    /// ECDSA on P-256 with SHA-256.
-    EcdsaP256,
-    /// ECDSA on P-384 with SHA-384.
-    EcdsaP384,
-    /// RSA PKCS#1 v1.5 with SHA-256, which only a callback signs.
-    RsaSha256,
-}
-
-impl SignatureAlgorithm {
-    /// Returns the algorithm of the public key of `certificate`.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Invalid`] for a key other than RSA, P-256, or P-384.
-    pub fn of(certificate: &Certificate) -> Result<Self, Error> {
-        let key = certificate.tbs_certificate().subject_public_key_info();
-        if key.algorithm.oid == RSA_ENCRYPTION {
-            return Ok(Self::RsaSha256);
-        }
-        let curve = key
-            .algorithm
-            .parameters
-            .as_ref()
-            .and_then(|parameters| parameters.decode_as::<ObjectIdentifier>().ok());
-        match (key.algorithm.oid, curve) {
-            (EC_PUBLIC_KEY, Some(PRIME256V1)) => Ok(Self::EcdsaP256),
-            (EC_PUBLIC_KEY, Some(SECP384R1)) => Ok(Self::EcdsaP384),
-            (oid, _) => Err(Error::Invalid(format!(
-                "the signing certificate's key ({oid}) is neither RSA nor ECDSA on P-256 or P-384"
-            ))),
-        }
-    }
-
-    /// Returns the digest algorithm that this algorithm signs with.
-    #[must_use]
-    pub const fn digest(self) -> DigestAlgorithm {
-        match self {
-            Self::EcdsaP256 | Self::RsaSha256 => DigestAlgorithm::Sha256,
-            Self::EcdsaP384 => DigestAlgorithm::Sha384,
-        }
-    }
-}
-
 /// A certificate chain whose first certificate is the signer's.
 #[derive(Debug, Clone)]
 pub struct Chain {
     certificates: Vec<Certificate>,
     algorithm: SignatureAlgorithm,
+    digest: DigestAlgorithm,
 }
 
 impl Chain {
@@ -227,6 +124,7 @@ impl Chain {
         Ok(Self {
             certificates,
             algorithm,
+            digest: algorithm.digest(),
         })
     }
 
@@ -258,6 +156,27 @@ impl Chain {
         let parsed = Certificate::load_pem_chain(pem)
             .map_err(|error| Error::invalid("the certificates are not PEM X.509", error))?;
         Self::new(parsed)
+    }
+
+    /// Selects the digest used in both CMS attributes and the signature.
+    pub fn with_digest(mut self, name: Option<&str>) -> Result<Self, Error> {
+        if let Some(name) = name {
+            self.digest = DigestAlgorithm::named(name)
+                .filter(|digest| self.algorithm.permits(*digest))
+                .ok_or_else(|| {
+                    Error::Invalid(format!(
+                        "{name} is not a permitted PDF signature digest for {:?}",
+                        self.algorithm
+                    ))
+                })?;
+        }
+        Ok(self)
+    }
+
+    /// The digest used for the signed content and attributes.
+    #[must_use]
+    pub const fn digest(&self) -> DigestAlgorithm {
+        self.digest
     }
 
     /// Returns the signer's certificate.
@@ -382,8 +301,7 @@ pub fn sign<E>(
     field[..written.len()].copy_from_slice(written.as_bytes());
     field[written.len()..written.len() + padding].fill(b' ');
 
-    let algorithm = chain.algorithm();
-    let digest_algorithm = algorithm.digest();
+    let digest_algorithm = chain.digest();
     let digest = digest_algorithm.digest(&[
         &data[..placeholder.contents.start],
         &data[placeholder.contents.end..],

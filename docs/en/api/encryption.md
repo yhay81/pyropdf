@@ -19,10 +19,11 @@ Members: `USER`, `OWNER`.
 ```python
 Encryption(
     *,
+    integrity: bool = False,
     user_password: str = '',
     owner_password: str | None = None,
     permissions: Permissions = Permissions.ALL,
-    method: Literal['aes-256', 'aes-128', 'keep'] = 'aes-256',
+    method: Literal['aes-256', 'aes-128', 'aes-gcm', 'keep'] = 'aes-256',
 )
 ```
 
@@ -32,12 +33,17 @@ The user password opens the document with the rights in `permissions`,
 and the owner password opens it with every right. `owner_password`
 defaults to `user_password`. Each password is capped at 127 UTF-8 bytes.
 
-`method` is `"aes-256"`, the AES-256 encryption of PDF 2.0 (revision
-6), or `"aes-128"`, AES-128 with crypt filters (revision 4). pyropdf
-reads RC4 but never writes it. `Encryption.KEEP` keeps the
-encryption that the document was opened with, copying its untouched
-encrypted bytes. Without `encryption`, a full save writes the document
+`method` selects `"aes-256"` (revision 6), `"aes-128"` (revision 4),
+or `"aes-gcm"` (ISO/TS 32003:2023, revision 7). AES-GCM authenticates
+each encrypted string and stream when the store reads it.
+`Encryption.KEEP` retains the existing handler, including legacy
+RC4 and AES-256 revision 5. It copies untouched encrypted bytes and
+encrypts new strings and streams with that handler. Without
+`encryption`, a full save writes the document
 decrypted, and an incremental save keeps its encryption.
+
+With `integrity=True`, a 256-bit method creates an ISO/TS 32004:2024
+document MAC. Subsequent edits renew it when the encryption is kept.
 
 ### `Encryption.KEEP`
 
@@ -46,6 +52,23 @@ Encryption.KEEP: Encryption
 ```
 
 Keep the encryption that the document was opened with.
+
+## `IntegrityReport`
+
+```python
+IntegrityReport(
+    *,
+    status: Literal['absent', 'locked', 'valid', 'invalid'],
+    location: Literal['standalone', 'attached'] | None,
+    reason: str | None,
+)
+```
+
+Result of verifying the ISO/TS 32004:2024 MAC of an opened PDF revision.
+
+`status` is `"valid"`, `"invalid"`, `"absent"` or `"locked"`. A valid
+result identifies the standalone or signature-attached token. An invalid
+result includes a reason. Digital signatures have their own verification.
 
 ## `Permissions`
 
@@ -97,11 +120,12 @@ The private key stays with the caller. The store retains the authenticated file 
 ```python
 RecipientEncryption(
     *,
+    integrity: bool = False,
     recipients: Mapping[Certificate, Permissions | None],
     encrypt_metadata: bool = True,
     cms_cipher: Literal['aes-128', 'aes-192', 'aes-256'] = 'aes-256',
     rsa_padding: Literal['pkcs1v15', 'oaep'] = 'pkcs1v15',
-    method: Literal['aes-256', 'aes-128'] = 'aes-256',
+    method: Literal['aes-256', 'aes-128', 'aes-gcm'] = 'aes-256',
 )
 ```
 
@@ -110,8 +134,9 @@ Encrypt a full save for certificate recipients with Adobe.PubSec, adbe.pkcs7.s5 
 Install `pyropdf[recipients]` and supply up to 128 X.509 certificates.
 Recipients with the same permissions share a CMS envelope. The named filter for strings and
 streams is `DefaultCryptFilter`. Set `encrypt_metadata=False` to leave
-the metadata stream readable. AES-256 supports direct rendering. AES-128 supports
-store operations including saving, while the engine needs a decrypted input for rendering.
+the metadata stream readable. AES-256 supports direct rendering. AES-128 and
+AES-GCM support store operations, including saving. Direct page rendering of
+these methods requires the authenticated store source in the rendering engine.
 Both an incremental save and a full save with
 `Encryption.KEEP` preserve untouched ciphertext.
 
@@ -125,6 +150,7 @@ SHA-512 digest, fresh user keying material and AES-256 key wrap
 (RFC 5753). Certificate key usage, when present, must permit RSA
 key encipherment or EC key agreement.
 
-Map each X.509 certificate to its permission flags. A value of `None` gives the recipient
-permission to change encryption and implies all other permissions (ISO 32000-2 Table 24 bit 2).
+Map each X.509 certificate to its permission flags. A value of `None` grants owner access.
+Set `integrity=True` to protect AES-256 output with a document MAC.
+Owner access gives permission to change encryption and implies all other permissions (ISO 32000-2 Table 24 bit 2).
 Other recipients must keep the encryption when saving.

@@ -988,14 +988,6 @@ impl PageAnnots<'_> {
     ) -> Result<(u32, u16)> {
         let budget = self.budget;
         budget.check(LimitCode::AnnotationCount, (self.items.len() + 1) as u64)?;
-        if !matches!(
-            self.resolved(self.page().dict().get("Annots"))?,
-            None | Some(Value::Array(_))
-        ) {
-            return Err(AnnotationError::Pdf(
-                "the page's /Annots is not an array".to_owned(),
-            ));
-        }
         let minimum = spec.minimum_version();
         let current = effective_version(transaction.version(), budget)?;
         let auto_version = automatic_version(transaction.version(), current, minimum, budget)?;
@@ -1016,17 +1008,32 @@ impl PageAnnots<'_> {
         spec.embed_for_version(transaction, &mut dict, auto_version, budget)?;
         let reference = transaction.allocate()?;
         transaction.write(reference.number(), &Value::Dict(dict), budget)?;
+        self.attach(transaction, reference)?;
+        if !face {
+            transaction.mark(Structure::Appearance, reference.number(), budget)?;
+        }
+        Ok((reference.number(), reference.generation()))
+    }
+
+    /// Append a freshly written annotation to the correct page-local array.
+    pub fn attach(&self, transaction: &mut Transaction, reference: Reference) -> Result<()> {
+        let budget = self.budget;
+        budget.check(LimitCode::AnnotationCount, (self.items.len() + 1) as u64)?;
+        if !matches!(
+            self.resolved(self.page().dict().get("Annots"))?,
+            None | Some(Value::Array(_))
+        ) {
+            return Err(AnnotationError::Pdf(
+                "the page's /Annots is not an array".to_owned(),
+            ));
+        }
         let mut items = BudgetVec::new(budget);
         items.try_reserve_exact(self.items.len() + 1)?;
         for item in self.items.iter() {
             items.try_push(copy_for_edit(item, budget)?)?;
         }
         items.try_push(Value::Reference(reference))?;
-        self.write_items(transaction, Array::from(items.into_vec()), budget)?;
-        if !face {
-            transaction.mark(Structure::Appearance, reference.number(), budget)?;
-        }
-        Ok((reference.number(), reference.generation()))
+        self.write_items(transaction, Array::from(items.into_vec()), budget)
     }
 
     /// Applies `patch` to handle `(index, id)` on this page.
@@ -1041,6 +1048,13 @@ impl PageAnnots<'_> {
         let (position, mut dict) = self.find(index, id)?;
         let subtype_bytes = self.name(&dict, "Subtype")?.unwrap_or_default();
         let subtype = String::from_utf8_lossy(&subtype_bytes);
+        if matches!(subtype.as_ref(), "PrinterMark" | "TrapNet")
+            && patch.flags.is_some_and(|flags| flags != 68)
+        {
+            return Err(AnnotationError::Pdf(
+                "printer's marks and trap networks require the Print and ReadOnly flags".into(),
+            ));
+        }
         let mut minimum = patch.minimum_version(&subtype);
         let current = effective_version(transaction.version(), self.budget)?;
         let auto_version = automatic_version(transaction.version(), current, minimum, self.budget)?;
@@ -1120,8 +1134,9 @@ impl PageAnnots<'_> {
         }
         if writing {
             let reference = transaction.allocate()?;
-            transaction.write(reference.number(), &Value::from(drawn.form()), budget)?;
-            let mut appearances = Dict::new();
+            let form = drawn.stored_form(transaction, budget)?;
+            transaction.write(reference.number(), &Value::from(form), budget)?;
+            let mut appearances = self.reader().appearances(&dict)?;
             #[expect(
                 clippy::disallowed_methods,
                 reason = "this call inserts only the fixed /N key"
@@ -1150,7 +1165,7 @@ impl PageAnnots<'_> {
         self.remove_with_references(transaction, handles, &refs::Cache::new())
     }
 
-    /// Uses the document's reverse-reference cache to refuse detaching media
+    /// Uses the document's reverse-reference cache to refuse detaching print and media
     /// targets while an action or measurement outside the removal still uses them.
     pub fn remove_with_references(
         &self,
@@ -1159,15 +1174,15 @@ impl PageAnnots<'_> {
         references: &refs::Cache,
     ) -> Result<()> {
         let budget = self.budget;
-        let mut media = BudgetVec::new(budget);
+        let mut targets = BudgetVec::new(budget);
         budget.check(LimitCode::AnnotationCount, handles.len() as u64)?;
         let mut positions = BudgetVec::new(budget);
         for &(index, id) in handles {
             let (position, dict) = self.find(index, id)?;
             budget.poll()?;
             positions.try_push(position)?;
-            if id.0 != 0 && super::is_media_annotation(&dict) {
-                media.try_push(id.0)?;
+            if id.0 != 0 && super::is_linked_annotation(self.pages().0, &dict, budget)? {
+                targets.try_push(id.0)?;
             }
             if let Some(Value::Reference(popup)) = dict.get("Popup")
                 && let Some(position) = self
@@ -1201,12 +1216,12 @@ impl PageAnnots<'_> {
             }
         }
         self.write_items(transaction, Array::from(kept.into_vec()), budget)?;
-        if !media.is_empty() {
+        if !targets.is_empty() {
             let index = references.in_transaction(transaction, budget)?;
-            let unused = refs::unreferenced(&index, &[], &media, budget)?;
-            if media.iter().any(|n| unused.binary_search(n).is_err()) {
+            let unused = refs::unreferenced(&index, &[], &targets, budget)?;
+            if targets.iter().any(|n| unused.binary_search(n).is_err()) {
                 return Err(AnnotationError::Value(
-                    "the multimedia annotation is still referenced; remove its action or measurement link first".into(),
+                    "the annotation is still referenced; remove its action or measurement link first".into(),
                 ));
             }
             for &number in unused.iter() {

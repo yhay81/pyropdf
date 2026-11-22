@@ -4,11 +4,59 @@
 
 use aes::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit};
 use aes::{Aes128, Aes256, Block};
+use aes_gcm::aead::AeadInOut;
+use aes_gcm::{Aes256Gcm, Nonce, Tag};
 use md5::{Digest, Md5};
 use sha2::{Sha256, Sha384, Sha512};
 
 use crate::budget::{Budget, BudgetVec};
 use crate::{Error, Result};
+
+/// ISO/TS 32003 section 5.2: 12-byte nonce, unpadded ciphertext, 16-byte tag, no AAD.
+pub(super) fn gcm_encrypt(key: &[u8], input: &[u8], budget: &Budget) -> Result<Vec<u8>> {
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|_| Error::malformed("invalid AES-GCM file key"))?;
+    let mut nonce = [0u8; 12];
+    getrandom::fill(&mut nonce)
+        .map_err(|_| Error::malformed("cannot generate an AES-GCM initialization vector"))?;
+    let mut result = BudgetVec::new(budget);
+    result.try_reserve_exact(
+        input
+            .len()
+            .checked_add(28)
+            .ok_or_else(|| Error::malformed("AES-GCM object is too large"))?,
+    )?;
+    result.try_extend_from_slice(&nonce)?;
+    result.try_extend_from_slice(input)?;
+    let tag = cipher
+        .encrypt_inout_detached(
+            &Nonce::from(nonce),
+            &[],
+            (&mut result.as_mut_slice()[12..]).into(),
+        )
+        .map_err(|_| Error::malformed("AES-GCM object is too large"))?;
+    result.try_extend_from_slice(&tag)?;
+    Ok(result.into_vec())
+}
+
+pub(super) fn gcm_decrypt(key: &[u8], input: &[u8], budget: &Budget) -> Result<Vec<u8>> {
+    let auth_error = || Error::malformed("AES-GCM authentication failed");
+    let (nonce, rest) = input.split_first_chunk::<12>().ok_or_else(auth_error)?;
+    let (ciphertext, tag) = rest.split_last_chunk::<16>().ok_or_else(auth_error)?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|_| Error::malformed("invalid AES-GCM file key"))?;
+    let mut result = BudgetVec::new(budget);
+    result.try_extend_from_slice(ciphertext)?;
+    cipher
+        .decrypt_inout_detached(
+            &Nonce::from(*nonce),
+            &[],
+            result.as_mut_slice().into(),
+            &Tag::from(*tag),
+        )
+        .map_err(|_| auth_error())?;
+    Ok(result.into_vec())
+}
 
 /// RC4 (ISO 32000-2 section 7.6.3.2), which is its own inverse. RC4 is
 /// read but never written.
