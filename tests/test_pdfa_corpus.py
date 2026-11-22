@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import runpy
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 import pytest
 
@@ -37,3 +38,20 @@ def test_the_icc_profile_declares_its_size_and_a_display_rgb_class() -> None:
     assert int.from_bytes(profile[:4]) == len(profile)
     assert profile[12:24] == b"mntrRGB XYZ "
     assert profile[36:40] == b"acsp"
+
+
+@pytest.mark.parametrize("name", ["pdfa-4.pdf", "pdfa-4e.pdf", "pdfa-4f.pdf"])
+def test_part_four_records_the_identification_namespace_revision_and_specific_flavour(name: str) -> None:
+    original = (PDFA / name).read_bytes()
+    with pyropdf.open(original) as author:
+        author.pages[0].rotation = 90
+        outputs = (original, author.to_bytes(), author.to_bytes(incremental=True))
+    for output in outputs:
+        with pyropdf.open(output) as doc:
+            packet = ET.fromstring(doc.catalog["Metadata"].read())  # noqa: S314 - committed fixture
+            ns = "{http://www.aiim.org/pdfa/ns/id/}"
+            assert packet.findtext(f".//{ns}part") == "4"
+            assert packet.findtext(f".//{ns}rev") == "2020"
+            level = {"pdfa-4.pdf": None, "pdfa-4e.pdf": "E", "pdfa-4f.pdf": "F"}[name]
+            assert packet.findtext(f".//{ns}conformance") == level
+            assert doc.profiles.pdfa == "PDF/A-4" + (level or "")

@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 import sysconfig
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -18,7 +18,7 @@ if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
     # As in tests/test_signing.py: pyHanko enables the GIL of a free-threaded build.
     pytest.skip("pyHanko enables the GIL of a free-threaded build", allow_module_level=True)
 
-from asn1crypto import cms
+from asn1crypto import algos, cms, core
 from asn1crypto import keys as asn1_keys
 from asn1crypto import x509 as asn1_x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -29,6 +29,7 @@ from pyhanko.sign.diff_analysis import ModificationLevel
 from pyhanko_certvalidator.registry import SimpleCertificateStore
 from test_signing import (
     DER,
+    PDF_SIGNATURE_CASES,
     PEM,
     PKCS8,
     Pki,
@@ -77,16 +78,35 @@ def _rsa_signer(pki: Pki) -> Signer:
     )
 
 
-def _pyhanko_signed(pki: Pki, name: str, data: bytes) -> bytes:
+class Rfc8419Signer(signers.SimpleSigner):
+    """Have pyHanko encode the Ed25519 digest algorithm with absent SHA-512 parameters."""
+
+    def signer_info(self, digest_algorithm: str, signed_attrs: Any, signature: bytes) -> cms.SignerInfo:  # noqa: ANN401
+        """Encode SHA-512 with the RFC 8419 section 3.1 parameters."""
+        info = super().signer_info(digest_algorithm, signed_attrs, signature)
+        del info["digest_algorithm"]["parameters"]
+        return info
+
+
+def _pyhanko_signed(
+    pki: Pki,
+    name: str,
+    data: bytes,
+    digest: str | None = None,
+    *,
+    mechanism: algos.SignedDigestAlgorithm | None = None,
+) -> bytes:
     key, certificate = pki.signers[name]
-    signer = signers.SimpleSigner(
+    implementation = Rfc8419Signer if name == "ed25519" else signers.SimpleSigner
+    signer = implementation(
+        signature_mechanism=mechanism,
         signing_cert=asn1_x509.Certificate.load(certificate.public_bytes(DER)),
         signing_key=asn1_keys.PrivateKeyInfo.load(key.private_bytes(DER, PKCS8, serialization.NoEncryption())),
         cert_registry=SimpleCertificateStore.from_certs([asn1_x509.Certificate.load(pki.root.public_bytes(DER))]),
     )
     out = signers.sign_pdf(
         IncrementalPdfFileWriter(io.BytesIO(data)),
-        signers.PdfSignatureMetadata(field_name="Hanko"),
+        signers.PdfSignatureMetadata(field_name="Hanko", md_algorithm=digest),
         signer=signer,
     )
     return out.getvalue()
@@ -411,3 +431,94 @@ def test_parent_field_lock_covers_descendants_and_reports_unclassified_objects(p
         "DocMDP P=2",
         "FieldMDP Include",
     }
+
+
+@pytest.mark.spec("sha3-hashes", "read", "interpret")
+@pytest.mark.spec("ecc-signatures", "read", "interpret")
+@pytest.mark.parametrize(("curve", "digest"), PDF_SIGNATURE_CASES)
+def test_independently_signed_iso_signature_profiles(pki: Pki, curve: str, digest: str) -> None:
+    signed = _pyhanko_signed(pki, curve, _document().to_bytes(), digest)
+    [verified] = _verified(signed, pki)
+    assert verified, verified.problems
+    assert verified.trusted
+    assert verified.signer == f"CN=pyropdf test signer {curve}"
+
+
+def test_ed25519_digest_must_omit_parameters(pki: Pki) -> None:
+    original = _pyhanko_signed(pki, "ed25519", _document().to_bytes(), "sha512")
+    [metadata] = pyropdf.open(original).signatures
+    _, first, second, _ = metadata.byte_range
+    info = cms.ContentInfo.load(bytes.fromhex(original[first + 1 : second - 1].decode("ascii")))
+    info["content"]["signer_infos"][0]["digest_algorithm"]["parameters"] = core.Null()
+    [report] = _verified(_replace_signature_der(original, info.dump()), pki)
+    assert report.valid is False
+    assert "RFC 8419" in report.problems[0]
+
+
+def _replace_signature_der(data: bytes, der: bytes) -> bytes:
+    [signature] = pyropdf.open(data).signatures
+    _, start, end, _ = signature.byte_range
+    capacity = (end - start - 2) // 2
+    assert len(der) <= capacity
+    return data[: start + 1] + der.hex().encode().ljust(2 * capacity, b"0") + data[end - 1 :]
+
+
+@pytest.mark.parametrize("curve", ["ed25519", "ed448"])
+def test_rfc8419_ed_signatures_without_signed_attributes(pki: Pki, curve: str) -> None:
+    # RFC 8419 section 3.2 uses the content itself, and id-shake256 without a length.
+    signed = _pyhanko_signed(pki, curve, _document().to_bytes())
+    [metadata] = pyropdf.open(signed).signatures
+    _, first, second, tail = metadata.byte_range
+    info = cms.ContentInfo.load(bytes.fromhex(signed[first + 1 : second - 1].decode("ascii")))
+    sign_data = info["content"]
+    signer = sign_data["signer_infos"][0]
+    del signer["signed_attrs"]
+    signer["signature"] = pki.signers[curve][0].sign(signed[:first] + signed[second : second + tail])
+    if curve == "ed448":
+        signer["digest_algorithm"] = {"algorithm": "shake256"}
+        sign_data["digest_algorithms"] = [signer["digest_algorithm"]]
+    [check] = _verified(_replace_signature_der(signed, info.dump()), pki)
+    assert check, check.problems
+
+
+def test_ed448_signed_attribute_digest_length_must_be_512_bits(pki: Pki) -> None:
+    original = _pyhanko_signed(pki, "ed448", _document().to_bytes())
+    [metadata] = pyropdf.open(original).signatures
+    _, first, second, _ = metadata.byte_range
+    info = cms.ContentInfo.load(bytes.fromhex(original[first + 1 : second - 1].decode("ascii")))
+    signer = info["content"]["signer_infos"][0]
+    signer["digest_algorithm"]["parameters"] = core.Integer(256)
+    [check] = _verified(_replace_signature_der(original, info.dump()), pki)
+    assert check.valid is False
+    assert "RFC 8419" in check.problems[0]
+
+
+@pytest.mark.parametrize("digest", ["sha3_256", "sha3_384", "sha3_512"])
+def test_independent_rsa_sha3_digest_algorithms(pki: Pki, digest: str) -> None:
+    mechanism = algos.SignedDigestAlgorithm({"algorithm": "rsassa_pkcs1v15"})
+    out = _pyhanko_signed(pki, "rsa", _document().to_bytes(), digest, mechanism=mechanism)
+    [report] = _verified(out, pki)
+    assert report, report.problems
+
+
+def test_sha3_pss_uses_declared_mask_and_salt(pki: Pki) -> None:
+    # RFC 4055 specifies the signer hash, an independent MGF1 hash and an exact salt length.
+    pss = algos.SignedDigestAlgorithm(
+        {
+            "algorithm": "rsassa_pss",
+            "parameters": {
+                "hash_algorithm": {"algorithm": "sha3_256"},
+                "mask_gen_algorithm": {"algorithm": "mgf1", "parameters": {"algorithm": "sha256"}},
+                "salt_length": 24,
+            },
+        }
+    )
+    signed = _pyhanko_signed(pki, "rsa", _document().to_bytes(), "sha3_256", mechanism=pss)
+    [good] = _verified(signed, pki)
+    assert good, good.problems
+    [metadata] = pyropdf.open(signed).signatures
+    _, first, second, _ = metadata.byte_range
+    info = cms.ContentInfo.load(bytes.fromhex(signed[first + 1 : second - 1].decode("ascii")))
+    info["content"]["signer_infos"][0]["signature_algorithm"]["parameters"]["salt_length"] = 25
+    [incorrect] = _verified(_replace_signature_der(signed, info.dump()), pki)
+    assert incorrect.valid is False

@@ -88,10 +88,28 @@ def test_prefix_only_style() -> None:
     assert doc.pages[0].label == doc.pages[5].label == "表紙"
 
 
-def test_letters_style_wraps_past_z() -> None:
+@pytest.mark.parametrize(
+    ("style", "expected"),
+    [
+        (
+            PageLabelStyle.UPPER_LETTERS,
+            [("Z", "AA", "BB"), ("ZZ", "AAA", "BBB"), ("ZZZ", "AAAA", "BBBB"), ("ZZZZ", "AAAAA", "BBBBB")],
+        ),
+        (
+            PageLabelStyle.LOWER_LETTERS,
+            [("z", "aa", "bb"), ("zz", "aaa", "bbb"), ("zzz", "aaaa", "bbbb"), ("zzzz", "aaaaa", "bbbbb")],
+        ),
+    ],
+    ids=["uppercase", "lowercase"],
+)
+@pytest.mark.spec("page-labels", "interpret")
+def test_alphabetic_labels_repeat_letters_in_blocks_of_26(
+    style: PageLabelStyle, expected: list[tuple[str, str, str]]
+) -> None:
     doc = _six_page_doc()
-    doc.page_labels = [PageLabelRange(0, PageLabelStyle.UPPER_LETTERS, first=26)]
-    assert _labels(doc)[:3] == ["Z", "AA", "BB"]
+    for first, labels in zip((26, 52, 78, 104), expected, strict=True):
+        doc.page_labels = [PageLabelRange(0, style, first=first)]
+        assert _labels(doc)[:3] == list(labels)
 
 
 @pytest.mark.spec("page-labels", "edit")

@@ -351,7 +351,7 @@ method and property of its classes with its full description.
 - [`Signature`](signing.md#signature): A signature of the opened file: its field, its signature dictionary, and the revision that it signs.
 - [`SignatureVerification`](signing.md#signatureverification): What `Signature.verify` found.
 - [`Signer`](signing.md#signer): A signing key or callback, with its certificate chain, which `Document.sign` signs with.
-- [`Timestamper`](signing.md#timestamper): A time-stamp callback: it receives the digest of the signature value and the name of its hash algorithm (`"sha256"` or `"sha384"`) and returns the DER of an RFC 3161 time-stamp token over that digest.
+- [`Timestamper`](signing.md#timestamper): A time-stamp callback: it receives the digest of the signature value and the name of the selected SHA-2, SHA-3 or SHAKE256 algorithm and returns the DER of an RFC 3161 time-stamp token over that digest.
 - [`ValidationInfo`](signing.md#validationinfo): Validation-related information for one signature in `/DSS /VRI` (ISO 32000-2 Table 262).
 - [`vri_key`](signing.md#vri_key): Return the 40-character uppercase SHA-1 hexadecimal `/VRI` key for `signature_contents`.
 - [`wrap_encrypted_payload`](signing.md#wrap_encrypted_payload): Create a PDF 2.0 unencrypted wrapper document carrying `payload` (ISO 32000-2 §7.6.7).
