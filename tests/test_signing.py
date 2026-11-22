@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import io
+import subprocess
+import sys
 import sysconfig
 import threading
 import time
@@ -184,6 +186,12 @@ def _assert_whole_file(status: Any) -> None:  # noqa: ANN401 - pyHanko's status 
 
 def _document() -> pyropdf.Document:
     return pyropdf.open(DOCUMENT.read_bytes())
+
+
+def test_arlington_signature_comparison_imports_fixtures_standalone() -> None:
+    script = Path(__file__).resolve().parents[1] / "evidence" / "arlington-signatures" / "compare.py"
+    result = subprocess.run([sys.executable, "-I", str(script), "--help"], capture_output=True, text=True, check=False)  # noqa: S603
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.spec("trap-network-annotations", "edit", "preserve")
