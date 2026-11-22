@@ -302,7 +302,8 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         ),
         "optional_content_count": (
             "A document group list, membership group list, or optional-content configuration array holds more than "
-            "4,096 entries, or `Layers.add` or `LayerMembership` would exceed that limit. A usage lookup counts its application entries "
+            "4,096 entries, or `Layers.add` or `LayerMembership` would exceed that limit. A usage lookup counts its "
+            "application entries "
             "and the group entries of applications for the requested event together."
         ),
         "optional_content_expression": (
