@@ -62,7 +62,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `text_line_count` | 4,096 lines | The text that a form field's appearance draws, or that `Canvas.text`, `Canvas.textbox`, or `Font.text_height` lays out, takes more than 4,096 lines. |
 | `text_input_size` | 1 MiB | The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of UTF-8. |
 | `shaped_glyph_count` | 1,048,576 glyphs | Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit. |
-| `font_input_size` | 64 MiB | The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB. |
+| `font_input_size` | 64 MiB | The font that `Font.from_file` or `Font.from_bytes` loads, or the Type 1 program that `Document.subset_fonts` reads, is larger than 64 MiB. |
 | `page_fonts_tree` | 64 levels | `Page.fonts` follows more than 64 `/Parent` links when looking up inherited page resources. |
 | `page_fonts_entries` | 65,536 entries | `Page.fonts` visits more than 65,536 `/Font` and `/XObject` entries across the page's resources and its Form XObjects. |
 | `page_fonts_forms` | 4,096 forms | `Page.fonts` reaches more than 4,096 Form XObjects from the page's resources. |
@@ -81,7 +81,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `page_label_ranges` | 4,096 ranges | The document's `/PageLabels` number tree holds more than 4,096 `/Nums` pairs. |
 | `page_label_text_size` | 1 MiB | The prefixes and style names of the document's `/PageLabels` number tree are longer than 1 MiB in UTF-8 together. |
 | `page_label_input_size` | 1 MiB | The prefixes that setting `Document.page_labels` writes are longer than 1 MiB in UTF-8 together. |
-| `optional_content_count` | 4,096 entries | A document group list, membership group list, or optional-content configuration array holds more than 4,096 entries, or `Layers.add` or `LayerMembership` would exceed that limit. |
+| `optional_content_count` | 4,096 entries | A document group list, membership group list, or optional-content configuration array holds more than 4,096 entries, or `Layers.add` or `LayerMembership` would exceed that limit. A usage lookup counts its application entries and the group entries of applications for the requested event together. |
 | `optional_content_expression` | 4,096 operands | `Layers.visible` evaluates a `/VE` visibility expression deeper than 32 levels or with more than 4,096 operands. |
 | `sanitize_action_chain` | 256 actions | `Document.sanitize` follows more than 256 actions along a `/Next` action chain when checking for JavaScript. |
 | `sanitize_forms` | 4,096 forms | `Document.sanitize` reaches more than 4,096 Form XObjects and appearance streams while removing hidden text. |

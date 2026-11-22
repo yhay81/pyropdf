@@ -14,8 +14,9 @@ import enum
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from itertools import islice
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Literal, overload
 
+from pyropdf import _core, typed
 from pyropdf._errors import LimitError
 from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, String
@@ -30,6 +31,8 @@ _MAX_EXPRESSION_DEPTH = 32
 _MAX_EXPRESSION_OPERANDS = 4096
 #: Groups and configurations that one listing reads.
 _MAX_LAYERS = 4096
+#: Space retained for one typed application, its object path and the result slots.
+_USAGE_VIEW_BYTES = 512
 _COUNT: LimitCode = "optional_content_count"
 _EXPRESSION: LimitCode = "optional_content_expression"
 
@@ -158,6 +161,15 @@ def _xrefs(value: object) -> tuple[int, ...]:
     return tuple(item.xref for item in _group_entries(value) if isinstance(item, Dictionary) and item.xref is not None)
 
 
+def _usage_entries(array: Array, used: int = 0) -> int:
+    """Bound the entries examined across application and group arrays."""
+    count = used + len(array)
+    if count > _MAX_LAYERS:
+        msg = f"more than {_MAX_LAYERS} optional content usage entries"
+        raise LimitError(_COUNT, msg)
+    return count
+
+
 def _intents(value: object) -> tuple[str, ...]:
     if isinstance(value, Name):
         return (str(value),)
@@ -191,15 +203,15 @@ class Layers(Sequence[Layer]):
         properties = self._document.catalog.get("OCProperties")
         return properties if isinstance(properties, Dictionary) else None
 
-    def _groups(self) -> list[Dictionary]:
+    def _groups(self) -> Iterator[Dictionary]:
         properties = self._properties()
         groups = properties.get("OCGs") if properties is not None else None
         if not isinstance(groups, Array):
-            return []
+            return
         if len(groups) > _MAX_LAYERS:
             msg = f"the document has more than {_MAX_LAYERS} optional content groups"
             raise LimitError(_COUNT, msg)
-        return [group for group in groups if isinstance(group, Dictionary) and group.xref is not None]
+        yield from (group for group in groups if isinstance(group, Dictionary) and group.xref is not None)
 
     def _default(self) -> Dictionary | None:
         properties = self._properties()
@@ -241,7 +253,7 @@ class Layers(Sequence[Layer]):
 
     def __len__(self) -> int:
         """Return the number of optional content groups."""
-        return len(self._groups())
+        return sum(1 for _ in self._groups())
 
     @overload
     def __getitem__(self, index: int) -> Layer: ...
@@ -255,23 +267,71 @@ class Layers(Sequence[Layer]):
         """Iterate over the groups, read once."""
         return iter(self._layers())
 
-    @property
-    def configs(self) -> list[LayerConfig]:
-        """Return the default configuration, then the alternate ones of ``/Configs``."""
+    def _configurations(self) -> Iterator[tuple[int, Dictionary]]:
+        """Yield the stored indices, keeping their positions across malformed entries."""
         properties = self._properties()
         if properties is None:
-            return []
-        configs = []
+            return
         default = properties.get("D")
         if isinstance(default, Dictionary):
-            configs.append(_config(0, default))
+            yield 0, default
         alternates = properties.get("Configs")
         if isinstance(alternates, Array):
             if len(alternates) > _MAX_LAYERS:
                 msg = f"the document has more than {_MAX_LAYERS} optional content configurations"
                 raise LimitError(_COUNT, msg)
-            configs += [_config(at + 1, item) for at, item in enumerate(alternates) if isinstance(item, Dictionary)]
-        return configs
+            yield from ((at, item) for at, item in enumerate(alternates, 1) if isinstance(item, Dictionary))
+
+    @property
+    def configs(self) -> list[LayerConfig]:
+        """Return the default configuration, then the alternate ones of ``/Configs``."""
+        return [_config(index, item) for index, item in self._configurations()]
+
+    def _configuration(self, index: int) -> Dictionary:
+        if isinstance(index, bool) or not isinstance(index, int):
+            msg = f"index must be an int: {index!r}"
+            raise TypeError(msg)
+        count = 0
+        for at, item in self._configurations():
+            if at == index:
+                return item
+            count += 1
+        msg = f"no optional content configuration {index}: the document has {count}"
+        raise IndexError(msg)
+
+    def usage_applications(
+        self, layer: Layer, /, *, event: Literal["View", "Print", "Export"], config: int = 0
+    ) -> tuple[typed.OptContentUsageApplication, ...]:
+        """Return the editable usage applications for a group, event and configuration, in stored order.
+
+        A usage application's ``Category`` names select entries in the group's
+        ``typed.OptContentGroup.Usage`` dictionary. An omitted or empty
+        ``OCGs`` applies to no groups. Configuration 0 is the default; the
+        indices of alternate configurations are listed in :attr:`configs`.
+        Looking up these settings leaves visibility unchanged.
+        """
+        if event not in ("View", "Print", "Export"):
+            msg = f"event must be View, Print or Export: {event!r}"
+            raise ValueError(msg)
+
+        def read(operation: _core._OperationBudget) -> tuple[typed.OptContentUsageApplication, ...]:
+            xref = self._group(layer)
+            applications = typed.OptContentConfig(self._configuration(config)).AS
+            if applications is None:
+                return ()
+            count = _usage_entries(applications.obj)
+            matches = []
+            for index in range(count):
+                application = applications[index]
+                if application.Event != event or (groups := application.OCGs) is None:
+                    continue
+                count = _usage_entries(groups.obj, count)
+                if any(isinstance(group, Dictionary) and group.xref == xref for group in groups.obj):
+                    operation.charge("memory_size", _USAGE_VIEW_BYTES)
+                    matches.append(application)
+            return tuple(matches)
+
+        return _core.read_operation(self._document._core(), read)  # noqa: SLF001
 
     def _require(self) -> tuple[Dictionary, Dictionary]:
         properties = self._properties()
@@ -328,7 +388,7 @@ class Layers(Sequence[Layer]):
             raise TypeError(msg)
         if layer._document is self._document:  # noqa: SLF001 - layer provenance is internal.
             for group in self._groups():
-                if group.xref == layer.xref and _text(group.get("Name")) == layer.name:
+                if group.xref == layer.xref and group.get("Type") == "OCG":
                     return layer.xref
         msg = f"layer {layer.name!r} (object {layer.xref}) is not an optional content group of this document"
         raise ValueError(msg)
@@ -361,25 +421,24 @@ class Layers(Sequence[Layer]):
     def use(self, index: int) -> None:
         """Make configuration ``index`` of :attr:`configs` the default, in one transaction.
 
-        The configuration's ``/BaseState``, ``/ON``, ``/OFF``, and
-        ``/Locked`` replace those of ``/D``; index 0 is ``/D`` itself.
+        Its ``/BaseState``, ``/ON``, ``/OFF``, ``/Locked`` and usage
+        applications (``/AS``) replace those of ``/D``; index 0 is ``/D`` itself.
         """
-        configs = self.configs
-        if isinstance(index, bool) or not isinstance(index, int):
-            msg = f"index must be an int: {index!r}"
-            raise TypeError(msg)
-        if not 0 <= index < len(configs):
-            msg = f"no optional content configuration {index}: the document has {len(configs)}"
-            raise IndexError(msg)
-        if index == 0:
-            return
-        chosen = configs[index]
         document = self._document
         with document.transaction("use layer configuration"):
+            source = self._configuration(index)
+            if index == 0:
+                return
+            chosen = _config(index, source)
             _, config = self._require()
             config["BaseState"] = Name("OFF" if chosen.base_state == "OFF" else "ON")
             for key, numbers in (("ON", chosen.on), ("OFF", chosen.off), ("Locked", chosen.locked)):
                 config[key] = [document.objects[number] for number in numbers]
+            if (applications := typed.OptContentConfig(source).AS) is not None:
+                _usage_entries(applications.obj)
+                config["AS"] = applications.obj
+            elif "AS" in config:
+                del config["AS"]
 
     def visible(self, oc: Dictionary | None) -> bool:
         """Return whether content marked with ``oc``, a group or membership dictionary, shows by default.

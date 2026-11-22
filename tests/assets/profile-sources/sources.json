@@ -1,0 +1,214 @@
+{
+  "repository": "https://github.com/veraPDF/veraPDF-corpus",
+  "revision": "bb75f4f0073d9350dfd058c0162a367e6fadf25e",
+  "files": [
+    {
+      "file": "1a-pass.pdf",
+      "flavour": "1a",
+      "source": "PDF_A-1a/6.8 Logical structure/6.8.2 Tagged PDF/6.8.2.2 Mark information dictionary/veraPDF test suite 6-8-2-2-t01-pass-a.pdf",
+      "sha256": "b5d194c0e6d91119f0f99354f3d1078877406b695cecf75fb0b5cb51b18c14fd",
+      "derivation": "",
+      "original_sha256": "b5d194c0e6d91119f0f99354f3d1078877406b695cecf75fb0b5cb51b18c14fd"
+    },
+    {
+      "file": "1a-fail.pdf",
+      "flavour": "1a",
+      "source": "PDF_A-1a/6.8 Logical structure/6.8.2 Tagged PDF/6.8.2.2 Mark information dictionary/veraPDF test suite 6-8-2-2-t01-fail-c.pdf",
+      "sha256": "ad926077ae7f8e7d5c0e59c46a2d54fc94191c4e3877dff20efcd299acd988c5",
+      "derivation": "",
+      "original_sha256": "ad926077ae7f8e7d5c0e59c46a2d54fc94191c4e3877dff20efcd299acd988c5"
+    },
+    {
+      "file": "1b-pass.pdf",
+      "flavour": "1b",
+      "source": "PDF_A-1b/6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-d.pdf",
+      "sha256": "2a5ba3a4c85ace9bbece0543634ba5447eb51276572424c1a9715d5b758a12a2",
+      "derivation": "",
+      "original_sha256": "2a5ba3a4c85ace9bbece0543634ba5447eb51276572424c1a9715d5b758a12a2"
+    },
+    {
+      "file": "1b-fail.pdf",
+      "flavour": "1b",
+      "source": "PDF_A-1b/6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-fail-b.pdf",
+      "sha256": "583f0b6d07f72a3887664fbbef958b61af818b3785ff27254b0d15f38b8cb1a3",
+      "derivation": "",
+      "original_sha256": "583f0b6d07f72a3887664fbbef958b61af818b3785ff27254b0d15f38b8cb1a3"
+    },
+    {
+      "file": "2a-pass.pdf",
+      "flavour": "2a",
+      "source": "PDF_A-2a/6.7 Logical structure/6.7.3 Artefacts/6.7.3.4 Structure types/veraPDF test suite 6-7-3-4-t01-pass-a.pdf",
+      "sha256": "e715e6cd3061bf660d4b15043ea045637c13f3470bf03fff693e721656b63b0f",
+      "derivation": "",
+      "original_sha256": "e715e6cd3061bf660d4b15043ea045637c13f3470bf03fff693e721656b63b0f"
+    },
+    {
+      "file": "2a-fail.pdf",
+      "flavour": "2a",
+      "source": "PDF_A-2a/6.7 Logical structure/6.7.3 Artefacts/6.7.3.4 Structure types/veraPDF test suite 6-7-3-4-t01-fail-a.pdf",
+      "sha256": "c97709f83403fc10f649c7ab14d5df8103dacd83efd1d492a4e35b5582d924ff",
+      "derivation": "",
+      "original_sha256": "c97709f83403fc10f649c7ab14d5df8103dacd83efd1d492a4e35b5582d924ff"
+    },
+    {
+      "file": "2b-pass.pdf",
+      "flavour": "2b",
+      "source": "PDF_A-2b/6.1 File structure/6.1.13 Implementation limits/veraPDF test suite 6-1-13-t09-pass-b.pdf",
+      "sha256": "5297b152a1a0cbc348084a58c90ceb6b24d6ac20093708a0b87769758fc379ae",
+      "derivation": "",
+      "original_sha256": "5297b152a1a0cbc348084a58c90ceb6b24d6ac20093708a0b87769758fc379ae"
+    },
+    {
+      "file": "2b-fail.pdf",
+      "flavour": "2b",
+      "source": "PDF_A-2b/6.1 File structure/6.1.13 Implementation limits/veraPDF test suite 6-1-13-t09-fail-d.pdf",
+      "sha256": "7d07313fba4ede6955f855e87837dbeb6981b1525c4833ba51e37590778dc877",
+      "derivation": "",
+      "original_sha256": "7d07313fba4ede6955f855e87837dbeb6981b1525c4833ba51e37590778dc877"
+    },
+    {
+      "file": "2u-pass.pdf",
+      "flavour": "2u",
+      "source": "PDF_A-2u/6.2 Graphics/6.2.11 Fonts/6.2.11.7 Unicode character maps/6.2.11.7.2 Level A and Level U conformance/veraPDF test suite 6-2-11-7-2-t01-pass-f.pdf",
+      "sha256": "c77ba0dd71e43823e1fb6a087889a1774ae8c3ea127a8e6861b7b0180eaf2c94",
+      "derivation": "",
+      "original_sha256": "c77ba0dd71e43823e1fb6a087889a1774ae8c3ea127a8e6861b7b0180eaf2c94"
+    },
+    {
+      "file": "2u-fail.pdf",
+      "flavour": "2u",
+      "source": "PDF_A-2u/6.2 Graphics/6.2.11 Fonts/6.2.11.7 Unicode character maps/6.2.11.7.2 Level A and Level U conformance/veraPDF test suite 6-2-11-7-2-t01-fail-c.pdf",
+      "sha256": "3883b444dd33c297d200044fce39c3af967a8a8f6c340aff42a6e013206ac908",
+      "derivation": "",
+      "original_sha256": "3883b444dd33c297d200044fce39c3af967a8a8f6c340aff42a6e013206ac908"
+    },
+    {
+      "file": "3a-pass.pdf",
+      "flavour": "3a",
+      "source": "PDF_A-2a/6.7 Logical structure/6.7.3 Artefacts/6.7.3.4 Structure types/veraPDF test suite 6-7-3-4-t01-pass-a.pdf",
+      "sha256": "98dd99a2517f8c38e7803d08be92c2198016decceef1c1ad4664b92799c43979",
+      "derivation": "Only the fixed-width XMP part digit changes from 2 to 3.",
+      "original_sha256": "e715e6cd3061bf660d4b15043ea045637c13f3470bf03fff693e721656b63b0f"
+    },
+    {
+      "file": "3a-fail.pdf",
+      "flavour": "3a",
+      "source": "PDF_A-2a/6.7 Logical structure/6.7.3 Artefacts/6.7.3.4 Structure types/veraPDF test suite 6-7-3-4-t01-fail-a.pdf",
+      "sha256": "73f1db1c3a07d88c6e5c99639b5871ead356f6d9e9bf16a2a98ebea8c00e6f3a",
+      "derivation": "Only the fixed-width XMP part digit changes from 2 to 3.",
+      "original_sha256": "c97709f83403fc10f649c7ab14d5df8103dacd83efd1d492a4e35b5582d924ff"
+    },
+    {
+      "file": "3b-pass.pdf",
+      "flavour": "3b",
+      "source": "PDF_A-3b/6.8 Embedded files/veraPDF test suite 6-8-t02-pass-a.pdf",
+      "sha256": "5b8fdee7090f0a0fb7266d10dd0f6f1f8a37d286e3c06b1aa82e01d6d4f0a8a4",
+      "derivation": "",
+      "original_sha256": "5b8fdee7090f0a0fb7266d10dd0f6f1f8a37d286e3c06b1aa82e01d6d4f0a8a4"
+    },
+    {
+      "file": "3b-fail.pdf",
+      "flavour": "3b",
+      "source": "PDF_A-3b/6.8 Embedded files/veraPDF test suite 6-8-t02-fail-a.pdf",
+      "sha256": "0dc9b74e825a504226bf95a768eb171cf11b9c880a43cfc275f49c2a934312e4",
+      "derivation": "",
+      "original_sha256": "0dc9b74e825a504226bf95a768eb171cf11b9c880a43cfc275f49c2a934312e4"
+    },
+    {
+      "file": "3u-pass.pdf",
+      "flavour": "3u",
+      "source": "PDF_A-2u/6.2 Graphics/6.2.11 Fonts/6.2.11.7 Unicode character maps/6.2.11.7.2 Level A and Level U conformance/veraPDF test suite 6-2-11-7-2-t01-pass-f.pdf",
+      "sha256": "f7bfb272416c81a20a4e5f4df3528e585d05e85b341754e6e49f14bdc30ad488",
+      "derivation": "Only the fixed-width XMP part digit changes from 2 to 3.",
+      "original_sha256": "c77ba0dd71e43823e1fb6a087889a1774ae8c3ea127a8e6861b7b0180eaf2c94"
+    },
+    {
+      "file": "3u-fail.pdf",
+      "flavour": "3u",
+      "source": "PDF_A-2u/6.2 Graphics/6.2.11 Fonts/6.2.11.7 Unicode character maps/6.2.11.7.2 Level A and Level U conformance/veraPDF test suite 6-2-11-7-2-t01-fail-c.pdf",
+      "sha256": "4ef19bc07958e216733dfb792d0c1bdccd898709f0a64b6e30ea9ab9f3973808",
+      "derivation": "Only the fixed-width XMP part digit changes from 2 to 3.",
+      "original_sha256": "3883b444dd33c297d200044fce39c3af967a8a8f6c340aff42a6e013206ac908"
+    },
+    {
+      "file": "4-pass.pdf",
+      "flavour": "4",
+      "source": "PDF_A-4/6.2 Graphics/6.2.4 Colour spaces/6.2.4.3 Uncalibrated -Device colour spaces/veraPDF test suite 6-2-4-3-t01-pass-e.pdf",
+      "sha256": "b2b40e60a6a8e2a52cedd2ad520357057a7b48565ed98b566d08bf2d55d8eb46",
+      "derivation": "",
+      "original_sha256": "b2b40e60a6a8e2a52cedd2ad520357057a7b48565ed98b566d08bf2d55d8eb46"
+    },
+    {
+      "file": "4-fail.pdf",
+      "flavour": "4",
+      "source": "PDF_A-4/6.2 Graphics/6.2.4 Colour spaces/6.2.4.3 Uncalibrated -Device colour spaces/veraPDF test suite 6-2-4-3-t01-fail-g.pdf",
+      "sha256": "009b8edf05af0f1d0ac82fa126ef1a966114f04e7c2742ceed1e550144607211",
+      "derivation": "",
+      "original_sha256": "009b8edf05af0f1d0ac82fa126ef1a966114f04e7c2742ceed1e550144607211"
+    },
+    {
+      "file": "4e-pass.pdf",
+      "flavour": "4e",
+      "source": "PDF_A-4e/6.7 Metadata/6.7.3 Version identification/veraPDF test suite 6-7-3-t01-pass-a.pdf",
+      "sha256": "6b1c9c0fc488abd2fd6a34daf846dd882c45350cf9ee165c6313dc5b7d57a08e",
+      "derivation": "",
+      "original_sha256": "6b1c9c0fc488abd2fd6a34daf846dd882c45350cf9ee165c6313dc5b7d57a08e"
+    },
+    {
+      "file": "4e-fail.pdf",
+      "flavour": "4e",
+      "source": "PDF_A-4e/6.7 Metadata/6.7.3 Version identification/veraPDF test suite 6-7-3-t01-fail-b.pdf",
+      "sha256": "8635b8b542378fbb84e17c6a2dc8aeefac2ce251546cac3842d29d9cd7eb1fa1",
+      "derivation": "",
+      "original_sha256": "8635b8b542378fbb84e17c6a2dc8aeefac2ce251546cac3842d29d9cd7eb1fa1"
+    },
+    {
+      "file": "4f-pass.pdf",
+      "flavour": "4f",
+      "source": "PDF_A-4f/6.9 Embedded files/veraPDF test suite 6-9-t01-pass-b.pdf",
+      "sha256": "5097e4de143e69b751703fa301cb26a188b092fb0cf949237e5f5848b5a2190b",
+      "derivation": "",
+      "original_sha256": "5097e4de143e69b751703fa301cb26a188b092fb0cf949237e5f5848b5a2190b"
+    },
+    {
+      "file": "4f-fail.pdf",
+      "flavour": "4f",
+      "source": "PDF_A-4f/6.9 Embedded files/veraPDF test suite 6-9-t01-fail-b.pdf",
+      "sha256": "7129451c9f02ae01809160c24ab9499e99e68e0e731bbe187d399c4b1b5d538c",
+      "derivation": "",
+      "original_sha256": "7129451c9f02ae01809160c24ab9499e99e68e0e731bbe187d399c4b1b5d538c"
+    },
+    {
+      "file": "ua1-pass.pdf",
+      "flavour": "ua1",
+      "source": "PDF_UA-1/7.1 General/7.1-t03-pass-b.pdf",
+      "sha256": "60f13bd812e3b5c8abd19c5ed01cc447dd433cc3b48e0b07cf5105067f8ffdf9",
+      "derivation": "",
+      "original_sha256": "60f13bd812e3b5c8abd19c5ed01cc447dd433cc3b48e0b07cf5105067f8ffdf9"
+    },
+    {
+      "file": "ua1-fail.pdf",
+      "flavour": "ua1",
+      "source": "PDF_UA-1/7.1 General/7.1-t03-fail-b.pdf",
+      "sha256": "7f6b4eaeb06a35d14d0352919e0f58b44833962e323811ac4737f8a45c6621cb",
+      "derivation": "",
+      "original_sha256": "7f6b4eaeb06a35d14d0352919e0f58b44833962e323811ac4737f8a45c6621cb"
+    },
+    {
+      "file": "ua2-pass.pdf",
+      "flavour": "ua2",
+      "source": "PDF_UA-2/8.4 Text representation for content/8.4.5 Fonts/8.4.5.7 Character encodings/8.4.5.7-t02-pass-c.pdf",
+      "sha256": "637559e4c6a8e66be032cc698df54724ebcc131d891c161c085a10b5ee68fe94",
+      "derivation": "",
+      "original_sha256": "637559e4c6a8e66be032cc698df54724ebcc131d891c161c085a10b5ee68fe94"
+    },
+    {
+      "file": "ua2-fail.pdf",
+      "flavour": "ua2",
+      "source": "PDF_UA-2/8.4 Text representation for content/8.4.5 Fonts/8.4.5.7 Character encodings/8.4.5.7-t02-fail-c.pdf",
+      "sha256": "93d61240aa05bc0a857249dfda44d463d6769ee6418c9dccc07e60b917691c21",
+      "derivation": "",
+      "original_sha256": "93d61240aa05bc0a857249dfda44d463d6769ee6418c9dccc07e60b917691c21"
+    }
+  ]
+}

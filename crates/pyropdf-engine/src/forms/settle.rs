@@ -26,16 +26,23 @@ pub fn is_widget(dict: &Dict) -> bool {
 
 /// What the settler writes for a widget.
 pub enum Drawing {
-    /// The value holds a character outside WinAnsi, which no Standard 14
-    /// font draws: the widget's normal appearance is removed, so that none
-    /// shows a stale value.
+    /// The available fonts cannot render the value. Remove the stale normal
+    /// appearance when settling the field.
     Removed,
     /// The widget's new normal appearance.
     Drawn(WidgetAppearance),
+    /// A rich field owns its Standard 14 resources and refers to the producer's embedded faces.
+    Rich(
+        WidgetAppearance,
+        Vec<crate::standard::Base14Font>,
+        Vec<(Name, Reference)>,
+    ),
     /// The normal appearances that a check box or radio button widget
     /// lacks, by state: `Off` and the state that its `/AS` names. A state
     /// that holds content is kept.
     States(Vec<(Name, WidgetAppearance)>),
+    /// Interaction-specific pushbutton appearances.
+    Modes(Vec<(Name, WidgetAppearance)>),
 }
 
 /// A drawn normal appearance of a widget: its content in the form's space,
@@ -46,6 +53,7 @@ pub struct WidgetAppearance {
     pub(super) size: (f64, f64),
     pub(super) matrix: Option<[f64; 6]>,
     pub(super) font: Option<(String, FontEntry)>,
+    pub(super) icon: Option<Reference>,
 }
 
 /// The font of an appearance's text.
@@ -59,11 +67,21 @@ pub(super) enum FontEntry {
 impl WidgetAppearance {
     /// Writes the font and the form XObject of the appearance as new
     /// objects, and returns the form's reference.
+    fn write(self, transaction: &mut Transaction, budget: &Budget) -> Result<Reference> {
+        self.write_fonts(transaction, budget, &[], &[])
+    }
+
     #[expect(
         clippy::disallowed_methods,
-        reason = "each key is a constant or the one font resource, so each dictionary holds six entries at most"
+        reason = "the stream dictionary has fixed keys; extra fonts are distinct Standard 14 faces"
     )]
-    fn write(self, transaction: &mut Transaction, budget: &Budget) -> Result<Reference> {
+    fn write_fonts(
+        self,
+        transaction: &mut Transaction,
+        budget: &Budget,
+        extra: &[crate::standard::Base14Font],
+        embedded: &[(Name, Reference)],
+    ) -> Result<Reference> {
         let mut dict = Dict::new();
         dict.insert(Name::from("Type"), Value::Name(Name::from("XObject")));
         dict.insert(Name::from("Subtype"), Value::Name(Name::from("Form")));
@@ -76,13 +94,28 @@ impl WidgetAppearance {
             dict.insert(Name::from("Matrix"), numbers_array(&matrix));
         }
         let mut resources = Dict::new();
+        if let Some(icon) = self.icon {
+            let mut xobjects = Dict::new();
+            xobjects.insert(Name::from("Icon"), Value::Reference(icon));
+            resources.insert(Name::from("XObject"), Value::Dict(xobjects));
+        }
+        let mut fonts = Dict::new();
         if let Some((resource, entry)) = &self.font {
             let reference = match entry {
                 FontEntry::Standard(base_font) => standard_font(transaction, base_font, budget)?,
                 FontEntry::Embedded(reference) => *reference,
             };
-            let mut fonts = Dict::new();
             fonts.insert(Name::from(resource.as_str()), Value::Reference(reference));
+        }
+        for font in extra {
+            let name = font.pdf_base_name();
+            let reference = standard_font(transaction, name, budget)?;
+            fonts.insert(Name::from(name), Value::Reference(reference));
+        }
+        for (name, id) in embedded {
+            fonts.insert(name.clone(), Value::Reference(*id));
+        }
+        if !fonts.is_empty() {
             resources.insert(Name::from("Font"), Value::Dict(fonts));
         }
         dict.insert(Name::from("Resources"), Value::Dict(resources));
@@ -167,6 +200,24 @@ pub fn write(
             #[expect(
                 clippy::disallowed_methods,
                 reason = "the appearances grow by one entry at most"
+            )]
+            appearances.insert(Name::from("N"), Value::Reference(reference));
+        }
+        Drawing::Modes(modes) => {
+            for (mode, appearance) in modes {
+                let reference = appearance.write(transaction, budget)?;
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "at most the three fixed interaction modes"
+                )]
+                appearances.insert(mode, Value::Reference(reference));
+            }
+        }
+        Drawing::Rich(drawn, fonts, embedded) => {
+            let reference = drawn.write_fonts(transaction, budget, &fonts, &embedded)?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "only the normal appearance key is inserted"
             )]
             appearances.insert(Name::from("N"), Value::Reference(reference));
         }
