@@ -12,10 +12,13 @@ save: every fixture holds the same two pages. Intended differences:
 
 from __future__ import annotations
 
+import io
+import re
 import sysconfig
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import pikepdf
 import pytest
 from test_pages import build_raw_pdf, numbered
 
@@ -464,7 +467,6 @@ def _pyhanko_oracle() -> None:
 @pytest.mark.parametrize("method", ["aes-256", "aes-128"])
 @pytest.mark.usefixtures("_pyhanko_oracle")
 def test_public_key_output_read_by_pyhanko(method: Literal["aes-256", "aes-128"], *, encrypt_metadata: bool) -> None:
-    import io  # noqa: PLC0415
 
     from asn1crypto import keys, x509  # noqa: PLC0415
     from pyhanko.pdf_utils.crypt.pubkey import SimpleEnvelopeKeyDecrypter  # noqa: PLC0415
@@ -609,6 +611,117 @@ def test_public_key_equal_permissions_share_a_cms_envelope() -> None:
         with pyropdf.open(saved, credential=credential) as doc:
             assert doc.permissions == Permissions.COPY
             assert len(doc.trailer["Encrypt"]["CF"]["DefaultCryptFilter"]["Recipients"]) == 1
+
+
+STANDARD_REVISIONS = {
+    "standard-rc4-r2": (1, 2, ("user-rc4-40.pdf",)),
+    "standard-rc4-r3": (2, 3, ("user-rc4-128.pdf", "user-rc4-128-indirect-length.pdf")),
+    "standard-rc4-r4": (4, 4, ("user-r4-rc4-128.pdf",)),
+    "standard-aes-r4": (4, 4, ("user-aes-128.pdf", "user-aes-128-plain-metadata.pdf")),
+    "standard-aes-r5": (5, 5, ("user-aes-256-r5.pdf",)),
+    "standard-aes-r6": (5, 6, ("user-aes-256.pdf", "user-aes-256-object-streams.pdf", "owneronly-aes-256.pdf")),
+}
+
+
+def stored_stream(data: bytes, independent: pikepdf.Pdf, stream: pikepdf.Object) -> bytes:
+    """Read the actual ciphertext at qpdf's active xref offset and resolved stream length."""
+    offset = independent.get_xref_table()[stream.objgen].offset
+    assert offset is not None
+    header = re.match(rb"\d+\s+\d+\s+obj\b.*?\bstream(?:\r\n|\n)", data[offset:], re.DOTALL)
+    assert header
+    start = offset + header.end()
+    return data[start : start + int(stream.Length)]
+
+
+@pytest.mark.spec("{profile}", "read", "interpret", "edit", "preserve")
+@pytest.mark.parametrize(
+    "profile",
+    [
+        "standard-rc4-r2",
+        "standard-rc4-r3",
+        "standard-rc4-r4",
+        "standard-aes-r4",
+        "standard-aes-r5",
+        "standard-aes-r6",
+    ],
+)
+def test_password_revision_keeps_old_ciphertext_and_encrypts_new_content(profile: str) -> None:
+    version, revision, names = STANDARD_REVISIONS[profile]
+    marker = b"independently read new stream and string"
+    for name in names:
+        source = (ASSETS / name).read_bytes()
+        user = "" if name.startswith("owneronly") else "userpw"
+        with (
+            pikepdf.open(io.BytesIO(source), password=user) as original,
+            pyropdf.open(source, password="ownerpw") as doc,
+        ):
+            assert doc.access is Access.OWNER
+            assert original.user_password_matched
+            assert (version, revision) == (original.trailer.Encrypt.V, original.trailer.Encrypt.R)
+            if version == 4:
+                crypt = original.trailer.Encrypt
+                assert str(crypt.CF[str(crypt.StmF)].CFM) == ("/AESV2" if profile == "standard-aes-r4" else "/V2")
+            original_content = original.pages[0].obj.Contents
+            old = stored_stream(source, original, original_content)
+            assert old != original_content.read_raw_bytes()
+            assert doc.to_bytes(incremental=True) == source
+            doc.catalog["XXString"] = marker
+            doc.catalog["XXStream"] = doc.objects[doc.objects.add_stream(marker, filter=None)]
+            doc.pages[0].rotation = 90
+            with pyropdf.open(doc.to_bytes()) as plain:
+                assert not plain.needs_password
+                expected = bytes(memoryview(plain.pages[0].pixmap(dpi=36)))
+                if revision <= 4:
+                    with pytest.raises(pyropdf.PdfError, match="hayro cannot read the document"):
+                        doc.pages[0].pixmap(dpi=36)
+                else:
+                    assert bytes(memoryview(doc.pages[0].pixmap(dpi=36))) == expected
+                with pyropdf.open(source, password=user) as by_user:
+                    by_user.pages[0].rotation = 90
+                    assert bytes(memoryview(by_user.pages[0].pixmap(dpi=36))) == expected
+            for incremental in (False, True):
+                result = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+                assert result.startswith(source) is incremental
+                assert marker not in result
+                with pikepdf.open(io.BytesIO(result), password=user) as saved:
+                    assert saved.user_password_matched
+                    assert saved.allow == original.allow
+                    assert (version, revision) == (saved.trailer.Encrypt.V, saved.trailer.Encrypt.R)
+                    assert saved.pages[0].Rotate == 90
+                    assert stored_stream(result, saved, saved.pages[0].obj.Contents) == old
+                    assert bytes(saved.Root.XXString) == saved.Root.XXStream.read_bytes() == marker
+                    assert stored_stream(result, saved, saved.Root.XXStream) != marker
+                with pikepdf.open(io.BytesIO(result), password="ownerpw") as owner:
+                    assert owner.owner_password_matched
+                with pytest.raises(pikepdf.PasswordError):
+                    pikepdf.open(io.BytesIO(result), password="wrong password")
+
+
+@pytest.mark.spec("{profile}", "create")
+@pytest.mark.parametrize("profile", ["standard-aes-r4", "standard-aes-r6"])
+def test_aes_authoring_sets_the_exact_revision_and_permissions(profile: str) -> None:
+    version, revision, _ = STANDARD_REVISIONS[profile]
+    method = "aes-128" if revision == 4 else "aes-256"
+    with pyropdf.open(numbered(1)) as doc:
+        config = Encryption(
+            user_password="reader", owner_password="owner", permissions=Permissions.PRINT, method=method
+        )
+        doc.catalog["XXMarker"] = b"a new password-protected document"
+        data = doc.to_bytes(encryption=config)
+    with pikepdf.open(io.BytesIO(data), password="reader") as reader:
+        assert reader.user_password_matched
+        assert not reader.owner_password_matched
+        assert reader.allow.print_lowres
+        assert not reader.allow.extract
+        assert not reader.allow.modify_other
+        assert bytes(reader.Root.XXMarker) == b"a new password-protected document"
+        crypt = reader.trailer.Encrypt
+        assert (version, revision) == (crypt.V, crypt.R)
+        assert str(crypt.CF[str(crypt.StrF)].CFM) == ("/AESV2" if revision == 4 else "/AESV3")
+    with pikepdf.open(io.BytesIO(data), password="owner") as owner:
+        assert owner.owner_password_matched
+    with pytest.raises(pikepdf.PasswordError):
+        pikepdf.open(io.BytesIO(data), password="wrong password")
 
 
 @pytest.mark.parametrize("length", [19, 20, 24, 25])
@@ -1201,8 +1314,8 @@ def test_stream_replacement_resolves_a_shared_identity_selector() -> None:
 @pytest.mark.parametrize("incremental", [False, True])
 @pytest.mark.parametrize("compress", [False, True])
 @pytest.mark.usefixtures("_pyhanko_oracle")
-@pytest.mark.spec("crypt-filter", "read", "edit", "preserve")
-@pytest.mark.spec("crypt-filters", "read", "edit", "preserve")
+@pytest.mark.spec("crypt-filter", "read", "create", "edit", "preserve")
+@pytest.mark.spec("crypt-filters", "read", "create", "edit", "preserve")
 def test_indirect_private_stream_parameters_remain_shared_after_replacement(
     *, incremental: bool, compress: bool
 ) -> None:
@@ -1220,10 +1333,15 @@ def test_indirect_private_stream_parameters_remain_shared_after_replacement(
         number = options.xref
         stream["Filter"] = doc.objects[doc.objects.add([pyropdf.Name("Crypt"), pyropdf.Name("FlateDecode")])]
         stream["DecodeParms"] = doc.objects[doc.objects.add([options, None])]
+        filter_id, params_id = stream["Filter"].xref, stream["DecodeParms"].xref
         shared = doc.to_bytes(encryption=Encryption.KEEP)
     with pyropdf.open(shared, credential=owner) as doc:
         stream = doc.catalog["FixtureNamed"]
         assert stream.read() == b"Named private data"
+        sibling = doc.objects[doc.objects.add_stream(b"new private sibling", filter="FlateDecode")]
+        sibling["Filter"] = stream["Filter"]
+        sibling["DecodeParms"] = stream["DecodeParms"]
+        doc.catalog["NewPrivateSibling"] = sibling
         stream.write(b"revised private stream", filter="FlateDecode" if compress else None)
         saved = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
     assert saved.startswith(shared) is incremental
@@ -1232,8 +1350,11 @@ def test_indirect_private_stream_parameters_remain_shared_after_replacement(
         assert stream.read() == b"revised private stream"
         selected = stream["DecodeParms"][0] if compress else stream["DecodeParms"]
         assert selected.xref == number
-    with pyropdf.open(saved, credential=recipient("editor")) as doc, pytest.raises(pyropdf.PasswordError):
-        doc.catalog["FixtureNamed"].read()
+        assert doc.catalog["NewPrivateSibling"].read() == b"new private sibling"
+    with pyropdf.open(saved, credential=recipient("editor")) as doc:
+        for key in ("FixtureNamed", "NewPrivateSibling"):
+            with pytest.raises(pyropdf.PasswordError):
+                doc.catalog[key].read()
     reader = PdfFileReader(io.BytesIO(saved))
     credential = SimpleEnvelopeKeyDecrypter.load(
         str(RECIPIENT_ASSETS / "recipient-owner.key"), str(RECIPIENT_ASSETS / "recipient-owner.cer")
@@ -1244,6 +1365,11 @@ def test_indirect_private_stream_parameters_remain_shared_after_replacement(
     assert handler.get_stream_filter(generic.pdf_name("/PrivateContent")).authenticate(credential).status.value > 0
     stream = reader.root["/FixtureNamed"]
     assert stream.data == b"revised private stream"
+    sibling = reader.root["/NewPrivateSibling"]
+    assert sibling.data == b"new private sibling"
+    assert sibling.raw_get("/Filter").idnum == filter_id
+    assert sibling.raw_get("/DecodeParms").idnum == params_id
+    assert sibling["/DecodeParms"].raw_get(0).idnum == number
 
 
 @pytest.mark.parametrize("incremental", [False, True])

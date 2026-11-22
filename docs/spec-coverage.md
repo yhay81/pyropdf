@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 32 | 25 | 774 |
-| interpret | 9 | 19 | 0 | 27 | 34 | 742 |
-| create | 0 | 0 | 21 | 25 | 46 | 739 |
-| edit | 0 | 0 | 0 | 38 | 35 | 758 |
-| preserve | 0 | 0 | 0 | 19 | 27 | 785 |
+| read | 0 | 0 | 0 | 15 | 25 | 797 |
+| interpret | 9 | 19 | 0 | 32 | 34 | 743 |
+| create | 0 | 0 | 25 | 23 | 33 | 756 |
+| edit | 0 | 0 | 0 | 36 | 35 | 766 |
+| preserve | 0 | 0 | 0 | 17 | 27 | 793 |
 
 ## Clauses
 
@@ -50,16 +50,16 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.4.7 | JBIG2Decode filter | `jbig2-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.4.8 | DCTDecode filter | `dct-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.4.9 | JPXDecode filter | `jpx-filter` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.4.10 | Crypt filter | `crypt-filter` | 1 partial | 1 n/a | 1 partial | 1 partial | 1 partial |
+| 7.4.10 | Crypt filter | `crypt-filter` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.2 | File header | `file-header` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.4 | Cross-reference table | `xref-table` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.6 | Incremental updates | `incremental-update` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.5.7 | Object streams | `object-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.6.4 | Standard security handler | `standard-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 2 done, 5 partial | 3 done, 4 non-goal | 7 done | 7 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
-| 7.6.6 | Crypt filters | `crypt-filters` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 7.6.6 | Crypt filters | `crypt-filters` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.2 | Document catalog | `document-catalog` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.3 | Page tree | `page-tree`, `page-objects` | 2 done | 2 done | 2 done | 2 done | 2 done |
@@ -232,10 +232,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex L | Allowed structure children | `structure-children` | 1 done | 1 partial | 1 planned | 1 planned | 1 done |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex Q | Page transparency detection | `page-transparency` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 partial | 3 partial | 3 planned | 3 partial | 3 partial |
+| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 done | 3 partial | 2 done, 1 planned | 3 partial | 3 partial |
 | ISO 15930 | PDF/X | `pdfx` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 partial | 12 partial | 12 planned | 12 partial | 12 partial |
+| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 done | 12 partial | 11 done, 1 planned | 12 partial | 12 partial |
 | ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-317 unfinished cells in 831 features: 9 engine, 141 partial, 167 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+286 unfinished cells in 837 features: 9 engine, 123 partial, 154 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -341,13 +341,13 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - read, create, edit, preserve — `public-key-security-handler`.
 - [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
     - interpret — `public-key-security-handler`.
-- [#1056](https://github.com/yhay81/pyropdf/issues/1056) Resolve indirect stream filter selectors and parameters in their document revision. Resolve filter names and parameter references in the correct revision before reading or creating encrypted streams, and retain their reference identities through saves.
-    - read, create, edit, preserve — `crypt-filter`, `crypt-filters`.
 - [#993](https://github.com/yhay81/pyropdf/issues/993) Render explicit legacy crypt filters and independently keyed recipient streams from the store. Interpret explicit legacy password filters and an independently keyed page stream through the authenticated version, including correct refusal for an unauthorized page.
     - interpret — `crypt-filters`.
 - [#982](https://github.com/yhay81/pyropdf/issues/982) Round-trip packed and wide predictor rows after adopting the hayro fix. Adopt the released row-local decoder through #603, then verify partially filled TIFF rows, externally filtered partial PNG pixel strides and predictor pixels wider than 255 bits in independent save and render controls.
     - read, interpret, create — `lzw-filter`.
     - edit — `flate-filter`, `lzw-filter`.
+- [#974](https://github.com/yhay81/pyropdf/issues/974) Render owner-authenticated standard-handler PDF revisions 2 to 4. Render authenticated R2 to R4 versions with the owner credentials before and after edits.
+    - interpret — `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`.
 
 ### 253 Understanding
 
@@ -370,12 +370,6 @@ Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 
 - [#846](https://github.com/yhay81/pyropdf/issues/846) Create accessible archival PDFs from a new Document through the public API. Create an accessible archival document with a valid claim and have an independent validator verify the result.
     - create — `pdfa-4`, `pdfua-2`.
-- [#911](https://github.com/yhay81/pyropdf/issues/911) Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour. Create and independently validate the earlier PDF/A and PDF/UA profile examples.
-    - create — `pdfa-2b`, `pdfua-1`.
-- [#911](https://github.com/yhay81/pyropdf/issues/911) Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour. Exercise independently sourced conforming and negative fixtures beyond the original vector example. Validate public authoring per listed part and level using independent validation and retain allowable source variations.
-    - read, create — `pdfa`, `pdfua`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4e`, `pdfa-4f`.
-- [#911](https://github.com/yhay81/pyropdf/issues/911) Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour. Exercise additional conforming and negative sources beyond the original per-flavour vector example.
-    - read — `pdfa-2b`, `pdfa-4`, `pdfua-1`, `pdfua-2`.
 - [#910](https://github.com/yhay81/pyropdf/issues/910) Validate PDF/X and PDF/VT profile rules through a print exchange round trip. Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour.
     - read, interpret, preserve — `pdfx`, `pdfvt`.
     - create, edit — `pdfx`, `pdfvt`, `output-intents`.
@@ -406,19 +400,19 @@ The machine and human checks are documented in the [corpus review](https://githu
 
 | Profile | read | interpret | create | edit | preserve |
 | --- | --- | --- | --- | --- | --- |
-| `pdfa-1a` | partial | partial | planned | partial | partial |
-| `pdfa-1b` | partial | partial | planned | partial | partial |
-| `pdfa-2a` | partial | partial | planned | partial | partial |
-| `pdfa-2b` | partial | partial | planned | partial | partial |
-| `pdfa-2u` | partial | partial | planned | partial | partial |
-| `pdfa-3a` | partial | partial | planned | partial | partial |
-| `pdfa-3b` | partial | partial | planned | partial | partial |
-| `pdfa-3u` | partial | partial | planned | partial | partial |
-| `pdfa-4` | partial | partial | planned | partial | partial |
-| `pdfa-4e` | partial | partial | planned | partial | partial |
-| `pdfa-4f` | partial | partial | planned | partial | partial |
-| `pdfua-1` | partial | partial | planned | partial | partial |
-| `pdfua-2` | partial | partial | planned | partial | partial |
+| `pdfa-1a` | done | partial | done | partial | partial |
+| `pdfa-1b` | done | partial | done | partial | partial |
+| `pdfa-2a` | done | partial | done | partial | partial |
+| `pdfa-2b` | done | partial | done | partial | partial |
+| `pdfa-2u` | done | partial | done | partial | partial |
+| `pdfa-3a` | done | partial | done | partial | partial |
+| `pdfa-3b` | done | partial | done | partial | partial |
+| `pdfa-3u` | done | partial | done | partial | partial |
+| `pdfa-4` | done | partial | planned | partial | partial |
+| `pdfa-4e` | done | partial | done | partial | partial |
+| `pdfa-4f` | done | partial | done | partial | partial |
+| `pdfua-1` | done | partial | done | partial | partial |
+| `pdfua-2` | done | partial | planned | partial | partial |
 
 ## Specification baseline
 
@@ -582,6 +576,41 @@ Each record has its upstream issue number, page anchors, affected feature IDs, d
 and an original summary. Empty dimension lists identify changes to wording, cross-references or examples.
 Feature tests and release decisions remain on the feature rows. An erratum needs a targeted regression
 before a test can be cited for that specific correction. The register gives no automatic coverage credit.
+
+### Reviewed behavioral requirements
+
+Of 296 correction IDs with behavioral dimensions, 12 have a reviewed crosswalk in at least one scope. 284 await one. One correction can have several role or revision variants.
+
+5 open work, 4 reasoned disposition, 17 targeted evidence.
+
+| Behavior | Edition and provision | Correction | Requirement and evidence |
+| --- | --- | --- | --- |
+| alphabetic-page-labels | ISO 32000-2:2020 12.4.2, Table 161, S entry | [593](https://github.com/pdf-association/pdf-issues/issues/593) | For styles A and a, number successive groups of 26 pages with repeated copies of the same uppercase or lowercase letter. `tests/test_page_labels.py::test_alphabetic_labels_repeat_letters_in_blocks_of_26[uppercase]`, `tests/test_page_labels.py::test_alphabetic_labels_repeat_letters_in_blocks_of_26[lowercase]` |
+| permissions-r5 | ISO 32000-2:2020 7.6.4.3.3, 7.6.4.4.9 and 7.6.4.4.12 | [24](https://github.com/pdf-association/pdf-issues/issues/24) | Decrypt the 16-byte permissions value using the document key; compare the permission bits and metadata indicator. References: FIPS PUB 197 (2001), AES-256, NIST SP 800-38A (2001), ECB. `tests/test_security_corrections.py::test_permissions_are_one_ecb_block_under_the_document_key[read-r5]` |
+| permissions-r6 | ISO 32000-2:2020 7.6.4.3.3, 7.6.4.4.9 and 7.6.4.4.12 | [24](https://github.com/pdf-association/pdf-issues/issues/24) | Decrypt the 16-byte permissions value using the document key; compare the permission bits and metadata indicator. References: FIPS PUB 197 (2001), AES-256, NIST SP 800-38A (2001), ECB. `tests/test_security_corrections.py::test_permissions_are_one_ecb_block_under_the_document_key[read-r6]`, `tests/test_security_corrections.py::test_permissions_are_one_ecb_block_under_the_document_key[write-r6]` |
+| password-hash-user | ISO 32000-2:2020 7.6.4.3.4 | [325](https://github.com/pdf-association/pdf-issues/issues/325) | Check 64 repetitions of the password and hash with no user entry. References: FIPS 180-4 (2015), SHA-256/384/512, FIPS PUB 197 (2001), AES-128. `tests/test_security_corrections.py::test_revision_six_uses_the_correct_password_hash_sequence[user]` |
+| legacy-padding-user | ISO 32000-2:2020 7.6.4.4.2 | [643](https://github.com/pdf-association/pdf-issues/issues/643) | Authenticate the user role with both a short password and a 32-byte truncation boundary. `tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[2-user]`, `tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[3-user]`, `tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[4-user]` |
+| password-hash-owner | ISO 32000-2:2020 7.6.4.3.4 | [325](https://github.com/pdf-association/pdf-issues/issues/325) | Check 64 repetitions with the entire user entry included for the owner. References: FIPS 180-4 (2015), SHA-256/384/512, FIPS PUB 197 (2001), AES-128. `tests/test_security_corrections.py::test_revision_six_uses_the_correct_password_hash_sequence[owner]` |
+| legacy-padding-owner | ISO 32000-2:2020 7.6.4.4.2 | [643](https://github.com/pdf-association/pdf-issues/issues/643) | Authenticate the owner role with both a short password and a 32-byte truncation boundary. `tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[2-owner]`, `tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[3-owner]`, `tests/test_security_corrections.py::test_legacy_passwords_use_the_32_byte_padding_step_for_both_roles[4-owner]` |
+| standard-filter-r4 | ISO 32000-2:2020 7.6.4.1 | [89](https://github.com/pdf-association/pdf-issues/issues/89) | The newly written standard dictionary selects a single StdCF with the proper content cipher and DocOpen event. References: ISO 32000-2:2020, 7.6.6. `tests/test_security_corrections.py::test_standard_handler_authoring_selects_one_named_docopen_filter[4]` |
+| standard-filter-r6 | ISO 32000-2:2020 7.6.4.1 | [89](https://github.com/pdf-association/pdf-issues/issues/89) | The newly written standard dictionary selects a single StdCF with the proper content cipher and DocOpen event. References: ISO 32000-2:2020, 7.6.6. `tests/test_security_corrections.py::test_standard_handler_authoring_selects_one_named_docopen_filter[6]` |
+| standard-filter-read-legacy | ISO 32000-2:2020 7.6.4.1 | [89](https://github.com/pdf-association/pdf-issues/issues/89) | Read the existing single named filter of an R4 RC4 or R5 AES file. `tests/test_security_corrections.py::test_existing_standard_handler_retains_a_single_docopen_crypt_filter[standard-rc4-r4]`, `tests/test_security_corrections.py::test_existing_standard_handler_retains_a_single_docopen_crypt_filter[standard-aes-r5]` |
+| legacy-id-note | ISO 32000-2:2020 7.6.4.3.2 and 7.6.4.3.3 | [53](https://github.com/pdf-association/pdf-issues/issues/53) | Correct the explanatory notes about which algorithm uses the first trailer identifier. The corrected notes describe an existing algorithm dependency; they introduce no new processor step. |
+| standard-table-typo | ISO 32000-2:2020 7.6.4.2 | [674](https://github.com/pdf-association/pdf-issues/issues/674) | Correct a word in the encryption dictionary description. The word spacing changes no key, value or algorithm. |
+| hash-modulo-note | ISO 32000-2:2020 4.1.1 and 7.6.4.3.4 | [792](https://github.com/pdf-association/pdf-issues/issues/792) | Explain the equivalent arithmetic for the selector in the R6 password hash. The implementation note permits an equivalent modulo-three calculation; the existing wire output is identical. |
+| credentials-and-saves-standard-aes-r4 | ISO 32000-2:2020 7.6.4.2 and 7.6.4.4 | — | Match both access roles and retained ciphertext after editing and reopening this handler revision. `tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-aes-r4]` |
+| credentials-and-saves-standard-aes-r5 | ISO 32000-2:2020 7.6.4.2 and 7.6.4.4 | — | Match both access roles and retained ciphertext after editing and reopening this handler revision. `tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-aes-r5]` |
+| credentials-and-saves-standard-aes-r6 | ISO 32000-2:2020 7.6.4.2 and 7.6.4.4 | — | Match both access roles and retained ciphertext after editing and reopening this handler revision. `tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-aes-r6]` |
+| credentials-and-saves-standard-rc4-r2 | ISO 32000-2:2020 7.6.4.2 and 7.6.4.4 | — | Match both access roles and retained ciphertext after editing and reopening this handler revision. `tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-rc4-r2]` |
+| credentials-and-saves-standard-rc4-r3 | ISO 32000-2:2020 7.6.4.2 and 7.6.4.4 | — | Match both access roles and retained ciphertext after editing and reopening this handler revision. `tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-rc4-r3]` |
+| credentials-and-saves-standard-rc4-r4 | ISO 32000-2:2020 7.6.4.2 and 7.6.4.4 | — | Match both access roles and retained ciphertext after editing and reopening this handler revision. `tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-rc4-r4]` |
+| archival-xmp-id | ISO 19005-4:2020 6.7.3 | [123](https://github.com/pdf-association/pdf-issues/issues/123) | Use the PDF/A identification namespace, revision 2020 and the absence of an optional E/F identification on plain PDF/A-4. References: ISO 16684-1:2019, XMP data model and serialization, ISO 32000-2:2020, 14.3.2. `tests/test_pdfa_corpus.py::test_part_four_records_the_identification_namespace_revision_and_specific_flavour[pdfa-4.pdf]` |
+| archival-77 | ISO 19005-4:2020 6.2.10.3.1 | [77](https://github.com/pdf-association/pdf-issues/issues/77) | Compare a predefined CMap supplement with the descendant CIDFont. References: ISO 32000-2:2020. #902 |
+| archival-104 | ISO 19005-4:2020 6.2.9 | [104](https://github.com/pdf-association/pdf-issues/issues/104) | Determine annotation transparency from opacity, blend mode and appearance under Annex Q. References: ISO 32000-2:2020. #911 |
+| archival-391 | ISO 19005-4:2020 6.9 and ISO 32000-2:2020, 7.11.3 | [391](https://github.com/pdf-association/pdf-issues/issues/391) | Distinguish associated files from file attachment annotations and verify relationship requirements. References: ISO 32000-2:2020. #911 |
+| archival-428 | ISO 19005-4:2020 6.2 and ISO 32000-2:2020, 8.7.3.1 | [428](https://github.com/pdf-association/pdf-issues/issues/428) | Refuse or report an overlapping tile whose result depends on renderer order. References: ISO 32000-2:2020. #896 |
+| archival-renderer-role | ISO 19005-4:2020 2 and 6.2 | — | Identify obligations that apply only to a conforming presentation processor. Writing and preserving a file do not exercise a conforming presentation processor. The separate interpret dimension retains rendering obligations. |
+| archival-full-ruleset | ISO 19005-4:2020 6 | — | Review the remaining independently observable archival constraints before making a flavour-wide claim. #911 |
 
 <details markdown="1"><summary>Corrections by upstream issue number</summary>
 
@@ -1000,6 +1029,10 @@ before a test can be cited for that specific correction. The register gives no a
 - `_UniversalArray` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
 - `_UniversalDictionary` interpret: n/a, 7.3: these generic containers admit arbitrary PDF objects; the referring clause supplies their meaning.
 - `flate-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.
+- `standard-rc4-r2` create: non-goal, #256: Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content.
+- `standard-rc4-r3` create: non-goal, #256: Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content.
+- `standard-rc4-r4` create: non-goal, #256: Creating a newly RC4-encrypted document is excluded. Both save modes can keep an existing handler while updating encrypted content.
+- `standard-aes-r5` create: non-goal, https://github.com/yhay81/pyropdf/blob/main/DESIGN.md#45-encryption: New AES-256 password encryption uses revision 6. The legacy revision 5 handler can be opened and kept while editing.
 - `lexical-conventions` interpret: n/a, 7.2: lexical conventions define file tokens only, whose parsing Read covers.
 - `basic-objects` interpret: n/a, 7.3: basic objects are syntax values, whose clause-specific meaning later clauses cover.
 - `asciihex-filter` interpret: n/a, 7.4: a filter only encodes the data of a stream, whose decoded data Read covers.
