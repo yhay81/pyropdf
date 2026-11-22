@@ -357,6 +357,53 @@ How a `LayerStateChange` updates optional content groups (ISO 32000-2 Table 217)
 
 Members: `ON`, `OFF`, `TOGGLE`.
 
+## `MovieAction`
+
+```python
+MovieAction(page: Page, action: typed.ActionMovie)
+```
+
+An existing Movie action interpreted on its destination page (ISO 32000-1 §12.6.4.9).
+
+Pass the destination page of the link or outline, or the page associated
+with the action. Titles identify movie annotations on that page.
+
+### `MovieAction.target`
+
+```python
+MovieAction.target: typed.AnnotMovie
+```
+
+Resolve the action's unique title or direct annotation reference on the destination page.
+
+Assign a title to write a title-based target, or an indirect movie
+annotation view to write a reference. Both forms replace the previous
+target in one transaction.
+
+Settable.
+
+### `MovieAction.start`
+
+```python
+MovieAction.start: tuple[int, int | None]
+```
+
+Effective start as (ticks, ticks per second), using the movie's time scale when the second value is None.
+
+Assign a pair to override the annotation or None to inherit its setting.
+
+Settable.
+
+### `MovieAction.duration`
+
+```python
+MovieAction.duration: tuple[int, int | None] | None
+```
+
+Effective (ticks, ticks per second), or None to play to the end. Assign None to inherit the annotation.
+
+Settable.
+
 ## `PageTrigger`
 
 Page additional-action events (`Page["AA"]`, ISO 32000-2 Table 198).

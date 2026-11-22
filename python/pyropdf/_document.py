@@ -40,9 +40,11 @@ from pyropdf._collections import (
 )
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
+from pyropdf._core import read_operation as _read_operation
 from pyropdf._encryption import (
     Access,
     Encryption,
+    IntegrityReport,
     Permissions,
     RecipientCredential,
     RecipientEncryption,
@@ -62,7 +64,7 @@ from pyropdf._fonts import (
 )
 from pyropdf._form import Form
 from pyropdf._history import History, Transaction
-from pyropdf._images import ImageRewriteReport, remove_image, replace_image, rewrite_images
+from pyropdf._images import ImageRewriteReport, image_for_output, remove_image, replace_image, rewrite_images
 from pyropdf._layers import Layers
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._links import Destinations
@@ -72,6 +74,7 @@ from pyropdf._measurement import (
     _read_document_requirements,
     _write_document_requirements,
 )
+from pyropdf._media import SlideShow, alternate_presentations
 from pyropdf._metadata import (
     METADATA_KEYS,
     MarkInfo,
@@ -99,6 +102,7 @@ from pyropdf._metadata import (
     write_viewer_preferences,
     write_xmp,
 )
+from pyropdf._name_resources import NamedResources
 from pyropdf._objects import Dictionary, Objects, Stream, _catalog, _trailer
 from pyropdf._outline import Outline, OutlineEntry, _write_outline
 from pyropdf._page import _clip_box, _ExportPage, _render_scale
@@ -133,6 +137,7 @@ from pyropdf._signing import timestamp as _timestamp
 from pyropdf._structure import StructureTree, _delete_structure_tree
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 from pyropdf._threads import Threads, _delete_all_threads
+from pyropdf._web_capture import WebCapture
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -219,6 +224,12 @@ class Document:
         """Return the pages, a sequence of :class:`Page` handles that edits keep valid."""
         self._ensure_open()
         return Pages(self)
+
+    @property
+    def alternate_presentations(self) -> dict[bytes, SlideShow]:
+        """Read the catalog's multi-level AlternatePresentations name tree as existing slideshows."""
+        self._ensure_open()
+        return alternate_presentations(self)
 
     @property
     def attachments(self) -> Attachments:
@@ -346,6 +357,48 @@ class Document:
         return objects
 
     @property
+    def base_uri(self) -> str | None:
+        """Return the base URI for relative URI actions in this document."""
+        from pyropdf._objects import Dictionary, String, _catalog  # noqa: PLC0415
+
+        uri = _catalog(self).get("URI")
+        value = uri.get("Base") if isinstance(uri, Dictionary) else None
+        return bytes(value).decode("utf-8", "replace") if isinstance(value, String) else None
+
+    @base_uri.setter
+    def base_uri(self, value: str) -> None:
+        from pyropdf._actions import _check_text_budget, _non_empty_str  # noqa: PLC0415
+        from pyropdf._metadata import _require_version  # noqa: PLC0415
+        from pyropdf._objects import Dictionary, _catalog  # noqa: PLC0415
+
+        _check_text_budget((_non_empty_str(value, "base_uri"),), "base URI")
+        with self.transaction("set catalog base URI"):
+            catalog = _catalog(self)
+            uri = catalog.get("URI")
+            _require_version(self, catalog, (1, 1))
+            if isinstance(uri, Dictionary):
+                uri["Base"] = value.encode()
+            else:
+                catalog["URI"] = {"Base": value.encode()}
+
+    @base_uri.deleter
+    def base_uri(self) -> None:
+        from pyropdf._objects import Dictionary, _catalog  # noqa: PLC0415
+
+        with self.transaction("remove catalog base URI"):
+            catalog = _catalog(self)
+            uri = catalog.get("URI")
+            if isinstance(uri, Dictionary) and "Base" in uri:
+                del uri["Base"]
+                if not uri:
+                    del catalog["URI"]
+
+    def named_resources(self, kind: str) -> NamedResources:
+        """Return the resource objects of a catalog name tree indexed by PDF byte-string keys."""
+        self._ensure_open()
+        return NamedResources(self, kind)
+
+    @property
     def destinations(self) -> Destinations:
         """Return the named destinations, a read-only mapping from name to :class:`Destination`."""
         self._ensure_open()
@@ -392,6 +445,12 @@ class Document:
     def structure(self) -> None:
         self._ensure_open()
         _delete_structure_tree(self)
+
+    @property
+    def web_capture(self) -> WebCapture:
+        """Return the stored Web Capture database and its URL and identifier indexes."""
+        self._ensure_open()
+        return WebCapture(self)
 
     @property
     def threads(self) -> Threads:
@@ -502,6 +561,19 @@ class Document:
         """
         self._ensure_open()
         return _profiles(self)
+
+    def image_for_output(self, xref: int, /, *, printing: bool = False) -> Stream | None:
+        """Return the image stream selected for display or print, or ``None`` for a hidden base image.
+
+        This reads the current layer configuration and the ordered ``/Alternates``
+        entries using the corrected ISO 32000-2 §8.9.5.4 selection rules. The
+        returned stream can be inspected or edited through its Arlington view.
+        Page rendering currently uses the base image for alternate-only visibility.
+        """
+        if not isinstance(printing, bool):
+            msg = f"printing must be a bool: {printing!r}"
+            raise TypeError(msg)
+        return _read_operation(self._core(), lambda _budget: image_for_output(self, xref, printing=printing))
 
     def replace_image(self, xref: int, data: bytes) -> None:
         """Replace image object ``xref`` with JPEG, JPEG 2000, or PNG ``data``, in one transaction.
@@ -956,6 +1028,16 @@ class Document:
         self._ensure_open()
         return _core.security_state(self._doc)[4]
 
+    def verify_integrity(self) -> IntegrityReport:
+        """Verify the document MAC over the selected revision's original bytes.
+
+        The result reports ISO/TS 32004:2024 integrity independently of password
+        access and signature trust. Unsaved edits receive their MAC when saved.
+        """
+        self._ensure_open()
+        status, location, reason = _core.verify_integrity(self._doc)
+        return IntegrityReport(status=status, location=location, reason=reason)
+
     @property
     def permissions(self) -> Permissions:
         """Return what the document permits, as :class:`Permissions` flags.
@@ -1027,6 +1109,8 @@ class Document:
         :attr:`Encryption.KEEP` keeps it in a full save too, copying its
         untouched encrypted bytes, and an :class:`Encryption` encrypts a full
         save anew.
+        A document with an ISO/TS 32004 MAC requires retained or replacement
+        MAC protection. Use an incremental save for a signed MAC revision.
 
         ``prune=True`` writes only the objects that the trailer reaches, so
         what an edit unlinked leaves the file; the document in memory keeps
@@ -1230,6 +1314,7 @@ class Document:
         *,
         doc_mdp: DocMdpPermission | None = None,
         field_lock: FieldLock | None = None,
+        seed_values: Mapping[str, object] | None = None,
         is_timestamp: bool = False,
         reason: str | None = None,
         location: str | None = None,
@@ -1242,7 +1327,10 @@ class Document:
         none exists, writes ``/Lock`` for ``field_lock`` and ``/SV`` seed values
         for ``doc_mdp``, ``is_timestamp``, and ``reason``, and returns the field
         dictionary's object number so external signers such as pyHanko (or a
-        subsequent :meth:`sign` call) can fill it cleanly.
+        subsequent :meth:`sign` call) can fill it cleanly. ``seed_values``
+        adds or updates entries of the ISO seed dictionary. Use
+        :class:`Name` for PDF names and lists for PDF arrays. Other entries
+        and other fields sharing the old seed dictionary retain their values.
         """
         self._ensure_open()
         return _prepare_signature(
@@ -1250,6 +1338,7 @@ class Document:
             field,
             doc_mdp=doc_mdp,
             field_lock=field_lock,
+            seed_values=seed_values,
             is_timestamp=is_timestamp,
             reason=reason,
             location=location,
@@ -1268,6 +1357,7 @@ class Document:
         reason: str | None = None,
         location: str | None = None,
         contact: str | None = None,
+        build_properties: Mapping[str, Mapping[str, object]] | None = None,
         reserve: int = DEFAULT_RESERVE,
     ) -> bytes:
         """Sign the document as PAdES B-B, or B-T with ``timestamper``, in a new revision, and return its bytes.
@@ -1281,7 +1371,15 @@ class Document:
         ``location``, and ``contact`` become ``/Reason``, ``/Location``, and
         ``/ContactInfo``. ``doc_mdp`` certifies an unsigned document with a
         ``DocMDP`` transform and ``Catalog['Perms']['DocMDP']``, and
-        ``field_lock`` records a ``FieldMDP`` transform.
+        ``field_lock`` records a ``FieldMDP`` transform. An existing field's
+        lock and required seed values must permit the requested signature.
+        The direct ``/Prop_Build`` dictionary records pyropdf's name and version
+        by default. Supply ``build_properties`` with PDF build entries for
+        ``App``, ``Filter``, ``PubSec`` or ``SigQ`` to identify the signing components.
+        Required seed conditions that the CAdES profile cannot satisfy, including
+        a named signature appearance or an explicit CMS signature policy, raise
+        :class:`ValueError`. Checking certificate issuer, subject DN, policy OIDs
+        or key usage requires the optional ``cryptography`` package.
 
         ``timestamper`` receives the digest of the signature value and the
         name of its hash algorithm, and returns an RFC 3161 time-stamp token
@@ -1296,8 +1394,8 @@ class Document:
 
         Signing runs as one transaction, which other threads' edits wait
         for. Signing inside a transaction raises :class:`PdfError`, as does
-        a callback that edits the document. An encrypted document raises
-        :class:`ValueError`.
+        a callback that edits the document. An encrypted document requires a valid
+        document MAC, which the new signature renews as an unsigned attribute.
         """
         return _sign(
             self,
@@ -1309,6 +1407,7 @@ class Document:
             reason=reason,
             location=location,
             contact=contact,
+            build_properties=build_properties,
             reserve=reserve,
         )
 
@@ -1318,16 +1417,18 @@ class Document:
         *,
         field: str = "DocTimeStamp",
         reserve: int = DEFAULT_RESERVE,
+        digest_algorithm: str = "sha256",
     ) -> bytes:
         """Append an RFC 3161 ``/DocTimeStamp`` revision to the document and return its bytes (ISO 32000-2 §12.8.5).
 
-        ``timestamper`` receives the SHA-256 digest of the signed byte ranges
-        and ``"sha256"``, and returns the DER of an RFC 3161 ``TimeStampToken``
+        ``timestamper`` receives the digest of the signed byte ranges and its name.
+        Choose SHA-2 (``sha256`` by default), ``sha3_256``, ``sha3_384``,
+        ``sha3_512`` or ``shake256``. The callback returns the DER of an RFC 3161 ``TimeStampToken``
         stamping that digest; pyropdf makes no network access. Afterwards the
         document reads the timestamped revision and earlier signatures remain
         intact.
         """
-        return _timestamp(self, timestamper, field=field, reserve=reserve)
+        return _timestamp(self, timestamper, field=field, reserve=reserve, digest_algorithm=digest_algorithm)
 
     def render(  # noqa: PLR0913 - the rendering and batch options are all keyword-only
         self,

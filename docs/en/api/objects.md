@@ -319,6 +319,8 @@ Add a stream of decoded `data`, in one transaction, and return its object number
 `dictionary` supplies further stream entries. The stream length and
 filter entries are derived from the data, `filter` and `decode_parms`
 as in `Stream.write`.
+A leading `/Crypt` in `dictionary` retains its security selector and
+parameters with every encoding.
 
 ## `Real`
 
@@ -477,6 +479,18 @@ Stream.__contains__(key: object) -> bool
 
 Return whether `key` is present, without resolving its value.
 
+### `Stream.opi`
+
+```python
+Stream.opi: typed.OPIVersion13Dict | typed.OPIVersion20Dict | None
+```
+
+The existing OPI proxy description on an image or Form.
+
+The version selects the live Arlington view of the file specification
+and stored image parameters. OPI 2.0 requires a Form. Image masks
+ignore OPI. No source file is opened.
+
 ### `Stream.read`
 
 ```python
@@ -485,6 +499,7 @@ Stream.read(*, decode: bool = True, max_size: int | None = 67108864) -> bytes
 
 Return the stream data, decoded through its filters unless `decode` is false.
 
+Indirect filter names and parameters are read from the current revision.
 hayro-syntax decodes the filters, and a filter that it does not
 decode, such as an image filter, raises `PdfError` instead of
 returning encoded bytes. `max_size` bounds the result with
@@ -513,6 +528,8 @@ for a name or one mapping or `None` per filter in a chain. LZW accepts
 `EarlyChange`; Flate and LZW accept TIFF and PNG predictor parameters.
 Predictors currently support up to 255 bits per pixel. TIFF predictor
 rows must fill whole bytes so every row can be read back.
+A leading `/Crypt` filter keeps the same recipients and shared security
+parameters. An unchanged filter chain keeps its indirect declarations.
 
 ## `String`
 

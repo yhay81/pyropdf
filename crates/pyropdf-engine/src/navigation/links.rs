@@ -206,7 +206,13 @@ impl<'v, 'b> PageAnnots<'v, 'b> {
         })
     }
 
-    fn write_items(&self, transaction: &mut Transaction, items: Array) -> Result<()> {
+    fn write_items(&self, transaction: &mut Transaction, mut items: Array) -> Result<()> {
+        crate::annotations::read::keep_trap_last(
+            self.version,
+            &self.items,
+            &mut items,
+            self.budget,
+        )?;
         if let Some(array) = self.array
             && !self.shared()
         {

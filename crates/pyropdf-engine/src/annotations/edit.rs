@@ -56,10 +56,10 @@ pub(super) fn with_page_edit<T>(
     result.map(Some)
 }
 
-/// Refuses a free-text annotation whose text cannot be drawn by a Standard 14
-/// font or overflows its rectangle.
+/// Refuses text that its standard font or appearance rectangle cannot draw.
 pub(super) fn check_text(annots: &PageAnnots<'_>, dict: &Dict) -> Result<()> {
-    if !matches!(dict.get("Subtype"), Some(Value::Name(name)) if name.as_bytes() == b"FreeText") {
+    if !matches!(dict.get("Subtype"), Some(Value::Name(name)) if matches!(name.as_bytes(), b"FreeText" | b"Line"))
+    {
         return Ok(());
     }
     let drawn = appearance(&annots.reader(), dict)?;
@@ -67,6 +67,9 @@ pub(super) fn check_text(annots: &PageAnnots<'_>, dict: &Dict) -> Result<()> {
         Some(TextFit::Unfit) => Err(AnnotationError::Pdf(
             "the text does not fit in the free text's rectangle; enlarge it or use a smaller size"
                 .to_owned(),
+        )),
+        Some(TextFit::NotWinAnsi) if matches!(dict.get("Subtype"), Some(Value::Name(n)) if n.as_bytes() == b"Line") => Err(AnnotationError::Pdf(
+            "Standard 14 line captions require WinAnsi characters; supply an embedded caption font".to_owned(),
         )),
         Some(TextFit::NotWinAnsi) => Err(AnnotationError::Pdf(
             "free text draws in a Standard 14 font, which prints WinAnsi characters only; \
@@ -1048,6 +1051,13 @@ impl PageAnnots<'_> {
         let (position, mut dict) = self.find(index, id)?;
         let subtype_bytes = self.name(&dict, "Subtype")?.unwrap_or_default();
         let subtype = String::from_utf8_lossy(&subtype_bytes);
+        if matches!(subtype.as_ref(), "PrinterMark" | "TrapNet")
+            && patch.flags.is_some_and(|flags| flags != 68)
+        {
+            return Err(AnnotationError::Pdf(
+                "printer's marks and trap networks require the Print and ReadOnly flags".into(),
+            ));
+        }
         let mut minimum = patch.minimum_version(&subtype);
         let current = effective_version(transaction.version(), self.budget)?;
         let auto_version = automatic_version(transaction.version(), current, minimum, self.budget)?;
@@ -1071,7 +1081,7 @@ impl PageAnnots<'_> {
     }
 
     /// Shapes and (when `font` is `Some`) writes the normal appearance of a
-    /// free-text annotation in embedded OpenType `face`.
+    /// free-text annotation or line caption in embedded OpenType `face`.
     pub fn draw_face(
         &self,
         transaction: &mut Transaction,
@@ -1099,7 +1109,8 @@ impl PageAnnots<'_> {
         let mut text = FaceText::new(face, font, budget)?;
         let Some(drawn) = face_appearance(&self.reader(), &dict, &mut text)? else {
             return Err(AnnotationError::Pdf(
-                "only a free text with a usable rectangle draws in an embedded face".to_owned(),
+                "an embedded face needs a free text or captioned line with usable geometry"
+                    .to_owned(),
             ));
         };
         match drawn.text_fit() {
@@ -1129,6 +1140,13 @@ impl PageAnnots<'_> {
             let reference = transaction.allocate()?;
             let form = drawn.stored_form(transaction, budget)?;
             transaction.write(reference.number(), &Value::from(form), budget)?;
+            if drawn.fitted {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the single fitted annotation rectangle"
+                )]
+                dict.insert(Name::from("Rect"), super::numbers_array(&drawn.rect));
+            }
             let mut appearances = self.reader().appearances(&dict)?;
             #[expect(
                 clippy::disallowed_methods,
@@ -1158,7 +1176,7 @@ impl PageAnnots<'_> {
         self.remove_with_references(transaction, handles, &refs::Cache::new())
     }
 
-    /// Uses the document's reverse-reference cache to refuse detaching media
+    /// Uses the document's reverse-reference cache to refuse detaching print and media
     /// targets while an action or measurement outside the removal still uses them.
     pub fn remove_with_references(
         &self,
@@ -1167,15 +1185,15 @@ impl PageAnnots<'_> {
         references: &refs::Cache,
     ) -> Result<()> {
         let budget = self.budget;
-        let mut media = BudgetVec::new(budget);
+        let mut targets = BudgetVec::new(budget);
         budget.check(LimitCode::AnnotationCount, handles.len() as u64)?;
         let mut positions = BudgetVec::new(budget);
         for &(index, id) in handles {
             let (position, dict) = self.find(index, id)?;
             budget.poll()?;
             positions.try_push(position)?;
-            if id.0 != 0 && super::is_media_annotation(&dict) {
-                media.try_push(id.0)?;
+            if id.0 != 0 && super::is_linked_annotation(self.pages().0, &dict, budget)? {
+                targets.try_push(id.0)?;
             }
             if let Some(Value::Reference(popup)) = dict.get("Popup")
                 && let Some(position) = self
@@ -1209,12 +1227,12 @@ impl PageAnnots<'_> {
             }
         }
         self.write_items(transaction, Array::from(kept.into_vec()), budget)?;
-        if !media.is_empty() {
+        if !targets.is_empty() {
             let index = references.in_transaction(transaction, budget)?;
-            let unused = refs::unreferenced(&index, &[], &media, budget)?;
-            if media.iter().any(|n| unused.binary_search(n).is_err()) {
+            let unused = refs::unreferenced(&index, &[], &targets, budget)?;
+            if targets.iter().any(|n| unused.binary_search(n).is_err()) {
                 return Err(AnnotationError::Value(
-                    "the multimedia annotation is still referenced; remove its action or measurement link first".into(),
+                    "the annotation is still referenced; remove its action or measurement link first".into(),
                 ));
             }
             for &number in unused.iter() {
@@ -1272,7 +1290,7 @@ pub fn annotation_edit(
     )
 }
 
-/// Draws the free-text annotation `(index, id)` in embedded OpenType `face`.
+/// Draws the annotation text `(index, id)` in embedded OpenType `face`.
 #[expect(
     clippy::too_many_arguments,
     reason = "page identity, annotation handle identity, embedded face, and optional font mapping"

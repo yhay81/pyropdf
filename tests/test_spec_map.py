@@ -68,6 +68,16 @@ def test_the_map_is_current() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_both_crypt_filter_clauses_credit_the_indirect_stream_operations() -> None:
+    mapped = features()
+    evidence = "tests/test_encrypted.py::test_indirect_private_stream_parameters_remain_shared_after_replacement"
+    for feature in ("crypt-filter", "crypt-filters"):
+        for dimension in ("read", "create", "edit", "preserve"):
+            cell = mapped[feature][dimension]
+            assert evidence in cell["tests"]
+            assert cell.get("issue") != 1056  # The store implements the indirect selectors covered by this issue.
+
+
 def test_every_arlington_object_has_a_read_status_backed_by_a_named_test() -> None:
     names = sorted(path.stem for path in (ROOT / "tools/arlington/model/tsv").glob("*.tsv"))
     mapped = features()
@@ -356,7 +366,9 @@ def test_work_index_accounts_for_all_unfinished_cells_in_both_directions() -> No
     upstream = features()["optional-content"]["interpret"]
     assert upstream["issue"] == upstream["upstream"] == 372
     assert families[upstream["family"]]["kind"] == "upstream"
-    assert features()["optional-content"]["edit"]["issue"] != upstream["issue"]
+    edited = features()["optional-content"]["edit"]
+    assert edited["status"] == "done"
+    assert "issue" not in edited
 
 
 def test_an_unassigned_cell_prevents_generation(tmp_path: Path) -> None:
@@ -448,6 +460,8 @@ def record_evidence(root: Path) -> dict:
         for dim in DIMENSIONS
         for test in feature[dim].get("tests", [])
     }
+    for row in spec_map["inventory"].get("behaviors", []):
+        tests.update(dict.fromkeys(row.get("tests", []), "passed"))
     for test in (
         "tests/test_preservation.py::test_an_edit_and_a_save_keep_every_untouched_object[full]",
         "tests/test_consistency.py::test_an_edit_and_a_save_add_no_qpdf_finding[full]",
@@ -488,7 +502,7 @@ def claim(
 
 
 def test_a_claim_holds_only_when_every_applicable_dimension_in_scope_is_done(tmp_path: Path) -> None:
-    held = claim(copy_root(tmp_path / "a"), 'features = ["standard-security-handler"]\n')
+    held = claim(copy_root(tmp_path / "a"), 'features = ["standard-aes-r6"]\n')
     assert held.returncode == 0, held.stdout + held.stderr
     assert "The claim holds." in held.stdout
     assert "Full inventory: " in held.stdout
@@ -499,6 +513,29 @@ def test_a_claim_holds_only_when_every_applicable_dimension_in_scope_is_done(tmp
     assert "- lzw-filter read is partial" in blocked.stdout
 
 
+@pytest.mark.parametrize("selector", ['clauses = ["7.6.4"]', 'features = ["standard-security-handler"]'])
+def test_password_handler_claim_distinguishes_rc4_creation_from_legacy_interpretation(
+    tmp_path: Path, selector: str
+) -> None:
+    root = copy_root(tmp_path)
+    result = claim(root, selector)
+    assert result.returncode == 1
+    for method in ("standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4"):
+        assert f"{method} create is non-goal" in result.stdout
+        assert f"{method} interpret is engine" in result.stdout
+    scope = json.loads((root / "docs/spec-map.json").read_text())
+    legacy = next(row for row in scope["features"] if row["feature"] == "standard-aes-r4")
+    assert legacy["interpret"]["upstream"] == 1043
+    assert "either role" in legacy["description"]
+    assert "standard-aes-r5 create is non-goal" in result.stdout
+    evidence = record_evidence(root)
+    node = "tests/test_encrypted.py::test_aes_authoring_sets_the_exact_revision_and_permissions[standard-aes-r6]"
+    assert evidence["tests"].pop(node) == "passed"
+    missing = claim(root, 'features = ["standard-aes-r6"]', evidence)
+    assert missing.returncode == 1
+    assert node in missing.stdout
+
+
 def test_clause_claims_resolve_typed_objects_and_report_their_work(tmp_path: Path) -> None:
     root = copy_root(tmp_path)
     mapped = json.loads((root / MAP).read_bytes())
@@ -507,18 +544,37 @@ def test_clause_claims_resolve_typed_objects_and_report_their_work(tmp_path: Pat
     (root / MAP).write_text(json.dumps(mapped))
     broad = claim(root, 'clauses = ["7.6.4"]\nfeatures = ["EncryptionStandard"]')
     assert broad.returncode == 1, broad.stderr
-    assert "Resolved features: EncryptionStandard, standard-security-handler\n" in broad.stdout
-    assert "of 10 applicable dimensions of 2 features" in broad.stdout
+    security_rows = (
+        "EncryptionStandard, standard-aes-r4, standard-aes-r5, standard-aes-r6, "
+        "standard-rc4-r2, standard-rc4-r3, standard-rc4-r4, standard-security-handler"
+    )
+    assert f"Resolved features: {security_rows}\n" in broad.stdout
+    assert "of 40 applicable dimensions of 8 features" in broad.stdout
     assert "EncryptionStandard edit is planned (#889)" in broad.stdout
     parent = claim(root, 'clauses = ["7.6"]')
     assert "EncryptionStandard edit is planned (#889)" in parent.stdout
     pages = claim(root, 'clauses = ["7.7.3"]')
     assert "Resolved features: PageObject, PageTreeNode, PageTreeNodeRoot, page-objects, page-tree\n" in pages.stdout
     narrow = claim(root, 'features = ["page-tree"]', metadata={"input-profiles": ["PDF/UA-2"]})
-    assert narrow.returncode == 0, narrow.stderr + narrow.stdout
+    assert narrow.returncode == 1, narrow.stderr + narrow.stdout
+    assert "pdf-issues#106" in narrow.stdout
     assert "Resolved features: page-tree\n" in narrow.stdout
     assert "Input context (declared, unverified): profiles PDF/UA-2" in narrow.stdout
     assert "page-tree edit tests: tests/test_pages.py::" in narrow.stdout
+
+
+@pytest.mark.parametrize("case", ["uppercase", "lowercase"])
+def test_page_label_scope_requires_each_corrected_alphabetic_sequence(tmp_path: Path, case: str) -> None:
+    root = copy_root(tmp_path)
+    evidence = record_evidence(root)
+    node = f"tests/test_page_labels.py::test_alphabetic_labels_repeat_letters_in_blocks_of_26[{case}]"
+    del evidence["tests"][node]
+
+    result = claim(root, 'features = ["page-labels"]', evidence)
+    assert result.returncode == 1, result.stderr
+    assert any(
+        "pdf-issues#593" in line and f"Missing passing evidence: {node}" in line for line in result.stdout.splitlines()
+    )
 
 
 def test_claimed_standards_require_their_own_passing_evidence(tmp_path: Path) -> None:
@@ -545,6 +601,26 @@ def test_claimed_standards_require_their_own_passing_evidence(tmp_path: Path) ->
         if feature["feature"] in rows:
             for dim in DIMENSIONS:
                 feature[dim] = {"status": "done", "tests": [f"tests/test_example.py::test_{dim}[{feature['feature']}]"]}
+    # Supply direct correction observations too, even though this synthetic
+    # case already passes every feature-level parameter.
+    for correction in mapped["inventory"]["corrections"]:
+        selected = sorted(set(correction["features"]) & (rows | {"page-tree"}))
+        if not selected or not correction["dimensions"]:
+            continue
+        correction["section_sha256"] = "1" * 64
+        mapped["inventory"]["behaviors"].append(
+            {
+                "id": f"synthetic-{correction['issue']}",
+                "edition": "Fixture edition",
+                "provision": "Fixture clause",
+                "correction": correction["issue"],
+                "reviewed_sha256": correction["section_sha256"],
+                "features": selected,
+                "dimensions": correction["dimensions"],
+                "summary": "Observed the correction directly.",
+                "tests": [f"tests/test_example.py::test_correction[{correction['issue']}]"],
+            }
+        )
     (root / MAP).write_text(json.dumps(mapped))
     passed = claim(root, scope, metadata=metadata)
     assert passed.returncode == 0, passed.stdout + passed.stderr
@@ -583,7 +659,8 @@ def test_scope_checks_versions_standards_and_the_public_label(tmp_path: Path) ->
             "input-extensions": ["ISO/TS 32005:2023"],
         },
     )
-    assert accepted.returncode == 0, accepted.stderr + accepted.stdout
+    assert accepted.returncode == 1, accepted.stderr + accepted.stdout
+    assert "pdf-issues#106" in accepted.stdout
     assert "Claim: Mapped features page-tree" in accepted.stdout
     assert "All of PDF" not in accepted.stdout
     for clause, error in (("7.6.400", "unknown clause"), ("Foreword", "clause has no mapped operations")):
@@ -635,9 +712,11 @@ def test_a_claim_rejects_empty_scopes_and_invalid_exclusions(tmp_path: Path) -> 
 
 def test_a_claim_requires_the_named_tests_and_validators_at_the_revision(tmp_path: Path) -> None:
     root = copy_root(tmp_path)
-    scope = 'features = ["standard-security-handler"]'
+    scope = 'features = ["standard-aes-r6"]'
     original = record_evidence(root)
-    test = next(test for test in original["tests"] if "test_every_standard_handler_reads_with_both_passwords" in test)
+    test = (
+        "tests/test_encrypted.py::test_password_revision_keeps_old_ciphertext_and_encrypts_new_content[standard-aes-r6]"
+    )
     for outcome in ("failed", "skipped", None):
         data = record_evidence(root)
         del data["tests"][test]
@@ -645,7 +724,7 @@ def test_a_claim_requires_the_named_tests_and_validators_at_the_revision(tmp_pat
             data["tests"][test + "[revision-6]"] = outcome
         result = claim(root, scope, data)
         assert result.returncode != 0
-        assert f"standard-security-handler read lacks passing tests: {test}" in result.stdout
+        assert f"standard-aes-r6 read lacks passing tests: {test}" in result.stdout
     for check in CHECKS:
         data = record_evidence(root)
         del data["checks"][check]
@@ -765,7 +844,7 @@ def test_prospective_merge_checks_both_branches_and_preserves_the_checkout(tmp_p
 def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_path: Path) -> None:
     root = copy_root(tmp_path)
     spec_map = json.loads((root / MAP).read_bytes())
-    feature = next(f for f in spec_map["features"] if f["feature"] == "standard-security-handler")
+    feature = next(f for f in spec_map["features"] if f["feature"] == "standard-aes-r6")
     spec_map["features"] = [feature]
     feature["edit"].update(missing="A remaining edit.", issue=257)
     decisions = root / "evidence/releases/v1.0.0/decisions.toml"
@@ -798,7 +877,7 @@ def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_pat
 
     assert run("partial").returncode != 0
     decisions.write_text(
-        'release = "v1.0.0"\n[exceptions.standard-security-handler.edit]\n'
+        'release = "v1.0.0"\n[exceptions.standard-aes-r6.edit]\n'
         'decision = "https://github.com/yhay81/pyropdf/issues/257#issuecomment-123"\n'
         'limitation = "The recorded limitation."\n'
     )
@@ -806,12 +885,12 @@ def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_pat
         result = run(status)
         assert result.returncode == 0, result.stderr + result.stdout
         assert "The recorded limitation." in result.stdout
-        result = claim(root, 'features = ["standard-security-handler"]')
+        result = claim(root, 'features = ["standard-aes-r6"]')
         assert result.returncode != 0
-        assert f"standard-security-handler edit is {status}" in result.stdout
+        assert f"standard-aes-r6 edit is {status}" in result.stdout
         result = claim(
             root,
-            'features = ["standard-security-handler"]\n[exclusions.standard-security-handler]\nedit="Outside scope"',
+            'features = ["standard-aes-r6"]\n[exclusions.standard-aes-r6]\nedit="Outside scope"',
         )
         assert result.returncode == 0
         assert "4 of 4" in result.stdout
@@ -826,7 +905,74 @@ def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_pat
     for status in ("engine", "planned"):
         result = run(status)
         assert result.returncode != 0
-        assert f"standard-security-handler edit is {status}" in result.stdout
+        assert f"standard-aes-r6 edit is {status}" in result.stdout
+
+
+def test_a_substantive_correction_requires_its_own_variant_and_unchanged_source(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    scope = 'features = ["standard-aes-r6"]'
+    collected = record_evidence(root)
+    result = claim(root, scope, collected)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "password-hash-owner (ISO 32000-2:2020 7.6.4.3.4, pdf-issues#325)" in result.stdout
+    assert "pdf-issues#24" in result.stdout
+    assert "credentials-and-saves-standard-aes-r6" in result.stdout
+    assert "equivalent modulo-three" in result.stdout
+    assert "standard-table-typo" in result.stdout
+    owner = "tests/test_security_corrections.py::test_revision_six_uses_the_correct_password_hash_sequence[owner]"
+    user = owner.replace("[owner]", "[user]")
+    assert collected["tests"][user] == "passed"
+    collected["tests"][owner] = "skipped"
+    incomplete = claim(root, scope, collected)
+    assert incomplete.returncode == 1
+    assert f"Missing passing evidence: {owner}" in incomplete.stdout
+    assert "The claim does not hold." in incomplete.stdout
+    mapped = json.loads((root / MAP).read_bytes())
+    edited = next(c for c in mapped["inventory"]["corrections"] if c["issue"] == 24)
+    edited["section_sha256"] = "2" * 64
+    (root / MAP).write_text(json.dumps(mapped))
+    stale = claim(root, scope)
+    assert stale.returncode == 1
+    assert "Review the changed source section." in stale.stdout
+    assert "permissions-r6" in stale.stdout
+    assert "password-hash-user" in stale.stdout
+
+
+def test_profile_behavior_rollup_keeps_open_clauses_distinct_from_the_passing_identifier(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    claim4 = claim(root, "", metadata={"profiles": ["PDF/A-4"]})
+    assert claim4.returncode == 1
+    assert "archival-xmp-id" in claim4.stdout
+    assert "pdf-issues#123" in claim4.stdout
+    assert "archival-104" in claim4.stdout
+    assert "Missing evidence (#911)" in claim4.stdout
+    assert "archival-renderer-role" in claim4.stdout
+    # Reviewing the general 4 flavour does not give 4E automatic coverage.
+    extended = claim(root, "", metadata={"profiles": ["PDF/A-4", "PDF/A-4e"]})
+    assert extended.returncode == 1
+    assert (
+        "pdf-issues#77: Predefined CMap supplement compatibility. Missing behavior-specific review" in extended.stdout
+    )
+
+
+def test_updating_published_wording_at_an_existing_anchor_requires_review(tmp_path: Path) -> None:
+    script = ROOT / "tools/spec_map/check_errata.py"
+    compare = runpy.run_path(str(script))["published"]
+    folder = tmp_path / "docs/edition"
+    folder.mkdir(parents=True)
+    (folder / "index.md").write_text("Index")
+    page = folder / "clause01.md"
+    sections = (
+        '<div class="isostyle">\n<h2 id="H1">One</h2>\n<p data-issue="24">Before.</p>\n'
+        '<h2 id="H2">Two</h2>\n<p data-issue="325">Retained.</p>\n</div>\n'
+    )
+    page.write_text(sections)
+    locations, old = compare(tmp_path, ["edition"])
+    page.write_text(sections.replace("Before.", "Revised."))
+    revised_locations, new = compare(tmp_path, ["edition"])
+    assert locations == revised_locations
+    assert old[24] != new[24]
+    assert old[325] == new[325]
 
 
 def qualifying_workflows(root: Path) -> tuple[dict, dict]:
