@@ -282,7 +282,7 @@ class _OcrEngine:
     ) -> list[tuple[float, float, float, float, str, float]]: ...
 
 def render_page(
-    document: _Document,
+    document: _Document | _PageSnapshot,
     number: int,
     generation: int,
     matrix: tuple[float, float, float, float],
@@ -479,7 +479,12 @@ def page_space(
     document: _Document, number: int, generation: int, /
 ) -> tuple[int, tuple[float, float, float, float], float] | None: ...
 def canvas_source_page(
-    source: _Document, number: int, generation: int, operation: _OperationBudget, /
+    source: _Document | _PageSnapshot,
+    number: int,
+    generation: int,
+    operation: _OperationBudget,
+    appearances: bool = False,
+    /,
 ) -> tuple[int, tuple[float, float, float, float], float, float, float, bytes, _CanvasSourceSnapshot] | None: ...
 def canvas_page_form(
     forms: _PageForms,

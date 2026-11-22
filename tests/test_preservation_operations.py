@@ -10,7 +10,7 @@ from __future__ import annotations
 import struct
 import tempfile
 import zlib
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -1604,6 +1604,20 @@ def edit_canvas_resources(doc: pyropdf.Document) -> set[int]:
     archival_one = (doc.profiles.pdfa or "").startswith("PDF/A-1")
     alpha = 1.0 if archival_one else 0.5
     mode = pyropdf.BlendMode.NORMAL if archival_one else pyropdf.BlendMode.MULTIPLY
+    mask = None
+    if not doc.profiles.pdfa and not doc.profiles.pdfua:
+        mask = doc.objects[
+            doc.objects.add_stream(
+                b"0 0 100 100 re f",
+                {
+                    "Type": pyropdf.Name("XObject"),
+                    "Subtype": pyropdf.Name("Form"),
+                    "BBox": [0, 0, 100, 100],
+                    "Resources": {},
+                    "Group": {"S": pyropdf.Name("Transparency"), "I": True},
+                },
+            )
+        ]
     with pyropdf.Document() as source:
         page = source.pages.new((40, 40))
         with page.draw() as canvas:
@@ -1613,6 +1627,7 @@ def edit_canvas_resources(doc: pyropdf.Document) -> set[int]:
             canvas.layer(layer),
             canvas.opacity(alpha),
             canvas.blend(mode),
+            canvas.soft_mask(mask) if mask is not None else nullcontext(),
         ):
             canvas.page((10, 10, 50, 50), page)
     return {target.xref}
@@ -1627,6 +1642,10 @@ def check_canvas_resources(doc: pyropdf.Document) -> None:
     archival_one = (doc.profiles.pdfa or "").startswith("PDF/A-1")
     assert any(state.get("ca") == (1 if archival_one else 0.5) for state in states)
     assert any(state.get("BM") == ("Normal" if archival_one else "Multiply") for state in states)
+    if not doc.profiles.pdfa and not doc.profiles.pdfua:
+        (mask,) = [state["SMask"] for state in states if "SMask" in state]
+        assert mask["S"] == "Alpha"
+        assert mask["G"]["Group"]["S"] == "Transparency"
     assert any(obj.get("Subtype") == "Form" for obj in resources["XObject"].values())
     red, green, blue = page.pixmap(dpi=72, background=(255, 255, 255)).pixel(20, 20)
     assert red == 255

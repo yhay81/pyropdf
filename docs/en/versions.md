@@ -131,10 +131,10 @@ the file. The owner password grants all permissions.
 
 | Existing handler | V / R | New password encryption on full save | Direct page rendering with |
 | --- | --- | --- | --- |
-| RC4, 40 bit | 1 / 2 | Unavailable | User password |
-| RC4, 128 bit | 2 / 3 | Unavailable | User password |
-| RC4, V2 crypt filter | 4 / 4 | Unavailable | User password |
-| AES-128, AESV2 | 4 / 4 | `method="aes-128"` | User password |
+| RC4, 40 bit | 1 / 2 | Unavailable | User or owner password |
+| RC4, 128 bit | 2 / 3 | Unavailable | User or owner password |
+| RC4, V2 crypt filter | 4 / 4 | Unavailable | User or owner password |
+| AES-128, AESV2 | 4 / 4 | `method="aes-128"` | User or owner password |
 | AES-256, AESV3 | 5 / 5 | Unavailable | User or owner password |
 | AES-256, AESV3 | 5 / 6 | `method="aes-256"` (default) | User or owner password |
 
@@ -144,9 +144,12 @@ handler. An incremental save does the same by default and retains the
 original file as its prefix. With no edits it returns the original bytes.
 A full save with the default `encryption=None` removes encryption.
 
-For revisions 2 through 4, the store can read and edit with the owner
-password, but calling `page.pixmap()` with that password currently raises
-`PdfError`. [Owner-password rendering](https://github.com/yhay81/pyropdf/issues/974)
+The byte reader accepts UTF-8 credentials. For revisions 2 through 4,
+owner access also works when the effective user password can be supplied
+as UTF-8. An older file with a non-UTF-8 user password can still be edited
+and saved after owner authentication. Direct rendering and text extraction
+raise `EncryptedDocumentError` for that encoding.
+[Byte-encoded credentials](https://github.com/yhay81/pyropdf/issues/1043)
 
 ## Signing
 
