@@ -21,6 +21,7 @@ def test_the_checks_are_the_ci_commands() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     for name in check.CHECKS:
         assert " ".join(check.command(name, locked=True)) in workflow, name
+    assert "--quick-corpus" in check.command("pytest", locked=False)
     assert check.command("clippy", locked=False)[-3:] == ["--", "-D", "warnings"]
 
 

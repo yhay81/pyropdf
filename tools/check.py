@@ -4,7 +4,9 @@ Run `python3 tools/check.py` from any directory. It runs the commands of
 AGENTS.md in order and prints one line per check; a failed check also prints
 the lines of its log that name the failures. Full logs stay in target/check/,
 so a failure can be searched instead of rerun. Name checks, or the groups
-`python` and `rust`, to run fewer, and pass `--locked` to match CI.
+`python` and `rust`, to run fewer, and pass `--locked` to match CI. The
+pre-push check uses pytest's representative corpus. Run `uv run pytest` for
+the exhaustive suite.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ LOG_DIR = ROOT / "target" / "check"
 # environment that it prepared instead of syncing again.
 CHECKS: dict[str, tuple[str, ...]] = {
     "sync": ("uv", "sync"),
-    "pytest": ("uv", "run", "--no-sync", "pytest"),
+    "pytest": ("uv", "run", "--no-sync", "pytest", "--quick-corpus"),
     "ruff": ("uv", "run", "--no-sync", "ruff", "check", "."),
     "ruff-format": ("uv", "run", "--no-sync", "ruff", "format", "--check", "."),
     "ty": ("uv", "run", "--no-sync", "ty", "check"),

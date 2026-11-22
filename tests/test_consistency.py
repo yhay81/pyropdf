@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import pikepdf
 import pytest
-from corpus import ASSETS, NAMES
+from corpus import NAMES, SOURCES
 from test_preservation import EDITS
 
 import pyropdf
@@ -34,7 +34,7 @@ QPDF = shutil.which("qpdf")
 # Group by source first so the three readers can reuse their original findings.
 # Within each source pytest prepares one saved document for all three checks.
 pytestmark = [
-    pytest.mark.parametrize("source", [ASSETS / name for name in NAMES], ids=NAMES, scope="session"),
+    pytest.mark.parametrize("source", SOURCES, ids=NAMES, scope="session"),
     pytest.mark.parametrize("edit", sorted(EDITS), scope="module"),
     pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"], scope="module"),
 ]
@@ -85,6 +85,7 @@ def original_qpdf_findings(source: Path) -> set[str] | None:
     return qpdf_findings(source) if QPDF is not None else None
 
 
+@pytest.mark.corpus_matrix
 def test_an_edit_and_a_save_add_no_structural_defect(
     saved_document: tuple[bytes, int],
     original_defects: set[tuple[int | None, str, str, str]],
@@ -94,6 +95,7 @@ def test_an_edit_and_a_save_add_no_structural_defect(
 
 
 @pytest.mark.skipif(QPDF is None and os.environ.get("PYROPDF_REQUIRE_QPDF") != "1", reason="qpdf is not on PATH")
+@pytest.mark.corpus_matrix
 def test_an_edit_and_a_save_add_no_qpdf_finding(
     saved_document: tuple[bytes, int],
     original_qpdf_findings: set[str] | None,
@@ -129,6 +131,7 @@ def original_pikepdf_problems(source: Path) -> set[str]:
     return pikepdf_problems(source)[1]
 
 
+@pytest.mark.corpus_matrix
 def test_pikepdf_reads_every_saved_document(
     saved_document: tuple[bytes, int], original_pikepdf_problems: set[str]
 ) -> None:
