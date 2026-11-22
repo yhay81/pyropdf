@@ -11,6 +11,8 @@
 //! beyond ASCII.
 
 mod crypto;
+mod legacy_cms;
+pub use legacy_cms::decrypt_legacy_cms;
 pub(crate) mod embedded;
 pub(crate) mod filters;
 pub mod integrity;

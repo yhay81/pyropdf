@@ -107,8 +107,8 @@ and ephemeral-static ECDH follow the CMS formats in RFC 3560 and RFC 5753.
 | --- | --- | --- |
 | AES-CBC (RFC 3565) | 128, 192 and 256 bits | All three |
 | DES-CBC and three-key Triple DES-CBC | Both | Deprecated in PDF 2.0, read-only |
-| RC2-CBC | 128 effective bits | Deprecated in PDF 2.0, read-only |
-| RC4 | 40, 56, 64, 80, 128, 160, 192 and 256 bits | Deprecated in PDF 2.0, read-only |
+| RC2-CBC | 1 to 128 effective bits, with a 1 to 16-byte key | Deprecated in PDF 2.0, read-only |
+| RC4 | Byte-sized keys from 8 through 256 bits | Deprecated in PDF 2.0, read-only |
 | RSA PKCS#1 v1.5 | 2048 to 8192-bit RSA | Default RSA transport |
 | RSAES-OAEP | Declared digest, MGF1 digest and label | SHA-256 and MGF1-SHA-256, empty label |
 | ECDH with AES key wrap | P-256, P-384 and P-521 | All three with AES-256 key wrap |

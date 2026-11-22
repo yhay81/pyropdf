@@ -91,14 +91,6 @@ features = ["aes-gcm"]
 dimensions = ["interpret"]
 behavior = "Render and extract from the authenticated AES-GCM store version without serializing untouched objects."
 
-[families.public-key-encryption]
-tracker = 252
-issue = 1014
-title = "Read the remaining legacy RC2 and RC4 recipient envelope key lengths"
-features = ["public-key-security-handler"]
-dimensions = ["read", "edit", "preserve"]
-behavior = "Read and preserve older CMS RC2 effective key sizes and RC4 key lengths beyond the optional provider's defaults."
-
 [families.public-key-legacy-interpretation]
 tracker = 252
 issue = 937
