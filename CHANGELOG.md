@@ -6,7 +6,9 @@
 
 - A retained `Attachment` raises `StaleObjectError` after removal or
   replacement, including when an inline entry moves to a different slot.
-  Use `doc.attachments[name]` to retrieve the current file (#942).
+  Use `doc.attachments[name]` to retrieve the current file. Saved histories
+  distinguish property edits from replacement. With a format-one history,
+  look up inline entries again after restoring a rewritten owner (#942).
 
 - On `Rect` and `IRect`, use `top_left`, `top_right`, `bottom_left` and
   `bottom_right` for the old `tl`, `tr`, `bl` and `br` corners, and

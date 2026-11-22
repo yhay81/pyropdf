@@ -13,7 +13,7 @@
 //!
 //! ```text
 //! magic        b"PYROPDF-HISTORY\n"
-//! format       u32, 1
+//! format       u32, 1 or 2
 //! fingerprint  32 bytes: SHA-256 of the base
 //! position     u32: the index of the current version
 //! versions     u32 count, then for each version:
@@ -22,7 +22,11 @@
 //!   trailer    u8 0, or u8 1 and u32 length and the bytes of the trailer
 //!   objects    u32 count, then for each: u32 number, then u8 0, u16
 //!              generation, u32 length, and the bytes of the value, or
-//!              u8 1 and the u16 generation of a free entry
+//!              u8 1 and the u16 generation of a free entry.
+//!              Written kind 0 replaces direct name-tree slots. Format 2
+//!              adds kinds 2 (preserve) and 3 (individually mark slots).
+//!              Kind 3 appends a length and one byte per direct slot in
+//!              tree traversal order (0 preserves, 1 replaces).
 //!   marks      u32 count, then for each: u8 structure (0 Appearance,
 //!              4 FontSubset; 1..=3 retired), u32 number
 //! checksum     32 bytes: SHA-256 of every byte before it
@@ -32,6 +36,7 @@ use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
+use super::name_slots::{NameSlots, SlotJournal};
 use super::{Base, Slot, Stale, Trailer, Version, Written, difference};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::settle::{Mark, Structure};
@@ -39,7 +44,7 @@ use crate::value::{Bytes, Reference, Value};
 use crate::{Error, Result, write};
 
 const MAGIC: &[u8; 16] = b"PYROPDF-HISTORY\n";
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
 const HASH: usize = 32;
 
 const APPEARANCE_TAG: u8 = 0;
@@ -140,7 +145,9 @@ pub(super) fn save(
     };
     let mut out = Out(BudgetVec::new(budget));
     out.bytes(MAGIC)?;
-    out.u32(FORMAT)?;
+    // Retain the original encoding when every rewritten owner may safely
+    // invalidate its direct slots, including histories restored from format 1.
+    out.u32(1)?;
     out.bytes(&fingerprint(oldest.base().as_ref(), budget)?)?;
     out.count(position)?;
     out.count(versions.len())?;
@@ -174,9 +181,22 @@ pub(super) fn save(
             out.u32(number)?;
             match version.slot(number) {
                 Some(Slot::Written(object)) => {
-                    out.bytes(&[0])?;
+                    let slots = object.name_slots.journal(before, number, object, budget)?;
+                    let tag = match &slots {
+                        SlotJournal::Keep => 2,
+                        SlotJournal::Replace => 0,
+                        SlotJournal::Mixed(_) => 3,
+                    };
+                    if tag != 0 {
+                        out.0.as_mut_slice()[MAGIC.len()..MAGIC.len() + 4]
+                            .copy_from_slice(&FORMAT.to_le_bytes());
+                    }
+                    out.bytes(&[tag])?;
                     out.bytes(&object.generation.to_le_bytes())?;
                     out.blob(&object.bytes)?;
+                    if let SlotJournal::Mixed(flags) = slots {
+                        out.blob(&flags)?;
+                    }
                 }
                 Some(&Slot::Free(generation)) => {
                     out.bytes(&[1])?;
@@ -223,8 +243,9 @@ pub(super) fn restore<'b>(
     if input.take(MAGIC.len())? != MAGIC {
         return Err(corrupt("it does not begin as one"));
     }
-    if input.u32()? != FORMAT {
-        return Err(corrupt("its format is not 1"));
+    let format = input.u32()?;
+    if !(1..=FORMAT).contains(&format) {
+        return Err(corrupt("its format is unknown"));
     }
     if input.take(HASH)? != fingerprint(opened.base().as_ref(), budget)? {
         return Ok(None);
@@ -244,7 +265,7 @@ pub(super) fn restore<'b>(
             labels.try_push(label.to_owned())?;
         }
         let before = versions.last().map_or(opened, |built| &built.version);
-        let version = read_version(before, &mut input, budget)?;
+        let version = read_version(before, format, &mut input, budget)?;
         let difference = difference(before, &version, budget)?;
         if index > 0 && difference.changes.is_empty() && !difference.stale {
             return Err(corrupt("a step changes nothing"));
@@ -269,7 +290,12 @@ pub(super) fn restore<'b>(
 }
 
 /// Reads one version, as what it holds differently from `before`.
-fn read_version(before: &Version, input: &mut In<'_>, budget: &Budget) -> Result<Version> {
+fn read_version(
+    before: &Version,
+    format: u32,
+    input: &mut In<'_>,
+    budget: &Budget,
+) -> Result<Version> {
     let mut version = before.draft();
     let next = u64::from_le_bytes(input.array()?);
     if next > 1 << 32 {
@@ -297,22 +323,28 @@ fn read_version(before: &Version, input: &mut In<'_>, budget: &Budget) -> Result
             return Err(corrupt("its object numbers are not ascending above 0"));
         }
         last = Some(number);
-        let slot = match input.take(1)? {
-            [0] => {
+        let [kind] = input.array()?;
+        let slot = match kind {
+            0 | 2 | 3 if kind == 0 || format >= 2 => {
                 let generation = u16::from_le_bytes(input.array()?);
                 let bytes = owned(input.blob()?, budget)?;
-                Value::parse(&bytes, budget)
+                let value = Value::parse(&bytes, budget)
                     .map_err(|error| error.context(format!("object {number} {generation}")))?;
                 budget.charge(LimitCode::MemorySize, Written::OVERHEAD)?;
-                // A journal contains PDF bytes, not live handle identities. A
-                // replaced root must be distinct from an opened base slot.
+                let name_slots = match kind {
+                    // The older format did not distinguish editing properties
+                    // from replacing even a byte-identical entry in this owner.
+                    0 => NameSlots::replaced()?,
+                    3 => NameSlots::restored(before, number, &value, input.blob()?, budget)?,
+                    _ => NameSlots::inherited(before, number),
+                };
                 Slot::Written(Arc::new(Written {
-                    name_slots: super::name_slots::NameSlots::replaced()?,
+                    name_slots,
                     ..Written::new(generation, bytes)
                 }))
             }
-            [1] => Slot::Free(u16::from_le_bytes(input.array()?)),
-            _ => return Err(corrupt("an object kind is neither 0 nor 1")),
+            1 => Slot::Free(u16::from_le_bytes(input.array()?)),
+            _ => return Err(corrupt("an object kind is unknown")),
         };
         version.table.insert(number, slot, budget)?;
         version.next = version.next.max(u64::from(number) + 1);

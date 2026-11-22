@@ -24,6 +24,8 @@ also has to remain in its original array slot. Removing or replacing
 the entry, or moving an inline entry, makes access raise
 `StaleObjectError`. Look up `doc.attachments[name]` again
 to access the current entry. Undo can restore the original handle.
+When restoring an older, format-one saved history, look up inline
+entries again if the history rewrote their containing object.
 
 ### `Attachment.name`
 

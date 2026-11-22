@@ -5,7 +5,7 @@ use std::cmp::Ordering as Cmp;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::{Slot, Version};
+use super::{Slot, Version, Written};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::value::{MAX_NESTING, Value};
 use crate::{Error, Result};
@@ -91,6 +91,13 @@ struct Changes {
 pub(super) struct NameSlots {
     default: u64,
     changes: Option<Arc<Changes>>,
+}
+
+/// Relation to the previous written root. Most mutations need only the tag.
+pub(super) enum SlotJournal<'b> {
+    Keep,
+    Replace,
+    Mixed(BudgetVec<'b, u8>),
 }
 
 static NEXT_SLOT: AtomicU64 = AtomicU64::new(1);
@@ -190,25 +197,40 @@ impl NameSlots {
         if path.is_empty() && suffix.is_none() {
             return Self::replaced();
         }
+        // Only inspect the assigned subtree, or the suffix moved by this
+        // insertion/removal. Ordinary scalar appends take constant work here.
+        let keep = affected_slot(value, path, suffix, budget)?;
+        if !keep {
+            let Some(changes) = &self.changes else {
+                return Ok(self.clone());
+            };
+            let start = changes.rules.partition_point(|r| r.path.as_ref() < path);
+            let mut removed = false;
+            for rule in &changes.rules[start..] {
+                if !rule.path.starts_with(path) {
+                    break;
+                }
+                budget.poll()?;
+                if rule.covered(path, suffix) {
+                    removed = true;
+                    break;
+                }
+            }
+            if !removed {
+                return Ok(self.clone());
+            }
+        }
         let mut rules = BudgetVec::new(budget);
         if let Some(changes) = &self.changes {
-            for rule in &changes.rules {
+            for (index, rule) in changes.rules.iter().enumerate() {
+                if index.is_multiple_of(1024) {
+                    budget.poll()?;
+                }
                 if !rule.covered(path, suffix) {
                     Self::insert_rule(&mut rules, &rule.path, rule.suffix, rule.token, budget)?;
                 }
             }
         }
-        // A removed value has no descendants. An insertion or later assignment
-        // marks its replacement, so deleting a transient key retains no record.
-        let keep = match (at_path(value, path), suffix) {
-            (Some(Value::Array(array)), Some(first)) => first < array.len(),
-            (Some(Value::Array(_) | Value::Dict(_)), None) => true,
-            (Some(_), None) => path.split_last().is_some_and(|(last, parent)| {
-                matches!(last, NameStep::Index(at) if at % 2 == 1 &&
-                    matches!(at_path(value, parent), Some(Value::Array(a)) if matches!(a.get(at - 1), Some(Value::String(_)))))
-            }),
-            _ => false,
-        };
         if keep {
             Self::insert_rule(&mut rules, path, suffix, fresh()?, budget)?;
         }
@@ -216,7 +238,7 @@ impl NameSlots {
     }
 
     /// Only a native dictionary rewrite may rebalance a name tree. All other
-    /// mutations have their exact path and never enumerate an array's entries.
+    /// mutations inspect only the assigned subtree or affected array suffix.
     pub(super) fn written(
         version: &Version,
         number: u32,
@@ -238,34 +260,23 @@ impl NameSlots {
         let mut rules = BudgetVec::new(budget);
         let mut old: Option<Option<Arc<Value>>> = None;
         let mut path = [NameStep::Other; MAX_NESTING + 1];
-        visit(value, &mut path, 0, budget, &mut |parent, names| {
-            // Resolve the old array once per leaf, independent of pair count.
-            let before = match &old {
-                Some(v) => v,
-                None => old.insert(version.get(number, budget)?.map(|o| Arc::clone(o.value()))),
-            };
-            let original = before
-                .as_deref()
-                .and_then(|root| at_path(root, parent))
-                .and_then(|v| match v {
-                    Value::Array(a) => Some(a),
-                    _ => None,
-                });
-            let mut path = [NameStep::Other; MAX_NESTING + 1];
-            path[..parent.len()].copy_from_slice(parent);
-            for (pair, [key, item]) in names.as_slice().as_chunks::<2>().0.iter().enumerate() {
-                if pair % 1024 == 0 {
-                    budget.poll()?;
-                }
-                if !matches!(key, Value::String(_)) || matches!(item, Value::Reference(_)) {
-                    continue;
-                }
-                let at = pair * 2 + 1;
-                path[parent.len()] = NameStep::Index(at);
-                let location = &path[..=parent.len()];
-                let token = if original
-                    .is_some_and(|a| a.get(at - 1) == Some(key) && a.get(at) == Some(item))
-                {
+        visit_slots(
+            value,
+            &mut path,
+            0,
+            0,
+            budget,
+            &mut |location, key, item| {
+                let before = match &old {
+                    Some(v) => v,
+                    None => old.insert(version.get(number, budget)?.map(|o| Arc::clone(o.value()))),
+                };
+                let Some((&NameStep::Index(at), parent)) = location.split_last() else {
+                    unreachable!("a name slot is an array item");
+                };
+                let same = matches!(before.as_deref().and_then(|v| at_path(v, parent)),
+                Some(Value::Array(a)) if a.get(at - 1) == Some(key) && a.get(at) == Some(item));
+                let token = if same {
                     previous.token(location)
                 } else {
                     fresh()?
@@ -273,9 +284,99 @@ impl NameSlots {
                 if token != previous.default {
                     Self::insert_rule(&mut rules, location, None, token, budget)?;
                 }
+                Ok(false)
+            },
+        )?;
+        Self::with_rules(previous.default, rules, budget)
+    }
+
+    /// One byte per direct slot in traversal order: 0 keeps the previous
+    /// incarnation, 1 starts a new one. Process-local tokens never escape.
+    pub(super) fn journal<'b>(
+        &self,
+        before: &Version,
+        number: u32,
+        object: &Written,
+        budget: &'b Budget,
+    ) -> Result<SlotJournal<'b>> {
+        let previous = before.name_slots(number).cloned().unwrap_or_default();
+        match (&previous.changes, &self.changes) {
+            (None, None) => {
+                return Ok(if previous.default == self.default {
+                    SlotJournal::Keep
+                } else {
+                    SlotJournal::Replace
+                });
             }
-            Ok(())
+            (Some(a), Some(b)) if previous.default == self.default && Arc::ptr_eq(a, b) => {
+                return Ok(SlotJournal::Keep);
+            }
+            _ => {}
+        }
+        let mut flags = BudgetVec::new(budget);
+        let mut path = [NameStep::Other; MAX_NESTING + 1];
+        let mut replaced = 0;
+        visit_slots(
+            object.value(budget)?.as_ref(),
+            &mut path,
+            0,
+            0,
+            budget,
+            &mut |location, _, _| {
+                let changed = self.token(location) != previous.token(location);
+                replaced += usize::from(changed);
+                flags.try_push(u8::from(changed))?;
+                Ok(false)
+            },
+        )?;
+        Ok(if replaced == 0 {
+            SlotJournal::Keep
+        } else if replaced == flags.len() {
+            SlotJournal::Replace
+        } else {
+            SlotJournal::Mixed(flags)
+        })
+    }
+
+    pub(super) fn inherited(before: &Version, number: u32) -> Self {
+        before.name_slots(number).cloned().unwrap_or_default()
+    }
+
+    pub(super) fn restored(
+        before: &Version,
+        number: u32,
+        value: &Value,
+        flags: &[u8],
+        budget: &Budget,
+    ) -> Result<Self> {
+        let invalid =
+            || Error::malformed("the data is not a saved history: invalid name-slot flags");
+        if flags.is_empty() {
+            return Err(invalid());
+        }
+        let previous = before.name_slots(number).cloned().unwrap_or_default();
+        let mut rules = BudgetVec::new(budget);
+        let mut path = [NameStep::Other; MAX_NESTING + 1];
+        let mut remaining = flags.iter();
+        let replacement = fresh()?;
+        let mut replaced = 0;
+        visit_slots(value, &mut path, 0, 0, budget, &mut |location, _, _| {
+            let token = match remaining.next() {
+                Some(0) => previous.token(location),
+                Some(1) => {
+                    replaced += 1;
+                    replacement
+                }
+                _ => return Err(invalid()),
+            };
+            if token != previous.default {
+                Self::insert_rule(&mut rules, location, None, token, budget)?;
+            }
+            Ok(false)
         })?;
+        if remaining.next().is_some() || replaced == 0 || replaced == flags.len() {
+            return Err(invalid());
+        }
         Self::with_rules(previous.default, rules, budget)
     }
 }
@@ -314,15 +415,56 @@ fn at_path<'a>(mut value: &'a Value, path: &[NameStep]) -> Option<&'a Value> {
     Some(value)
 }
 
-fn visit(
+fn pair_key(value: Option<&Value>) -> bool {
+    matches!(value, Some(Value::String(_) | Value::Reference(_)))
+}
+
+fn affected_slot(
+    root: &Value,
+    path: &[NameStep],
+    suffix: Option<usize>,
+    budget: &Budget,
+) -> Result<bool> {
+    let Some(value) = at_path(root, path) else {
+        return Ok(false);
+    };
+    if suffix.is_none()
+        && let Some((&NameStep::Index(at), parent)) = path.split_last()
+        && at % 2 == 1
+        && (parent.is_empty() || parent.last() == Some(&NameStep::Names))
+        && !matches!(value, Value::Reference(_))
+        && matches!(at_path(root, parent), Some(Value::Array(a)) if pair_key(a.get(at - 1)))
+    {
+        return Ok(true);
+    }
+    if path.len() >= MAX_NESTING {
+        return Ok(false);
+    }
+    let mut scratch = [NameStep::Other; MAX_NESTING + 1];
+    scratch[..path.len()].copy_from_slice(path);
+    visit_slots(
+        value,
+        &mut scratch,
+        path.len(),
+        suffix.unwrap_or(0),
+        budget,
+        &mut |_, _, _| Ok(true),
+    )
+}
+
+/// Visit direct entries only. An indirect array root may hold either name
+/// pairs or direct child dictionaries; a /Kids array can only hold children.
+/// A visitor returning true stops at the first matching slot.
+fn visit_slots(
     value: &Value,
     path: &mut [NameStep; MAX_NESTING + 1],
     depth: usize,
+    first: usize,
     budget: &Budget,
-    slot: &mut impl FnMut(&[NameStep], &crate::value::Array) -> Result<()>,
-) -> Result<()> {
+    slot: &mut impl FnMut(&[NameStep], &Value, &Value) -> Result<bool>,
+) -> Result<bool> {
     if depth >= MAX_NESTING {
-        return Ok(()); // Deeper input cannot be opened by the store.
+        return Ok(false);
     }
     match value {
         Value::Dict(dict) => {
@@ -333,39 +475,49 @@ fn visit(
             ] {
                 if let Some(child @ (Value::Dict(_) | Value::Array(_))) = dict.get(field) {
                     path[depth] = step;
-                    visit(child, path, depth + 1, budget, slot)?;
+                    if visit_slots(child, path, depth + 1, 0, budget, slot)? {
+                        return Ok(true);
+                    }
                 }
             }
         }
         Value::Array(array) => {
             let parent = depth.checked_sub(1).map(|i| path[i]);
-            if parent == Some(NameStep::Names) {
-                if array.as_slice().as_chunks::<2>().0.iter().any(|[k, v]| {
-                    matches!(k, Value::String(_)) && !matches!(v, Value::Reference(_))
-                }) {
-                    slot(&path[..depth], array)?;
-                }
-                return Ok(());
+            let pairs = parent.is_none() || parent == Some(NameStep::Names);
+            let kids = parent.is_none() || parent == Some(NameStep::Kids);
+            if !pairs && !kids {
+                return Ok(false);
             }
-            for (at, item) in array.iter().enumerate() {
-                if at % 1024 == 0 {
+            for (at, item) in array.iter().enumerate().skip(first) {
+                if (at - first).is_multiple_of(1024) {
                     budget.poll()?;
                 }
                 path[depth] = NameStep::Index(at);
-                if matches!(item, Value::Dict(_)) {
-                    visit(item, path, depth + 1, budget, slot)?;
+                if pairs
+                    && at % 2 == 1
+                    && !matches!(item, Value::Reference(_))
+                    && pair_key(array.get(at - 1))
+                    && slot(&path[..=depth], &array.as_slice()[at - 1], item)?
+                {
+                    return Ok(true);
+                }
+                if kids
+                    && matches!(item, Value::Dict(_))
+                    && visit_slots(item, path, depth + 1, 0, budget, slot)?
+                {
+                    return Ok(true);
                 }
             }
         }
         _ => {}
     }
-    Ok(())
+    Ok(false)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{Array, PdfString};
+    use crate::value::{Array, Bytes, PdfString};
 
     #[test]
     fn repeated_slot_writes_and_array_shifts_keep_only_surviving_rules() {
@@ -406,11 +558,35 @@ mod tests {
     }
 
     #[test]
-    fn unrelated_numeric_array_assignment_allocates_no_name_records() {
+    fn ordinary_array_writes_allocate_no_identity_records_even_on_a_zero_memory_budget() {
+        let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
         let values = Value::Array(Array::from(vec![Value::Integer(1); 1000]));
-        let slots = NameSlots::default()
-            .edited(&values, &[NameStep::Index(999)], None, &Budget::default())
-            .unwrap();
-        assert_eq!(slots.size(), 0);
+        let previous = NameSlots::default();
+        for (path, first) in [
+            (&[NameStep::Index(999)][..], None),
+            (&[][..], Some(999)),
+            (&[][..], Some(0)),
+        ] {
+            let slots = previous.edited(&values, path, first, &budget).unwrap();
+            assert_eq!(slots.size(), 0);
+        }
+        let kids = Value::parse(
+            &Bytes::from(b"<< /Kids [1 0 R 2 0 R << /Type /Page >>] >>".as_slice()),
+            &Budget::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            previous
+                .edited(&kids, &[NameStep::Kids], Some(0), &budget)
+                .unwrap()
+                .size(),
+            0
+        );
+        let pairs = Value::parse(
+            &Bytes::from(b"[(key) (value)]".as_slice()),
+            &Budget::default(),
+        )
+        .unwrap();
+        assert!(previous.edited(&pairs, &[], Some(0), &budget).is_err());
     }
 }

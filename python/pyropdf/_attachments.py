@@ -507,6 +507,8 @@ class Attachment:
     the entry, or moving an inline entry, makes access raise
     :class:`StaleObjectError`. Look up ``doc.attachments[name]`` again
     to access the current entry. Undo can restore the original handle.
+    When restoring an older, format-one saved history, look up inline
+    entries again if the history rewrote their containing object.
     """
 
     __slots__ = ("_document", "_identity", "_name")

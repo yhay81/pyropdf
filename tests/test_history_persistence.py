@@ -203,7 +203,7 @@ def corruptions(data: bytes) -> dict[str, bytes]:
         "truncated": data[:-1],
         "flipped": data[:100] + bytes([data[100] ^ 1]) + data[101:],
         "magic": resealed(b"X" + body[1:]),
-        "format": resealed(body[:16] + struct.pack("<I", 2) + body[20:]),
+        "format": resealed(body[:16] + struct.pack("<I", 3) + body[20:]),
         "position": resealed(body[: versions_at - 4] + struct.pack("<I", 9) + body[versions_at:]),
         "count": resealed(body[:versions_at] + struct.pack("<I", 99) + body[versions_at + 4 :]),
         "trailing": resealed(body + b"\0"),
