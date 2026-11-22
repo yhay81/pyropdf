@@ -3,14 +3,14 @@
 //! (RFC 6979), so it needs no random numbers.
 
 use der::pem;
-use p256::ecdsa::signature::Signer as _;
+use p256::ecdsa::signature::{Signer as _, hazmat::PrehashSigner as _};
 use p256::pkcs8::DecodePrivateKey as _;
 use pkcs8::EncryptedPrivateKeyInfoRef;
 use pkcs8::pkcs5::EncryptionScheme;
 use pkcs8::pkcs5::pbes2::Kdf;
 use x509_cert::Certificate;
 
-use super::{Error, SignatureAlgorithm};
+use super::{DigestAlgorithm, Error, SignatureAlgorithm};
 
 /// The most iterations of a key derivation from a password: of PBKDF2, and
 /// of a PKCS#12 MAC. OpenSSL writes 2048, and OWASP asks 600,000 for
@@ -125,12 +125,7 @@ impl Key {
 
     /// Reads a DER PKCS#8 EncryptedPrivateKeyInfo with `password`.
     pub(super) fn from_encrypted_pkcs8(der: &[u8], password: &[u8]) -> Result<Self, Error> {
-        let info = EncryptedPrivateKeyInfoRef::try_from(der)
-            .map_err(|error| Error::invalid("the key is not encrypted PKCS#8", error))?;
-        bounded(&info.encryption_algorithm)?;
-        let document = info
-            .decrypt(password)
-            .map_err(|_| Error::Invalid("the key does not decrypt: a wrong password".to_owned()))?;
+        let document = decrypt_pkcs8(der, password)?;
         Self::from_pkcs8(document.as_bytes())
     }
 
@@ -160,12 +155,11 @@ impl Key {
             }
     }
 
-    /// Returns the DER ECDSA signature of `data`, hashed with the key's
-    /// digest algorithm.
+    /// Returns a DER signature using the default SHA-2 digest for this key.
     #[must_use]
     #[expect(
         clippy::disallowed_methods,
-        reason = "a DER ECDSA signature on P-256 or P-384 holds 104 bytes at most"
+        reason = "the signature holds at most 104 bytes"
     )]
     pub fn sign(&self, data: &[u8]) -> Vec<u8> {
         match self {
@@ -179,6 +173,73 @@ impl Key {
             }
         }
     }
+
+    /// Signs the digest of the signed attributes with the key and returns DER ECDSA.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a DER ECDSA signature on P-256 or P-384 holds 104 bytes at most"
+    )]
+    pub fn sign_with_digest(
+        &self,
+        data: &[u8],
+        algorithm: DigestAlgorithm,
+    ) -> Result<Vec<u8>, Error> {
+        if !self.algorithm().permits(algorithm) {
+            return Err(Error::Invalid(format!(
+                "unsupported ECDSA digest {}",
+                algorithm.name()
+            )));
+        }
+        let hash = algorithm.digest(&[data]);
+        match self {
+            Self::P256(key) => {
+                let signature: p256::ecdsa::DerSignature = key
+                    .sign_prehash(&hash)
+                    .map_err(|error| Error::invalid("the P-256 signature", error))?;
+                Ok(signature.as_bytes().to_vec())
+            }
+            Self::P384(key) => {
+                let signature: p384::ecdsa::DerSignature = key
+                    .sign_prehash(&hash)
+                    .map_err(|error| Error::invalid("the P-384 signature", error))?;
+                Ok(signature.as_bytes().to_vec())
+            }
+        }
+    }
+}
+
+/// Decode a PEM key for an optional curve provider, applying the same PBES2 limits
+/// as native keys before handing over a plaintext PKCS#8 or SEC1 object.
+pub fn pem_key_material(
+    pem: &[u8],
+    password: Option<&[u8]>,
+) -> Result<pkcs8::SecretDocument, Error> {
+    let (label, bytes) =
+        pem::decode_vec(pem).map_err(|error| Error::invalid("the key is not PEM", error))?;
+    match label {
+        "PRIVATE KEY" | "EC PRIVATE KEY" => pkcs8::SecretDocument::try_from(bytes)
+            .map_err(|error| Error::invalid("the key is not DER", error)),
+        "ENCRYPTED PRIVATE KEY" => {
+            let password = password.ok_or_else(|| {
+                Error::Invalid("the key is encrypted; pass its password".to_owned())
+            })?;
+            decrypt_pkcs8(&bytes, password)
+        }
+        "RSA PRIVATE KEY" => Err(rsa_key()),
+        _ => Err(Error::Invalid(format!(
+            "a PEM {label:?} is not a supported private key"
+        ))),
+    }
+}
+
+pub(super) fn decrypt_pkcs8(der: &[u8], password: &[u8]) -> Result<pkcs8::SecretDocument, Error> {
+    let info = EncryptedPrivateKeyInfoRef::try_from(der)
+        .map_err(|error| Error::invalid("the key is not encrypted PKCS#8", error))?;
+    bounded(&info.encryption_algorithm)?;
+    let document = info
+        .decrypt(password)
+        .map_err(|_| Error::Invalid("the key does not decrypt: a wrong password".to_owned()))?;
+    Ok(document)
 }
 
 fn unsupported_key() -> Error {
