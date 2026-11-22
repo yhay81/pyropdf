@@ -29,6 +29,20 @@ if TYPE_CHECKING:
 # denotes a property assignment and 'del:' denotes a property deletion.
 MUTATIONS = (
     (
+        "typed_set",
+        "Switch the movie target on the existing action; title and reference are exclusive.",
+        "MovieAction",
+        "target=",
+    ),
+    ("typed_set", "Override the action timing and preserve the annotation default.", "MovieAction", "start= duration="),
+    ("typed_set", "Select an existing name on the slideshow dictionary.", "SlideShow", "start_resource="),
+    (
+        "named_pages",
+        "Move a named target and preserve shared name-tree nodes; dedicated slideshow tests check StartResource.",
+        "SlideShow",
+        "rename_resource",
+    ),
+    (
         "sign_revision",
         "Adopt the signed incremental revision, binding the field and its byte ranges.",
         "Document",
@@ -345,9 +359,9 @@ MUTATIONS = (
     ),
     (
         "canvas_resources",
-        "Opacity and blend modes register ExtGState entries for the drawing.",
+        "Opacity, blend modes and group soft masks register graphics state for the drawing.",
         "Canvas",
-        "opacity blend",
+        "opacity blend soft_mask",
     ),
     ("canvas_resources", "Use the layer's shared indirect OCG as the marked content property.", "Canvas", "layer"),
     (
@@ -598,13 +612,14 @@ MUTATIONS = (
 # Pure readers, value factories/transformations and external or session-only
 # effects are listed independently of edits to the versioned PDF.
 READ_ONLY = {
+    "Sound": "from_stream",
     "Annotation": "pixmap text sound",
     "CancellationToken": "cancelled",
     "AnnotationFile": "read",
     "Attachment": "read",
     "Chars": "column",
     "Chunk": "to_dict",
-    "Content": "path_clusters",
+    "Content": "path_clusters pixmap",
     "Document": "changes check to_bytes render text markdown to_json to_chunks font_program",
     "DocumentLimits": "web",
     "Element": "to_dict",
@@ -617,7 +632,10 @@ READ_ONLY = {
     "Operations": "parse to_bytes",
     "Outline": "walk entries",
     "OutlineItem": "to_entry",
-    "Page": "images fonts pixmap ocr svg content paths text words layout chars search selection markdown tables",
+    "Page": (
+        "images fonts pixmap ocr svg content paths text words layout chars search selection markdown tables "
+        "uses_transparency"
+    ),
     "PageImage": "pixmap stored",
     "PageLabelRange": "label",
     "Pages": "labeled index",
@@ -638,7 +656,7 @@ READ_ONLY = {
     "Signer": "from_pem from_pkcs12 callback",
     "Dictionary": "geospatial_point",
     "Stream": "read",
-    "StructureTree": "resolve_role walk",
+    "StructureTree": "child_rules reading_order resolve_role walk",
     "Table": "markdown",
     "typed.LinkedTree": "lookup",
     "typed.View": "interpret",

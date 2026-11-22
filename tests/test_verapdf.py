@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from test_attachments import build_raw_pdf
 from test_preservation import EDITS
 
 import pyropdf
@@ -191,14 +192,44 @@ def test_verapdf_rules_include_full_iso_table_names_and_model_deviations() -> No
     assert VERAPDF.failed_rules(report) == {"8.2.5.2-1", "Table 5. StructTreeRoot-Document-1", "VRI-OCSP-Array-9"}
 
 
-@pytest.mark.parametrize(("level", "extensions"), [(1, "ISO_19005_3"), (2, "ISO_19005_3,ETSI_PAdES")])
-def test_arlington_selects_the_declared_pades_extension(tmp_path: Path, level: int, extensions: str) -> None:
+@pytest.mark.parametrize(
+    ("prefix", "level", "extensions"),
+    [
+        ("ESIC", 1, "ISO_19005_3"),
+        ("ESIC", 2, "ISO_19005_3,ETSI_PAdES"),
+        ("ESIC", 3, "ISO_19005_3,ETSI_PAdES"),
+        ("ADBE", 7, "ISO_19005_3"),
+        ("ADBE", 8, "ISO_19005_3,ETSI_PAdES"),
+        ("ETSI_PAdES", 2, "ISO_19005_3"),
+    ],
+)
+def test_arlington_selects_the_declared_pades_extension(
+    tmp_path: Path, prefix: str, level: int, extensions: str
+) -> None:
     source = ROOT / "tests/assets/pdfa/pdfa-3b.pdf"
     result = tmp_path / "document with spaces.pdf"
     with pyropdf.open(source) as doc:
-        doc.catalog["Extensions"] = {"ETSI_PAdES": {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": level}}
+        doc.catalog["Extensions"] = {prefix: {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": level}}
         doc.save(result)
     assert VERAPDF.arlington(result, "3b") == f"arlington1.7+{extensions}"
+
+
+def test_arlington_does_not_select_a_pades_level_stored_as_a_reference(tmp_path: Path) -> None:
+    source = tmp_path / "indirect-level.pdf"
+    source.write_bytes(
+        build_raw_pdf(
+            {
+                1: (
+                    "<< /Type /Catalog /Pages 2 0 R /Extensions << /ESIC "
+                    "<< /BaseVersion /1.7 /ExtensionLevel 4 0 R >> >> >>"
+                ),
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>",
+                4: "2",
+            }
+        )
+    )
+    assert VERAPDF.arlington(source, "") == "arlington1.7"
 
 
 def test_supplemental_pades_validation_keeps_native_and_archival_checks_distinct() -> None:

@@ -23,8 +23,9 @@ use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::value::{Dict, Name, PdfString, Reference, StringForm, Value};
 use crate::{Error, Password, Result};
 
+pub(crate) use value::decrypt_value_with;
 pub(crate) use value::encrypt_bytes_as;
-pub use value::{decrypt_value, encrypt_bytes, encrypt_value};
+pub use value::{decrypt_value, encrypt_bytes, encrypt_value, encrypt_value_with};
 
 /// The 32 bytes that pad a password (ISO 32000-2 section 7.6.4.3.2).
 const PADDING: [u8; 32] = [
@@ -74,6 +75,9 @@ pub struct Handler {
     key: Box<[u8]>,
     recipient: Option<recipient::RecipientAccess>,
     password: Box<[u8]>,
+    // The byte-reader API authenticates R2–R4 only as a user. Retain the
+    // equivalent reader input only after the store has authenticated an owner.
+    legacy_reader: Option<Box<[u8]>>,
     revision: u8,
     version: u8,
     strings: Method,
@@ -95,14 +99,43 @@ impl std::fmt::Debug for Handler {
     }
 }
 
+/// A credential for the standard password reader. Its bytes stay inside the
+/// store, including when they were recovered during legacy owner authentication.
+pub struct ReaderPassword<'a>(&'a str);
+
+impl<'a> From<&'a str> for ReaderPassword<'a> {
+    fn from(password: &'a str) -> Self {
+        Self(password)
+    }
+}
+
+impl ReaderPassword<'_> {
+    /// Opens the version bytes prepared by the engine bridge.
+    pub fn open(
+        self,
+        bytes: Vec<u8>,
+    ) -> std::result::Result<hayro_syntax::Pdf, hayro_syntax::LoadPdfError> {
+        hayro_syntax::Pdf::new_with_password(bytes, self.0)
+    }
+}
+
 impl Handler {
-    /// Returns the password that authenticated the handler, which a reader
-    /// of the file's bytes needs to decrypt them as the store does: the
-    /// bridge gives it to hayro until hayro reads the store's versions
-    /// (DESIGN.md section 6). It is never written or shown.
+    /// The original opening credential, used to authenticate historical revisions
+    /// with the same access. It is never written or shown.
     #[must_use]
     pub fn password(&self) -> &[u8] {
         &self.password
+    }
+
+    /// Uses the credential accepted by the byte reader without changing the
+    /// store's authenticated role. The byte reader accepts only UTF-8.
+    pub fn reader_password(&self) -> std::result::Result<ReaderPassword<'_>, std::str::Utf8Error> {
+        let supplied = std::str::from_utf8(self.password())?;
+        let reader = match self.legacy_reader.as_deref() {
+            Some(bytes) => std::str::from_utf8(bytes)?,
+            None => supplied,
+        };
+        Ok(ReaderPassword(reader))
     }
 
     /// Authenticates `password` against `encrypt`, the `/Encrypt`
@@ -136,6 +169,7 @@ impl Handler {
             key,
             recipient: None,
             password: Box::from(password),
+            legacy_reader: None,
             revision,
             version,
             strings,
@@ -188,7 +222,9 @@ impl Handler {
         let params = (&o[..32], p, id, encrypt_metadata, revision, n);
         let recovered = file_key(&user, params);
         if user_matches(&recovered, u, revision, id, budget)? {
-            return Ok(make(recovered, Access::Owner));
+            let mut handler = make(recovered, Access::Owner);
+            handler.legacy_reader = Some(legacy_reader_input(user));
+            return Ok(handler);
         }
         let key = file_key(password, params);
         if user_matches(&key, u, revision, id, budget)? {
@@ -396,6 +432,37 @@ fn copy(data: &[u8], budget: &Budget) -> Result<Vec<u8>> {
     Ok(out.into_vec())
 }
 
+// The reader pads its input itself. Any matching ISO padding suffix can be
+// removed because supplying that prefix reproduces the authenticated 32 bytes.
+fn legacy_reader_input(mut user: Vec<u8>) -> Box<[u8]> {
+    let len = (0..32)
+        .find(|&i| user[i..] == PADDING[..32 - i])
+        .unwrap_or(32);
+    user.truncate(len);
+    // A valid UTF-8 password can be truncated in the middle of a codepoint
+    // at byte 32. A valid completion is ignored by legacy key derivation.
+    if len == 32
+        && let Err(error) = std::str::from_utf8(&user)
+        && error.error_len().is_none()
+    {
+        let start = error.valid_up_to();
+        let lead = user[start];
+        let width = usize::try_from(lead.leading_ones())
+            .expect("a UTF-8 sequence spans at most four bytes");
+        let mut completed = [0x80; 35];
+        completed[..32].copy_from_slice(&user);
+        if start + 1 == 32 {
+            completed[32] = match lead {
+                0xe0 => 0xa0,
+                0xf0 => 0x90,
+                _ => 0x80,
+            };
+        }
+        return Box::from(&completed[..start + width]);
+    }
+    user.into_boxed_slice()
+}
+
 /// Pads or truncates a password to 32 bytes.
 fn padded(password: &[u8]) -> [u8; 32] {
     let mut out = PADDING;
@@ -538,6 +605,7 @@ impl PasswordEncryption {
                 key: Box::from(key),
                 recipient: None,
                 password: Box::from(self.owner.as_slice()),
+                legacy_reader: None,
                 revision: 6,
                 version: 5,
                 strings: Method::Aes256,
@@ -570,6 +638,7 @@ impl PasswordEncryption {
                 key,
                 recipient: None,
                 password: Box::from(self.owner.as_slice()),
+                legacy_reader: Some(Box::from(self.user.as_slice())),
                 revision: 4,
                 version: 4,
                 strings: Method::Aes128,

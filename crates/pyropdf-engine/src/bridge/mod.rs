@@ -14,8 +14,8 @@
 //!
 //! For an encrypted base, the written objects are encrypted with the
 //! base's security handler, as a save that keeps the encryption writes
-//! them, and hayro opens the bytes with the password that unlocked the
-//! base (yhay81/pyropdf#13). For an authenticated V5 recipient key, a
+//! them, and hayro opens the bytes using the authenticated standard handler.
+//! For legacy owner access, the store supplies an equivalent user credential. For an authenticated V5 recipient key, a
 //! temporary Standard dictionary in the bridge trailer wraps that same key.
 //! The store's version, file encryption dictionary and ciphertext stay intact.
 //!
@@ -41,7 +41,7 @@ use pyropdf_store::Password;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::index::Location;
 use pyropdf_store::pages::PageIndex;
-use pyropdf_store::security::{self, Handler};
+use pyropdf_store::security::{self, Handler, ReaderPassword};
 use pyropdf_store::value::{Bytes, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Slot, Version};
 use pyropdf_store::write;
@@ -96,7 +96,7 @@ impl fmt::Display for Error {
                 "a version whose encryption differs from the file's cannot be interpreted before it is saved",
             ),
             Self::PasswordNotUtf8 => {
-                f.write_str("a document opened with a password that is not UTF-8 cannot be interpreted")
+                f.write_str("the byte reader requires a UTF-8 password to interpret this document")
             }
             Self::LegacyRecipientKey => f.write_str("hayro cannot interpret a legacy public-key file key through its password interface"),
             Self::Unreadable => f.write_str("hayro cannot read the document"),
@@ -147,7 +147,7 @@ impl Bridged {
     ///
     /// An unedited encrypted document goes to hayro as its original bytes,
     /// and an edited one with its written objects encrypted; hayro opens
-    /// both with the password that unlocked the base.
+    /// both with the credential supplied by the authenticated store.
     pub fn new(version: &Version, pages: &PageIndex, budget: &Budget) -> Result<Self> {
         Self::build(version, pages, budget, false)
     }
@@ -172,14 +172,14 @@ impl Bridged {
             .transpose()?
             .flatten();
         let password = match (&bridge, handler) {
-            (Some((password, _)), _) => password.as_str(),
+            (Some((password, _)), _) => ReaderPassword::from(password.as_str()),
             (None, Some(handler)) if handler.is_recipient() => {
                 return Err(Error::LegacyRecipientKey);
             }
-            (None, Some(handler)) => {
-                std::str::from_utf8(handler.password()).map_err(|_| Error::PasswordNotUtf8)?
-            }
-            (None, None) => "",
+            (None, Some(handler)) => handler
+                .reader_password()
+                .map_err(|_| Error::PasswordNotUtf8)?,
+            (None, None) => ReaderPassword::from(""),
         };
         // The original is a prefix in either mode, even when appearances
         // still have to be synthesized or the cross-reference stream rebuilt.
@@ -209,7 +209,7 @@ impl Bridged {
         let started = Instant::now();
         let len = bytes.len();
         budget.check(LimitCode::InterpretationSize, len as u64)?;
-        let pdf = Pdf::new_with_password(bytes, password).map_err(|_| Error::Unreadable)?;
+        let pdf = password.open(bytes).map_err(|_| Error::Unreadable)?;
         let scaled_pages = check_pages(&pdf, pages, budget)?;
         Ok(Self {
             pdf,
@@ -387,6 +387,12 @@ fn update(
         Some(file) => out.try_extend_from_slice(file.bytes())?,
         None => out.try_extend_from_slice(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n")?,
     }
+    let changed_streams = match (file, handler) {
+        (Some(file), Some(handler)) if version.has_changes() => {
+            handler.changed_streams(version, file, handler, false, budget)?
+        }
+        _ => Vec::new(),
+    };
     let original = out.len();
     out.try_extend_from_slice(b"\n")?;
     let next = extra
@@ -442,15 +448,28 @@ fn update(
             .map(|at| &extra[at]);
         let entry = match (stand_in, version.slot(number)) {
             (Some((reference, value)), _) => {
-                object(&mut out, *reference, Body::Value(value), handler)?
+                object(&mut out, *reference, Body::Value(value), handler, version)?
             }
             (None, Some(Slot::Written(written))) => object(
                 &mut out,
                 Reference::new(number, written.generation()),
                 Body::Serialized(written.bytes()),
                 handler,
+                version,
             )?,
             (None, Some(Slot::Free(_))) => row(0, 0, 0),
+            (None, None) if changed_streams.binary_search(&number).is_ok() => {
+                let obj = version
+                    .get(number, budget)?
+                    .ok_or_else(|| pyropdf_store::Error::malformed("changed stream is missing"))?;
+                object(
+                    &mut out,
+                    Reference::new(number, obj.generation()),
+                    Body::Value(obj.value()),
+                    handler,
+                    version,
+                )?
+            }
             (None, None) => base_row(version, number, &mut out, budget)?,
         };
         rows.try_push(entry)?;
@@ -538,6 +557,7 @@ fn object(
     reference: Reference,
     body: Body<'_>,
     handler: Option<&Handler>,
+    version: &Version,
 ) -> Result<[u8; 13]> {
     let offset = out.len() as u64;
     header(out, reference.number(), reference.generation())?;
@@ -553,7 +573,13 @@ fn object(
                     &parsed
                 }
             };
-            let encrypted = security::encrypt_value(handler, reference, value, out.budget())?;
+            let encrypted = security::encrypt_value_with(
+                handler,
+                (reference, reference),
+                value,
+                &|r, b| version.filter_object(r, b),
+                out.budget(),
+            )?;
             write::value(out, &encrypted)?;
         }
     }
@@ -582,6 +608,7 @@ fn base_row(
             Reference::new(number, generation),
             Body::Serialized(&bytes),
             None,
+            version,
         );
     };
     let Some(entry) = file.get(number) else {
