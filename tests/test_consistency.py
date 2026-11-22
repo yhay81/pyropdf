@@ -81,13 +81,17 @@ def test_an_edit_and_a_save_add_no_qpdf_finding(name: str, edit: str, *, increme
     EDITS[edit].apply(doc)
     saved = tmp_path / "saved.pdf"
     saved.write_bytes(doc.to_bytes(incremental=incremental))
+    assert saved_qpdf_findings(saved) - qpdf_findings(ASSETS / name) == set()
+
+
+def saved_qpdf_findings(saved: Path) -> set[str]:
+    """Ignore qpdf 11's stale object-stream entries only when the saved document actually freed them."""
     live = set(pyropdf.open(saved).objects)
-    findings = {
+    return {
         finding
         for finding in qpdf_findings(saved)
         if not ((match := _FREED_IN_STREAM.fullmatch(finding)) and int(match[1]) not in live)
     }
-    assert findings - qpdf_findings(ASSETS / name) == set()
 
 
 def pikepdf_problems(source: Path | io.BytesIO) -> tuple[int, set[str]]:
