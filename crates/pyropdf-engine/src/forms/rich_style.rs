@@ -1,4 +1,4 @@
-//! XHTML text and scoped CSS used by a variable text field's appearance.
+//! XHTML text and scoped CSS used by rich PDF text appearances.
 
 use std::ops::Range;
 
@@ -58,7 +58,7 @@ pub(crate) fn visual_spans<'b, T>(
 pub(super) const RICH_TEXT: i64 = 1 << 25;
 
 /// The PDF text string or XML text stream containing /RV.
-pub(super) fn read(value: &Value, budget: &Budget) -> Result<Vec<Run>, WidgetError> {
+pub(crate) fn read(value: &Value, budget: &Budget) -> Result<Vec<Run>, WidgetError> {
     let xml = match value {
         Value::String(bytes) => {
             budget.check(LimitCode::FormFieldInputSize, bytes.as_bytes().len() as u64)?;
@@ -107,19 +107,19 @@ pub(super) fn read(value: &Value, budget: &Budget) -> Result<Vec<Run>, WidgetErr
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Style<'s> {
+pub(crate) struct Style<'s> {
     pub(super) families: &'s str,
-    pub(super) family: Base14Font,
+    pub(crate) family: Base14Font,
     pub(super) bold: bool,
     pub(super) italic: bool,
-    pub(super) size: f64,
-    pub(super) auto_size: bool,
-    pub(super) user_unit: f64,
-    pub(super) color: [f64; 3],
-    pub(super) align: Align,
-    pub(super) rise: f64,
-    pub(super) decoration: Option<bool>, // true for underline, false for strike-through
-    pub(super) stretch: f64,
+    pub(crate) size: f64,
+    pub(crate) auto_size: bool,
+    pub(crate) user_unit: f64,
+    pub(crate) color: [f64; 3],
+    pub(crate) align: Align,
+    pub(crate) rise: f64,
+    pub(crate) decoration: Option<bool>, // true for underline, false for strike-through
+    pub(crate) stretch: f64,
 }
 
 pub(super) fn standard_family(name: &str) -> Option<Base14Font> {
@@ -132,7 +132,15 @@ pub(super) fn standard_family(name: &str) -> Option<Base14Font> {
 }
 
 impl<'s> Style<'s> {
-    pub(super) fn new(font: Base14Font, size: f64, color: [f64; 3], align: Align) -> Self {
+    /// Captions retain the resolved face after their XHTML runs are released.
+    pub(crate) fn caption_style(self) -> Style<'static> {
+        Style {
+            families: "",
+            ..self
+        }
+    }
+
+    pub(crate) fn new(font: Base14Font, size: f64, color: [f64; 3], align: Align) -> Self {
         let mut s = Self {
             family: font,
             families: "",
@@ -163,7 +171,7 @@ impl<'s> Style<'s> {
         self
     }
 
-    pub(super) fn font(self) -> Base14Font {
+    pub(crate) fn font(self) -> Base14Font {
         let name = self.family.pdf_base_name();
         let faces = if name.starts_with("Times") {
             &Base14Font::ALL[4..8]
@@ -272,7 +280,7 @@ impl<'s> Style<'s> {
         }
     }
 
-    pub(super) fn css(&mut self, declaration: &'s str) {
+    pub(crate) fn css(&mut self, declaration: &'s str) {
         for property in declaration.split(';') {
             if let Some((key, value)) = property.split_once(':') {
                 self.property(key.trim(), value.trim());
@@ -317,7 +325,7 @@ fn color(value: &str) -> Option<[f64; 3]> {
 
 /// Emits styled characters, folding XHTML whitespace across inline scopes but
 /// preserving explicit breaks, empty paragraphs, and nonbreaking spaces.
-pub(super) fn walk<'s>(
+pub(crate) fn walk<'s>(
     runs: &'s [Run],
     initial: Style<'s>,
     budget: &Budget,

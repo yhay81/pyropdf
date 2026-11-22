@@ -30,10 +30,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 5 | 8 | 825 |
-| interpret | 17 | 19 | 0 | 7 | 12 | 783 |
-| create | 0 | 0 | 28 | 3 | 13 | 794 |
-| edit | 0 | 0 | 0 | 6 | 10 | 822 |
+| read | 0 | 0 | 0 | 4 | 8 | 826 |
+| interpret | 17 | 19 | 0 | 6 | 12 | 784 |
+| create | 0 | 0 | 28 | 2 | 13 | 795 |
+| edit | 0 | 0 | 0 | 5 | 10 | 823 |
 | preserve | 0 | 0 | 0 | 0 | 10 | 828 |
 
 ## Clauses
@@ -145,7 +145,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.5.6.4 | Text annotations | `text-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.5 | Link annotations | `link-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.6 | Free text annotations | `free-text-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.5.6.7 | Line annotations | `line-annotations` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 12.5.6.7 | Line annotations | `line-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.8 | Square and circle annotations | `square-circle-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.9 | Polygon and polyline annotations | `polygon-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.10 | Text markup annotations | `text-markup-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -247,7 +247,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-91 unfinished cells in 838 features: 17 engine, 21 partial, 53 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+87 unfinished cells in 838 features: 17 engine, 17 partial, 53 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -286,8 +286,6 @@ Milestone [#248](https://github.com/yhay81/pyropdf/issues/248).
 
 Milestone [#249](https://github.com/yhay81/pyropdf/issues/249).
 
-- [#1025](https://github.com/yhay81/pyropdf/issues/1025) Shape rich and Unicode captions in line annotation appearances. Resolve and shape RC or multilingual captions, including embedded fonts, along the measured line after authoring and editing.
-    - read, interpret, create, edit — `line-annotations`.
 - [#1016](https://github.com/yhay81/pyropdf/issues/1016) hayro: offer DeviceN mixing hints to colour-proofing devices. Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked.
     - interpret — `devicen-color-space`.
 

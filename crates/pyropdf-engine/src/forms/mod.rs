@@ -29,7 +29,7 @@ pub mod remove;
 mod rich_codes;
 mod rich_fonts;
 mod rich_layout;
-mod rich_style;
+pub(crate) mod rich_style;
 pub mod rich_text;
 mod settle;
 mod style;

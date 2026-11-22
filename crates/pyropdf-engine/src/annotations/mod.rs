@@ -24,6 +24,7 @@ pub mod edit;
 pub mod geometry;
 mod icons;
 mod line;
+mod line_caption;
 mod missing;
 pub mod popup;
 pub mod read;
@@ -1036,34 +1037,46 @@ impl Appearance {
 
     /// Use a complete Type 1 font for a persisted PDF 2.0 caption.
     fn stored_form(&self, transaction: &mut Transaction, budget: &Budget) -> Result<Stream> {
-        let reference = match self.font {
-            Some(text::TextFont::Standard((_, base)))
-                if forms::is_pdf_2_0(transaction.version(), budget)? =>
-            {
-                Some(forms::write_standard_type1(
-                    transaction,
-                    base,
-                    true,
-                    budget,
-                )?)
+        let mut references = [None; 14];
+        if !matches!(self.font, None | Some(text::TextFont::Embedded(_)))
+            && forms::is_pdf_2_0(transaction.version(), budget)?
+        {
+            for (i, &(_, base)) in crate::standard::DA_FONTS.iter().enumerate() {
+                if self.standard_font(i) {
+                    references[i] = Some(forms::write_standard_type1(
+                        transaction,
+                        base,
+                        true,
+                        budget,
+                    )?);
+                }
             }
-            _ => None,
-        };
-        Ok(self.form_with_font(reference))
+        }
+        Ok(self.form_with_font(&references))
+    }
+
+    fn standard_font(&self, index: usize) -> bool {
+        match self.font {
+            Some(text::TextFont::Standard(resource)) => {
+                resource == crate::standard::DA_FONTS[index]
+            }
+            Some(text::TextFont::Standards(mask)) => mask & (1 << index) != 0,
+            _ => false,
+        }
     }
 
     /// Returns the form XObject of the appearance, whose `/Matrix` maps its
     /// box onto the rectangle.
     #[must_use]
     pub fn form(&self) -> Stream {
-        self.form_with_font(None)
+        self.form_with_font(&[None; 14])
     }
 
     #[expect(
         clippy::disallowed_methods,
         reason = "form and resource dictionaries have a fixed set of keys"
     )]
-    fn form_with_font(&self, standard_font: Option<Reference>) -> Stream {
+    fn form_with_font(&self, standard_fonts: &[Option<Reference>; 14]) -> Stream {
         let (width, height) = self.size;
         let mut dict = Dict::new();
         dict.insert(Name::from("Type"), Value::Name(Name::from("XObject")));
@@ -1074,8 +1087,17 @@ impl Appearance {
         );
         dict.insert(Name::from("Matrix"), numbers_array(&self.matrix));
         let mut resources = Dict::new();
-        match self.font {
-            Some(text::TextFont::Standard((resource, base_font))) => {
+        let mut fonts = Dict::new();
+        if let Some(text::TextFont::Embedded(reference)) = self.font {
+            fonts.insert(Name::from(FACE_RESOURCE), Value::Reference(reference));
+        }
+        for (i, &(resource, base_font)) in crate::standard::DA_FONTS.iter().enumerate() {
+            if !self.standard_font(i) {
+                continue;
+            }
+            let value = if let Some(reference) = standard_fonts[i] {
+                Value::Reference(reference)
+            } else {
                 let mut font = Dict::new();
                 font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
                 font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
@@ -1086,19 +1108,12 @@ impl Appearance {
                         Value::Name(Name::from("WinAnsiEncoding")),
                     );
                 }
-                let mut fonts = Dict::new();
-                fonts.insert(
-                    Name::from(resource),
-                    standard_font.map_or(Value::Dict(font), Value::Reference),
-                );
-                resources.insert(Name::from("Font"), Value::Dict(fonts));
-            }
-            Some(text::TextFont::Embedded(reference)) => {
-                let mut fonts = Dict::new();
-                fonts.insert(Name::from(FACE_RESOURCE), Value::Reference(reference));
-                resources.insert(Name::from("Font"), Value::Dict(fonts));
-            }
-            None => {}
+                Value::Dict(font)
+            };
+            fonts.insert(Name::from(resource), value);
+        }
+        if !fonts.is_empty() {
+            resources.insert(Name::from("Font"), Value::Dict(fonts));
         }
         if self.alpha < 1.0 || self.blend.is_some() {
             let mut state = Dict::new();
@@ -1163,6 +1178,7 @@ fn fit(
     dict: &Dict,
     subtype: &[u8],
     geometry: &Geometry,
+    dimension: Option<&line::Dimension>,
 ) -> Result<Option<[f64; 4]>> {
     let lists = match geometry {
         Geometry::Quads(quads) => return Ok(Some(bounds(quads.iter().flatten()))),
@@ -1170,10 +1186,7 @@ fn fit(
         Geometry::Rect => return Ok(None),
     };
     let mut area = bounds(lists.iter().flatten());
-    if subtype == b"Line"
-        && let Some(vertices) = lists.first()
-        && let Some(dimension) = line::Dimension::read(reader, dict, vertices)?
-    {
+    if let Some(dimension) = dimension {
         dimension.expand(&mut area);
     }
     let [x0, y0, x1, y1] = area;
@@ -1206,9 +1219,28 @@ pub fn fitted_rect(reader: &Reader<'_>, dict: &Dict) -> Result<Option<[f64; 4]>>
         return Ok(None);
     };
     match geometry(reader, dict, &subtype)? {
-        Some(geometry) => fit(reader, dict, &subtype, &geometry),
+        Some(geometry) => {
+            let dimension = read_dimension(reader, dict, &subtype, &geometry, None)?;
+            fit(reader, dict, &subtype, &geometry, dimension.as_ref())
+        }
         None => Ok(None),
     }
+}
+
+fn read_dimension(
+    reader: &Reader<'_>,
+    dict: &Dict,
+    subtype: &[u8],
+    geometry: &Geometry,
+    face: Option<&FaceText<'_>>,
+) -> Result<Option<line::Dimension>> {
+    if subtype == b"Line"
+        && let Geometry::Points(lists) = geometry
+        && let Some(vertices) = lists.first()
+    {
+        return line::Dimension::read(reader, dict, vertices, face);
+    }
+    Ok(None)
 }
 
 /// Draws the normal appearance of the annotation `dict`, or returns `None`
@@ -1227,7 +1259,10 @@ pub fn face_appearance(
     dict: &Dict,
     face: &mut FaceText<'_>,
 ) -> Result<Option<Appearance>> {
-    if reader.name(dict, "Subtype")?.as_deref() != Some(b"FreeText".as_slice()) {
+    if !matches!(
+        reader.name(dict, "Subtype")?.as_deref(),
+        Some(b"FreeText" | b"Line")
+    ) {
         return Ok(None);
     }
     appearance_with(reader, dict, false, Some(face))
@@ -1253,7 +1288,8 @@ fn appearance_with(
     let Some(geometry) = geometry(reader, dict, &subtype)? else {
         return Ok(None);
     };
-    let fitted = fit(reader, dict, &subtype, &geometry)?;
+    let dimension = read_dimension(reader, dict, &subtype, &geometry, face.as_deref())?;
+    let fitted = fit(reader, dict, &subtype, &geometry, dimension.as_ref())?;
     let rect = match (&geometry, fitted) {
         (_, Some(rect)) => rect,
         (Geometry::Rect, None) => match reader.rect(dict)? {
@@ -1388,17 +1424,8 @@ fn appearance_with(
         (_, Geometry::Points(lists)) => {
             let intensity = reader.cloud_intensity(dict)?;
             let endings = reader.line_endings(dict)?;
-            let dimension = if &*subtype == b"Line"
-                && let Some(vertices) = lists.first()
-            {
-                line::Dimension::read(reader, dict, vertices)?
-            } else {
-                None
-            };
             if let Some(dimension) = dimension {
-                font = dimension
-                    .draw(&mut canvas, &paint, endings, rect)?
-                    .map(text::TextFont::Standard);
+                (fit, font) = dimension.draw(&mut canvas, &paint, endings, rect, face)?;
             } else if !shapes::lines(
                 &mut canvas,
                 &paint,

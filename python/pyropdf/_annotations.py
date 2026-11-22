@@ -12,7 +12,7 @@ import enum
 import math
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 
 from pyropdf import _core, _rich_media, typed
@@ -837,8 +837,8 @@ def _now() -> str:
     return time.strftime("D:%Y%m%d%H%M%SZ", time.gmtime())
 
 
-def _draw_face(page: Page, index: int, id: tuple[int, int], font: Font) -> None:  # noqa: A002 - an object's id.
-    """Draw free text ``id`` in embedded ``font``, in the caller's transaction.
+def _draw_face(page: Page, index: int, id: tuple[int, int], font: Font, *, editable: bool = False) -> None:  # noqa: A002
+    """Draw annotation text in its embedded font within the caller's transaction.
 
     A first pass collects the glyphs that the text shows, the font records
     their widths and texts, and a second pass writes the appearance, whose
@@ -852,11 +852,52 @@ def _draw_face(page: Page, index: int, id: tuple[int, int], font: Font) -> None:
         raise page._stale()  # noqa: SLF001
     cache = _cache(document)
     # The appearance names the font even without glyphs, so that an edit finds the face.
-    xref = embedded_font(document, font, cache.fonts)
+    xref = embedded_font(document, font, cache.fonts, editable=editable)
     cache.faces[xref] = font
-    mapped = add_glyphs(document, xref, font, drawn) if drawn else {}
+    mapped = add_glyphs(document, xref, font, drawn, editable=editable) if drawn else {}
     if _core.annotation_draw_face(*location, face, (xref, mapped)) is None:
         raise page._stale()  # noqa: SLF001
+
+
+def _set_line_markup(doc: Document, obj: Dictionary, markup: str | None) -> None:
+    current = obj.get("RC")
+    if markup is None:
+        if current is not None:
+            del obj["RC"]
+    elif isinstance(current, Stream):
+        # A producer can share one /RC stream among several annotations.
+        obj["RC"] = doc.objects[doc.objects.add_stream(markup.encode(), dict(current))]
+    else:
+        obj["RC"] = markup
+
+
+def _line_markup(value: object) -> str | None:
+    """Decode the bounded PDF text string or XML stream in /RC."""
+    if value is None:
+        return None
+    if isinstance(value, String):
+        if len(value) > _MAX_ANNOTATION_INPUT_TEXT_SIZE:
+            code = "annotation_input_size"
+            msg = "line caption exceeds the annotation text limit"
+            raise LimitError(code, msg)
+        return value.text
+    if isinstance(value, Stream):
+        data = value.read(max_size=_MAX_ANNOTATION_INPUT_TEXT_SIZE)
+        if data.startswith((b"\xfe\xff", b"\xff\xfe")):
+            encoding = "utf-16"
+        elif data.startswith(b"<\0"):
+            encoding = "utf-16-le"
+        elif data.startswith(b"\0<"):
+            encoding = "utf-16-be"
+        else:
+            encoding = "utf-8-sig"
+        try:
+            return data.decode(encoding)
+        except UnicodeError as exc:
+            msg = "invalid rich line caption encoding"
+            raise MalformedPdfError(msg) from exc
+    msg = "line /RC requires a PDF text string or an XML stream"
+    raise MalformedPdfError(msg)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -864,8 +905,10 @@ class LineDetails:
     """Leader lengths in default user space and the caption placement of a line.
 
     A positive leader extends clockwise from the drawn line to its endpoint.
-    The caption comes from the annotation's contents. Its offset is along and
-    perpendicular to the line, with positive values toward the end and above.
+    A caption displays the XHTML in ``rich_text`` or the annotation's plain
+    contents when XHTML is absent. Supply an embedded outline ``font`` for
+    text outside WinAnsi. Its full program remains available for later edits.
+    The offset is along and perpendicular to the line, toward the end and above.
     """
 
     leader_length: float = 0.0
@@ -874,6 +917,8 @@ class LineDetails:
     caption: bool = False
     position: Literal["Inline", "Top"] = "Inline"
     caption_offset: tuple[float, float] = (0.0, 0.0)
+    rich_text: str | None = None
+    font: Font | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         """Validate leader lengths and caption placement."""
@@ -886,6 +931,15 @@ class LineDetails:
             msg = "a line caption requires a boolean and Inline or Top positioning"
             raise ValueError(msg)
         object.__setattr__(self, "caption_offset", tuple(_point(self.caption_offset)))
+        if self.rich_text is not None:
+            _text_value(self.rich_text, "rich line caption")
+        if self.font is not None:
+            if not isinstance(self.font, Font):
+                msg = "a caption font must be a Font"
+                raise TypeError(msg)
+            if self.font._font.standard_name is not None:  # noqa: SLF001
+                msg = "supply an embedded outline font or select a standard font in the caption XHTML"
+                raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -935,28 +989,38 @@ class Annotation(_AppearanceOwner):
             raise self._page._stale()  # noqa: SLF001
         self._id = result
 
-    def _set(self, *, clear: list[str] | None = None, **entries: object) -> None:
+    def _set(self, *, clear: list[str] | None = None, draw_font: Font | None = None, **entries: object) -> None:
         """Change properties, recording the time of the edit; the appearance settles later.
 
         A free text drawn in an embedded face this session is drawn again in
         that face, in the same undo step as the edit.
         """
         edit: dict[str, object] = {"clear": clear or [], "modified": _now(), **entries}
-        font = self._face()
+        font = draw_font or self._face()
         if font is None:
             self._changed(_core.annotation_edit(*self._location(), edit))
             return
+        editable = self.type == AnnotationType.LINE
         with self._page._document.transaction():  # noqa: SLF001
             self._changed(_core.annotation_edit(*self._location(), edit, face=True))
-            _draw_face(self._page, self._index, self._id, font)
+            _draw_face(self._page, self._index, self._id, font, editable=editable)
 
     def _face(self) -> Font | None:
-        """Return the embedded face that this session drew the free text in, if its appearance still names it."""
-        cache = self._page._document._drawn  # noqa: SLF001
-        if cache is None or not cache.faces:
-            return None
+        """Recover the font referenced by a caption appearance, including after reopening."""
+        doc = self._page.document
+        cache = doc._drawn  # noqa: SLF001
         xref = _core.annotation_face(*self._location())
-        return None if xref is None else cache.faces.get(xref)
+        if xref is None:
+            return None
+        if cache is not None and xref in cache.faces:
+            return cache.faces[xref]
+        if self.type == AnnotationType.LINE:
+            program = doc.font_program(xref)
+            if program is not None:
+                font = Font.from_bytes(program.data)
+                _cache(doc).faces[xref] = font
+                return font
+        return None
 
     def _text(self, slot: int) -> str | None:
         return self._read()[5][slot]
@@ -1346,6 +1410,8 @@ class Annotation(_AppearanceOwner):
                 caption=obj.get("Cap", False),
                 position=cast('Literal["Inline", "Top"]', str(cp)),
                 caption_offset=(0.0, 0.0) if co is None else (co[0], co[1]),
+                rich_text=_line_markup(obj.get("RC")),
+                font=self._face(),
             )
         except (TypeError, ValueError, PdfError) as exc:
             raise MalformedPdfError(str(exc)) from exc
@@ -1358,6 +1424,7 @@ class Annotation(_AppearanceOwner):
         doc = self._page.document
         with doc.transaction("edit line leaders and caption"):
             obj = self.obj
+            font = value.font or self._face()
             entries = {
                 "LL": value.leader_length if value.leader_length or value.leader_extension else None,
                 "LLE": value.leader_extension or None,
@@ -1370,12 +1437,15 @@ class Annotation(_AppearanceOwner):
                 _require(doc, (1, 7))
             elif any(v is not None for v in entries.values()):
                 _require(doc, (1, 6))
+            if value.rich_text is not None:
+                _require(doc, (1, 5))
+            _set_line_markup(doc, obj, value.rich_text)
             for key, entry in entries.items():
                 if entry is not None:
                     obj[key] = entry
                 elif key in obj:
                     del obj[key]
-            self._set()
+            self._set(draw_font=font)
 
     @property
     def redaction(self) -> RedactionMark | None:

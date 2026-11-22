@@ -44,14 +44,6 @@ features = ["transparency-color", "alpha-compositing"]
 dimensions = ["interpret"]
 behavior = "Render groups against their initial backdrop, honor knockout shape, and convert into the selected group space at the boundary. Verify explicit output-device samples after upstream adoption."
 
-[families.rich-line-captions]
-tracker = 249
-issue = 1025
-title = "Shape rich and Unicode captions in line annotation appearances"
-features = ["line-annotations"]
-dimensions = ["read", "interpret", "create", "edit"]
-behavior = "Resolve and shape RC or multilingual captions, including embedded fonts, along the measured line after authoring and editing."
-
 [families.devicen-mixing-hints]
 tracker = 249
 parent = 248

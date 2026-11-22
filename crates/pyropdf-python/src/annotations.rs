@@ -162,11 +162,22 @@ pub fn annotation_face(
     id: (u32, u16),
 ) -> PyResult<Option<u32>> {
     crate::errors::boundary(|| {
+        let lookup = |version, pages, budget: &Budget| {
+            annotations::annotation_face(version, pages, budget, number, generation, index, id)
+                .map_err(annotation_error)
+        };
+        if document.in_transaction() {
+            // Choosing an edit's font must not settle earlier appearance writes
+            // in the same transaction. Inspect the writer's current resources.
+            return document.edit(py, |transaction, budget| {
+                let version = transaction.snapshot();
+                let pages = PageIndex::memoized(&document.draft_pages, &version, budget)
+                    .map_err(|err| store_error(&err))?;
+                lookup(version, pages, budget)
+            });
+        }
         let (version, pages, budget) = page_index(document)?;
-        py.detach(|| {
-            annotations::annotation_face(version, pages, &budget, number, generation, index, id)
-        })
-        .map_err(annotation_error)
+        py.detach(|| lookup(version, pages, &budget))
     })?
 }
 
