@@ -1,0 +1,950 @@
+[
+  {
+    "run": "https://github.com/yhay81/pyropdf/actions/runs/44980129230",
+    "pr_head": "d38a22e05aeb66eff05545b90dce4bbe8eb26fd2",
+    "base": "138fd449cdbd4a7465c61b6a7bfa58b4fd1c171b",
+    "merge": "86aa283ea92b29041628f152d20e7623f5c7cbb3",
+    "maturin_action": {
+      "rust-toolchain": [
+        "1.100.0"
+      ],
+      "maturin-version": [
+        "1.16.0"
+      ],
+      "sccache": [
+        "false"
+      ],
+      "manylinux": [
+        "auto"
+      ]
+    },
+    "elapsed_s": 3794,
+    "targets": {
+      "aarch64-apple-darwin": {
+        "job_id": 137078613747,
+        "runner": [
+          "macos-latest"
+        ],
+        "queue_s": 2200,
+        "runner_s": 767,
+        "base": {
+          "step_s": 377,
+          "cargo_s": 349.0,
+          "tool_setup_s": 15.7,
+          "compiled_crates": 197,
+          "wheel_bytes": 8212319,
+          "wheel_sha256": "c1361bcab8aaea9d2639fe8201035b128b390751601c77e5015069fe3d9d5160"
+        },
+        "head": {
+          "step_s": 311,
+          "cargo_s": 307.0,
+          "tool_setup_s": 1.3,
+          "compiled_crates": 197,
+          "wheel_bytes": 8029337,
+          "wheel_sha256": "b3f1eded885666757efb79ccddd0d349eb02b054f8367055420ba1fbdb9538d1"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-macosx_11_0_arm64",
+        "cargo_target": "separate"
+      },
+      "aarch64-unknown-linux-gnu": {
+        "job_id": 137078613921,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ],
+        "queue_s": 5,
+        "runner_s": 831,
+        "base": {
+          "step_s": 387,
+          "cargo_s": 337.0,
+          "tool_setup_s": 42.1,
+          "compiled_crates": 197,
+          "wheel_bytes": 8701372,
+          "wheel_sha256": "ecdba49b06b6230ecc137521db3c613a1215477a79826ea4c217f625ea02f6f4"
+        },
+        "head": {
+          "step_s": 358,
+          "cargo_s": 332.0,
+          "tool_setup_s": 18.5,
+          "compiled_crates": 197,
+          "wheel_bytes": 8482449,
+          "wheel_sha256": "3635323952a985376c86af82c26c47f25f1096d3f7ac925f3def452b6285fdeb"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64",
+        "cargo_target": "separate"
+      },
+      "x86_64-apple-darwin": {
+        "job_id": 137078613907,
+        "runner": [
+          "macos-15-intel"
+        ],
+        "queue_s": 2290,
+        "runner_s": 1502,
+        "base": {
+          "step_s": 703,
+          "cargo_s": 666.0,
+          "tool_setup_s": 22.3,
+          "compiled_crates": 197,
+          "wheel_bytes": 9181686,
+          "wheel_sha256": "31971114d0ecd3c2cec939aebb45eca58c72b37266e8cc74b6413ae419c50cd1"
+        },
+        "head": {
+          "step_s": 652,
+          "cargo_s": 647.0,
+          "tool_setup_s": 1.7,
+          "compiled_crates": 197,
+          "wheel_bytes": 8968464,
+          "wheel_sha256": "607cb796637fea71ff55789919740230cee7fb4317f756c22019da1c56dc8c89"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-macosx_10_12_x86_64",
+        "cargo_target": "separate"
+      },
+      "x86_64-pc-windows-msvc": {
+        "job_id": 137078613898,
+        "runner": [
+          "windows-latest"
+        ],
+        "queue_s": 2,
+        "runner_s": 1288,
+        "base": {
+          "step_s": 595,
+          "cargo_s": 551.0,
+          "tool_setup_s": 22.4,
+          "compiled_crates": 199,
+          "wheel_bytes": 9573341,
+          "wheel_sha256": "4a3be6b9ac2539de07e73f7b0eb7ba67a50a857af860e518eeba99cba8978f72"
+        },
+        "head": {
+          "step_s": 545,
+          "cargo_s": 540.0,
+          "tool_setup_s": 2.3,
+          "compiled_crates": 199,
+          "wheel_bytes": 9350626,
+          "wheel_sha256": "951798508a641b6c7b01168cff8f731c796ea8ff3920186a5db18190050853e0"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-win_amd64",
+        "cargo_target": "separate"
+      },
+      "x86_64-unknown-linux-gnu": {
+        "job_id": 137078613906,
+        "runner": [
+          "ubuntu-latest"
+        ],
+        "queue_s": 1,
+        "runner_s": 729,
+        "base": {
+          "step_s": 333,
+          "cargo_s": 279.0,
+          "tool_setup_s": 37.9,
+          "compiled_crates": 197,
+          "wheel_bytes": 9454024,
+          "wheel_sha256": "7da5ea6d331843d49e2013d451b3b21a5dba0bd461399f896486f0484adcae7f"
+        },
+        "head": {
+          "step_s": 310,
+          "cargo_s": 280.0,
+          "tool_setup_s": 20.9,
+          "compiled_crates": 197,
+          "wheel_bytes": 9223041,
+          "wheel_sha256": "f4bac2e7f4bcf306f285ed7d5629d78c214715a83c2b176dda7f3805c59ac881"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64",
+        "cargo_target": "separate"
+      }
+    }
+  },
+  {
+    "run": "https://github.com/yhay81/pyropdf/actions/runs/44984902949",
+    "pr_head": "a9b74d7d5f6c0f793e0f966da59367813fafe05a",
+    "base": "a2414f7e0734c0b8575f370f9a042c46498e4fc8",
+    "merge": "497e9fe780e25e21c7b20d2521b204f74a64859e",
+    "maturin_action": {
+      "rust-toolchain": [
+        "1.100.0"
+      ],
+      "maturin-version": [
+        "1.16.0"
+      ],
+      "sccache": [
+        "false"
+      ],
+      "manylinux": [
+        "auto"
+      ]
+    },
+    "elapsed_s": 1406,
+    "targets": {
+      "aarch64-apple-darwin": {
+        "job_id": 137093229228,
+        "runner": [
+          "macos-latest"
+        ],
+        "queue_s": 2,
+        "runner_s": 823,
+        "base": {
+          "step_s": 394,
+          "cargo_s": 370.0,
+          "tool_setup_s": 13.7,
+          "compiled_crates": 197,
+          "wheel_bytes": 8029337,
+          "wheel_sha256": "46ce052257545a7183c4b004cf5d529905afb37d60e289d9a80291e15cd0c3d3"
+        },
+        "head": {
+          "step_s": 368,
+          "cargo_s": 363.0,
+          "tool_setup_s": 1.8,
+          "compiled_crates": 197,
+          "wheel_bytes": 8029680,
+          "wheel_sha256": "94f5fbe23721bcbb6a706a57cd6e509e9eafe594523fce9817148ece57adffa1"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-macosx_11_0_arm64",
+        "cargo_target": "separate"
+      },
+      "aarch64-unknown-linux-gnu": {
+        "job_id": 137093229105,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ],
+        "queue_s": 4,
+        "runner_s": 901,
+        "base": {
+          "step_s": 420,
+          "cargo_s": 368.0,
+          "tool_setup_s": 43.3,
+          "compiled_crates": 197,
+          "wheel_bytes": 8482450,
+          "wheel_sha256": "0acb102386cee3344e4b090c74df6815b33cc747e608ab74ef56e8df722dc8d7"
+        },
+        "head": {
+          "step_s": 396,
+          "cargo_s": 369.0,
+          "tool_setup_s": 18.0,
+          "compiled_crates": 197,
+          "wheel_bytes": 8481701,
+          "wheel_sha256": "b82047330cfb25d7e7a705ad79a04717dd1750402f9804d1ef240fe597541746"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64",
+        "cargo_target": "separate"
+      },
+      "x86_64-apple-darwin": {
+        "job_id": 137093229315,
+        "runner": [
+          "macos-15-intel"
+        ],
+        "queue_s": 2,
+        "runner_s": 1402,
+        "base": {
+          "step_s": 653,
+          "cargo_s": 617.0,
+          "tool_setup_s": 21.3,
+          "compiled_crates": 197,
+          "wheel_bytes": 8968464,
+          "wheel_sha256": "9dee5dee86aaa12134855f30f5688653b8941d6eeec8f114de1a4a315d23733a"
+        },
+        "head": {
+          "step_s": 636,
+          "cargo_s": 631.0,
+          "tool_setup_s": 1.6,
+          "compiled_crates": 197,
+          "wheel_bytes": 8969071,
+          "wheel_sha256": "8b07b059bb073f44ffc419b2629fdb17460aaad759f9b561467cd640383d312d"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-macosx_10_12_x86_64",
+        "cargo_target": "separate"
+      },
+      "x86_64-pc-windows-msvc": {
+        "job_id": 137093229271,
+        "runner": [
+          "windows-latest"
+        ],
+        "queue_s": 2,
+        "runner_s": 1351,
+        "base": {
+          "step_s": 634,
+          "cargo_s": 588.0,
+          "tool_setup_s": 22.7,
+          "compiled_crates": 199,
+          "wheel_bytes": 9350631,
+          "wheel_sha256": "63893dd5996f9f29392b16e32ff726fac1d1911841befa5c59900522178ce8bd"
+        },
+        "head": {
+          "step_s": 583,
+          "cargo_s": 577.0,
+          "tool_setup_s": 2.5,
+          "compiled_crates": 199,
+          "wheel_bytes": 9350957,
+          "wheel_sha256": "76a165de8cbcf2a7c24ba38e58a1995c8c55b06b9358ecd5e45a2ecfa865e8b7"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-win_amd64",
+        "cargo_target": "separate"
+      },
+      "x86_64-unknown-linux-gnu": {
+        "job_id": 137093229365,
+        "runner": [
+          "ubuntu-latest"
+        ],
+        "queue_s": 1,
+        "runner_s": 673,
+        "base": {
+          "step_s": 302,
+          "cargo_s": 254.0,
+          "tool_setup_s": 31.3,
+          "compiled_crates": 197,
+          "wheel_bytes": 9223039,
+          "wheel_sha256": "4b504dbd3ca2a90c5ab3b0903fde46cafbf220a37d9c869da762fd2dfde9f104"
+        },
+        "head": {
+          "step_s": 287,
+          "cargo_s": 256.0,
+          "tool_setup_s": 20.1,
+          "compiled_crates": 197,
+          "wheel_bytes": 9222515,
+          "wheel_sha256": "a53b2dc9efeb0f335e5c80b023adf047487bfbeb6889de142c5eef4e003282b4"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64",
+        "cargo_target": "separate"
+      }
+    }
+  },
+  {
+    "run": "https://github.com/yhay81/pyropdf/actions/runs/44984907881",
+    "pr_head": "4754387fd38e7be94ca93f5d49def68c38aa87f4",
+    "base": "a2414f7e0734c0b8575f370f9a042c46498e4fc8",
+    "merge": "5fac82e1052df04da5d7b57a4e32863dc70c9a86",
+    "maturin_action": {
+      "rust-toolchain": [
+        "1.100.0"
+      ],
+      "maturin-version": [
+        "1.16.0"
+      ],
+      "sccache": [
+        "false"
+      ],
+      "manylinux": [
+        "auto"
+      ]
+    },
+    "elapsed_s": 2739,
+    "targets": {
+      "aarch64-apple-darwin": {
+        "job_id": 137093244793,
+        "runner": [
+          "macos-latest"
+        ],
+        "queue_s": 90,
+        "runner_s": 911,
+        "base": {
+          "step_s": 533,
+          "cargo_s": 506.0,
+          "tool_setup_s": 15.9,
+          "compiled_crates": 197,
+          "wheel_bytes": 8029338,
+          "wheel_sha256": "2f6b5a1455978ab7934e4027529f15360c3ef53d607371ac7b636f5345dd320f"
+        },
+        "head": {
+          "step_s": 317,
+          "cargo_s": 311.0,
+          "tool_setup_s": 2.1,
+          "compiled_crates": 197,
+          "wheel_bytes": 8031212,
+          "wheel_sha256": "5cabf72d5fbd8dcb04e4f37ce373aea393da2af2bacf9e1bedc207b1dc8dc4c1"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-macosx_11_0_arm64",
+        "cargo_target": "separate"
+      },
+      "aarch64-unknown-linux-gnu": {
+        "job_id": 137093244692,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ],
+        "queue_s": 4,
+        "runner_s": 812,
+        "base": {
+          "step_s": 378,
+          "cargo_s": 328.0,
+          "tool_setup_s": 41.8,
+          "compiled_crates": 197,
+          "wheel_bytes": 8482452,
+          "wheel_sha256": "800eac3b81d3b3b6cbf77f32911fde9cc5c2ea996c796291838c25fb34c3019f"
+        },
+        "head": {
+          "step_s": 348,
+          "cargo_s": 323.0,
+          "tool_setup_s": 17.0,
+          "compiled_crates": 197,
+          "wheel_bytes": 8485687,
+          "wheel_sha256": "33aef80b11fded4b436ea2477142cc81ae73b940d26436541d4751e636c234b7"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64",
+        "cargo_target": "separate"
+      },
+      "x86_64-apple-darwin": {
+        "job_id": 137093244903,
+        "runner": [
+          "macos-15-intel"
+        ],
+        "queue_s": 1117,
+        "runner_s": 1620,
+        "base": {
+          "step_s": 741,
+          "cargo_s": 697.0,
+          "tool_setup_s": 21.3,
+          "compiled_crates": 197,
+          "wheel_bytes": 8968466,
+          "wheel_sha256": "359bf1dad7b3f82a56a651c1d575f575fa678bd4b10a6f0b749193ffa879c493"
+        },
+        "head": {
+          "step_s": 757,
+          "cargo_s": 752.0,
+          "tool_setup_s": 1.7,
+          "compiled_crates": 197,
+          "wheel_bytes": 8971602,
+          "wheel_sha256": "0e3a029763c20d99b8f3346b3818ff5aae9a8b7f064fc358946ea9692305ebf0"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-macosx_10_12_x86_64",
+        "cargo_target": "separate"
+      },
+      "x86_64-pc-windows-msvc": {
+        "job_id": 137093244918,
+        "runner": [
+          "windows-latest"
+        ],
+        "queue_s": 12,
+        "runner_s": 1121,
+        "base": {
+          "step_s": 539,
+          "cargo_s": 469.0,
+          "tool_setup_s": 37.7,
+          "compiled_crates": 199,
+          "wheel_bytes": 9350598,
+          "wheel_sha256": "9c79be1c169cb62fc9133f98af6a3958526186f72cf467c59ed50c88b8797896"
+        },
+        "head": {
+          "step_s": 466,
+          "cargo_s": 461.0,
+          "tool_setup_s": 2.2,
+          "compiled_crates": 199,
+          "wheel_bytes": 9353836,
+          "wheel_sha256": "1a068006e6d266c64f16cbe394130fd7609366c0add6ac5faef1df627f68be38"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-win_amd64",
+        "cargo_target": "separate"
+      },
+      "x86_64-unknown-linux-gnu": {
+        "job_id": 137093244854,
+        "runner": [
+          "ubuntu-latest"
+        ],
+        "queue_s": 2,
+        "runner_s": 750,
+        "base": {
+          "step_s": 347,
+          "cargo_s": 287.0,
+          "tool_setup_s": 39.2,
+          "compiled_crates": 197,
+          "wheel_bytes": 9223040,
+          "wheel_sha256": "f744b3748148a6b6402b8bed4c7547422200b9541793a48676f5d55c8de816ab"
+        },
+        "head": {
+          "step_s": 304,
+          "cargo_s": 274.0,
+          "tool_setup_s": 20.9,
+          "compiled_crates": 197,
+          "wheel_bytes": 9225834,
+          "wheel_sha256": "e3b731c14a479b778e3e5a98fb60af3d78b80a3a88b8f2cef62e5f35498ebe0d"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64",
+        "cargo_target": "separate"
+      }
+    }
+  },
+  {
+    "run": "https://github.com/yhay81/pyropdf/actions/runs/44984908627",
+    "pr_head": "8fb0b9a763de7c67e86a242100668567cc6caaab",
+    "base": "a2414f7e0734c0b8575f370f9a042c46498e4fc8",
+    "merge": "edae7ef2e012f10ee16d655fe1d42e1db3483721",
+    "maturin_action": {
+      "rust-toolchain": [
+        "1.100.0"
+      ],
+      "maturin-version": [
+        "1.16.0"
+      ],
+      "sccache": [
+        "false"
+      ],
+      "manylinux": [
+        "auto"
+      ]
+    },
+    "elapsed_s": 1853,
+    "targets": {
+      "aarch64-apple-darwin": {
+        "job_id": 137093246793,
+        "runner": [
+          "macos-latest"
+        ],
+        "queue_s": 822,
+        "runner_s": 1009,
+        "base": {
+          "step_s": 514,
+          "cargo_s": 480.0,
+          "tool_setup_s": 12.8,
+          "compiled_crates": 197,
+          "wheel_bytes": 8029339,
+          "wheel_sha256": "3b85dfe9a508e154839a23ba86acf413b2440f41d5d642e939b57b51b8318d35"
+        },
+        "head": {
+          "step_s": 416,
+          "cargo_s": 410.0,
+          "tool_setup_s": 1.9,
+          "compiled_crates": 197,
+          "wheel_bytes": 8031819,
+          "wheel_sha256": "f1ff4d478008e166c538f0ab77d4a29afb03a22dab04a044828bde32e232efa7"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-macosx_11_0_arm64",
+        "cargo_target": "separate"
+      },
+      "aarch64-unknown-linux-gnu": {
+        "job_id": 137093246972,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ],
+        "queue_s": 91,
+        "runner_s": 822,
+        "base": {
+          "step_s": 382,
+          "cargo_s": 333.0,
+          "tool_setup_s": 43.6,
+          "compiled_crates": 197,
+          "wheel_bytes": 8482445,
+          "wheel_sha256": "2b99463c4fcf87d915a6c5d8e44fd86cb3724f098e1a68938619a070747f59b3"
+        },
+        "head": {
+          "step_s": 356,
+          "cargo_s": 333.0,
+          "tool_setup_s": 17.1,
+          "compiled_crates": 197,
+          "wheel_bytes": 8484932,
+          "wheel_sha256": "e5aa1c1bd1ac66eeae7168d63444e88da5f168e252ef55fb0d8eccaf28a6e7d3"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64",
+        "cargo_target": "separate"
+      },
+      "x86_64-apple-darwin": {
+        "job_id": 137093246983,
+        "runner": [
+          "macos-15-intel"
+        ],
+        "queue_s": 245,
+        "runner_s": 1606,
+        "base": {
+          "step_s": 767,
+          "cargo_s": 732.0,
+          "tool_setup_s": 18.8,
+          "compiled_crates": 197,
+          "wheel_bytes": 8968463,
+          "wheel_sha256": "5038f6e2febd7bdd09bb8d42cb15311534c01d20b73c687cf453f1018b82a755"
+        },
+        "head": {
+          "step_s": 711,
+          "cargo_s": 706.0,
+          "tool_setup_s": 1.9,
+          "compiled_crates": 197,
+          "wheel_bytes": 8970945,
+          "wheel_sha256": "82b09af58bb0be86bab708adac2e78a83ac0e8ae71c9c777a54b234a8f23c000"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-macosx_10_12_x86_64",
+        "cargo_target": "separate"
+      },
+      "x86_64-pc-windows-msvc": {
+        "job_id": 137093246987,
+        "runner": [
+          "windows-latest"
+        ],
+        "queue_s": 14,
+        "runner_s": 1364,
+        "base": {
+          "step_s": 633,
+          "cargo_s": 588.0,
+          "tool_setup_s": 22.7,
+          "compiled_crates": 199,
+          "wheel_bytes": 9350601,
+          "wheel_sha256": "168ded4861105ec788a46ecda5cce439f307c4f3a2fe8b838598d2400c03a079"
+        },
+        "head": {
+          "step_s": 595,
+          "cargo_s": 590.0,
+          "tool_setup_s": 2.5,
+          "compiled_crates": 199,
+          "wheel_bytes": 9353077,
+          "wheel_sha256": "b0d660ee490f94aadbd5966808b4c2a05245597e7192bd83dc5c2611d3e80c9f"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-win_amd64",
+        "cargo_target": "separate"
+      },
+      "x86_64-unknown-linux-gnu": {
+        "job_id": 137093247388,
+        "runner": [
+          "ubuntu-latest"
+        ],
+        "queue_s": 278,
+        "runner_s": 689,
+        "base": {
+          "step_s": 304,
+          "cargo_s": 264.0,
+          "tool_setup_s": 28.6,
+          "compiled_crates": 197,
+          "wheel_bytes": 9223044,
+          "wheel_sha256": "bd7c476c1e3be2237d769c6355156887e561dd6b413fe5539d99f2210d6f0550"
+        },
+        "head": {
+          "step_s": 293,
+          "cargo_s": 268.0,
+          "tool_setup_s": 19.5,
+          "compiled_crates": 197,
+          "wheel_bytes": 9225516,
+          "wheel_sha256": "034f6cfde29a4a2eac021ab847e9a9ed6c321b48ad62cf08badabf670829b9c0"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64",
+        "cargo_target": "separate"
+      }
+    }
+  },
+  {
+    "run": "https://github.com/yhay81/pyropdf/actions/runs/44984912331",
+    "pr_head": "8af4444a6570d5b7ffced0eb337a09da8708e326",
+    "base": "a2414f7e0734c0b8575f370f9a042c46498e4fc8",
+    "merge": "b2f5b9279ab678a4a2148a3541a926a80e11577b",
+    "maturin_action": {
+      "rust-toolchain": [
+        "1.100.0"
+      ],
+      "maturin-version": [
+        "1.16.0"
+      ],
+      "sccache": [
+        "false"
+      ],
+      "manylinux": [
+        "auto"
+      ]
+    },
+    "elapsed_s": 3024,
+    "targets": {
+      "aarch64-apple-darwin": {
+        "job_id": 137093282808,
+        "runner": [
+          "macos-latest"
+        ],
+        "queue_s": 993,
+        "runner_s": 868,
+        "base": {
+          "step_s": 425,
+          "cargo_s": 399.0,
+          "tool_setup_s": 13.8,
+          "compiled_crates": 197,
+          "wheel_bytes": 8029336,
+          "wheel_sha256": "611f355a96b44c0080f2a53ac717ebd1fc3c9775db43fc79b929b73bf346cd8e"
+        },
+        "head": {
+          "step_s": 377,
+          "cargo_s": 372.0,
+          "tool_setup_s": 1.6,
+          "compiled_crates": 197,
+          "wheel_bytes": 8030576,
+          "wheel_sha256": "2270ed082791192d99120318689029a2db582ce938f4e09ebeac2f69b9c14253"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-macosx_11_0_arm64",
+        "cargo_target": "separate"
+      },
+      "aarch64-unknown-linux-gnu": {
+        "job_id": 137093282828,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ],
+        "queue_s": 234,
+        "runner_s": 808,
+        "base": {
+          "step_s": 374,
+          "cargo_s": 324.0,
+          "tool_setup_s": 42.2,
+          "compiled_crates": 197,
+          "wheel_bytes": 8482452,
+          "wheel_sha256": "1237ecd94d5eb1b2e62a9f10049526098cde1b614691af0f883ff7531afbf9a5"
+        },
+        "head": {
+          "step_s": 348,
+          "cargo_s": 325.0,
+          "tool_setup_s": 16.1,
+          "compiled_crates": 197,
+          "wheel_bytes": 8483058,
+          "wheel_sha256": "60d2d09db17e7754d9e82815b582e59d73ccee68e5f3f4953468f3a73c2b999a"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64",
+        "cargo_target": "separate"
+      },
+      "x86_64-apple-darwin": {
+        "job_id": 137093282952,
+        "runner": [
+          "macos-15-intel"
+        ],
+        "queue_s": 1393,
+        "runner_s": 1623,
+        "base": {
+          "step_s": 797,
+          "cargo_s": 730.0,
+          "tool_setup_s": 38.8,
+          "compiled_crates": 197,
+          "wheel_bytes": 8968461,
+          "wheel_sha256": "acb56d35e8102e78f3ee5b6cbc351fdbec58df620251a0a7f9b07203bab88346"
+        },
+        "head": {
+          "step_s": 693,
+          "cargo_s": 687.0,
+          "tool_setup_s": 2.0,
+          "compiled_crates": 197,
+          "wheel_bytes": 8968819,
+          "wheel_sha256": "388ca753e4d60ef3b52f1ee81b1597dd09da58e05245cd1d270a13502ee95d7c"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-macosx_10_12_x86_64",
+        "cargo_target": "separate"
+      },
+      "x86_64-pc-windows-msvc": {
+        "job_id": 137093282811,
+        "runner": [
+          "windows-latest"
+        ],
+        "queue_s": 250,
+        "runner_s": 1032,
+        "base": {
+          "step_s": 476,
+          "cargo_s": 440.0,
+          "tool_setup_s": 18.6,
+          "compiled_crates": 199,
+          "wheel_bytes": 9350603,
+          "wheel_sha256": "7c8aba1a7601a83c72b7511681d4c43c865b1bbfb0f0c4e3aa75e0bdb5d8149a"
+        },
+        "head": {
+          "step_s": 447,
+          "cargo_s": 443.0,
+          "tool_setup_s": 2.0,
+          "compiled_crates": 199,
+          "wheel_bytes": 9352226,
+          "wheel_sha256": "33b4a2939ad46e7b84e6bcf27c7f906d0bd6a65405aa1edf4c9c46dac959db33"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-win_amd64",
+        "cargo_target": "separate"
+      },
+      "x86_64-unknown-linux-gnu": {
+        "job_id": 137093282635,
+        "runner": [
+          "ubuntu-latest"
+        ],
+        "queue_s": 269,
+        "runner_s": 725,
+        "base": {
+          "step_s": 329,
+          "cargo_s": 276.0,
+          "tool_setup_s": 37.3,
+          "compiled_crates": 197,
+          "wheel_bytes": 9223040,
+          "wheel_sha256": "6a1dc0eff33fbe60bb37605f87ed70bb6fc775c06c7c44946089cbef759ae438"
+        },
+        "head": {
+          "step_s": 310,
+          "cargo_s": 279.0,
+          "tool_setup_s": 21.5,
+          "compiled_crates": 197,
+          "wheel_bytes": 9223995,
+          "wheel_sha256": "c48ed90c285cd40a5acb538549e3193e8e450e81d737f3236d077b3ef8e6902a"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64",
+        "cargo_target": "separate"
+      }
+    }
+  },
+  {
+    "run": "https://github.com/yhay81/pyropdf/actions/runs/44984915735",
+    "pr_head": "01f56dcca924843575e71b9271d80132b535a0ac",
+    "base": "a2414f7e0734c0b8575f370f9a042c46498e4fc8",
+    "merge": "885c649cfb8d99442b660099cd5601fffd82ec3a",
+    "maturin_action": {
+      "rust-toolchain": [
+        "1.100.0"
+      ],
+      "maturin-version": [
+        "1.16.0"
+      ],
+      "sccache": [
+        "false"
+      ],
+      "manylinux": [
+        "auto"
+      ]
+    },
+    "elapsed_s": 3533,
+    "targets": {
+      "aarch64-apple-darwin": {
+        "job_id": 137093269177,
+        "runner": [
+          "macos-latest"
+        ],
+        "queue_s": 115,
+        "runner_s": 992,
+        "base": {
+          "step_s": 516,
+          "cargo_s": 488.0,
+          "tool_setup_s": 16.6,
+          "compiled_crates": 197,
+          "wheel_bytes": 8029335,
+          "wheel_sha256": "70dd8af9f494e59f006fe65a5349c6406ad8a58d58806c2bdea4f6c57f8e9902"
+        },
+        "head": {
+          "step_s": 404,
+          "cargo_s": 400.0,
+          "tool_setup_s": 1.7,
+          "compiled_crates": 197,
+          "wheel_bytes": 8044275,
+          "wheel_sha256": "a53594c988338b1df0878e30f1334a5b61b5d716aed0c829ef9847c1cc9d553f"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-macosx_11_0_arm64",
+        "cargo_target": "separate"
+      },
+      "aarch64-unknown-linux-gnu": {
+        "job_id": 137093269041,
+        "runner": [
+          "ubuntu-24.04-arm"
+        ],
+        "queue_s": 273,
+        "runner_s": 842,
+        "base": {
+          "step_s": 387,
+          "cargo_s": 340.0,
+          "tool_setup_s": 41.3,
+          "compiled_crates": 197,
+          "wheel_bytes": 8482451,
+          "wheel_sha256": "f54ac67aa1be521f60b45429c884e601d6292ccd62b8beaf7def5060ac057943"
+        },
+        "head": {
+          "step_s": 366,
+          "cargo_s": 343.0,
+          "tool_setup_s": 16.5,
+          "compiled_crates": 197,
+          "wheel_bytes": 8499137,
+          "wheel_sha256": "7793247d23d9954bbeb65ebfaa930fea6886dcd32ce7252f71d2bd017cab8f23"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64",
+        "cargo_target": "separate"
+      },
+      "x86_64-apple-darwin": {
+        "job_id": 137093268912,
+        "runner": [
+          "macos-15-intel"
+        ],
+        "queue_s": 1828,
+        "runner_s": 1703,
+        "base": {
+          "step_s": 867,
+          "cargo_s": 829.0,
+          "tool_setup_s": 18.6,
+          "compiled_crates": 197,
+          "wheel_bytes": 8968466,
+          "wheel_sha256": "3bf4e794ce08ab066d83eebff6127fedeaa19fde646faabe031fedd8ef0f2c59"
+        },
+        "head": {
+          "step_s": 728,
+          "cargo_s": 720.0,
+          "tool_setup_s": 3.4,
+          "compiled_crates": 197,
+          "wheel_bytes": 8983695,
+          "wheel_sha256": "92ee42c74ae74399d85ddcb1bc1bf1c7705214e43d6f838d82d35ce375a7ea68"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-macosx_10_12_x86_64",
+        "cargo_target": "separate"
+      },
+      "x86_64-pc-windows-msvc": {
+        "job_id": 137093269026,
+        "runner": [
+          "windows-latest"
+        ],
+        "queue_s": 104,
+        "runner_s": 1388,
+        "base": {
+          "step_s": 644,
+          "cargo_s": 599.0,
+          "tool_setup_s": 22.1,
+          "compiled_crates": 199,
+          "wheel_bytes": 9350597,
+          "wheel_sha256": "57864d70fe765a78101195b91830f8de1973c3b945f24875e2e9a342ec253c39"
+        },
+        "head": {
+          "step_s": 608,
+          "cargo_s": 602.0,
+          "tool_setup_s": 2.5,
+          "compiled_crates": 199,
+          "wheel_bytes": 9367273,
+          "wheel_sha256": "98160b8b15960ec366f24b964ddd86671e944f2c1bcae5c8f15f689894a298fe"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-win_amd64",
+        "cargo_target": "separate"
+      },
+      "x86_64-unknown-linux-gnu": {
+        "job_id": 137093269050,
+        "runner": [
+          "ubuntu-latest"
+        ],
+        "queue_s": 273,
+        "runner_s": 875,
+        "base": {
+          "step_s": 394,
+          "cargo_s": 341.0,
+          "tool_setup_s": 41.6,
+          "compiled_crates": 197,
+          "wheel_bytes": 9223040,
+          "wheel_sha256": "60c69c40beb15eade43049a877196c5e7b6dcaadd1f35acac5eb9dea98925108"
+        },
+        "head": {
+          "step_s": 372,
+          "cargo_s": 337.0,
+          "tool_setup_s": 25.9,
+          "compiled_crates": 197,
+          "wheel_bytes": 9238442,
+          "wheel_sha256": "d17140619eafd358bc18a4007cb4441acc06f50cb9774255cdafa8127d75fbed"
+        },
+        "switch_s": 0,
+        "wheel_tag": "cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64",
+        "cargo_target": "separate"
+      }
+    }
+  }
+]
