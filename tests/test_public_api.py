@@ -251,6 +251,7 @@ _POSITIONAL_VALUES = frozenset(
         "PushButton",
         "RadioButton",
         "RectilinearMeasure",
+        "RedactionMark",
         "RemoteDestination",
         "RequirementHandler",
         "ResetFormAction",

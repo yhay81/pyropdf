@@ -93,6 +93,35 @@ impl FileBase {
         })
     }
 
+    /// Reopen a signed incremental successor using its original credentials.
+    /// Reject a different prefix or encryption dictionary before sharing its handler.
+    pub fn open_signed_revision(
+        bytes: Bytes,
+        predecessor: &Index,
+        budget: &Budget,
+    ) -> Result<Self> {
+        let source = predecessor.bytes();
+        let prefix = bytes
+            .get(..source.len())
+            .ok_or_else(|| Error::malformed("signed bytes do not extend the source"))?;
+        for (actual, expected) in prefix.chunks(64 * 1024).zip(source.chunks(64 * 1024)) {
+            budget.poll()?;
+            if actual != expected {
+                return Err(Error::malformed("signed bytes do not extend the source"));
+            }
+        }
+        let mut index = Index::open(bytes, budget)?;
+        if encryption_dict(&index, budget)? != encryption_dict(predecessor, budget)? {
+            return Err(Error::malformed(
+                "signing changed the encryption dictionary",
+            ));
+        }
+        if let Some(handler) = predecessor.security() {
+            index.unlock(handler.clone(), budget)?;
+        }
+        Self::new(index, budget)
+    }
+
     /// Opens revision `revision` (oldest = `0`) of `index` as an independent
     /// [`FileBase`] sharing `index`'s bytes, or `None` when `revision` is out
     /// of range.
@@ -105,8 +134,19 @@ impl FileBase {
             return Ok(None);
         };
         if let Some(handler) = index.security().filter(|h| h.is_recipient()) {
-            if encryption_dict(index, budget)? == encryption_dict(&rev_index, budget)? {
+            let active = encryption_dict(index, budget)?;
+            let previous = encryption_dict(&rev_index, budget)?;
+            if active == previous {
                 rev_index.unlock(handler.clone(), budget)?;
+            } else if let (Some(mut active), Some(previous)) = (active, previous) {
+                let mut same_keys = previous.clone();
+                active.remove("EFF");
+                same_keys.remove("EFF");
+                if active == same_keys {
+                    rev_index.unlock(handler.with_embedded_filter(&previous)?, budget)?;
+                } else {
+                    unlock(&mut rev_index, None, budget)?;
+                }
             } else {
                 unlock(&mut rev_index, None, budget)?;
             }
@@ -206,7 +246,13 @@ impl Base for FileBase {
         // is never encrypted, so the index gives its bytes as they are.
         let fetch = |length| self.index.object(length, budget);
         let value = Value::parse_with_lengths(&bytes, budget, &fetch)?;
-        let plain = security::decrypt_value(handler, reference, &value, budget)?;
+        let plain = security::decrypt_value_with(
+            handler,
+            reference,
+            &value,
+            &|r, b| crate::value::filters::indexed_filter(&self.index, r, b),
+            budget,
+        )?;
         let mut out = BudgetVec::new(budget);
         write::value(&mut out, &plain)?;
         Ok(Some(Bytes::new(out.into_vec())))
@@ -249,6 +295,17 @@ fn unlock(index: &mut Index, password: Option<&[u8]>, budget: &Budget) -> Result
     if password.is_some() && encrypt.as_ref().is_some_and(|dict| matches!(dict.get("Filter"), Some(Value::Name(n)) if n.as_bytes() == b"Adobe.PubSec")) {
         return Err(Password::Recipient.into());
     }
+    if let Some(dict) = &encrypt
+        && matches!(dict.get("Filter"),Some(Value::Name(n)) if n.as_bytes()==b"Adobe.PubSec")
+        && matches!(dict.get("SubFilter"),Some(Value::Name(n)) if n.as_bytes()==b"adbe.pkcs7.s5")
+        && ["StmF", "StrF"].iter().all(|name| {
+            matches!(dict.get(*name), None | Some(Value::Null))
+                || matches!(dict.get(*name),Some(Value::Name(n)) if n.as_bytes()==b"Identity")
+        })
+    {
+        let handler = Handler::open_recipient(dict, |_| Ok(None), budget)?;
+        return index.unlock(handler, budget);
+    }
     let id = match index.trailer().get("ID") {
         Some(Value::Array(id)) => match id.get(0) {
             Some(Value::String(first)) => first.as_bytes(),
@@ -276,7 +333,7 @@ fn unlock(index: &mut Index, password: Option<&[u8]>, budget: &Budget) -> Result
     Ok(())
 }
 
-fn encryption_dict(index: &Index, budget: &Budget) -> Result<Option<Dict>> {
+pub(crate) fn encryption_dict(index: &Index, budget: &Budget) -> Result<Option<Dict>> {
     Ok(match index.trailer().get("Encrypt") {
         Some(Value::Dict(dict)) => Some(dict.clone()),
         Some(&Value::Reference(reference)) => match index.object(reference, budget)? {

@@ -278,7 +278,7 @@ fn parse_pdf_version(bytes: &[u8]) -> Option<(u8, u8)> {
 
 /// Returns whether the effective PDF version of `version` (the later of its
 /// `%PDF-x.y` header and its catalog `/Version`) is PDF 2.0 or later.
-pub(in crate::forms) fn is_pdf_2_0(version: &Version, budget: &Budget) -> Result<bool> {
+pub(crate) fn is_pdf_2_0(version: &Version, budget: &Budget) -> Result<bool> {
     let mut effective = version
         .base()
         .header_bytes()
@@ -303,7 +303,7 @@ pub(in crate::forms) fn is_pdf_2_0(version: &Version, budget: &Budget) -> Result
     clippy::disallowed_methods,
     reason = "each font and descriptor dictionary holds fixed keys only"
 )]
-pub(in crate::forms) fn write_standard_type1(
+pub(crate) fn write_standard_type1(
     transaction: &mut Transaction,
     base: &str,
     pdf_2_0: bool,

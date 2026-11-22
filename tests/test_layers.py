@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
+import pikepdf
 import pytest
 
 import pyropdf
-from pyropdf import Layer, LayerConfig, Name
+from pyropdf import Layer, LayerConfig, Name, _layers, typed
 
 CORPUS = Path(__file__).resolve().parent / "assets" / "real_world"
 WIDTH, HEIGHT = 200, 100
@@ -301,3 +303,225 @@ def test_switching_refuses_what_is_not_a_group() -> None:
     with pytest.raises(IndexError, match="configuration 3"):
         doc.layers.use(3)
     assert doc.to_bytes() == before
+
+
+def _usage_document() -> bytes:
+    """Independent groups with identical names, shared application entries and two alternate configurations."""
+    pdf = pikepdf.Pdf.new()
+    pdf.add_blank_page()
+    first, second = [pdf.make_indirect(pikepdf.Dictionary(Type=pikepdf.Name.OCG, Name="Overlay")) for _ in range(2)]
+    first.Usage = pdf.make_indirect(
+        pikepdf.Dictionary(
+            Print=pikepdf.Dictionary(PrintState=pikepdf.Name.OFF, Subtype=pikepdf.Name.Watermark),
+            Zoom=pikepdf.Dictionary(min=2),
+            XXNote="usage",
+        )
+    )
+    second.Usage = pikepdf.Dictionary(View=pikepdf.Dictionary(ViewState=pikepdf.Name.ON))
+    view = pikepdf.Dictionary(Event=pikepdf.Name.View, OCGs=[second], Category=[pikepdf.Name.View])
+    first_print = pdf.make_indirect(
+        pikepdf.Dictionary(Event=pikepdf.Name.Print, OCGs=[first], Category=[pikepdf.Name.Print], XXNote="application")
+    )
+    zoom = pikepdf.Dictionary(Event=pikepdf.Name.Print, OCGs=[first, second], Category=[pikepdf.Name.Zoom])
+    missing = pikepdf.Dictionary(Event=pikepdf.Name.Print, Category=[pikepdf.Name.Language])
+    empty = pikepdf.Dictionary(Event=pikepdf.Name.Print, OCGs=[], Category=[pikepdf.Name.Export])
+    pdf.Root.OCProperties = pikepdf.Dictionary(
+        OCGs=[first, second],
+        D=pikepdf.Dictionary(
+            Name="Default", AS=pdf.make_indirect(pikepdf.Array([view, first_print, zoom, missing, empty]))
+        ),
+        Configs=[
+            pikepdf.Dictionary(Name="Alternate", AS=[view]),
+            pikepdf.Dictionary(Name="Manual"),
+        ],
+    )
+    out = io.BytesIO()
+    pdf.save(out, min_version="1.7")
+    pdf.close()
+    return out.getvalue()
+
+
+@pytest.mark.spec("optional-content", "read")
+def test_usage_applications_resolve_group_event_and_configuration() -> None:
+    doc = pyropdf.open(_usage_document())
+    first, second = doc.layers
+    assert first.name == second.name
+    assert first.xref != second.xref
+    printed, zoom = doc.layers.usage_applications(first, event="Print")
+    assert (printed.Category[0], zoom.Category[0]) == ("Print", "Zoom")
+    group = typed.OptContentGroup(doc.objects[first.xref])
+    assert group.Usage is not None
+    assert group.Usage.Print is not None
+    assert group.Usage.Zoom is not None
+    assert group.Usage.Print.PrintState == "OFF"
+    assert group.Usage.Zoom.min == 2
+    assert doc.layers.usage_applications(second, event="Print") == (zoom,)
+    (view,) = doc.layers.usage_applications(second, event="View", config=1)
+    assert view.Category[0] == "View"
+    assert doc.layers.usage_applications(first, event="View") == ()
+    assert doc.layers.usage_applications(first, event="Print", config=1) == ()
+    assert doc.layers.usage_applications(second, event="View", config=2) == ()
+    assert doc.layers.usage_applications(first, event="Export") == ()
+    assert not doc.history.can_undo
+
+
+@pytest.mark.spec("optional-content", "create")
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_create_group_usage_and_export_application(*, incremental: bool) -> None:
+    base, _ = layer_document()
+    doc = pyropdf.open(base.to_bytes())
+    first, second, _ = doc.layers
+    group = typed.OptContentGroup(doc.objects[first.xref])
+    config = typed.OptContentConfig(doc.catalog["OCProperties"]["Configs"][0])
+    assert group.Usage is None
+    assert config.AS is None
+    with doc.transaction():
+        group.Usage = typed.OptContentUsage(doc.objects[doc.objects.add({"Export": {"ExportState": Name("OFF")}})])
+        config.AS = typed.ArrayOfOCUsage(
+            doc.objects[doc.objects.add([{"Event": Name("Export"), "OCGs": [group.obj], "Category": [Name("Export")]}])]
+        )
+    saved = doc.to_bytes(incremental=incremental)
+    reopened = pyropdf.open(saved)
+    (application,) = reopened.layers.usage_applications(reopened.layers[0], event="Export", config=1)
+    assert application.Category[0] == "Export"
+    assert reopened.layers.usage_applications(reopened.layers[1], event="Export", config=1) == ()
+    assert reopened.layers.usage_applications(reopened.layers[0], event="Export") == ()
+    with pikepdf.open(io.BytesIO(saved)) as pdf:
+        assert not pdf.check_pdf_syntax()
+        groups = pdf.Root.OCProperties.OCGs
+        alternate = pdf.Root.OCProperties.Configs[0]
+        assert groups[0].Usage.Export.ExportState == pikepdf.Name.OFF
+        assert alternate.AS[0].Event == pikepdf.Name.Export
+        assert alternate.AS[0].OCGs[0].objgen == groups[0].objgen
+        assert alternate.OFF[0].objgen == groups[0].objgen
+        assert groups[1].objgen[0] == second.xref
+        assert "/AS" not in pdf.Root.OCProperties.D
+
+
+@pytest.mark.spec("optional-content", "edit")
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_edit_usage_and_retarget_an_indirect_application(*, incremental: bool) -> None:
+    doc = pyropdf.open(_usage_document())
+    first, second = doc.layers
+    application, zoom = doc.layers.usage_applications(first, event="Print")
+    group = typed.OptContentGroup(doc.objects[first.xref])
+    assert group.Usage is not None
+    assert group.Usage.Print is not None
+    assert application.OCGs is not None
+    with doc.transaction():
+        group.Usage.Print.PrintState = "ON"
+        application.Event = "Export"
+        application.OCGs[0] = doc.objects[second.xref]
+    assert doc.layers.usage_applications(first, event="Print") == (zoom,)
+    saved = doc.to_bytes(incremental=incremental)
+    reopened = pyropdf.open(saved)
+    (target,) = reopened.layers.usage_applications(reopened.layers[1], event="Export")
+    assert target.obj.xref == application.obj.xref
+    assert target.Category[0] == "Print"
+    assert reopened.layers.usage_applications(reopened.layers[0], event="Export") == ()
+    with pikepdf.open(io.BytesIO(saved)) as pdf:
+        assert not pdf.check_pdf_syntax()
+        properties = pdf.Root.OCProperties
+        first_raw, second_raw = properties.OCGs
+        assert first_raw.Usage.Print.PrintState == pikepdf.Name.ON
+        assert first_raw.Usage.Print.Subtype == pikepdf.Name.Watermark
+        assert first_raw.Usage.Zoom.min == 2
+        assert first_raw.Usage.XXNote == "usage"
+        assert second_raw.Usage.View.ViewState == pikepdf.Name.ON
+        changed = properties.D.AS[1]
+        assert (changed.Event, list(changed.Category), str(changed.XXNote)) == (
+            pikepdf.Name.Export,
+            [pikepdf.Name.Print],
+            "application",
+        )
+        assert changed.OCGs[0].objgen == second_raw.objgen
+        assert properties.Configs[0].AS[0].Event == pikepdf.Name.View
+        assert "/OCGs" not in properties.D.AS[3]
+        assert len(properties.D.AS[4].OCGs) == 0
+
+
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_using_a_configuration_replaces_or_clears_its_usage_applications(*, incremental: bool) -> None:
+    doc = pyropdf.open(_usage_document())
+    first, second = doc.layers
+    doc.layers.use(1)
+    assert doc.layers.usage_applications(first, event="Print") == ()
+    (view,) = doc.layers.usage_applications(second, event="View")
+    assert view.Category[0] == "View"
+    with pikepdf.open(io.BytesIO(doc.to_bytes(incremental=incremental))) as pdf:
+        assert [entry.Event for entry in pdf.Root.OCProperties.D.AS] == [pikepdf.Name.View]
+        assert pdf.Root.OCProperties.D.Name == "Default"
+    doc.layers.use(2)
+    with pikepdf.open(io.BytesIO(doc.to_bytes(incremental=incremental))) as pdf:
+        assert "/AS" not in pdf.Root.OCProperties.D
+        assert pdf.Root.OCProperties.Configs[0].AS[0].Event == pikepdf.Name.View
+    doc.history.undo()
+    assert doc.layers.usage_applications(second, event="View") == (view,)
+    doc.layers.use(0)
+    assert doc.history.can_redo
+
+
+def test_usage_follows_a_renamed_group_and_rejects_an_object_that_stopped_being_an_ocg() -> None:
+    doc = pyropdf.open(_usage_document())
+    first = doc.layers[0]
+    original = doc.layers.usage_applications(first, event="Print")
+    group = doc.objects[first.xref]
+    group["Name"] = "Renamed overlay"
+    assert doc.layers.usage_applications(first, event="Print") == original
+    group["Type"] = Name("OCMD")
+    with pytest.raises(ValueError, match="optional content group"):
+        doc.layers.usage_applications(first, event="Print")
+
+
+def test_usage_refuses_invalid_targets_and_malformed_settings() -> None:
+    doc = pyropdf.open(_usage_document())
+    first, _ = doc.layers
+    foreign = pyropdf.open(_usage_document())
+    with pytest.raises(ValueError, match="of this document"):
+        doc.layers.usage_applications(foreign.layers[0], event="Print")
+    with pytest.raises(ValueError, match="Print"):
+        doc.layers.usage_applications(first, event="Preview")  # ty: ignore[invalid-argument-type]
+    properties = doc.catalog["OCProperties"]
+    properties["Configs"][0] = 1
+    assert [config.index for config in doc.layers.configs] == [0, 2]
+    with pytest.raises(IndexError, match="configuration 1"):
+        doc.layers.usage_applications(first, event="View", config=1)
+    assert doc.layers.usage_applications(first, event="View", config=2) == ()
+    application = doc.layers.usage_applications(first, event="Print")[0]
+    with pytest.raises(ValueError, match="Event"):
+        application.Event = "Preview"
+    application.obj["OCGs"] = 2
+    with pytest.raises(pyropdf.PdfError, match="OCGs"):
+        doc.layers.usage_applications(first, event="Print")
+    properties["Configs"][1]["AS"] = "broken"
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.PdfError, match="AS"):
+        doc.layers.use(2)
+    assert doc.to_bytes() == before
+
+
+def test_usage_lookup_limits_group_entries_across_applications(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = pyropdf.open(_usage_document())
+    first = doc.layers[0]
+    monkeypatch.setattr(_layers, "_MAX_LAYERS", 7)
+    with pytest.raises(pyropdf.LimitError) as raised:
+        doc.layers.usage_applications(first, event="Print")
+    assert raised.value.code == "optional_content_count"
+    assert len(doc.layers.usage_applications(doc.layers[1], event="View")) == 1
+
+
+def test_matching_usage_views_share_the_document_read_budget() -> None:
+    source = pyropdf.open(_usage_document())
+    config = source.catalog["OCProperties"]["D"]
+    config["AS"] = [config["AS"][1]] * 80
+    data = source.to_bytes()
+    limited = pyropdf.open(data, limits=pyropdf.DocumentLimits(max_memory_size=32_768))
+    group = limited.layers[0]
+    assert limited.layers.usage_applications(group, event="View") == ()
+    with pytest.raises(pyropdf.LimitError) as error:
+        limited.layers.usage_applications(group, event="Print")
+    assert error.value.code == "memory_size"
+    assert not limited.history.can_undo
+    assert limited.layers.usage_applications(group, event="View") == ()
+    regular = pyropdf.open(data)
+    assert len(regular.layers.usage_applications(regular.layers[0], event="Print")) == 80

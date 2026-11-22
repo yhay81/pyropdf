@@ -196,6 +196,53 @@ def test_stream_write_compresses_and_reads_back() -> None:
     assert _content(pyropdf.open(doc.to_bytes()).pages[0]) == b"BT /F1 12 Tf 72 720 Td (replaced) Tj ET"
 
 
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.parametrize("indirect_length", [False, True])
+def test_top_level_stream_bodies_survive_both_save_modes(*, incremental: bool, indirect_length: bool) -> None:
+    payload = b"a\x00\nendstream\nendobj\nb  \r\n"
+    length = "5 0 R" if indirect_length else str(len(payload))
+    source = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Original 4 0 R /Copy 6 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 10 10] >>",
+            4: f"<< /Length {length} >>\nstream\n{payload.decode('ascii')}\nendstream",
+            5: str(len(payload)),
+            6: "<< /Length 0 >>\nstream\n\nendstream",
+        }
+    )
+    doc = pyropdf.open(source)
+    assert doc.catalog["Original"].read(decode=False) == payload
+    edited = b"\xff\x00new data\r\n"
+    doc.catalog["Copy"].write(edited, filter=None)
+
+    saved = doc.to_bytes(incremental=incremental)
+    reopened = pyropdf.open(saved)
+    assert reopened.catalog["Original"].read(decode=False) == payload
+    assert reopened.catalog["Copy"].read(decode=False) == edited
+    assert f"<< /Length {length} >>\nstream\n".encode() + payload + b"\nendstream" in saved
+
+
+@pytest.mark.parametrize(
+    ("length", "reason"),
+    [(1, "the indirect stream length does not end at endstream"), (99999, "invalid indirect stream length")],
+)
+def test_full_save_reports_an_invalid_indirect_stream_length(length: int, reason: str) -> None:
+    source = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Original 4 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>",
+            4: "<< /Length 5 0 R >>\nstream\nABC\nendstream",
+            5: str(length),
+        }
+    )
+    doc = pyropdf.open(source)
+    doc.catalog["Edited"] = True
+    with pytest.raises(pyropdf.MalformedPdfError, match=reason):
+        doc.to_bytes()
+
+
 def test_stream_write_without_a_filter_stores_the_data() -> None:
     doc = _two_pages()
     contents = doc.pages[0].obj["Contents"]
@@ -662,6 +709,88 @@ def test_objects_nest_at_most_64_levels() -> None:
         len(doc.objects[4])
 
 
+@pytest.mark.parametrize("packed", [False, True])
+def test_indirect_flate_filter_and_parameters_keep_their_references(*, packed: bool) -> None:
+    import io  # noqa: PLC0415
+    import sysconfig  # noqa: PLC0415
+
+    import pikepdf  # noqa: PLC0415
+
+    if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
+        pytest.skip("pyHanko imports enable the GIL on free-threaded Python")
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.writer import PageObject, PdfFileWriter  # noqa: PLC0415
+
+    writer = PdfFileWriter(stream_xrefs=packed)
+    container = writer.prepare_object_stream() if packed else None
+    name = generic.pdf_name
+    payload = b"0 g 2 3 4 5 re f\n"
+    stream = generic.StreamObject(encoded_data=zlib.compress(payload))
+    filter_name = writer.add_object(name("/FlateDecode"), obj_stream=container)
+    params = writer.add_object(generic.DictionaryObject(), obj_stream=container)
+    filters = writer.add_object(generic.ArrayObject([filter_name]), obj_stream=container)
+    options = writer.add_object(generic.ArrayObject([params]), obj_stream=container)
+    stream[name("/Filter")] = filters
+    stream[name("/DecodeParms")] = options
+    writer.insert_page(PageObject(writer.add_object(stream), [0, 0, 30, 40]))
+    out = io.BytesIO()
+    writer.write(out)
+    original = out.getvalue()
+    with pyropdf.open(original) as doc:
+        target = doc.pages[0].obj["Contents"]
+        assert target.read() == payload
+        doc.pages[0].rotation = 90
+        rewrites = (doc.to_bytes(), doc.to_bytes(incremental=True))
+    assert rewrites[1].startswith(original)
+    for saved in (original, *rewrites):
+        with pikepdf.Pdf.open(io.BytesIO(saved)) as reader:
+            content = reader.pages[0].obj.Contents
+            assert content.read_bytes() == payload
+            assert content.Filter.objgen == (filters.idnum, 0)
+            assert content.Filter[0].objgen == (filter_name.idnum, 0)
+            assert content.DecodeParms.objgen == (options.idnum, 0)
+            assert content.DecodeParms[0].objgen == (params.idnum, 0)
+
+
+@pytest.mark.parametrize(
+    ("filters", "name", "parameters"),
+    [
+        ("6 1 R", "/FlateDecode", "<< >>"),
+        ("6 0 R", "7 0 R", "<< >>"),
+        ("6 0 R", "false", "<< >>"),
+        ("/Crypt", "/Unused", "9"),
+    ],
+)
+@pytest.mark.parametrize("incremental", [False, True])
+def test_unresolvable_stream_selectors_refuse_before_replacement(
+    filters: str, name: str, parameters: str, tmp_path: Path, *, incremental: bool
+) -> None:
+    source = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [] /Count 0 >>",
+            3: f"<< /Length 5 /Filter {filters} /DecodeParms 8 0 R >>\nstream\nhello\nendstream",
+            6: "[7 0 R]",
+            7: name,
+            8: parameters,
+        }
+    )
+    with pyropdf.open(source) as doc:
+        stream = doc.objects[3]
+        with pytest.raises(pyropdf.MalformedPdfError):
+            stream.read()
+        with pytest.raises(pyropdf.MalformedPdfError):
+            stream.write(b"new content")
+        assert stream.read(decode=False) == b"hello"
+        assert doc.to_bytes(incremental=True) == source
+        stream["Unrelated"] = 1
+        destination = tmp_path / "existing.pdf"
+        destination.write_bytes(b"previous output")
+        with pytest.raises(pyropdf.MalformedPdfError):
+            doc.save(destination, incremental=incremental)
+        assert destination.read_bytes() == b"previous output"
+
+
 @pytest.mark.parametrize("name", ["FlateDecode", "ASCIIHexDecode", "ASCII85Decode", "RunLengthDecode", "LZWDecode"])
 @pytest.mark.parametrize("data", [b"", b"\0" * 132 + bytes(range(256)) + b"abc"])
 def test_lossless_stream_encoders_write_decodable_data(name: str, data: bytes) -> None:
@@ -775,3 +904,24 @@ def test_unsupported_predictor_layout_leaves_existing_stream_untouched() -> None
             decode_parms={"Predictor": 12, "Colors": 16, "Columns": 1, "BitsPerComponent": 16},
         )
     assert doc.to_bytes() == before
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_repeated_dictionary_keys_keep_the_first_position_and_last_value_on_save(*, incremental: bool) -> None:
+    original = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Extra 3 0 R >>",
+            2: "<< /Type /Pages /Kids [] /Count 0 >>",
+            3: "<< /#41 1 /B 2 /A 3 >>",
+        }
+    )
+    doc = pyropdf.open(original)
+    extra = doc.objects[3]
+    assert isinstance(extra, Dictionary)
+    assert list(extra.items()) == [("A", 3), ("B", 2)]
+    assert doc.to_bytes(incremental=True) == original
+    extra["B"] = 4
+    saved = pyropdf.open(doc.to_bytes(incremental=incremental))
+    reopened = saved.objects[3]
+    assert isinstance(reopened, Dictionary)
+    assert list(reopened.items()) == [("A", 3), ("B", 4)]

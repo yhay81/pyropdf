@@ -18,6 +18,8 @@ on:
       - NOTICE
       - tools/arlington/**
       - tools/wheel_size.py
+      - tools/repack_wheel.py
+      - uv.lock
       - tools/native-wheel-args.txt
       - .github/workflows/release.yml
       - .github/workflows/wheel-size.yml
@@ -25,13 +27,45 @@ on:
 permissions:
   contents: read
 
+# New source pushes supersede older source runs immediately. An edit has its
+# own group so a delayed justification check cannot cancel a newer comparison.
 concurrency:
-  group: wheel-size-${{ github.event.pull_request.number }}
+  group: wheel-size-${{ github.event.action == 'edited' && format('edit-{0}', github.run_id) || github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
+  edited-inputs:
+    name: Check edited wheel inputs
+    if: >-
+      github.event.action == 'edited' &&
+      (github.event.changes.base != null ||
+      (github.event.changes.body != null &&
+      (contains(github.event.changes.body.from, 'Wheel growth justification:') ||
+      contains(github.event.pull_request.body, 'Wheel growth justification:'))))
+    runs-on: ubuntu-latest
+    outputs:
+      compare: ${{ steps.inputs.outputs.compare }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: inputs
+        shell: bash
+        run: |
+          python - <<'PYTHON' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          from pathlib import Path
+          from tools.wheel_size import comparison_inputs_changed
+
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+          print("compare=" + str(comparison_inputs_changed(event)).lower())
+          PYTHON
+
   compare:
     name: Compare abi3 (${{ matrix.platform.target }})
+    needs: edited-inputs
+    if: >-
+      ${{ !cancelled() &&
+      (github.event.action != 'edited' || needs.edited-inputs.outputs.compare == 'true') }}
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 60
     env:
@@ -65,10 +99,12 @@ jobs:
           ref: ${{ steps.base.outputs.revision }}
           path: base
           persist-credentials: false
-      - name: Read native release arguments from each revision
+      - name: Prepare both native release builds
         id: native
         shell: bash
         run: |
+          # Keep the output directories writable by the host after manylinux runs.
+          mkdir -p base/dist head/dist
           for checkout in base head; do
             # Releases before #858 passed these flags directly in release.yml.
             if [[ $checkout == base && ! -f base/tools/native-wheel-args.txt ]]; then
@@ -99,6 +135,17 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: Apply each revision's release wheel packaging
+        shell: bash
+        run: |
+          for checkout in base head; do
+            if [[ -f "$checkout/tools/repack_wheel.py" ]]; then
+              (cd "$checkout" && uv run --locked --only-group wheel --python 3.14 python tools/repack_wheel.py dist)
+            fi
+          done
       - name: Check compressed size and growth
         env:
           PR_BODY: ${{ github.event.pull_request.body }}

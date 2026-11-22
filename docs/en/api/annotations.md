@@ -23,6 +23,48 @@ its position. A handle raises `StaleObjectError` while the
 annotation is not on its page, and `StalePageError` while the
 page is gone; it works again if undo restores them.
 
+### `Annotation.obj`
+
+```python
+Annotation.obj: Dictionary
+```
+
+The annotation dictionary as a live low-level handle.
+
+### `Annotation.appearance_stream`
+
+```python
+Annotation.appearance_stream(
+    mode: Mode = 'normal',
+    *,
+    state: str | None = None,
+) -> Stream | None
+```
+
+Return the displayed Form for a normal, rollover or down appearance.
+
+A missing interaction appearance falls back to normal. An appearance
+dictionary selects the named state or the annotation's current /AS.
+
+### `Annotation.set_appearance`
+
+```python
+Annotation.set_appearance(
+    mode: Mode,
+    source: Stream | bytes,
+    *,
+    state: str | None = None,
+    bbox: Sequence[float] | None = None,
+    resources: Mapping[str, object] | None = None,
+) -> Stream
+```
+
+Attach a Form or build it from PDF drawing commands in the given local bounding box.
+
+Byte sources use the owner's rectangle size when bbox is omitted. A named
+state updates one member of a state dictionary. Other interaction modes,
+state names and shared appearance objects retain their values.
+
 ### `Annotation.page`
 
 ```python
@@ -38,14 +80,6 @@ Annotation.xref: int
 ```
 
 The annotation's object number, or 0 for a dictionary stored in `/Annots` itself.
-
-### `Annotation.obj`
-
-```python
-Annotation.obj: Dictionary
-```
-
-The annotation dictionary as a live low-level handle.
 
 ### `Annotation.type`
 
@@ -293,6 +327,37 @@ Non-`Screen` annotations return an empty mapping and refuse mutations
 with `ValueError`. `del annotation.triggers` removes `/AA`.
 
 Settable.
+
+### `Annotation.line_details`
+
+```python
+Annotation.line_details: LineDetails | None
+```
+
+Or replace a line's leader lengths and caption placement.
+
+Settable.
+
+### `Annotation.redaction`
+
+```python
+Annotation.redaction: RedactionMark | None
+```
+
+Or replace the regions and replacement instructions of a redaction mark.
+
+Settable.
+
+### `Annotation.popup_info`
+
+```python
+Annotation.popup_info: PopupInfo | None
+```
+
+Read a popup's window and effective Contents, T, M and C (ISO 32000-2 §12.5.6.14).
+
+A reciprocal Parent supplies the markup entries. A popup without a
+Parent uses its own entries. A conflicting Parent is malformed.
 
 ### `Annotation.popup_rect`
 
@@ -698,6 +763,7 @@ AnnotationSpecification: TypeAlias = (
     | FreeText
     | Stamp
     | MediaSpecification
+    | RedactionMark
 )
 ```
 
@@ -895,6 +961,7 @@ LineAnnotation(
     start: Point | Sequence[float],
     end: Point | Sequence[float],
     *,
+    details: LineDetails | None = None,
     color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
     interior_color: Color | None = None,
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
@@ -911,6 +978,26 @@ A straight line between two display points, as `page.annotations.add` takes it.
 `line_endings` gives the shapes at its start and end, whose closed
 shapes `interior_color` fills. The annotation's rectangle is the line's
 bounds, widened for the stroke and the endings.
+
+## `LineDetails`
+
+```python
+LineDetails(
+    *,
+    leader_length: float = 0.0,
+    leader_extension: float = 0.0,
+    leader_offset: float = 0.0,
+    caption: bool = False,
+    position: Literal['Inline', 'Top'] = 'Inline',
+    caption_offset: tuple[float, float] = (0.0, 0.0),
+)
+```
+
+Leader lengths in default user space and the caption placement of a line.
+
+A positive leader extends clockwise from the drawn line to its endpoint.
+The caption comes from the annotation's contents. Its offset is along and
+perpendicular to the line, with positive values toward the end and above.
 
 ## `LineEnding`
 
@@ -948,13 +1035,86 @@ Embedded base-standard 3D stream formats.
 
 Members: `U3D`, `PRC`.
 
+## `ModelMeasurement`
+
+```python
+ModelMeasurement(
+    *,
+    kind: ModelMeasurementType,
+    anchor: tuple[float, float, float],
+    text_position: tuple[float, float, float],
+    annotation_plane: tuple[float, float, float] | None = None,
+    second_anchor: tuple[float, float, float] | None = None,
+    first_direction: tuple[float, float, float] | None = None,
+    second_direction: tuple[float, float, float] | None = None,
+    text_x: tuple[float, float, float] | None = None,
+    text_y: tuple[float, float, float] | None = None,
+    third_anchor: tuple[float, float, float] | None = None,
+    fourth_anchor: tuple[float, float, float] | None = None,
+    value: float | None = None,
+    unit: str | None = None,
+)
+```
+
+Geometry of one 3D measurement in model coordinates.
+
+Every kind has an anchor and text position. Dimensional kinds also
+take the annotation plane, second anchor, text Y direction and value.
+Distance, perpendicular distance and radius take a unit. Perpendicular
+distance adds the first direction. Angle adds both directions and text
+X. Radius takes text X and optionally the third and fourth anchors.
+
+Pass the specification in `ModelView.measurements` to allocate it in
+the model's document. Use `apply_to` on a live measurement to change
+its geometry while keeping its projection and other references.
+
+### `ModelMeasurement.from_view`
+
+```python
+ModelMeasurement.from_view(measurement: Measure) -> ModelMeasurement
+```
+
+Read a stored 3D measurement as immutable geometry in model coordinates.
+
+### `ModelMeasurement.apply_to`
+
+```python
+ModelMeasurement.apply_to(measurement: Measure)
+```
+
+Replace geometry of the same subtype in one undo step, keeping its object identity.
+
+## `ModelMeasurementType`
+
+Kinds of stored 3D measurements and markups (ISO 32000-2, Tables 326–331).
+
+Members: `POINT_COMMENT`, `ANGLE`, `DISTANCE`, `PERPENDICULAR_DISTANCE`, `RADIUS`.
+
 ## `ModelView`
 
 ```python
-ModelView(*, name: str, measurements: tuple[Measure, ...] = ())
+ModelView(
+    *,
+    name: str,
+    measurements: tuple[ModelMeasurement | Measure, ...] = (),
+    camera_to_world: tuple[float, ...] | None = None,
+    lighting: str | None = None,
+    background: tuple[float, float, float] | None = None,
+    render_mode: str | None = None,
+    nodes: tuple[typed.ThreeDNode, ...] = (),
+    cross_sections: tuple[typed.ThreeDCrossSection, ...] = (),
+)
 ```
 
-A named 3D view with optional links to existing 3D measurements.
+A named 3D view, its camera-to-world matrix, scene settings and measurements.
+
+Lighting and render mode use the PDF subtype names. Background is a
+DeviceRGB triple in [0, 1]. Supply indirect Arlington node and cross
+section views to share their settings. Measurements may be new geometry
+specifications or existing indirect measurement views. For example,
+`camera_to_world=(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 5, 6)` sets an
+identity orientation with camera position (4, 5, 6). After creation,
+`annotation.media["3DD"].VA[0].LS.Subtype = "Day"` updates lighting.
 
 ## `Note`
 
@@ -1028,6 +1188,22 @@ An open line through two or more display points, as `page.annotations.add` takes
 The fields are those of `LineAnnotation`, with `line_endings` at
 the first and last points; one annotation holds at most 65,536 points.
 
+## `PopupInfo`
+
+```python
+PopupInfo(
+    *,
+    rect: Rect,
+    is_open: bool,
+    contents: str | None,
+    author: str | None,
+    modified: str | None,
+    color: Color | None,
+)
+```
+
+Effective markup shown in a pop-up window and its initial display state.
+
 ## `ProjectionAnnotation`
 
 ```python
@@ -1035,6 +1211,31 @@ ProjectionAnnotation(*, rect: Rect, measurement: Measure)
 ```
 
 A projection annotation that links back to a 3D measurement.
+
+## `RedactionMark`
+
+```python
+RedactionMark(
+    rect: Rect,
+    *,
+    quads: tuple[Quad, ...] = (),
+    overlay_text: str | None = None,
+    default_appearance: bytes | None = None,
+    repeat: bool = False,
+    alignment: int = 0,
+    interior_color: Color | None = None,
+    overlay: Stream | None = None,
+)
+```
+
+Mark a rectangle or quadrilaterals for later redaction.
+
+Coordinates are in display space. Each optional quad lies inside the rectangle.
+The normal appearance outlines the proposed regions. Page content remains
+recoverable after either save mode. Applying a redaction is a separate operation.
+
+An overlay Form takes precedence over the replacement color and text. Text
+requires a PDF default appearance string whose font the document provides.
 
 ## `RichMedia`
 
@@ -1063,17 +1264,57 @@ Screen(*, rect: Rect, asset: MediaAsset | None = None)
 
 A Screen annotation with an optional media clip and its rendition action.
 
+## `SlideShow`
+
+```python
+SlideShow(show: typed.SlideShow)
+```
+
+An existing embedded slideshow and the UTF-8 resource names in its virtual file system.
+
+### `SlideShow.resources`
+
+```python
+SlideShow.resources: dict[str, Dictionary]
+```
+
+Map UTF-8 resource names to their live image streams or file specifications.
+
+### `SlideShow.start_resource`
+
+```python
+SlideShow.start_resource: str
+```
+
+The name selected by StartResource. Assign the name of an existing resource to select it.
+
+Settable.
+
+### `SlideShow.rename_resource`
+
+```python
+SlideShow.rename_resource(old: str, new: str, *, keep_alias: bool = False)
+```
+
+Move a resource to a new UTF-8 name and update StartResource in one transaction.
+
+Shared resource trees keep their other slideshows' original names.
+Set keep_alias=True to retain the old name for references inside opaque media files.
+The media bytes are retained in both cases.
+
 ## `Sound`
 
 ```python
 Sound(
     *,
     data: bytes,
-    rate: float,
+    rate: float | None,
     channels: int,
     bits: int,
     encoding: SoundEncoding,
     compression: str | None,
+    compression_parameters: Array | Dictionary | None = None,
+    external_file: String | Dictionary | None = None,
 )
 ```
 
@@ -1083,6 +1324,19 @@ The sound of a sound annotation, `/Sound`, as `Annotation.sound` reads it.
 or the stream's bytes before them when read with `decode=False`; the
 samples stay in `encoding` and, for a compressed sound, in the format
 that `compression` names.
+
+### `Sound.from_stream`
+
+```python
+Sound.from_stream(
+    stream: Stream,
+    *,
+    decode: bool = True,
+    max_size: int | None = 67108864,
+) -> Sound
+```
+
+Read a sound stream's samples and metadata, including streams referenced by Sound actions.
 
 ## `SoundEncoding`
 
@@ -1187,14 +1441,16 @@ ThreeD(
     format: ModelFormat,
     data: bytes,
     views: tuple[ModelView, ...] = (),
+    activation: typed.ThreeDActivation | None = None,
 )
 ```
 
 A 3D annotation whose stream holds an opaque U3D or PRC asset.
 
-Each named view is stored once. Supply existing measurement views to
-share the same geometry with a projection annotation. Viewers handle
-3D rendering. pyropdf preserves the model bytes across edits.
+Each named view is stored once. Supply an indirect Arlington activation
+dictionary to set the annotation's activation conditions. Attach a
+projection to a stored measurement from `annotation.media["3DD"].VA[0].MA`
+to share its geometry. Viewers handle 3D rendering.
 
 ## `Underline`
 

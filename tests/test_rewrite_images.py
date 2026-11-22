@@ -11,6 +11,7 @@ import zlib
 from pathlib import Path
 from typing import Literal
 
+import pikepdf
 import pytest
 from PIL import Image
 
@@ -942,6 +943,79 @@ def test_bitonal_images_are_written_as_group_4_or_one_bit_flate(bitonal_format: 
         assert image["Filter"] == "FlateDecode"
         assert image.read() == rows
     assert bytes(doc.pages[0].pixmap(dpi=72)) == bytes(before)
+
+
+def _round_trip_rewritten_image(form: str, *, incremental: bool) -> None:
+    width, height = 129, 95
+    bitonal = form != "jpx"
+    samples = bytes(255 if (x // 8 + y // 7) % 3 else 0 for y in range(height) for x in range(width))
+    original_image = Image.frombytes("L", (width, height), samples)
+    stored_samples = original_image.convert("1").tobytes() if bitonal else samples
+    entries: dict[str, object] = {
+        "Width": width,
+        "Height": height,
+        "BitsPerComponent": 1 if bitonal else 8,
+        "ColorSpace": Name("DeviceGray"),
+    }
+    source = image_document(stored_samples, entries, [(width, height)])
+    # Many small tiles retain the image samples while adding tile-part headers.
+    # Re-encoding as a single tile should reduce the stored size on every platform.
+    if not bitonal:
+        existing = io.BytesIO()
+        original_image.save(existing, "JPEG2000", tile_size=(8, 8), num_resolutions=1)
+        image = stream(source)
+        image.write(existing.getvalue(), filter=None)
+        image["Filter"] = Name("JPXDecode")
+    keep = source.objects[source.objects.add_stream(b"4a 4b 4c >", filter=None)]
+    keep["Filter"] = Name("ASCIIHexDecode")
+    source.catalog["Unrelated"] = keep
+    original = source.to_bytes()
+    doc = pyropdf.open(original)
+    expected = ghostscript(doc)
+    old = stream(doc).read(decode=False)
+    if form == "jpx":
+        result = doc.rewrite_images(quality=90, lossless_format="jpx")
+    elif form == "jbig2":
+        result = doc.rewrite_images(quality=90, bitonal_format="jbig2")
+    else:
+        result = doc.rewrite_images(quality=90, bitonal_format="fax-g3")
+    assert result.rewritten == 1
+    output = doc.to_bytes(incremental=incremental)
+    if incremental:
+        assert output.startswith(original)
+    saved = pyropdf.open(output)
+    encoded = stream(saved)
+    name = {"fax-g3": "CCITTFaxDecode", "jbig2": "JBIG2Decode", "jpx": "JPXDecode"}[form]
+    assert encoded["Filter"] == Name(name)
+    assert encoded.read(decode=False) != old
+    if form == "fax-g3":
+        assert encoded["DecodeParms"]["K"] == 0
+    if form == "jpx":
+        with Image.open(io.BytesIO(stored(saved))) as independent:
+            assert independent.tobytes() == samples
+    with pikepdf.Pdf.open(io.BytesIO(output)) as independent_pdf:
+        assert independent_pdf.Root.Unrelated.read_raw_bytes() == b"4a 4b 4c >"
+        assert independent_pdf.Root.Unrelated.read_bytes() == b"JKL"
+    assert ghostscript(saved).tobytes() == expected.tobytes()
+    assert bytes(saved.pages[0].images()[0].pixmap().to_gray()) == samples
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.spec("ccitt-fax-filter", "create", "edit")
+def test_written_group_3_pixels_survive_save(incremental: bool) -> None:  # noqa: FBT001
+    _round_trip_rewritten_image("fax-g3", incremental=incremental)
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.spec("jbig2-filter", "create", "edit")
+def test_written_jbig2_pixels_survive_save(incremental: bool) -> None:  # noqa: FBT001
+    _round_trip_rewritten_image("jbig2", incremental=incremental)
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.spec("jpx-filter", "create", "edit")
+def test_reencoded_jpx_pixels_survive_save(incremental: bool) -> None:  # noqa: FBT001
+    _round_trip_rewritten_image("jpx", incremental=incremental)
 
 
 def test_a_resampled_bitonal_image_stays_one_bit() -> None:

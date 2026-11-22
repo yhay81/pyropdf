@@ -24,6 +24,7 @@
 mod bytes;
 mod copy;
 pub mod encode;
+pub(crate) mod filters;
 mod read;
 
 #[cfg(test)]
@@ -33,6 +34,7 @@ use std::fmt;
 
 pub use bytes::Bytes;
 pub(crate) use copy::{copy_array_for_edit, copy_dict_for_edit, copy_for_edit};
+pub use filters::FilterLookup;
 pub use read::MAX_NESTING;
 #[cfg(test)]
 pub(crate) use read::PARSES;
@@ -440,7 +442,7 @@ impl<'a> IntoIterator for &'a Array {
 /// A dictionary: entries from names to values, in the order they were read
 /// or added.
 ///
-/// Each key appears once. When the bytes repeat a key, hayro-syntax keeps
+/// Each key appears once. When the bytes repeat a key, the store keeps
 /// its last value, and the entry stays where the key first appears.
 #[derive(Clone, Debug, Default)]
 pub struct Dict {
