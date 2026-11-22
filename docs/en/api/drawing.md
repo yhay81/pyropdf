@@ -350,10 +350,36 @@ Transform what the block draws by `matrix`, applied before the enclosing transfo
 ### `Canvas.opacity`
 
 ```python
-Canvas.opacity(alpha: float) -> AbstractContextManager[None]
+Canvas.opacity(
+    alpha: float,
+    *,
+    isolated: bool = False,
+    knockout: bool = False,
+    colorspace: Literal['gray', 'rgb', 'cmyk'] | None = None,
+) -> AbstractContextManager[None]
 ```
 
-Composite what the block draws as one group, then draw it at `alpha`.
+Composite the block as a transparency group and draw it at `alpha`.
+
+An isolated group starts with a transparent backdrop. In a knockout group
+each element replaces earlier elements in its shape. An isolated group
+may declare its device blending colour space. Other groups inherit it.
+
+### `Canvas.soft_mask`
+
+```python
+Canvas.soft_mask(
+    group: Stream,
+    *,
+    subtype: SoftMaskType | str = SoftMaskType.ALPHA,
+) -> AbstractContextManager[None]
+```
+
+Mask the block with an existing transparency Form XObject from this document.
+
+Alpha uses the group's computed opacity. Luminosity uses its colour and
+requires an explicit group blending space. The mask applies inside the
+block and the enclosing graphics state resumes afterwards.
 
 ### `Canvas.blend`
 

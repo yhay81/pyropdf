@@ -923,6 +923,19 @@ Exceeding 4,096 vector rules, 4,096 cells per candidate table,
 65,536 merged-cell candidates per grid, or 32 text columns raises
 `LimitError`, with no partial table results.
 
+### `Page.uses_transparency`
+
+```python
+Page.uses_transparency() -> bool
+```
+
+Return whether the current page uses transparent imaging under ISO 32000-2 Annex Q.
+
+Check paint operations, selected Forms, images, patterns, Type 3
+character procedures and annotation appearances. The query follows only
+the resources reached by painting. Cyclic resources and exhausted
+limits raise an error.
+
 ### `Page.operations`
 
 ```python

@@ -45,16 +45,14 @@ features = [
 dimensions = ["interpret"]
 behavior = "Adopt engine evaluation of visibility expressions and annotation OC. Track the upstream issue directly. #373 owns local adoption."
 
-[families.transparency]
+[families.transparency-group-engine]
 tracker = 248
-issue = 899
-title = "Complete transparency group, soft-mask and compositing coverage"
-features = [
-    "blend-modes", "soft-masks", "transparency-groups", "transparency-color", "alpha-compositing",
-    "page-transparency",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Exercise non-isolated and knockout groups, group masks, blending colour spaces, alpha composition and Annex Q resource traversal. Verify isolated and nested results with independent rendered references."
+issue = 1024
+kind = "upstream"
+title = "hayro: render non-isolated, knockout and blending-space group boundaries"
+features = ["transparency-color", "alpha-compositing"]
+dimensions = ["interpret"]
+behavior = "Render groups against their initial backdrop, honor knockout shape, and convert into the selected group space at the boundary. Verify explicit output-device samples after upstream adoption."
 
 [families.annotation-appearances]
 tracker = 249
