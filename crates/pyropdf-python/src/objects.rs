@@ -37,7 +37,7 @@ use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, PdfString, Real, Reference, Stream, Value};
-use pyropdf_store::version::{Transaction, Version};
+use pyropdf_store::version::{NameEdit, NameStep, Transaction, Version};
 
 use crate::document::_Document;
 use crate::errors::{StaleObjectError, limit_error, store_error};
@@ -54,6 +54,34 @@ type Root = Option<(u32, u16)>;
 pub(crate) enum Step {
     Key(Vec<u8>),
     Index(usize),
+}
+
+impl Step {
+    fn name_step(&self) -> NameStep {
+        match self {
+            Self::Key(key) => NameStep::key(key),
+            Self::Index(at) => NameStep::Index(*at),
+        }
+    }
+}
+
+/// Direct paths cannot exceed the store's parser nesting limit.
+fn name_path<'a>(
+    scratch: &'a mut [NameStep; pyropdf_store::value::MAX_NESTING + 1],
+    path: &[Step],
+    tail: Option<NameStep>,
+) -> PyResult<&'a [NameStep]> {
+    let len = path.len().saturating_add(usize::from(tail.is_some()));
+    let steps = scratch
+        .get_mut(..len)
+        .ok_or_else(|| PyValueError::new_err("name-tree path exceeds object nesting"))?;
+    for (out, step) in steps
+        .iter_mut()
+        .zip(path.iter().map(Step::name_step).chain(tail))
+    {
+        *out = step;
+    }
+    Ok(steps)
 }
 
 impl<'py> FromPyObject<'_, 'py> for Step {
@@ -402,6 +430,7 @@ fn write_root(
     root: Root,
     path: &[Step],
     value: Value,
+    edit: NameEdit,
     budget: &Budget,
 ) -> PyResult<()> {
     let store = |e: pyropdf_store::Error| store_error(&e);
@@ -412,7 +441,9 @@ fn write_root(
             if transaction.version().generation(number) != Some(generation) {
                 return Err(stale(root, path));
             }
-            transaction.write(number, &value, budget).map_err(store)?;
+            transaction
+                .write_with_name_edit(number, &value, edit, budget)
+                .map_err(store)?;
             Ok(())
         }
     }
@@ -426,6 +457,7 @@ fn change(
     document: &_Document,
     root: Root,
     path: &[Step],
+    edit: Option<(&Step, bool)>,
     change: impl FnOnce(&mut Value, &Version, &Budget) -> PyResult<()>,
 ) -> PyResult<()> {
     document.edit(py, |transaction, budget| {
@@ -439,7 +471,17 @@ fn change(
             transaction.version(),
             budget,
         )?;
-        write_root(transaction, root, path, value, budget)
+        let mut scratch = [NameStep::Other; pyropdf_store::value::MAX_NESTING + 1];
+        let edit = match edit {
+            Some((Step::Index(first), true)) => {
+                NameEdit::Shift(name_path(&mut scratch, path, None)?, *first)
+            }
+            Some((step, _)) => {
+                NameEdit::Set(name_path(&mut scratch, path, Some(step.name_step()))?)
+            }
+            None => NameEdit::Rebuild,
+        };
+        write_root(transaction, root, path, value, edit, budget)
     })
 }
 
@@ -464,6 +506,43 @@ pub fn object_lookup<'py>(
         };
         let value = tagged(py, &version, object.value(), None, &budget)?;
         Ok(Some((object.generation(), value)))
+    })?
+}
+
+/// Pins a name-tree traversal and payload reads to one store version and budget.
+#[pyfunction]
+pub fn attachment_reader(document: &_Document) -> PyResult<_Document> {
+    crate::errors::boundary(|| Ok(document.import_source(document.reading()?, document.budget())))?
+}
+
+/// Returns the resolved indirect file specification, or the direct slot's incarnation.
+#[pyfunction]
+pub fn object_entry_identity<'py>(
+    py: Python<'py>,
+    document: &_Document,
+    root: Root,
+    path: Vec<Step>,
+    index: usize,
+) -> PyResult<Bound<'py, PyAny>> {
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        let budget = document.budget();
+        let value = root_value(&version, root, &path, &budget)?;
+        let Value::Array(names) = walk(&value, root, &path)? else {
+            return Err(stale(root, &path));
+        };
+        let entry = names.get(index).ok_or_else(|| stale(root, &path))?;
+        if let Value::Reference(reference) = entry {
+            let target = reference_target(&version, *reference, &budget)
+                .map_err(|e| store_error(&e))?
+                .ok_or_else(|| stale(root, &path))?
+                .0;
+            return (target.number(), target.generation()).into_bound_py_any(py);
+        }
+        let mut scratch = [NameStep::Other; pyropdf_store::value::MAX_NESTING + 1];
+        let steps = name_path(&mut scratch, &path, Some(NameStep::Index(index)))?;
+        let token = root.map_or(0, |(number, _)| version.name_slot(number, steps));
+        token.into_bound_py_any(py)
     })?
 }
 
@@ -581,22 +660,29 @@ pub fn object_set(
     value: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
     crate::errors::boundary(|| {
-        change(py, document, root, &path, |container, version, budget| {
-            let value = untagged(value, version, 1, budget)?;
-            match (container, step) {
-                (Value::Dict(dict), Step::Key(key)) => {
-                    dict.insert(Name::new(key), value);
+        change(
+            py,
+            document,
+            root,
+            &path,
+            Some((&step, false)),
+            |container, version, budget| {
+                let value = untagged(value, version, 1, budget)?;
+                match (container, &step) {
+                    (Value::Dict(dict), Step::Key(key)) => {
+                        dict.insert(Name::new(key.as_slice()), value);
+                    }
+                    (Value::Stream(stream), Step::Key(key)) => {
+                        stream.dict_mut().insert(Name::new(key.as_slice()), value);
+                    }
+                    (Value::Array(array), Step::Index(index)) => {
+                        *array.get_mut(*index).ok_or_else(|| index_error(*index))? = value;
+                    }
+                    _ => return Err(PyTypeError::new_err("the step does not fit the container")),
                 }
-                (Value::Stream(stream), Step::Key(key)) => {
-                    stream.dict_mut().insert(Name::new(key), value);
-                }
-                (Value::Array(array), Step::Index(index)) => {
-                    *array.get_mut(index).ok_or_else(|| index_error(index))? = value;
-                }
-                _ => return Err(PyTypeError::new_err("the step does not fit the container")),
-            }
-            Ok(())
-        })
+                Ok(())
+            },
+        )
     })?
 }
 
@@ -611,21 +697,30 @@ pub fn object_delete(
     step: Step,
 ) -> PyResult<()> {
     crate::errors::boundary(|| {
-        change(py, document, root, &path, |container, _, _| {
-            let removed = match (container, &step) {
-                (Value::Dict(dict), Step::Key(key)) => dict.remove(key).is_some(),
-                (Value::Stream(stream), Step::Key(key)) => stream.dict_mut().remove(key).is_some(),
-                (Value::Array(array), Step::Index(index)) => array.remove(*index).is_some(),
-                _ => return Err(PyTypeError::new_err("the step does not fit the container")),
-            };
-            match (removed, step) {
-                (true, _) => Ok(()),
-                (false, Step::Key(key)) => Err(PyKeyError::new_err(
-                    String::from_utf8_lossy(&key).into_owned(),
-                )),
-                (false, Step::Index(index)) => Err(index_error(index)),
-            }
-        })
+        change(
+            py,
+            document,
+            root,
+            &path,
+            Some((&step, true)),
+            |container, _, _| {
+                let removed = match (container, &step) {
+                    (Value::Dict(dict), Step::Key(key)) => dict.remove(key).is_some(),
+                    (Value::Stream(stream), Step::Key(key)) => {
+                        stream.dict_mut().remove(key).is_some()
+                    }
+                    (Value::Array(array), Step::Index(index)) => array.remove(*index).is_some(),
+                    _ => return Err(PyTypeError::new_err("the step does not fit the container")),
+                };
+                match (removed, &step) {
+                    (true, _) => Ok(()),
+                    (false, Step::Key(key)) => Err(PyKeyError::new_err(
+                        String::from_utf8_lossy(key).into_owned(),
+                    )),
+                    (false, Step::Index(index)) => Err(index_error(*index)),
+                }
+            },
+        )
     })?
 }
 
@@ -645,14 +740,21 @@ pub fn object_insert(
     value: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
     crate::errors::boundary(|| {
-        change(py, document, root, &path, |container, version, budget| {
-            let value = untagged(value, version, 1, budget)?;
-            let Value::Array(array) = container else {
-                return Err(PyTypeError::new_err("only an array takes an insertion"));
-            };
-            let at = index.min(array.len());
-            array.insert(at, value).map_err(|_| index_error(index))
-        })
+        change(
+            py,
+            document,
+            root,
+            &path,
+            Some((&Step::Index(index), true)),
+            |container, version, budget| {
+                let value = untagged(value, version, 1, budget)?;
+                let Value::Array(array) = container else {
+                    return Err(PyTypeError::new_err("only an array takes an insertion"));
+                };
+                let at = index.min(array.len());
+                array.insert(at, value).map_err(|_| index_error(index))
+            },
+        )
     })?
 }
 
@@ -672,7 +774,7 @@ pub fn object_replace(
             }
             let value = untagged(value, transaction.version(), 0, budget)?;
             transaction
-                .write(number, &value, budget)
+                .write_with_name_edit(number, &value, NameEdit::Set(&[]), budget)
                 .map_err(|e| store_error(&e))?;
             Ok(())
         })
@@ -810,18 +912,25 @@ pub fn stream_write(
     options: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
     crate::errors::boundary(|| {
-        change(py, document, Some(root), &[], |value, version, budget| {
-            let Value::Stream(stream) = value else {
-                return Err(stale(Some(root), &[]));
-            };
-            set_data_in(
-                stream,
-                data,
-                filter_options(options, version, budget)?,
-                version,
-                budget,
-            )
-        })
+        change(
+            py,
+            document,
+            Some(root),
+            &[],
+            None,
+            |value, version, budget| {
+                let Value::Stream(stream) = value else {
+                    return Err(stale(Some(root), &[]));
+                };
+                set_data_in(
+                    stream,
+                    data,
+                    filter_options(options, version, budget)?,
+                    version,
+                    budget,
+                )
+            },
+        )
     })?
 }
 
