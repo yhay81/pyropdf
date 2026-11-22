@@ -30,8 +30,10 @@ use pyo3::exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyList, PyTuple};
 use pyo3::{IntoPyObjectExt, intern};
+use pyropdf_engine::content::{Operations, PageContent};
 use pyropdf_store::LimitExceeded;
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, StreamKind};
+use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, PdfString, Real, Reference, Stream, Value};
@@ -115,6 +117,63 @@ fn root_value(
             .map(|object| Arc::clone(object.value()))
             .ok_or_else(|| stale(root, path)),
     }
+}
+
+/// Resource names actually invoked by Do in a page or a Form, for an OBJR page association.
+#[pyfunction]
+pub fn object_reference_xobjects<'py>(
+    py: Python<'py>,
+    document: &_Document,
+    root: (u32, u16),
+    page: bool,
+) -> PyResult<Vec<Bound<'py, PyBytes>>> {
+    crate::errors::boundary(|| {
+        let budget = document.budget();
+        let names = |ops: &Operations| -> PyResult<_> {
+            let mut names = BudgetVec::new(&budget);
+            for operation in ops.operations() {
+                budget.poll().map_err(|error| limit_error(&error))?;
+                if let (b"Do", [Value::Name(name)]) =
+                    (ops.operator(operation), ops.operands(operation))
+                {
+                    let bytes = name.as_bytes();
+                    budget
+                        .charge(LimitCode::MemorySize, bytes.len() as u64 + 64)
+                        .map_err(|error| limit_error(&error))?;
+                    names
+                        .try_push(PyBytes::new(py, bytes))
+                        .map_err(|error| limit_error(&error))?;
+                }
+            }
+            Ok(names.into_vec())
+        };
+        if page {
+            let (version, index) = crate::pages::index_with(document, None, &budget)?;
+            let at = index
+                .index_of(Reference::new(root.0, root.1))
+                .ok_or_else(|| stale(Some(root), &[]))?;
+            let content = py
+                .detach(|| {
+                    PageContent::read(&mut Reads::new(&version, &budget), &index.pages()[at])
+                })
+                .map_err(|error| store_error(&error))?;
+            return names(content.operations());
+        }
+        let version = document.reading()?;
+        let value = root_value(&version, Some(root), &[], &budget)?;
+        let Value::Stream(stream) = &*value else {
+            return Err(stale(Some(root), &[]));
+        };
+        let operations = py
+            .detach(|| {
+                Operations::parse(
+                    Bytes::new(stream.decoded_as(StreamKind::PageContent, &budget)?),
+                    &budget,
+                )
+            })
+            .map_err(|error| store_error(&error))?;
+        names(&operations)
+    })?
 }
 
 /// Returns the child at `step` of an array, a dictionary, or a stream's

@@ -265,13 +265,13 @@ impl WidgetStyle {
 
 /// The text style of a widget's `/DA`.
 pub(super) struct TextStyle {
-    font: Base14Font,
+    pub(super) font: Base14Font,
     /// The font's resource name.
     pub(super) resource: String,
     pub(super) base_font: &'static str,
     /// The size in points; 0 fits the text to the widget.
-    size: f64,
-    color: (f64, f64, f64),
+    pub(super) size: f64,
+    pub(super) color: (f64, f64, f64),
 }
 
 impl TextStyle {

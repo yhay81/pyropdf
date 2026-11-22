@@ -714,6 +714,34 @@ def check_structure(doc: pyropdf.Document) -> None:
     assert elem.actual_text == MARKER
 
 
+def edit_structure_attributes(doc: pyropdf.Document) -> set[int]:
+    root = doc.structure.obj
+    assert root is not None
+    elem = doc.structure[0].children[-1].children[0]
+    touched = {number(doc.catalog), number(root), elem.xref}
+    with doc.structure.edit() as tree:
+        tree.set_class_attributes("PreservationClass", "Layout", {"Placement": "Block"})
+        elem.add_class("PreservationClass")
+        elem.set_attributes("Layout", {"TextAlign": "Center"})
+        if pdf_version(doc) >= (1, 6):
+            elem.set_user_property("PreservationProperty", MARKER)
+    return touched
+
+
+def check_structure_attributes(doc: pyropdf.Document) -> None:
+    root = doc.structure.obj
+    assert root is not None
+    elem = doc.structure[0].children[-1].children[0]
+    assert elem.obj.get("C") == pyropdf.Name("PreservationClass")
+    assert root["ClassMap"]["PreservationClass"]["Placement"] == pyropdf.Name("Block")
+    attributes = elem.obj["A"]
+    if pdf_version(doc) >= (1, 6):
+        attributes, user = attributes
+        assert user["P"][0]["V"].text == MARKER
+        assert doc.catalog["MarkInfo"]["UserProperties"]
+    assert attributes["TextAlign"] == pyropdf.Name("Center")
+
+
 def prepare_actions(doc: pyropdf.Document) -> None:
     # Two holders share the indirect action. Removing the page trigger must
     # keep the action alive while the catalog still opens the same destination.
@@ -1862,6 +1890,30 @@ def prepare_font_subset(doc: pyropdf.Document) -> None:
         doc.pages.extend([page])
 
 
+def write_font_cmap(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    font = page.obj["Resources"]["Font"]["PyroF1"]
+    code = next(bytes(op.operands[0]) for op in page.operations if op.operator == "Tj")
+    info = font["DescendantFonts"][0]["CIDSystemInfo"]
+    font["Encoding"] = doc.write_cmap(
+        {code: int.from_bytes(code, "big")},
+        name="XX-PageFont",
+        registry=bytes(info["Registry"]),
+        ordering=bytes(info["Ordering"]),
+        supplement=info["Supplement"],
+    )
+    return indirect_numbers(font)
+
+
+def check_font_cmap(doc: pyropdf.Document) -> None:
+    page = doc.pages[-1]
+    encoding = page.obj["Resources"]["Font"]["PyroF1"]["Encoding"]
+    assert isinstance(encoding, pyropdf.Stream)
+    assert encoding["CMapName"] == "XX-PageFont"
+    assert b"1 begincidchar" in encoding.read()
+    assert page.text().strip() == "A"
+
+
 def subset_font(doc: pyropdf.Document) -> set[int]:
     page = doc.pages[-1]
     font = page.obj["Resources"]["Font"]["PyroF1"]
@@ -2002,7 +2054,55 @@ def check_timestamp(doc: pyropdf.Document) -> None:
     assert len(stamp.byte_range) == 4
 
 
+def prepare_xfa_packets(doc: pyropdf.Document) -> None:
+    form = doc.catalog.get("AcroForm")
+    if form is None:
+        form = doc.objects[doc.objects.add({"Fields": []})]
+        doc.catalog["AcroForm"] = form
+
+    def stream(data: bytes) -> pyropdf.Stream:
+        return doc.objects[doc.objects.add_stream(data)]
+
+    # Two legal packets share one original stream. Editing either must retain
+    # the other, without adding an extension key to a profiled AcroForm.
+    shared = stream(b"<config/>")
+    form["XFA"] = [
+        "xdp:xdp",
+        stream(b'<x:xdp xmlns:x="http://ns.adobe.com/xdp/">'),
+        "config",
+        shared,
+        "template",
+        stream(b"<template/>"),
+        "config",
+        shared,
+        "/xdp:xdp",
+        stream(b"</x:xdp>"),
+    ]
+
+
+def edit_xfa_packets(doc: pyropdf.Document) -> set[int]:
+    form = doc.catalog["AcroForm"]
+    packets = form["XFA"]
+    touched = {form.xref if form.xref is not None else number(doc.catalog)} | indirect_numbers(packets, *packets)
+    shared = packets[3].xref
+    assert packets[7].xref == shared
+    doc.form.replace_xfa_packet(1, b'<config id="edited"/>')
+    assert doc.form.xfa_packet(1) == b'<config id="edited"/>'
+    assert form["XFA"][7].xref == shared
+    assert doc.form.xfa_packet(3) == b"<config/>"
+    doc.form.remove_xfa_packet(2)
+    assert doc.form.xfa_packet(2) == b"<config/>"
+    assert doc.form.remove_xfa()
+    return touched
+
+
+def check_xfa_packets(doc: pyropdf.Document) -> None:
+    assert doc.form.xfa_packet_names == ()
+    assert "XFA" not in doc.catalog["AcroForm"]
+
+
 FAMILY_EDITS = {
+    "xfa_packets": Edit(prepare=prepare_xfa_packets, apply=edit_xfa_packets, check=check_xfa_packets),
     "action_triggers": Edit(prepare=prepare_widget_events, apply=edit_widget_events, check=check_widget_events),
     "annotation_relations": Edit(
         prepare=prepare_replies, apply=edit_replies, check=check_replies, affected_pages=first_page
@@ -2061,10 +2161,14 @@ FAMILY_EDITS = {
     "shared_action_trigger": Edit(prepare=prepare_actions, apply=edit_actions, check=check_actions),
     "sign_revision": Edit(prepare=prepare_signature, apply=sign_revision, check=check_signed_revision),
     "signature_field": Edit(prepare=prepare_signature, apply=edit_signature, check=check_signature),
+    "structure_attributes": Edit(
+        prepare=prepare_structure, apply=edit_structure_attributes, check=check_structure_attributes
+    ),
     "structure_membership": Edit(
         prepare=prepare_structure_membership, apply=change_structure_membership, check=check_structure_membership
     ),
     "structure_role_map": Edit(prepare=prepare_structure, apply=edit_structure, check=check_structure),
+    "font_cmap": Edit(prepare=prepare_font_subset, apply=write_font_cmap, check=check_font_cmap),
     "subset_fonts": Edit(prepare=prepare_font_subset, apply=subset_font, check=check_subset_font),
     "tagged_drawing": Edit(
         prepare=prepare_tagged_drawing, apply=tagged_drawing, check=check_tagged_drawing, affected_pages=first_page

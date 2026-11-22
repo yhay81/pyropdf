@@ -159,10 +159,11 @@ StructureChildren.add(
     alt: str | None = None,
     actual_text: str | None = None,
     expanded: str | None = None,
+    namespace: str | None = None,
 ) -> StructureElement
 ```
 
-Create and insert a child `StructureElement` in one transaction.
+Insert a child in one transaction, registering its optional PDF 2.0 namespace URI.
 
 ### `StructureChildren.move`
 
@@ -329,6 +330,58 @@ StructureElement.items: tuple[StructureElement | MarkedContentReference | Object
 
 The child elements, marked-content items, and object references in `/K` reading order.
 
+### `StructureElement.set_attributes`
+
+```python
+StructureElement.set_attributes(
+    owner: str,
+    values: Mapping[str, object],
+    *,
+    namespace: str | None = None,
+)
+```
+
+Set standard or export-format attributes, or supply a registered namespace URI for the NSO owner.
+
+### `StructureElement.add_class`
+
+```python
+StructureElement.add_class(name: str)
+```
+
+Apply a defined attribute class without duplicating it or removing earlier class revisions.
+
+### `StructureElement.set_user_property`
+
+```python
+StructureElement.set_user_property(
+    name: str,
+    value: object,
+    *,
+    formatted: str | None = None,
+    hidden: bool = False,
+)
+```
+
+Create or update a named user property and declare it in the catalog's mark information.
+
+### `StructureElement.set_object_reference`
+
+```python
+StructureElement.set_object_reference(
+    target: Dictionary,
+    *,
+    page: Page | int,
+    replace: Dictionary | None = None,
+) -> ObjectReference
+```
+
+Attach an annotation or a drawn XObject to the specified page and its structure parent.
+
+A whole XObject drawn on several pages can have one reference per page in the same element.
+To retarget a reference, supply an untagged replacement and the page where it is drawn.
+When the old target has several references, this replaces the one on that page.
+
 ### `StructureElement.move`
 
 ```python
@@ -455,6 +508,7 @@ StructureTree.add(
     alt: str | None = None,
     actual_text: str | None = None,
     expanded: str | None = None,
+    namespace: str | None = None,
 ) -> StructureElement
 ```
 
@@ -462,6 +516,31 @@ Create and insert a top-level `StructureElement` in one transaction.
 
 Creates `/StructTreeRoot` and sets `MarkInfo/Marked` to `True` when
 the document has no structure tree yet.
+
+### `StructureTree.set_class_attributes`
+
+```python
+StructureTree.set_class_attributes(
+    name: str,
+    owner: str,
+    values: Mapping[str, object],
+    *,
+    namespace: str | None = None,
+)
+```
+
+Define or update an attribute class, keeping existing owners and entries under other names.
+
+### `StructureTree.edit`
+
+```python
+StructureTree.edit() -> Generator[StructureTree]
+```
+
+Group edits and roll back newly invalid determinate PDF 2.0 Annex L relationships.
+
+The final child order and multiplicities are checked together, allowing temporarily
+incomplete groups such as Ruby. Conditional relationships remain available via child_rules().
 
 ### `StructureTree.reading_order`
 

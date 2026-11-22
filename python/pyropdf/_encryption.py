@@ -77,11 +77,13 @@ class Encryption:
     and the owner password opens it with every right. ``owner_password``
     defaults to ``user_password``. Each password is capped at 127 UTF-8 bytes.
 
-    ``method`` is ``"aes-256"``, the AES-256 encryption of PDF 2.0 (revision
-    6), or ``"aes-128"``, AES-128 with crypt filters (revision 4).
+    ``method`` selects ``"aes-256"`` (revision 6), ``"aes-128"`` (revision 4),
+    or ``"aes-gcm"`` (ISO/TS 32003:2023, revision 7). AES-GCM authenticates
+    each encrypted string and stream when the store reads it.
     :attr:`Encryption.KEEP` retains the existing handler, including legacy
     RC4 and AES-256 revision 5. It copies untouched encrypted bytes and
-    encrypts new strings and streams with that handler. Without ``encryption``, a full save writes the document
+    encrypts new strings and streams with that handler. Without
+    ``encryption``, a full save writes the document
     decrypted, and an incremental save keeps its encryption.
     """
 
@@ -91,7 +93,7 @@ class Encryption:
     user_password: str = ""
     owner_password: str | None = None
     permissions: Permissions = Permissions.ALL
-    method: Literal["aes-256", "aes-128", "keep"] = "aes-256"
+    method: Literal["aes-256", "aes-128", "aes-gcm", "keep"] = "aes-256"
 
     def __post_init__(self) -> None:
         """Validate the passwords, permissions, and method."""
@@ -105,8 +107,8 @@ class Encryption:
         if isinstance(self.method, str) and self.method.lower() in _RC4_METHODS:
             msg = f"pyropdf does not write {self.method} encryption, which PDF 2.0 deprecates; use 'aes-256'"
             raise ValueError(msg)
-        if self.method not in ("aes-256", "aes-128", "keep"):
-            msg = f"method must be 'aes-256' or 'aes-128': {self.method!r}"
+        if self.method not in ("aes-256", "aes-128", "aes-gcm", "keep"):
+            msg = f"method must be 'aes-256', 'aes-128' or 'aes-gcm': {self.method!r}"
             raise ValueError(msg)
         defaults = (self.user_password, self.owner_password, self.permissions) == ("", None, Permissions.ALL)
         if self.method == "keep" and not defaults:
@@ -119,7 +121,7 @@ class Encryption:
             return "Encryption.KEEP"
         return f"Encryption(permissions={self.permissions!r}, method={self.method!r})"
 
-    def _core(self) -> str | tuple[bytes, bytes, int, bool, bytes]:
+    def _core(self) -> str | tuple[bytes, bytes, int, str, bytes]:
         """Return what the core takes: ``"keep"``, or the passwords, flags, method, and 64 random bytes."""
         if self.method == "keep":
             return "keep"
@@ -128,7 +130,7 @@ class Encryption:
             self.user_password.encode(),
             owner.encode(),
             int(self.permissions),
-            self.method == "aes-256",
+            self.method,
             os.urandom(64),
         )
 
@@ -523,8 +525,9 @@ class RecipientEncryption:
     Install ``pyropdf[recipients]`` and supply up to 128 X.509 certificates.
     Recipients with the same permissions share a CMS envelope. The named filter for strings and
     streams is ``DefaultCryptFilter``. Set ``encrypt_metadata=False`` to leave
-    the metadata stream readable. AES-256 supports direct rendering. AES-128 supports
-    store operations including saving, while the engine needs a decrypted input for rendering.
+    the metadata stream readable. AES-256 supports direct rendering. AES-128 and
+    AES-GCM support store operations, including saving. Direct page rendering of
+    these methods requires the authenticated store source in the rendering engine.
     Both an incremental save and a full save with
     ``Encryption.KEEP`` preserve untouched ciphertext.
 
@@ -547,7 +550,7 @@ class RecipientEncryption:
     encrypt_metadata: bool = True
     cms_cipher: Literal["aes-128", "aes-192", "aes-256"] = "aes-256"
     rsa_padding: Literal["pkcs1v15", "oaep"] = "pkcs1v15"
-    method: Literal["aes-256", "aes-128"] = "aes-256"
+    method: Literal["aes-256", "aes-128", "aes-gcm"] = "aes-256"
 
     def __post_init__(self) -> None:
         """Validate the recipients and retain their order for file-key derivation."""
@@ -561,8 +564,8 @@ class RecipientEncryption:
         if not isinstance(self.encrypt_metadata, bool):
             msg = "encrypt_metadata must be a bool"
             raise TypeError(msg)
-        if self.method not in ("aes-256", "aes-128"):
-            msg = "recipient method must be aes-256 or aes-128"
+        if self.method not in ("aes-256", "aes-128", "aes-gcm"):
+            msg = "recipient method must be aes-256, aes-128 or aes-gcm"
             raise ValueError(msg)
         if self.cms_cipher not in ("aes-128", "aes-192", "aes-256"):
             msg = "CMS content encryption must be aes-128, aes-192 or aes-256"
@@ -586,9 +589,9 @@ class RecipientEncryption:
             payload = seed + (flags | 0xFFFF_F0C1).to_bytes(4, "big")
             yield _seal_envelope(payload, certificates, self.cms_cipher, self.rsa_padding)
 
-    def _core(self) -> tuple[bytes, bytes, tuple[bool, bool], Iterator[bytes]]:
+    def _core(self) -> tuple[bytes, bytes, tuple[bool, str], Iterator[bytes]]:
         seed = os.urandom(20)
-        return seed, os.urandom(16), (self.encrypt_metadata, self.method == "aes-256"), self._envelopes(seed)
+        return seed, os.urandom(16), (self.encrypt_metadata, self.method), self._envelopes(seed)
 
 
 def _open_credentials(

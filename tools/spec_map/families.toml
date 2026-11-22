@@ -72,17 +72,6 @@ features = ["redaction-annotations"]
 dimensions = ["read", "create", "edit", "preserve"]
 behavior = "Inspect and edit stored redaction marks, overlay text and appearance streams. Preserve the marks through reopening before destructive application."
 
-[families.font-programs]
-tracker = 249
-issue = 902
-title = "Complete font program, encoding and CMap creation and editing"
-features = [
-    "type1-fonts", "truetype-fonts", "type3-fonts", "simple-font-encodings", "cmaps", "embedded-fonts",
-    "character-tables",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement."
-
 [families.devicen-mixing-hints]
 tracker = 249
 parent = 248
@@ -93,15 +82,13 @@ features = ["devicen-color-space"]
 dimensions = ["interpret"]
 behavior = "Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked."
 
-[families.text-fields-and-xfa]
+[families.rich-text-embedded-fonts]
 tracker = 249
-issue = 904
-title = "Support rich variable text, password appearances and legacy XFA form data"
-features = [
-    "variable-text", "text-fields", "xfa",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read and edit RV/DS field data, mask displayed password glyphs, and inspect, edit/remove and preserve existing XFA packets under the recorded creation exclusion. Verify field values and appearances independently."
+issue = 1032
+title = "Resolve embedded font fallbacks in rich text field appearances"
+features = ["variable-text"]
+dimensions = ["interpret"]
+behavior = "Select embedded fonts from the form resources for rich text CSS families, including shaped non-WinAnsi spans, and independently verify mixed appearances."
 
 [families.image-resources]
 tracker = 250
@@ -135,25 +122,13 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Follow named resources and structure destinations, resolve base URI/IsMap, Windows launch and remote/named targets as data, and round-trip fragment selection and navigation options. Expose unresolved targets without executing actions."
 
-[families.tagged-authoring]
-tracker = 251
-issue = 908
-title = "Author standard tagged attributes, class maps and legal structure children"
-features = [
-    "logical-structure", "tagged-pdf", "structure-children",
-]
-dimensions = ["create", "edit"]
-behavior = "Author and edit class maps, object references, user properties and standard structure attributes. Validate child multiplicities and relationships through page operations and independent checks."
-
-[families.aes-gcm]
+[families.aes-gcm-interpretation]
 tracker = 252
-issue = 865
-title = "Read and write AES-GCM encrypted PDFs under ISO/TS 32003"
-features = [
-    "aes-gcm",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read and write authenticated AES-GCM objects with independent positive and negative cases."
+issue = 968
+title = "Interpret AES-GCM encrypted pages through the authenticated store source"
+features = ["aes-gcm"]
+dimensions = ["interpret"]
+behavior = "Render and extract from the authenticated AES-GCM store version without serializing untouched objects."
 
 [families.integrity-protection]
 tracker = 252
@@ -220,7 +195,7 @@ tracker = 253
 issue = 990
 title = "Resolve contextual Annex L rules and namespace-mapped structure children"
 features = ["structure-children"]
-dimensions = ["interpret"]
+dimensions = ["interpret", "create", "edit"]
 behavior = "Resolve cross-namespace roles, use as a grouping element and role-specific content for the remaining conditional Annex L verdicts."
 
 [families.display-space]
@@ -252,17 +227,6 @@ features = [
 ]
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour."
-
-[families.profile-edit-effects]
-tracker = 255
-issue = 932
-title = "Verify profile edit effects on nested resources and alternate structure encodings"
-features = [
-    "pdfa", "pdfua", "pdfa-1a", "pdfa-1b", "pdfa-2a", "pdfa-2b", "pdfa-2u", "pdfa-3a", "pdfa-3b", "pdfa-3u",
-    "pdfa-4", "pdfa-4e", "pdfa-4f", "pdfua-1", "pdfua-2",
-]
-dimensions = ["interpret", "edit", "preserve"]
-behavior = "Extend the checked edit matrix to nested resources, alternate structure relationships, and font representations with positive and negative controls."
 
 [families.interchange]
 tracker = 256

@@ -378,18 +378,33 @@ class Widgets(Sequence[Widget]):
         below it, and an existing field of another kind raise
         :class:`PdfError`.
         """
-        from pyropdf._form import _FIELD_SPECIFICATIONS  # noqa: PLC0415 - _form imports this module.
+        from pyropdf._form import _FIELD_SPECIFICATIONS, TextField  # noqa: PLC0415 - _form imports this module.
 
         if not isinstance(specification, _FIELD_SPECIFICATIONS):
             msg = f"page.widgets.add takes a field specification: {type(specification).__name__}"
             raise TypeError(msg)
         page = self._page
         payload = specification._payload()  # noqa: SLF001
-        result = _core.widget_add(page._document._core(), page._number, page._generation, payload)  # noqa: SLF001
-        if result is None:
-            raise page._stale()  # noqa: SLF001
-        widget, index = result
-        return Widget(page, widget, index)
+
+        def add_widget() -> Widget:
+            result = _core.widget_add(page._document._core(), page._number, page._generation, payload)  # noqa: SLF001
+            if result is None:
+                raise page._stale()  # noqa: SLF001
+            widget, index = result
+            return Widget(page, widget, index)
+
+        if isinstance(specification, TextField) and (
+            specification.rich_text is not None or specification.default_style is not None
+        ):
+            with page._document.transaction("add rich text field"):  # noqa: SLF001
+                widget = add_widget()
+                field = page._document.form[specification.name]  # noqa: SLF001
+                if specification.default_style is not None:
+                    field.default_style = specification.default_style
+                if specification.rich_text is not None:
+                    field.rich_text = specification.rich_text
+                return widget
+        return add_widget()
 
     def __len__(self) -> int:
         """Return the number of widgets on the page."""

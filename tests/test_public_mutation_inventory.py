@@ -167,7 +167,16 @@ MUTATIONS = (
         "fill_field",
         "Field edits redraw the field's widgets and settle their appearances.",
         "Field",
-        "flags= choices= label= del:label max_length= del:max_length default_value= del:default_value value= reset",
+        (
+            "flags= choices= label= del:label max_length= del:max_length default_value= del:default_value "
+            "value= rich_text= default_style= reset"
+        ),
+    ),
+    (
+        "xfa_packets",
+        "Replace and remove existing XFA packets while retaining live references to the original streams.",
+        "Form",
+        "replace_xfa_packet remove_xfa_packet remove_xfa",
     ),
     ("fill_field", "Bind the font used to regenerate field appearances.", "Form", "font="),
     (
@@ -184,6 +193,24 @@ MUTATIONS = (
         "FDF and XFDF decode independently then share the atomic field/appearance update.",
         "Form",
         "import_fdf import_xfdf",
+    ),
+    (
+        "structure_attributes",
+        "Write ClassMap owners or group related structure edits under a checked transaction.",
+        "StructureTree",
+        "set_class_attributes edit",
+    ),
+    (
+        "structure_attributes",
+        "Write the element's A and C entries, class definitions and UserProperties mark information.",
+        "StructureElement",
+        "set_attributes add_class set_user_property",
+    ),
+    (
+        "tagged_drawing",
+        "Append through the same parent-tree writer and connect the owner's K entry to its content item.",
+        "StructureElement",
+        "set_object_reference",
     ),
     (
         "structure_role_map",
@@ -516,6 +543,7 @@ MUTATIONS = (
         "Document",
         "rewrite_images",
     ),
+    ("font_cmap", "Write a font's code-to-CID mapping and stream metadata together.", "Document", "write_cmap"),
     (
         "subset_fonts",
         "Subset shared font programs and rename their descriptors while retaining glyph IDs.",
@@ -623,7 +651,7 @@ READ_ONLY = {
     "DocumentLimits": "web",
     "Element": "to_dict",
     "Font": "from_file from_bytes standard chars char_widths char_bbox program text_width text_height has_glyph",
-    "Form": "to_fdf to_xfdf",
+    "Form": "to_fdf to_xfdf xfa_packet",
     "History": "save",
     "Layers": "visible",
     "Layout": "to_dict to_html to_xml",
