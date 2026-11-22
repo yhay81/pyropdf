@@ -204,6 +204,9 @@ fn rebuild(glyf: &[u8], offsets: &[usize], keep: &BTreeSet<u32>) -> Option<(Vec<
     reason = "the bytes of `tables`, which the caller holds, and 16 of record and 3 of padding per table"
 )]
 pub(super) fn write(version: &[u8], tables: &[([u8; 4], Vec<u8>)]) -> Option<Vec<u8>> {
+    if tables.len() > 4095 {
+        return None;
+    }
     let count = u16::try_from(tables.len()).ok()?;
     let power = if count == 0 {
         0
@@ -493,4 +496,17 @@ fn renumber_components(data: &mut [u8], new_id: impl Fn(u16) -> Option<usize>) -
         }
     }
     Some(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_rejects_more_than_4095_tables_without_u16_overflow() {
+        let tables: Vec<([u8; 4], Vec<u8>)> = (0u32..4096)
+            .map(|i| (i.to_be_bytes(), Vec::new()))
+            .collect();
+        assert!(write(&[0, 1, 0, 0], &tables).is_none());
+    }
 }

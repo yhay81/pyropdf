@@ -903,7 +903,11 @@ pub(super) fn hint_values(data: &[u8], fd: usize, scale: f64) -> Option<Vec<u8>>
             out.extend_from_slice(&entry.operands);
         } else {
             for number in &entry.numbers {
-                push_real(&mut out, number.filter(|number| number.is_finite())? * by);
+                let scaled = (*number)? * by;
+                if !scaled.is_finite() {
+                    return None;
+                }
+                push_real(&mut out, scaled);
             }
         }
         push_operator(&mut out, entry.op);
@@ -1044,4 +1048,34 @@ pub(super) fn cid_keyed(
         out.extend_from_slice(private);
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hint_values_rejects_non_finite_scaled_real() {
+        // Real operand `1e308` followed by StdHW operator (10).
+        // CFF real encoding: 0x1E (real), nibbles: 1, E(0xB), 3, 0, 8, end(0xF) -> 1E 1B 30 8F
+        let private = [0x1E_u8, 0x1B, 0x30, 0x8F, 10];
+        let header = [1_u8, 0, 4, 1];
+        let names = write_index(&[b"F"]).unwrap();
+        let make_top = |private_offset: i32| {
+            let mut dict = Vec::new();
+            push_entry(&mut dict, PRIVATE, &[private.len() as i32, private_offset]);
+            write_index(&[&dict]).unwrap()
+        };
+        let top_len = make_top(0).len();
+        let private_offset = (header.len() + names.len() + top_len) as i32;
+        let tops = make_top(private_offset);
+        assert_eq!(tops.len(), top_len);
+        let mut cff = Vec::new();
+        cff.extend_from_slice(&header);
+        cff.extend_from_slice(&names);
+        cff.extend_from_slice(&tops);
+        cff.extend_from_slice(&private);
+        assert!(hint_values(&cff, 0, 1.0).is_some());
+        assert!(hint_values(&cff, 0, 10.0).is_none());
+    }
 }

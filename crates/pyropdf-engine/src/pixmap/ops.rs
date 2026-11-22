@@ -201,10 +201,11 @@ pub fn crop(data: &[u8], layout: Layout, area: Area) -> Vec<u8> {
     out
 }
 
-/// The source pixels and their weights for each pixel of one axis.
+/// The source pixels and their weights for each pixel of one axis, stored flat.
 struct Taps {
-    starts: Vec<usize>,
-    weights: Vec<Vec<f64>>,
+    /// `(source_start, weights_offset, weights_len)` per target pixel.
+    spans: Vec<(usize, usize, usize)>,
+    weights: Vec<f64>,
 }
 
 /// Returns the taps of a triangle filter from `source` to `target`
@@ -212,31 +213,38 @@ struct Taps {
 /// resampling computes them.
 #[expect(
     clippy::disallowed_methods,
-    reason = "source and target are bounded by MAX_PIXELS; the triangle spans at most 2*source + 3*target weights"
+    reason = "source and target are bounded by MAX_PIXELS; the flat triangle holds at most 2*source + 3*target weights"
 )]
 fn taps(source: u32, target: u32) -> Taps {
     let scale = f64::from(source) / f64::from(target);
     let filter = scale.max(1.0);
     let support = filter;
-    let mut starts = Vec::with_capacity(target as usize);
-    let mut weights = Vec::with_capacity(target as usize);
+    let mut spans = Vec::with_capacity(target as usize);
+    let mut weights = Vec::with_capacity(
+        (source as usize)
+            .saturating_mul(2)
+            .saturating_add((target as usize).saturating_mul(3)),
+    );
     for index in 0..target {
         let centre = (f64::from(index) + 0.5) * scale;
         let first = (centre - support).floor().max(0.0) as usize;
         let last = ((centre + support).ceil() as usize).min(source as usize);
-        let mut row: Vec<f64> = (first..last)
-            .map(|pixel| (1.0 - ((pixel as f64 + 0.5 - centre) / filter).abs()).max(0.0))
-            .collect();
-        let total: f64 = row.iter().sum();
+        let offset = weights.len();
+        let mut total = 0.0;
+        for pixel in first..last {
+            let weight = (1.0 - ((pixel as f64 + 0.5 - centre) / filter).abs()).max(0.0);
+            weights.push(weight);
+            total += weight;
+        }
+        let len = weights.len() - offset;
         if total > 0.0 {
-            for weight in &mut row {
+            for weight in &mut weights[offset..offset + len] {
                 *weight /= total;
             }
         }
-        starts.push(first);
-        weights.push(row);
+        spans.push((first, offset, len));
     }
-    Taps { starts, weights }
+    Taps { spans, weights }
 }
 
 /// Resamples `width` by `height` pixels of `channels` bytes along rows,
@@ -248,12 +256,13 @@ fn taps(source: u32, target: u32) -> Taps {
 fn resample_rows(data: &[u8], width: u32, height: u32, channels: usize, target: u32) -> Vec<u8> {
     let taps = taps(width, target);
     let mut out = Vec::with_capacity(target as usize * height as usize * channels);
-    let mut sums = vec![0.0; channels];
+    let mut sums = [0.0; 4];
+    let sums = &mut sums[..channels];
     for row in data.chunks_exact(width as usize * channels) {
-        for (start, weights) in taps.starts.iter().zip(&taps.weights) {
+        for &(start, offset, len) in &taps.spans {
             sums.fill(0.0);
-            for (offset, weight) in weights.iter().enumerate() {
-                let at = (start + offset) * channels;
+            for (step, &weight) in taps.weights[offset..offset + len].iter().enumerate() {
+                let at = (start + step) * channels;
                 for (sum, &sample) in sums.iter_mut().zip(&row[at..at + channels]) {
                     *sum += weight * f64::from(sample);
                 }
@@ -265,25 +274,34 @@ fn resample_rows(data: &[u8], width: u32, height: u32, channels: usize, target: 
 }
 
 /// Resamples `width` by `height` pixels of `channels` bytes along
-/// columns, to `target` rows.
+/// columns, to `target` rows, accumulating in bounded strips so extreme
+/// aspect ratios never allocate a wide f64 row buffer.
 #[expect(
     clippy::disallowed_methods,
     reason = "scale chooses the smaller intermediate raster, bounded by MAX_PIXELS; channels is at most four"
 )]
 fn resample_columns(data: &[u8], width: u32, height: u32, channels: usize, target: u32) -> Vec<u8> {
+    const STRIP: usize = 4096;
     let taps = taps(height, target);
     let stride = width as usize * channels;
     let mut out = Vec::with_capacity(stride * target as usize);
-    let mut sums = vec![0.0; stride];
-    for (start, weights) in taps.starts.iter().zip(&taps.weights) {
-        sums.fill(0.0);
-        for (offset, weight) in weights.iter().enumerate() {
-            let row = &data[(start + offset) * stride..][..stride];
-            for (sum, &sample) in sums.iter_mut().zip(row) {
-                *sum += weight * f64::from(sample);
+    let mut sums = [0.0_f64; STRIP];
+    for &(start, offset, len) in &taps.spans {
+        let weights = &taps.weights[offset..offset + len];
+        let mut col = 0;
+        while col < stride {
+            let chunk_len = (stride - col).min(STRIP);
+            let chunk = &mut sums[..chunk_len];
+            chunk.fill(0.0);
+            for (step, &weight) in weights.iter().enumerate() {
+                let row = &data[(start + step) * stride + col..][..chunk_len];
+                for (sum, &sample) in chunk.iter_mut().zip(row) {
+                    *sum += weight * f64::from(sample);
+                }
             }
+            out.extend(chunk.iter().map(|&sum| byte(sum)));
+            col += chunk_len;
         }
-        out.extend(sums.iter().map(|&sum| byte(sum)));
     }
     out
 }
@@ -341,6 +359,10 @@ pub fn scale(data: &[u8], layout: Layout, width: u32, height: u32) -> Vec<u8> {
     reason = "one output pixel per validated source pixel, bounded by MAX_PIXELS and four samples each"
 )]
 pub fn rotate(data: &[u8], layout: Layout, quarters: u8) -> Vec<u8> {
+    let quarters = quarters % 4;
+    if quarters == 0 {
+        return data.to_vec();
+    }
     let (width, height) = (layout.width as usize, layout.height as usize);
     let channels = layout.channels();
     let mut out = Vec::with_capacity(data.len());
@@ -417,7 +439,9 @@ impl Projection {
             let (cx, cy) = corners[(at + 2) % 4];
             (bx - ax) * (cy - by) - (by - ay) * (cx - bx)
         });
-        if !(turns.iter().all(|turn| *turn > 0.0) || turns.iter().all(|turn| *turn < 0.0)) {
+        if !turns.iter().all(|turn| turn.is_finite())
+            || !(turns.iter().all(|turn| *turn > 0.0) || turns.iter().all(|turn| *turn < 0.0))
+        {
             return None;
         }
         let (dx1, dx2, dx3) = (x1 - x2, x3 - x2, x0 - x1 + x2 - x3);
@@ -426,12 +450,15 @@ impl Projection {
             (0.0, 0.0)
         } else {
             let denominator = dx1 * dy2 - dx2 * dy1;
+            if !denominator.is_finite() || denominator == 0.0 {
+                return None;
+            }
             (
                 (dx3 * dy2 - dx2 * dy3) / denominator,
                 (dx1 * dy3 - dx3 * dy1) / denominator,
             )
         };
-        Some(Self([
+        let coeffs = [
             x1 - x0 + g * x1,
             x3 - x0 + h * x3,
             x0,
@@ -440,7 +467,11 @@ impl Projection {
             y0,
             g,
             h,
-        ]))
+        ];
+        if !coeffs.iter().all(|value| value.is_finite()) {
+            return None;
+        }
+        Some(Self(coeffs))
     }
 
     fn apply(self, u: f64, v: f64) -> (f64, f64) {
@@ -644,7 +675,8 @@ fn decode_png(data: &[u8]) -> Result<Decoded, String> {
         .pixel_dims
         .filter(|dims| dims.unit == png::Unit::Meter)
         .map_or((96, 96), |dims| {
-            let dpi = |per_metre: u32| ((f64::from(per_metre) * 0.0254).round() as u32).max(1);
+            let dpi =
+                |per_metre: u32| ((f64::from(per_metre) * 0.0254).round() as u32).clamp(1, 65_535);
             (dpi(dims.xppu), dpi(dims.yppu))
         });
     let size = reader
