@@ -47,8 +47,8 @@ const NO_TOGGLE_TO_OFF: i64 = 1 << 14;
 
 /// The field entries that a field merged with its widget gives to the new
 /// parent that it gets with a second widget.
-pub(in crate::forms) const FIELD_KEYS: [&str; 11] = [
-    "FT", "T", "TU", "TM", "Ff", "V", "DV", "Opt", "MaxLen", "TI", "I",
+pub(in crate::forms) const FIELD_KEYS: [&str; 13] = [
+    "FT", "T", "TU", "TM", "Ff", "V", "DV", "Opt", "MaxLen", "TI", "I", "RV", "DS",
 ];
 
 /// Returns the `/FT` and the `/Ff` bits of a field of `kind`.

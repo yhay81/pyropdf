@@ -301,9 +301,10 @@ class _Handle:
         """Return whether this is an indirect object rather than a direct value inside one."""
         return self._root is not None and not self._path
 
-    def _get(self, step: _Step) -> Any:  # noqa: ANN401 - a PDF value is any of several types.
-        """Return the resolved value at ``step``."""
-        return _decode(self._document, _core.object_get(self._core(), self._root, list(self._path), step), self, step)
+    def _get(self, step: _Step, *, direct_only: bool = False) -> Any:  # noqa: ANN401 - a PDF value has several types.
+        """Read a child value, optionally requiring it to be stored directly."""
+        value = _core.object_get(self._core(), self._root, list(self._path), step, direct_only=direct_only)
+        return _decode(self._document, value, self, step)
 
     def _set(self, step: _Step, value: object) -> None:
         """Write ``value`` at ``step``."""
@@ -470,6 +471,7 @@ class Stream(Dictionary):
     def read(self, *, decode: bool = True, max_size: int | None = _DEFAULT_MAX_STREAM_DATA_SIZE) -> bytes:
         """Return the stream data, decoded through its filters unless ``decode`` is false.
 
+        Indirect filter names and parameters are read from the current revision.
         hayro-syntax decodes the filters, and a filter that it does not
         decode, such as an image filter, raises :class:`PdfError` instead of
         returning encoded bytes. ``max_size`` bounds the result with
@@ -500,6 +502,8 @@ class Stream(Dictionary):
         ``EarlyChange``; Flate and LZW accept TIFF and PNG predictor parameters.
         Predictors currently support up to 255 bits per pixel. TIFF predictor
         rows must fill whole bytes so every row can be read back.
+        A leading ``/Crypt`` filter keeps the same recipients and shared security
+        parameters. An unchanged filter chain keeps its indirect declarations.
         """
         options = _stream_options(self._document, filter, decode_parms)
         _core.stream_write(self._core(), self._stream_root(), bytes(data), options)
@@ -640,6 +644,8 @@ class Objects(Mapping[int, Any]):
         ``dictionary`` supplies further stream entries. The stream length and
         filter entries are derived from the data, ``filter`` and ``decode_parms``
         as in :meth:`Stream.write`.
+        A leading ``/Crypt`` in ``dictionary`` retains its security selector and
+        parameters with every encoding.
         """
         core = self._core()
         options = _stream_options(self._document, filter, decode_parms)
@@ -683,6 +689,11 @@ def _object_number(xref: object) -> int:
     if not 0 <= xref <= _MAX_OBJECT_NUMBER:
         raise KeyError(xref)
     return xref
+
+
+def _direct_value(dictionary: Dictionary, key: str) -> Any:  # noqa: ANN401 - a PDF value has several types.
+    """Read a direct dictionary entry, returning None when it is absent or indirect."""
+    return dictionary._get(_key(key), direct_only=True)  # noqa: SLF001 - the handle reads its addressed child.
 
 
 def _key(key: object) -> bytes:

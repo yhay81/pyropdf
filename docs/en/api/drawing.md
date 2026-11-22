@@ -72,8 +72,8 @@ Write the drawing after a normal exit; discard it after an exception.
 Canvas.path(
     path: PathInput,
     *,
-    fill: Color | Gradient | ShadingPattern | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | ShadingPattern | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     fill_rule: FillRule = FillRule.NONZERO,
 )
 ```
@@ -87,7 +87,7 @@ Canvas.line(
     start: Sequence[float],
     end: Sequence[float],
     *,
-    stroke: Stroke | Color | Gradient | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
@@ -100,8 +100,8 @@ Canvas.rect(
     rect: Sequence[float],
     *,
     radius: float = 0,
-    fill: Color | Gradient | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
@@ -114,8 +114,8 @@ Canvas.circle(
     center: Sequence[float],
     radius: float,
     *,
-    fill: Color | Gradient | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
@@ -127,8 +127,8 @@ Draw a circle.
 Canvas.ellipse(
     rect: Sequence[float],
     *,
-    fill: Color | Gradient | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
@@ -141,8 +141,8 @@ Canvas.polygon(
     points: Iterable[Sequence[float]],
     *,
     close: bool = True,
-    fill: Color | Gradient | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     fill_rule: FillRule = FillRule.NONZERO,
 )
 ```
@@ -158,7 +158,7 @@ Canvas.bezier(
     control2: Sequence[float],
     end: Sequence[float],
     *,
-    stroke: Stroke | Color | Gradient | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
@@ -173,8 +173,8 @@ Canvas.text(
     *,
     font: Font | None = None,
     size: float = 11,
-    fill: Color | Gradient | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     line_height: float | None = None,
     rotate: int = 0,
     max_text_size: int | None = 1048576,
@@ -213,8 +213,8 @@ Canvas.textbox(
     size: float = 11,
     align: Literal['left', 'center', 'right', 'justify'] = 'left',
     line_height: float | None = None,
-    fill: Color | Gradient | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     rotate: int = 0,
     max_text_size: int | None = 1048576,
 ) -> TextFit
@@ -268,7 +268,7 @@ document, is stored once.
 ```python
 Canvas.page(
     rect: Sequence[float],
-    source: Page,
+    source: Page | Content,
     *,
     clip: Sequence[float] | None = None,
     keep_aspect: bool = True,
@@ -291,7 +291,9 @@ degrees, and `keep_aspect` centres it in `rect` at its aspect
 ratio after the turn. A page placed several times, by any canvas of
 this document, is stored once while its content, its geometry and
 every object its resources reach are unchanged.
-Annotations and form fields of the source page are not drawn.
+A live page omits annotations and form fields. A complete `Content`
+uses the geometry, resources and annotation setting captured by
+`Page.content`. Visible captured appearances become vector content.
 
 ### `Canvas.draw`
 
@@ -348,10 +350,36 @@ Transform what the block draws by `matrix`, applied before the enclosing transfo
 ### `Canvas.opacity`
 
 ```python
-Canvas.opacity(alpha: float) -> AbstractContextManager[None]
+Canvas.opacity(
+    alpha: float,
+    *,
+    isolated: bool = False,
+    knockout: bool = False,
+    colorspace: Literal['gray', 'rgb', 'cmyk'] | None = None,
+) -> AbstractContextManager[None]
 ```
 
-Composite what the block draws as one group, then draw it at `alpha`.
+Composite the block as a transparency group and draw it at `alpha`.
+
+An isolated group starts with a transparent backdrop. In a knockout group
+each element replaces earlier elements in its shape. An isolated group
+may declare its device blending colour space. Other groups inherit it.
+
+### `Canvas.soft_mask`
+
+```python
+Canvas.soft_mask(
+    group: Stream,
+    *,
+    subtype: SoftMaskType | str = SoftMaskType.ALPHA,
+) -> AbstractContextManager[None]
+```
+
+Mask the block with an existing transparency Form XObject from this document.
+
+Alpha uses the group's computed opacity. Luminosity uses its colour and
+requires an explicit group blending space. The mask applies inside the
+block and the enclosing graphics state resumes afterwards.
 
 ### `Canvas.blend`
 

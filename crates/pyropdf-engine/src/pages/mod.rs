@@ -14,6 +14,7 @@ pub mod canvas;
 pub mod copy;
 pub mod geometry;
 pub mod import;
+mod retained_layers;
 pub mod sources;
 pub mod tree;
 pub mod unrotate;
