@@ -49,10 +49,17 @@ def build_metrics(step: dict, log: str) -> dict:
     if duration is None:
         msg = f"missing release compilation timer in {step['name']}"
         raise ValueError(msg)
+    sources = re.findall(
+        r"^(\S+)\s+(Updating (?:git repository|crates\.io index)|Downloading crates \.\.\.|Downloaded \S+ v\S+)",
+        log,
+        re.MULTILINE,
+    )
     return {
         "step_s": int(seconds(step["started_at"], step["completed_at"])),
         "cargo_s": 60 * int(duration[1] or 0) + float(duration[2]),
         "tool_setup_s": round(sum(seconds(start, end) for start, end in SETUP_GROUP.findall(log)), 1),
+        "source_fetch_s": round(seconds(sources[0][0], sources[-1][0]), 1) if sources else 0,
+        "downloaded_crates": sum(event.startswith("Downloaded ") for _, event in sources),
         "compiled_crates": len(re.findall(r"^\S+\s+Compiling \S+ v\S+", log, re.MULTILINE)),
     }
 
@@ -76,9 +83,14 @@ def compare_job(job: dict, log: str) -> tuple[dict, dict]:
         msg = f"missing one of the paired builds in {job['html_url']}"
         raise ValueError(msg)
     report = wheel_report(log)
+    image = re.search(r"^\S+ Image: (\S+)\n\S+ Version: (\S+)$", log, re.MULTILINE)
+    if image is None:
+        msg = f"missing hosted runner image in {job['html_url']}"
+        raise ValueError(msg)
     record: dict[str, Any] = {
         "job_id": job["id"],
         "runner": job["labels"],
+        "image": f"{image[1]}@{image[2]}",
         "queue_s": int(seconds(job["created_at"], job["started_at"])),
         "runner_s": int(seconds(job["started_at"], job["completed_at"])),
     }
@@ -92,6 +104,12 @@ def compare_job(job: dict, log: str) -> tuple[dict, dict]:
     record["switch_s"] = int(
         seconds(steps["Build base release wheel"]["completed_at"], steps["Build head release wheel"]["started_at"])
     )
+    trial_steps = (
+        "Compare wheel member contents",
+        "Retain measured wheels for the paired-build trial",
+    )
+    if measured := [steps[name] for name in trial_steps if name in steps]:
+        record["trial_diagnostics_s"] = int(sum(seconds(step["started_at"], step["completed_at"]) for step in measured))
     record["wheel_tag"] = report["head"]["tag"]
 
     # A shared path makes the base compiler output available on this runner.
@@ -103,9 +121,19 @@ def compare_job(job: dict, log: str) -> tuple[dict, dict]:
 
     base_dir, head_dir = map(target_dir, builds[:2])
     record["cargo_target"] = "shared" if base_dir and base_dir == head_dir else "separate"
+    digests = sorted(set(re.findall(r"^\S+ Digest: (sha256:[0-9a-f]{64})$", log, re.MULTILINE)))
+    if digests:
+        record["container_digests"] = digests
     policy = {
         key: sorted(set(re.findall(rf"^\S+ +{key}: (\S+)$", log, flags=re.MULTILINE)))
-        for key in ("rust-toolchain", "maturin-version", "sccache", "manylinux")
+        for key in (
+            "rust-toolchain",
+            "maturin-version",
+            "sccache",
+            "manylinux",
+            "CARGO_BUILD_JOBS",
+            "CARGO_INCREMENTAL",
+        )
     }
     if not all(policy.values()):
         msg = f"missing compiler policy in {job['html_url']}"

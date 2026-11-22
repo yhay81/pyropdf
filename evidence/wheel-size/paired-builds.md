@@ -25,7 +25,36 @@ The following times are median seconds per job across those six runs. The setup 
 | macOS arm64 | 468.5 | 469.5 | 372.5 | 14.8 | 1.8 |
 | Windows x86-64 | 13.0 | 614.0 | 564.0 | 22.5 | 2.4 |
 
-Each checkout had a separate Cargo target directory. The workflow restored no compiler output cache. Both builds requested Rust 1.100.0, maturin 1.16.0 and automatic manylinux selection, with sccache disabled. The logs report Cargo's release timer separately from the action's wall clock. Their difference includes tool startup, acquiring the container and tools, and assembling the wheel. Source downloads that Cargo performs itself are included in Cargo's timer.
+Each checkout had a separate Cargo target directory. The workflow restored no compiler output cache. Both builds requested Rust 1.100.0, maturin 1.16.0, two Cargo build jobs and automatic manylinux selection. Cargo incremental compilation and sccache were disabled. The action's total time includes setup, dependency retrieval, Cargo's release compilation and wheel assembly.
+
+Cargo downloaded 193 packages on each Linux build. The median interval from the first source update to the last recorded download was 4.9 seconds on the x86-64 head and 3.7 seconds on the arm64 head. macOS and Windows reused the registry sources on the head and still compiled all packages. The [recorded data](hosted-timings.json) includes these intervals for both builds on each runner.
+
+## Same-input hosted comparison
+
+The [trial workflow](https://github.com/yhay81/pyropdf/actions/runs/44994564240) built the tested merge `66977363` and its first parent `07569871`. Their only differences were the workflow, its regression tests and measurement files. Each runner therefore built the same release sources, manifests, lockfile and packaging rules twice, first from an empty Cargo target and then with the base compilation available to the head.
+
+| Five-target measure | Historical median | Trial |
+| --- | ---: | ---: |
+| Paired build steps, sum | 78.36 min | 64.55 min |
+| Base builds, sum | 41.18 min | 43.37 min |
+| Head builds, sum | 37.18 min | 21.18 min |
+| Total occupied runner time | 86.37 min | 72.85 min |
+| Workflow elapsed | 48 min 2 s | 22 min 50 s |
+| Longest runner queue | 20 min 55 s | 4 s |
+
+The trial used 17.6% fewer paired-build runner-minutes. Head build steps took 43.0% less time than the historical median. The trial also had a much shorter queue, which contributes separately to the observed change in workflow elapsed time.
+
+| Target | Queue (s) | Clean base build (s) | Reused head build (s) | Base / head packages compiled | Wheel size change (bytes) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Linux x86-64 | 2 | 280 | 154 | 197 / 4 | +2 |
+| Linux arm64 | 4 | 398 | 215 | 197 / 4 | 0 |
+| macOS Intel | 3 | 857 | 380 | 197 / 4 | +2 |
+| macOS arm64 | 3 | 446 | 215 | 197 / 4 | +4 |
+| Windows x86-64 | 2 | 621 | 307 | 199 / 4 | +37 |
+
+All five jobs logged compilation of the same four head packages (`pyropdf-store`, `pyropdf-schema`, `pyropdf-engine` and `pyropdf-python`). Aggregate head tool setup took 44 seconds in the trial and the historical median was also 44 seconds. The two Linux heads each downloaded 193 crate sources again, taking about four seconds per job. Checking out and preparing the second source tree took 18 seconds across all five jobs. The trial's member inspection and extra artifact uploads added another 18 seconds to total runner occupation.
+
+The [archived wheel-member comparison](paired-builds/hosted-contents.json) records how the clean base and reused head artifacts differed for these inputs. The [controlled build experiments](paired-builds/README.md) additionally compare a clean and a reused build of the exact same head when the inputs change.
 
 ## Reproduction
 
@@ -33,5 +62,6 @@ With authenticated `gh`, run the scraper from the repository. It reads the first
 
 ```sh
 python3 evidence/wheel-size/hosted_timings.py \
-  44980129230 44984902949 44984907881 44984908627 44984912331 44984915735
+  44980129230 44984902949 44984907881 44984908627 44984912331 44984915735 \
+  44994564240
 ```
