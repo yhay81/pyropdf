@@ -299,40 +299,40 @@ impl NameSlots {
         object: &Written,
         budget: &'b Budget,
     ) -> Result<SlotJournal<'b>> {
-        let previous = before.name_slots(number).cloned().unwrap_or_default();
-        match (&previous.changes, &self.changes) {
-            (None, None) => {
-                return Ok(if previous.default == self.default {
-                    SlotJournal::Keep
-                } else {
-                    SlotJournal::Replace
-                });
-            }
-            (Some(a), Some(b)) if previous.default == self.default && Arc::ptr_eq(a, b) => {
-                return Ok(SlotJournal::Keep);
-            }
-            _ => {}
+        if !object.name_tree_candidate || before.generation(number).is_none() {
+            return Ok(SlotJournal::Replace);
+        }
+        let previous = Self::inherited(before, number);
+        let same = match (&previous.changes, &self.changes) {
+            (None, None) if previous.default != self.default => return Ok(SlotJournal::Replace),
+            (None, None) => true,
+            (Some(a), Some(b)) => previous.default == self.default && Arc::ptr_eq(a, b),
+            _ => false,
+        };
+        let value = object.value(budget)?;
+        let mut path = [NameStep::Other; MAX_NESTING + 1];
+        if same {
+            // Format one is sufficient when the owner has no direct entry.
+            let contains_slot =
+                visit_slots(&value, &mut path, 0, 0, budget, &mut |_, _, _| Ok(true))?;
+            return Ok(if contains_slot {
+                SlotJournal::Keep
+            } else {
+                SlotJournal::Replace
+            });
         }
         let mut flags = BudgetVec::new(budget);
-        let mut path = [NameStep::Other; MAX_NESTING + 1];
         let mut replaced = 0;
-        visit_slots(
-            object.value(budget)?.as_ref(),
-            &mut path,
-            0,
-            0,
-            budget,
-            &mut |location, _, _| {
-                let changed = self.token(location) != previous.token(location);
-                replaced += usize::from(changed);
-                flags.try_push(u8::from(changed))?;
-                Ok(false)
-            },
-        )?;
-        Ok(if replaced == 0 {
-            SlotJournal::Keep
-        } else if replaced == flags.len() {
+        visit_slots(&value, &mut path, 0, 0, budget, &mut |location, _, _| {
+            let changed = self.token(location) != previous.token(location);
+            replaced += usize::from(changed);
+            flags.try_push(u8::from(changed))?;
+            Ok(false)
+        })?;
+        Ok(if replaced == flags.len() {
             SlotJournal::Replace
+        } else if replaced == 0 {
+            SlotJournal::Keep
         } else {
             SlotJournal::Mixed(flags)
         })

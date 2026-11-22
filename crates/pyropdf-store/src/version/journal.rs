@@ -340,7 +340,7 @@ fn read_version(
                 };
                 Slot::Written(Arc::new(Written {
                     name_slots,
-                    ..Written::new(generation, bytes)
+                    ..Written::new(generation, bytes, &value)
                 }))
             }
             1 => Slot::Free(u16::from_le_bytes(input.array()?)),

@@ -237,7 +237,7 @@ impl Transaction {
         let name_slots = NameSlots::written(&self.draft, number, value, edit, budget)?;
         let object = Arc::new(Written {
             name_slots,
-            ..Written::new(generation, bytes.bytes().clone())
+            ..Written::new(generation, bytes.bytes().clone(), value)
         });
         budget.poll()?;
         self.draft
