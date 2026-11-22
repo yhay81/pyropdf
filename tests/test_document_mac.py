@@ -164,6 +164,8 @@ def test_create_document_mac_on_full_save(version: str, *, stream: bool) -> None
 @pytest.mark.spec("integrity-protection", "create", "interpret")
 def test_create_recipient_mac() -> None:
     owner = recipient("owner")
+    with pytest.raises(ValueError, match="256-bit"):
+        pyropdf.RecipientEncryption(recipients={owner.certificate: None}, method="aes-128", integrity=True)
     with pyropdf.Document() as doc:
         doc.pages.new()
         protected = pyropdf.RecipientEncryption(recipients={owner.certificate: None}, integrity=True)
