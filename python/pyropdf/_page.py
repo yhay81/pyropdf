@@ -599,7 +599,7 @@ class Page:
         box = None if clip is None else _clip_box(clip)
         try:
             return _core.render_page(
-                self._document._core(),  # noqa: SLF001
+                self._reader(),
                 self._number,
                 self._generation,
                 linear,
@@ -852,6 +852,10 @@ class Page:
     ) -> Content:
         """Return the text runs, paths, and images that the page paints.
 
+        A complete result can be rendered again with :meth:`Content.pixmap` or
+        placed with :meth:`Canvas.page` while this document is open, even after a
+        change to the original page. Filtering by kind or clip yields items only.
+
         Items come in paint order, in display coordinates, as hayro
         interprets the current version of the page, with optional-content
         visibility applied. Each carries its paints, its blend mode and soft
@@ -913,7 +917,10 @@ class Page:
             )
         except StaleObjectError as error:
             raise self._stale() from error
-        return _content_from_core(raw, self._document, snapshot)
+        content = _content_from_core(raw, self._document, snapshot)
+        if snapshot is not None and paths and images and clip_box is None:
+            object.__setattr__(content, "_page", _RetainedPage(self, snapshot, annotations=annotations))
+        return content
 
     def paths(
         self,
@@ -1499,6 +1506,27 @@ class Page:
     def __repr__(self) -> str:
         """Return a representation naming the page object and the document."""
         return f"<Page {self._number} {self._generation} R of {self._document!r}>"
+
+
+class _RetainedPage(Page):
+    """Geometry and paints from the same version as a complete Content result."""
+
+    __slots__ = ("_annotations_included", "_snapshot")
+
+    def __init__(self, page: Page, snapshot: _core._PageSnapshot, *, annotations: bool) -> None:
+        super().__init__(page.document, page.xref, page._generation)  # noqa: SLF001
+        self._snapshot = snapshot
+        self._annotations_included = annotations
+
+    @property
+    def annotations_included(self) -> bool:
+        return self._annotations_included
+
+    def _reader(self) -> _core._PageSnapshot:
+        return self._snapshot
+
+    def __reduce__(self) -> tuple[type[None], tuple[()]]:
+        return type(None), ()
 
 
 class _ExportPage(Page):

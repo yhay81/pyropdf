@@ -15,9 +15,10 @@ import math
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, overload
 
 from pyropdf._geometry import Matrix, Point, Rect
+from pyropdf._pixmap import Colorspace
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
     from pyropdf._core import PathColumns, _OperationBudget, _PageSnapshot, _PathPaint, _PathRow, _PathStroke
     from pyropdf._document import Document
     from pyropdf._objects import Array, Dictionary
+    from pyropdf._page import _RetainedPage
+    from pyropdf._pixmap import Pixmap
 
 
 class BlendMode(enum.StrEnum):
@@ -596,6 +599,55 @@ class Content(Sequence[ContentItem]):
     """The items that a page paints, in paint order."""
 
     items: tuple[ContentItem, ...]
+    _page: _RetainedPage | None = field(default=None, init=False, repr=False, compare=False)
+
+    def __getstate__(self) -> tuple[tuple[ContentItem, ...]]:
+        """Serialize only the item sequence, as versions before retained playback did."""
+        return (self.items,)
+
+    def __setstate__(self, state: Sequence[tuple[ContentItem, ...]]) -> None:
+        object.__setattr__(self, "items", state[0])
+        object.__setattr__(self, "_page", None)
+
+    def _retained_page(self) -> _RetainedPage:
+        if self._page is None:
+            msg = "replay requires complete, unfiltered content captured from a page"
+            raise ValueError(msg)
+        self._page.document._ensure_open()  # noqa: SLF001 - a captured result follows its source lifetime.
+        return self._page
+
+    def pixmap(  # noqa: PLR0913 - the same keyword rendering options as Page.pixmap.
+        self,
+        *,
+        dpi: float | None = None,
+        matrix: Sequence[float] | None = None,
+        fit: int | tuple[int, int] | None = None,
+        clip: Sequence[float] | None = None,
+        alpha: bool = False,
+        background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
+        colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
+        hinting: bool = False,
+        glyph_cache: bool = False,
+    ) -> Pixmap:
+        """Render this complete page capture with the options of :meth:`Page.pixmap`.
+
+        Geometry, paints, resources and annotation visibility are those of the
+        capture. Each call has its own budget. Filtered, constructed or unpickled
+        content raises :class:`ValueError`; a closed source raises :class:`PdfError`.
+        """
+        page = self._retained_page()
+        return page.pixmap(
+            dpi=dpi,
+            matrix=matrix,
+            fit=fit,
+            clip=clip,
+            alpha=alpha,
+            background=background,
+            colorspace=colorspace,
+            hinting=hinting,
+            glyph_cache=glyph_cache,
+            annotations=page.annotations_included,
+        )
 
     @overload
     def __getitem__(self, index: int) -> ContentItem: ...

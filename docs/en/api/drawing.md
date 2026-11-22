@@ -268,7 +268,7 @@ document, is stored once.
 ```python
 Canvas.page(
     rect: Sequence[float],
-    source: Page,
+    source: Page | Content,
     *,
     clip: Sequence[float] | None = None,
     keep_aspect: bool = True,
@@ -291,7 +291,9 @@ degrees, and `keep_aspect` centres it in `rect` at its aspect
 ratio after the turn. A page placed several times, by any canvas of
 this document, is stored once while its content, its geometry and
 every object its resources reach are unchanged.
-Annotations and form fields of the source page are not drawn.
+A live page omits annotations and form fields. A complete `Content`
+uses the geometry, resources and annotation setting captured by
+`Page.content`. Visible captured appearances become vector content.
 
 ### `Canvas.draw`
 

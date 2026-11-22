@@ -113,6 +113,22 @@ impl PageSource<'_> {
         }
     }
 
+    /// A new paint operation uses fresh limits and the version held by its input.
+    /// A live canvas can additionally be inside an open target transaction.
+    pub(crate) fn paint_index(
+        &self,
+        operation: Option<&Budget>,
+        budget: &Budget,
+    ) -> PyResult<(Arc<Version>, Arc<PageIndex>)> {
+        match self {
+            Self::Live(document) => index_with(document, operation, budget),
+            Self::Pinned(view) => {
+                budget.poll().map_err(|error| limit_error(&error))?;
+                Ok((Arc::clone(&view.version), Arc::clone(&view.index)))
+            }
+        }
+    }
+
     pub(crate) fn fallback(&self) -> Fallback {
         match self {
             Self::Live(document) => document.fallback(),
@@ -358,31 +374,47 @@ impl CanvasSourceSnapshot {
 /// with a snapshot of that version for [`copy_page_resources`]. The read
 /// charges the operation under the lower of its limits and the source's.
 /// `None` for a stale page.
-#[pyfunction]
+#[pyfunction(signature = (source, number, generation, operation, appearances=false))]
 pub fn canvas_source_page<'py>(
     py: Python<'py>,
-    source: &_Document,
+    source: PageSource<'_>,
     number: u32,
     generation: u16,
     operation: &OperationBudget,
+    appearances: bool,
 ) -> PyResult<Option<CanvasSourcePage<'py>>> {
     crate::errors::boundary(|| {
         operation.ensure_active()?;
-        let source_document = source.document()?;
-        let budget = operation.for_source(source)?;
-        let own = operation.is_active_on(source).then_some(&*budget);
-        let (version, index) = index_with(source, own, &budget)?;
+        let document = source.document();
+        let source_document = document.document()?;
+        let budget = operation.for_source(document)?;
+        let own = operation.is_active_on(document).then_some(&*budget);
+        let (mut version, mut index) = source.paint_index(own, &budget)?;
         let page = Reference::new(number, generation);
+        if appearances && let Some(at) = index.index_of(page) {
+            (version, index) = py
+                .detach(|| {
+                    pyropdf_engine::forms::flatten::captured_page(version, index, at, &budget)
+                })
+                .map_err(annotation_error)?;
+        }
         let Some(source_page) = canvas::SourcePage::new(version, index, page) else {
             return Ok(None);
         };
+        let retained = matches!(source, PageSource::Pinned(_));
         let captured = py
-            .detach(|| source_page.capture(&budget))
+            .detach(|| {
+                let mut captured = source_page.capture(&budget)?;
+                if retained {
+                    captured.retain_layers(&budget)?;
+                }
+                Ok(captured)
+            })
             .map_err(page_error)?;
         // The source may have closed, been replaced by signing, or the canvas
         // ended on another call while the GIL was released.
         operation.ensure_active()?;
-        if !Arc::ptr_eq(&source_document, &source.document()?) {
+        if !Arc::ptr_eq(&source_document, &document.document()?) {
             return Err(PdfError::new_err(
                 "the source document changed during the canvas read",
             ));
