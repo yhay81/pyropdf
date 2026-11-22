@@ -62,7 +62,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `text_line_count` | 4,096 lines | The text that a form field's appearance draws, or that `Canvas.text`, `Canvas.textbox`, or `Font.text_height` lays out, takes more than 4,096 lines. |
 | `text_input_size` | 1 MiB | The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of UTF-8. |
 | `shaped_glyph_count` | 1,048,576 glyphs | Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit. |
-| `font_input_size` | 64 MiB | The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB. |
+| `font_input_size` | 64 MiB | The font that `Font.from_file` or `Font.from_bytes` loads, or the Type 1 program that `Document.subset_fonts` reads, is larger than 64 MiB. |
 | `page_fonts_tree` | 64 levels | `Page.fonts` follows more than 64 `/Parent` links when looking up inherited page resources. |
 | `page_fonts_entries` | 65,536 entries | `Page.fonts` visits more than 65,536 `/Font` and `/XObject` entries across the page's resources and its Form XObjects. |
 | `page_fonts_forms` | 4,096 forms | `Page.fonts` reaches more than 4,096 Form XObjects from the page's resources. |

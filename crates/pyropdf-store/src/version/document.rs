@@ -80,6 +80,12 @@ impl Document {
         )
     }
 
+    /// An isolated writer for save-time declarations. Its next number and history
+    /// are private, while unchanged objects are shared with the source version.
+    pub(crate) fn for_save(version: &Version) -> Transaction {
+        Self::from_version(Arc::new(version.draft()), Some(0)).begin()
+    }
+
     /// Starts independent history at an existing immutable version. The base
     /// and persistent object map are shared; later edits on either document
     /// cannot change the other's view.

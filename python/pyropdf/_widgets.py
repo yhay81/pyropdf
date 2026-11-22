@@ -8,7 +8,8 @@ its widget's object, and the position where it last found it in the page's
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from typing import TYPE_CHECKING, cast, overload
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 from pyropdf import _core
 from pyropdf._actions import _WIDGET_TRIGGERS as _ACTION_WIDGET_TRIGGERS
@@ -16,18 +17,22 @@ from pyropdf._actions import ActionTriggers, AnnotationTrigger
 from pyropdf._annotations import (
     _BORDER_STYLE_NAMES,
     _BORDER_STYLES,
+    _POINT_COMPONENTS,
     AnnotationFlags,
     Border,
     _color,
+    _number,
     _opaque_color,
     _rect,
     _text_value,
 )
+from pyropdf._appearance_states import AppearanceOwner as _AppearanceOwner
+from pyropdf._appearance_states import Mode, _entries, _form, _mode
 from pyropdf._content import Color
-from pyropdf._errors import StaleObjectError
+from pyropdf._errors import MalformedPdfError, StaleObjectError
 from pyropdf._fonts import Font
 from pyropdf._geometry import Rect
-from pyropdf._objects import Dictionary
+from pyropdf._objects import Array, Dictionary, Name, Stream
 
 if TYPE_CHECKING:
     from pyropdf._core import _Widget, _WidgetStyle
@@ -37,7 +42,43 @@ if TYPE_CHECKING:
     from pyropdf._targets import Target
 
 
-class Widget:
+_ICON_KEYS = {"N": "I", "R": "RI", "D": "IX"}
+_SCALE_WHEN = {"always": "A", "larger": "B", "smaller": "S", "never": "N"}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IconFit:
+    """Pushbutton icon scaling and alignment, shared by its three display modes.
+
+    Anchor coordinates select the fraction of unused space on the left and
+    bottom. A true fit_bounds includes the border in the available rectangle.
+    """
+
+    when: Literal["always", "larger", "smaller", "never"] = "always"
+    proportional: bool = True
+    anchor: tuple[float, float] = (0.5, 0.5)
+    fit_bounds: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate the PDF icon-fit parameters."""
+        if (
+            self.when not in _SCALE_WHEN
+            or not isinstance(self.proportional, bool)
+            or not isinstance(self.fit_bounds, bool)
+        ):
+            msg = "invalid icon fit scaling mode or flag"
+            raise ValueError(msg)
+        if not isinstance(self.anchor, (list, tuple)) or len(self.anchor) != _POINT_COMPONENTS:
+            msg = "icon anchor must contain two fractions"
+            raise ValueError(msg)
+        anchor = tuple(_number(v, "icon alignment") for v in self.anchor)
+        if any(v < 0 or v > 1 for v in anchor):
+            msg = "icon anchor fractions must lie between zero and one"
+            raise ValueError(msg)
+        object.__setattr__(self, "anchor", anchor)
+
+
+class Widget(_AppearanceOwner):
     """A handle on one form widget of a page, as ``page.widgets`` lists it.
 
     Properties read the document on every access, and assigning one changes
@@ -210,6 +251,103 @@ class Widget:
     def background_color(self) -> None:
         self._set(clear=["background_color"])
 
+    def icon(self, mode: Mode = "normal") -> Stream | None:
+        """Return the explicit icon Form for normal, rollover or down."""
+        key = _ICON_KEYS[_mode(mode)]
+        mark = self.obj.get("MK")
+        if mark is None:
+            return None
+        if not isinstance(mark, Dictionary) or isinstance(mark, Stream):
+            msg = "widget /MK must be a dictionary"
+            raise MalformedPdfError(msg)
+        value = mark.get(key)
+        if value is None:
+            return None
+        try:
+            return _form(self.page.document, value)
+        except (TypeError, ValueError) as exc:
+            raise MalformedPdfError(str(exc)) from exc
+
+    @property
+    def icon_fit(self) -> IconFit:
+        """Read or replace the shared pushbutton icon fit dictionary."""
+        mark = _entries(self.page.document, self.obj.get("MK"), "/MK")
+        fit = _entries(self.page.document, mark.get("IF"), "/MK/IF")
+        sw, scale = fit.get("SW", Name("A")), fit.get("S", Name("P"))
+        when = next((word for word, code in _SCALE_WHEN.items() if code == sw), None)
+        anchor = fit.get("A")
+        if (
+            not isinstance(sw, Name)
+            or when is None
+            or not isinstance(scale, Name)
+            or scale not in ("P", "A")
+            or (anchor is not None and (not isinstance(anchor, Array) or len(anchor) != _POINT_COMPONENTS))
+        ):
+            msg = "malformed pushbutton /IF scaling or alignment"
+            raise MalformedPdfError(msg)
+        try:
+            return IconFit(
+                when=cast('Literal["always","larger","smaller","never"]', when),
+                proportional=scale == "P",
+                anchor=(0.5, 0.5) if anchor is None else (anchor[0], anchor[1]),
+                fit_bounds=cast("bool", fit.get("FB", False)),
+            )
+        except (TypeError, ValueError) as exc:
+            raise MalformedPdfError(str(exc)) from exc
+
+    @icon_fit.setter
+    def icon_fit(self, fit: IconFit) -> None:
+        if not isinstance(fit, IconFit):
+            msg = "icon_fit requires IconFit"
+            raise TypeError(msg)
+        self._write_icons(fit=fit)
+
+    def set_icon(self, mode: Mode, icon: Stream, *, fit: IconFit | None = None, position: int | None = None) -> None:
+        """Set an interaction icon and redraw the pushbutton in one transaction.
+
+        An indirect Form from this document supplies the icon. The first icon
+        defaults to an icon-only layout. An explicit position selects the PDF
+        caption layout (0 caption, 1 icon, 2 below, 3 above, 4 right, 5 left,
+        6 overlaid). Existing explicit positions and other modes are retained.
+        """
+        key = _ICON_KEYS[_mode(mode)]
+        if fit is not None and not isinstance(fit, IconFit):
+            msg = "fit requires IconFit"
+            raise TypeError(msg)
+        if position is not None and (type(position) is not int or position not in range(7)):
+            msg = "pushbutton caption position must be an integer from zero through six"
+            raise ValueError(msg)
+        self._write_icons(fit=fit, key=key, icon=_form(self.page.document, icon), position=position)
+
+    def _write_icons(
+        self, *, fit: IconFit | None, key: str | None = None, icon: Stream | None = None, position: int | None = None
+    ) -> None:
+        from pyropdf._annotations import _require  # noqa: PLC0415
+        from pyropdf._form import FieldType  # noqa: PLC0415
+
+        doc = self.page.document
+        with doc.transaction("edit pushbutton icons"):
+            field = self.field
+            if field is None or field.type != FieldType.PUSHBUTTON:
+                msg = "icons require a pushbutton widget"
+                raise ValueError(msg)
+            mark = _entries(doc, self.obj.get("MK"), "/MK")
+            if key is not None:
+                mark[key] = icon
+                if position is not None or "TP" not in mark:
+                    mark["TP"] = 1 if position is None else position
+            if fit is not None:
+                info = _entries(doc, mark.get("IF"), "/MK/IF")
+                info.update(
+                    {"SW": Name(_SCALE_WHEN[fit.when]), "S": Name("P" if fit.proportional else "A"), "A": fit.anchor}
+                )
+                if fit.fit_bounds or "FB" in info:
+                    info["FB"] = fit.fit_bounds
+                mark["IF"] = info
+            _require(doc, (1, 5) if fit is not None and fit.fit_bounds else (1, 2))
+            self.obj["MK"] = mark
+            self._set()
+
     @property
     def caption(self) -> str | None:
         """Return or set the caption of a pushbutton, ``/MK /CA``; ``del`` removes it.
@@ -378,18 +516,33 @@ class Widgets(Sequence[Widget]):
         below it, and an existing field of another kind raise
         :class:`PdfError`.
         """
-        from pyropdf._form import _FIELD_SPECIFICATIONS  # noqa: PLC0415 - _form imports this module.
+        from pyropdf._form import _FIELD_SPECIFICATIONS, TextField  # noqa: PLC0415 - _form imports this module.
 
         if not isinstance(specification, _FIELD_SPECIFICATIONS):
             msg = f"page.widgets.add takes a field specification: {type(specification).__name__}"
             raise TypeError(msg)
         page = self._page
         payload = specification._payload()  # noqa: SLF001
-        result = _core.widget_add(page._document._core(), page._number, page._generation, payload)  # noqa: SLF001
-        if result is None:
-            raise page._stale()  # noqa: SLF001
-        widget, index = result
-        return Widget(page, widget, index)
+
+        def add_widget() -> Widget:
+            result = _core.widget_add(page._document._core(), page._number, page._generation, payload)  # noqa: SLF001
+            if result is None:
+                raise page._stale()  # noqa: SLF001
+            widget, index = result
+            return Widget(page, widget, index)
+
+        if isinstance(specification, TextField) and (
+            specification.rich_text is not None or specification.default_style is not None
+        ):
+            with page._document.transaction("add rich text field"):  # noqa: SLF001
+                widget = add_widget()
+                field = page._document.form[specification.name]  # noqa: SLF001
+                if specification.default_style is not None:
+                    field.default_style = specification.default_style
+                if specification.rich_text is not None:
+                    field.rich_text = specification.rich_text
+                return widget
+        return add_widget()
 
     def __len__(self) -> int:
         """Return the number of widgets on the page."""
@@ -405,5 +558,5 @@ class Widgets(Sequence[Widget]):
 
 
 # The package re-exports these names; reprs, pickles, and documentation name them.
-for _public in (Widget, Widgets):
+for _public in (IconFit, Widget, Widgets):
     _public.__module__ = "pyropdf"

@@ -1,6 +1,6 @@
 //! Lossless encoders for PDF stream data, applied in reverse filter order.
 
-use super::{Bytes, Dict, Name, Stream, Value};
+use super::{Bytes, Dict, FilterLookup, Stream, Value};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::{Error, Result};
 
@@ -8,21 +8,28 @@ const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
 /// Replace the data and filter metadata together. The filter array is ordered
 /// as a reader decodes it; encoding starts with the innermost filter.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "at most two bounded metadata keys are inserted"
-)]
-pub fn write(stream: &mut Stream, data: &[u8], mut options: Dict, budget: &Budget) -> Result<()> {
-    let filter = options.remove("Filter");
-    let parameters = options.remove("DecodeParms");
-    let filters = match &filter {
+pub fn write(stream: &mut Stream, data: &[u8], options: Dict, budget: &Budget) -> Result<()> {
+    write_with_lookup(stream, data, options, &|_, _| Ok(None), budget)
+}
+
+/// Encode and replace a stream whose previous security declaration can be indirect.
+pub fn write_with_lookup(
+    stream: &mut Stream,
+    data: &[u8],
+    options: Dict,
+    lookup: &FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<()> {
+    let filter = options.get("Filter");
+    let parameters = options.get("DecodeParms");
+    let filters = match filter {
         None => &[][..],
         Some(name @ Value::Name(_)) => std::slice::from_ref(name),
         Some(Value::Array(array)) => array.as_slice(),
         _ => return Err(Error::malformed("invalid stream Filter")),
     };
     budget.check(LimitCode::StreamFilterCount, filters.len() as u64)?;
-    let parms = match &parameters {
+    let parms = match parameters {
         None => &[][..],
         Some(dict @ Value::Dict(_)) if matches!(filter, Some(Value::Name(_))) => {
             std::slice::from_ref(dict)
@@ -61,16 +68,12 @@ pub fn write(stream: &mut Stream, data: &[u8], mut options: Dict, budget: &Budge
         copy.try_extend_from_slice(data)?;
         copy.into_vec()
     };
-    let dict = stream.dict_mut();
-    for (key, value) in [("Filter", filter), ("DecodeParms", parameters)] {
-        if let Some(value) = value {
-            dict.insert(Name::from(key), value);
-        } else {
-            dict.remove(key);
-        }
+    let charge = bytes.capacity() as u64;
+    let result = stream.replace_encoded_options_with(Bytes::from(bytes), options, lookup, budget);
+    if result.is_err() {
+        budget.release(LimitCode::MemorySize, charge);
     }
-    stream.set_data(Bytes::from(bytes));
-    Ok(())
+    result
 }
 
 /// Encode the input with the named general-purpose filter (ISO 32000-2, 7.4).
@@ -370,6 +373,7 @@ fn paeth(left: u8, up: u8, last: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::Name;
 
     #[test]
     fn a_refused_chain_releases_its_intermediate_output_charge() {

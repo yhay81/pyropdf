@@ -16,6 +16,7 @@ hayro-syntax = { version = "0.9.0", default-features = false, features = ["std"]
 # The primitives of the standard security handler (DESIGN.md section 4.5),
 # MIT OR Apache-2.0 as the repository's license allows.
 aes = "0.9.4"
+aes-gcm = { version = "0.11.1", default-features = false, features = ["aes"] }
 md-5 = "0.11.0"
 sha2 = "0.11.1"
 # ISO 32000-2 algorithm for the V4 AESV2 recipient file key.

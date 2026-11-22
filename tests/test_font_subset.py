@@ -58,9 +58,13 @@ def test_every_readable_program_subset_regardless_of_size_draws_the_same(name: s
         keep = sorted({glyph for _ in program.fonts for glyph in next(used)})
         if _fonts._UNKNOWN_GLYPHS in keep:  # noqa: SLF001 - the subsetter's safety marker.
             continue
-        subset = _core.subset_font_program(program.stream.read(), program.format, keep)
+        data = program.stream.read()
+        lengths = (program.stream["Length1"], program.stream["Length2"]) if program.format == "type1" else None
+        subset = _core.subset_font_program(data, program.format, keep, lengths)
         assert subset is not None
         program.stream.write(subset[0])
+        if lengths is not None:
+            program.stream["Length2"] = lengths[1] - (len(data) - len(subset[0]))
 
     _assert_same(before, _pages(pyropdf.open(doc.to_bytes())))
 
@@ -130,7 +134,7 @@ def test_collecting_with_every_layer_on_leaves_no_trace() -> None:
 
 def test_an_unknown_program_format_is_refused() -> None:
     with pytest.raises(ValueError, match="unknown font program format"):
-        _core.subset_font_program(b"", "type1", [])
+        _core.subset_font_program(b"", "unknown", [])
 
 
 def test_a_program_the_subsetter_does_not_read_is_left_alone() -> None:

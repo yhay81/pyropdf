@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from pyropdf import _core
 from pyropdf._errors import LimitError, StaleObjectError
-from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, Stream, String, _catalog, _Handle
 from pyropdf._pixmap import Colorspace, Pixmap
+from pyropdf._viewer_actions import require_navigation_version
 
 if TYPE_CHECKING:
     from pyropdf._document import Document
@@ -519,15 +519,29 @@ def _read_remote_destination(action: Dictionary) -> RemoteDestination | None:
     if not file:
         return None
     dest = action.get("D")
+    page, name = 0, None
     if isinstance(dest, Name) and str(dest):
-        return RemoteDestination(file, 0, str(dest))
-    if isinstance(dest, String) and len(dest) > 0:
-        return RemoteDestination(file, 0, bytes(dest).decode("utf-8", "replace"))
-    if isinstance(dest, Array) and len(dest) >= 1:
-        page_num = dest[0]
-        is_valid_int = isinstance(page_num, int) and not isinstance(page_num, bool) and page_num >= 0
-        return RemoteDestination(file, page_num if is_valid_int else 0, None)
-    return RemoteDestination(file, 0, None)
+        name = str(dest)
+    elif isinstance(dest, String) and len(dest) > 0:
+        name = dest.text
+    elif isinstance(dest, Array) and len(dest) and type(dest[0]) is int and dest[0] >= 0:
+        page = dest[0]
+    else:
+        return None
+    view = action.get("SD")
+    if isinstance(view, Array) and 2 <= len(view) <= 6 and isinstance(view[0], String) and isinstance(view[1], Name):  # noqa: PLR2004 - Table 149 syntax.
+        try:
+            return RemoteDestination(
+                file,
+                page,
+                name,
+                structure_id=bytes(view[0]),
+                structure_fit=str(view[1]),
+                structure_operands=tuple(view[2:]),
+            )
+        except ValueError:
+            pass
+    return RemoteDestination(file, page, name)
 
 
 class _ActionReadContext:
@@ -605,6 +619,10 @@ class _ActionReadContext:
         kind = action.get("S")
         if not isinstance(kind, Name):
             return None
+        if kind in {"URI", "Launch", "GoTo"}:
+            expanded = _read_custom_action_dict(self._document, action)
+            if expanded is not None:
+                return expanded
         match str(kind):
             case "URI":
                 uri = action.get("URI")
@@ -719,7 +737,7 @@ def _write_page_transition(page: Page, transition: Transition) -> None:
     with document.transaction("page transition"):
         _ = page.index
         if minimum >= (1, 5):
-            _require_version(document, _catalog(document), minimum)
+            require_navigation_version(document, _catalog(document), minimum)
         old_xref = _indirect_xref(page.obj.get("Trans"))
         page.obj["Trans"] = entries
         if old_xref is not None:
@@ -840,7 +858,7 @@ def _write_navigation_steps(page: Page, steps: Iterable[NavigationStep]) -> None
                 del page.obj["PresSteps"]
         else:
             first_xref, minimum = _write_nav_chain(document, items)
-            _require_version(document, _catalog(document), minimum)
+            require_navigation_version(document, _catalog(document), minimum)
             page.obj["PresSteps"] = document.objects[first_xref]
         if candidates:
             _core.object_free_unreferenced(document._core(), candidates)  # noqa: SLF001
@@ -889,7 +907,7 @@ def _write_page_thumbnail(page: Page, pixmap: Pixmap) -> None:
     document = page.document
     with document.transaction("page thumbnail"):
         _ = page.index
-        _require_version(document, _catalog(document), (1, 3))
+        require_navigation_version(document, _catalog(document), (1, 3))
         old_xref = _indirect_xref(page.obj.get("Thumb"))
         xref = document.objects.add_stream(samples, dictionary=thumb_dict, filter="FlateDecode")
         page.obj["Thumb"] = document.objects[xref]

@@ -952,14 +952,7 @@ impl Writer<'_> {
     ) -> Result<Fields> {
         let plan = self.plan;
         let fields = fields.unwrap_or_default();
-        let header = plan
-            .version
-            .base()
-            .header_bytes()
-            .and_then(|bytes| bytes.get(..8))
-            .filter(|bytes| bytes.starts_with(b"%PDF-"))
-            .unwrap_or(b"%PDF-1.7");
-        out.bytes(header)?;
+        out.bytes(self.mode.header(plan.version, false))?;
         out.bytes(b"\n%\xE2\xE3\xCF\xD3\n")?;
         let linearization = plan.linearization();
         let first_page = plan.infos[plan.pages[0]].new;
@@ -1111,9 +1104,24 @@ impl Writer<'_> {
         let value = plan
             .value(info.number)?
             .ok_or_else(|| StoreError::malformed("a written object has no value"))?;
-        let mut value = plan.copy(&value).map_err(context)?;
+        let mut value = crate::value::copy_for_edit(&value, budget)?;
+        if self.mode.removing_encryption(plan.version) {
+            security::filters::remove_explicit(
+                &mut value,
+                &|r, b| plan.version.filter_object(r, b),
+                budget,
+            )?;
+        } else {
+            plan.version.check_stream_filters(&value, budget)?;
+        }
         if self.streams != Streams::Keep
-            && let Some(recoded) = recode::recoded(&value, self.streams, budget).map_err(context)?
+            && let Some(recoded) = recode::recoded(
+                &value,
+                self.streams,
+                &|r, b| plan.version.filter_object(r, b),
+                budget,
+            )
+            .map_err(context)?
         {
             let mut before = BudgetVec::new(budget);
             write::value(&mut before, &value)?;
@@ -1127,9 +1135,20 @@ impl Writer<'_> {
         if let Some(handler) = self.mode.handler()
             && plan.encrypt != Some(index)
         {
-            value = security::encrypt_value(handler, reference, &value, budget)
-                .map_err(|e| context(e.into()))?;
+            let source = Reference::new(
+                info.number,
+                plan.version.generation(info.number).unwrap_or(0),
+            );
+            value = security::encrypt_value_with(
+                handler,
+                (source, reference),
+                &value,
+                &|r, b| plan.version.filter_object(r, b),
+                budget,
+            )
+            .map_err(|e| context(e.into()))?;
         }
+        plan.rewrite(&mut value).map_err(context)?;
         let mut bytes = BudgetVec::new(budget);
         object(&mut bytes, reference.number(), &value)?;
         Ok(bytes)

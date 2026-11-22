@@ -43,6 +43,14 @@ Document.pages: Pages
 
 The pages, a sequence of `Page` handles that edits keep valid.
 
+### `Document.alternate_presentations`
+
+```python
+Document.alternate_presentations: dict[bytes, SlideShow]
+```
+
+Read the catalog's multi-level AlternatePresentations name tree as existing slideshows.
+
 ### `Document.attachments`
 
 ```python
@@ -134,6 +142,24 @@ The indirect objects, a mapping by object number.
 
 A locked encrypted document raises `EncryptedDocumentError`.
 
+### `Document.base_uri`
+
+```python
+Document.base_uri: str | None
+```
+
+The base URI for relative URI actions in this document.
+
+Settable.
+
+### `Document.named_resources`
+
+```python
+Document.named_resources(kind: str) -> NamedResources
+```
+
+Return the resource objects of a catalog name tree indexed by PDF byte-string keys.
+
 ### `Document.destinations`
 
 ```python
@@ -176,6 +202,14 @@ Each element exposes its hierarchy, marked-content items, and
 accessibility attributes, and `doc.structure.role_map` reads and
 edits `/RoleMap`. `del doc.structure` removes `/StructTreeRoot`
 and frees unreferenced structure objects in one transaction.
+
+### `Document.web_capture`
+
+```python
+Document.web_capture: WebCapture
+```
+
+The stored Web Capture database and its URL and identifier indexes.
 
 ### `Document.threads`
 
@@ -907,6 +941,7 @@ Document.prepare_signature(
     *,
     doc_mdp: DocMdpPermission | None = None,
     field_lock: FieldLock | None = None,
+    seed_values: Mapping[str, object] | None = None,
     is_timestamp: bool = False,
     reason: str | None = None,
     location: str | None = None,
@@ -921,7 +956,10 @@ Creates an invisible signature field `field` on the first page when
 none exists, writes `/Lock` for `field_lock` and `/SV` seed values
 for `doc_mdp`, `is_timestamp`, and `reason`, and returns the field
 dictionary's object number so external signers such as pyHanko (or a
-subsequent `sign` call) can fill it cleanly.
+subsequent `sign` call) can fill it cleanly. `seed_values`
+adds or updates entries of the ISO seed dictionary. Use
+`Name` for PDF names and lists for PDF arrays. Other entries
+and other fields sharing the old seed dictionary retain their values.
 
 ### `Document.sign`
 
@@ -936,6 +974,7 @@ Document.sign(
     reason: str | None = None,
     location: str | None = None,
     contact: str | None = None,
+    build_properties: Mapping[str, Mapping[str, object]] | None = None,
     reserve: int = 16384,
 ) -> bytes
 ```
@@ -951,7 +990,15 @@ signature dictionary's `/M` is the current time, and `reason`,
 `location`, and `contact` become `/Reason`, `/Location`, and
 `/ContactInfo`. `doc_mdp` certifies an unsigned document with a
 `DocMDP` transform and `Catalog['Perms']['DocMDP']`, and
-`field_lock` records a `FieldMDP` transform.
+`field_lock` records a `FieldMDP` transform. An existing field's
+lock and required seed values must permit the requested signature.
+The direct `/Prop_Build` dictionary records pyropdf's name and version
+by default. Supply `build_properties` with PDF build entries for
+`App`, `Filter`, `PubSec` or `SigQ` to identify the signing components.
+Required seed conditions that the CAdES profile cannot satisfy, including
+a named signature appearance or an explicit CMS signature policy, raise
+`ValueError`. Checking certificate issuer, subject DN, policy OIDs
+or key usage requires the optional `cryptography` package.
 
 `timestamper` receives the digest of the signature value and the
 name of its hash algorithm, and returns an RFC 3161 time-stamp token
@@ -977,13 +1024,15 @@ Document.timestamp(
     *,
     field: str = 'DocTimeStamp',
     reserve: int = 16384,
+    digest_algorithm: str = 'sha256',
 ) -> bytes
 ```
 
 Append an RFC 3161 `/DocTimeStamp` revision to the document and return its bytes (ISO 32000-2 §12.8.5).
 
-`timestamper` receives the SHA-256 digest of the signed byte ranges
-and `"sha256"`, and returns the DER of an RFC 3161 `TimeStampToken`
+`timestamper` receives the digest of the signed byte ranges and its name.
+Choose SHA-2 (`sha256` by default), `sha3_256`, `sha3_384`,
+`sha3_512` or `shake256`. The callback returns the DER of an RFC 3161 `TimeStampToken`
 stamping that digest; pyropdf makes no network access. Afterwards the
 document reads the timestamped revision and earlier signatures remain
 intact.
@@ -1209,7 +1258,7 @@ keeps the edits, which `history` can undo.
 Document.subset_fonts() -> tuple[SubsetFont, ...]
 ```
 
-Subset each embedded TrueType, OpenType, and CFF program to the glyphs that the pages draw, as one step.
+Subset embedded Type 1, TrueType, OpenType and CFF programs to the glyphs that the pages draw, as one step.
 
 The glyphs are those that rendering draws with every optional
 content group on, with the glyphs that they draw as composite
@@ -1217,8 +1266,36 @@ components or `seac` accents. A subset keeps every glyph ID and
 empties the outlines of the others, so text, encodings, widths, and
 ToUnicode are unchanged; the font names gain a subset tag. Programs
 that annotation appearances or the form's default resources reach,
-and Type 1 and Type 3 fonts, stay whole. Returns the programs that
-shrank; `history` can undo the step.
+and Type 3 fonts, stay whole. Type 1 subsets retain the clear dictionary,
+hints, subroutines, and glyph order and update the encrypted segment
+length. Unrecognized CMap or font layouts stay whole. The result
+lists programs that shrank. `history` can undo the step.
+
+### `Document.write_cmap`
+
+```python
+Document.write_cmap(
+    mapping: Mapping[bytes, int],
+    /,
+    *,
+    name: str,
+    registry: bytes = b'Adobe',
+    ordering: bytes = b'Identity',
+    supplement: int = 0,
+    vertical: bool = False,
+    stream: Stream | None = None,
+) -> Stream
+```
+
+Create or replace an embedded code-to-CID encoding CMap for a Type 0 font.
+
+Map one-to-four-byte character codes to integer CIDs from 0 through
+65535. Codes must be prefix-free, so a reader can tell their lengths.
+Choose registry, ordering and supplement for the descendant CIDFont's
+character collection. The stream and its dictionary share the same
+name and writing mode. Assign the result to the font's `/Encoding`.
+Passing an existing CMap stream updates it in one undo step, retaining
+its object number and clearing its previous base CMap.
 
 ### `Document.font_program`
 
