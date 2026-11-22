@@ -1020,7 +1020,6 @@ objects = ["ActionRichMediaExecute"]
 clause = "12.7.4.3"
 description = "Variable text: default appearance, quadding, and rich text of fields."
 objects = []
-interpret = { status = "partial", missing = "Standard 14 XHTML spans use field defaults, CSS, font variants, colour and paragraph layout. Embedded font selection from the AcroForm resource dictionary and non-WinAnsi shaping remain in #1032.", milestone = "Phase 4: Specification" }
 
 [features.interactive-form]
 clause = "12.7.3"
