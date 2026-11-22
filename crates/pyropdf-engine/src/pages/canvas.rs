@@ -16,7 +16,13 @@ use pyropdf_store::value::{Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{ObjectStamps, Transaction, Version};
 
 use super::{
-    PageError, Result, geometry::space, import, sources, target, tree::Root, with_savepoint,
+    PageError, Result,
+    geometry::space,
+    import,
+    retained_layers::{FormResources, States},
+    sources, target,
+    tree::Root,
+    with_savepoint,
 };
 use crate::content::PageContent;
 use crate::display::{Box4, Display, display_box};
@@ -55,6 +61,7 @@ impl SourcePage {
         let content = PageContent::read(&mut Reads::new(&self.version, budget), self.entry())?;
         Ok(Captured {
             page: self,
+            retained_layers: None,
             content: content.operations().data().clone(),
         })
     }
@@ -101,11 +108,19 @@ impl SourcePage {
 
 /// The decoded operations and page geometry of one canvas source version.
 pub struct Captured {
+    retained_layers: Option<Arc<States>>,
     page: SourcePage,
     content: Bytes,
 }
 
 impl Captured {
+    /// Preserve the default visibility of groups reached by a retained page.
+    pub fn retain_appearance(&mut self, budget: &Budget) -> Result<()> {
+        let layers = States::read(&self.page.version, budget)?;
+        self.retained_layers = Some(Arc::new(layers));
+        Ok(())
+    }
+
     /// The content used both for canvas clipping and for the Form.
     #[must_use]
     pub fn content(&self) -> &[u8] {
@@ -133,6 +148,9 @@ const PAGE_FORMS: usize = 64;
 /// A placed page's Form and the source and target objects it depends on.
 /// Stamps keep no version alive.
 struct PageForm {
+    retained_layers: Option<Arc<States>>,
+    copied_groups: Vec<(Reference, bool)>,
+    group: Option<Value>,
     page: Reference,
     contents: Option<Value>,
     resources: Value,
@@ -173,12 +191,19 @@ impl PageForms {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         for at in 0..entries.len() {
             let form = &entries[at];
-            if form.page == page.reference
+            if form.retained_layers == source.retained_layers
+                && form.group.as_ref()
+                    == source
+                        .retained_layers
+                        .as_ref()
+                        .and(page.entry().dict().get("Group"))
+                && form.page == page.reference
                 && form.bbox == bbox
                 && form.contents.as_ref() == contents
                 && &form.resources == resources
                 && form.source.unchanged(&page.version, budget)?
                 && form.target.unchanged(target, budget)?
+                && States::matches(target, &form.copied_groups, budget)?
                 && let Some(form) = entries.remove(at)
             {
                 let number = form.form;
@@ -206,9 +231,17 @@ impl PageForms {
         let contents = page.entry().dict().get("Contents");
         let resources = page.resources();
         let bbox = display_box(page.entry());
+        let group = captured
+            .retained_layers
+            .as_ref()
+            .and(page.entry().dict().get("Group"));
         let reached = sources::reachable(
             &page.version,
-            &[contents.unwrap_or(&Value::Null), resources],
+            &[
+                contents.unwrap_or(&Value::Null),
+                resources,
+                group.unwrap_or(&Value::Null),
+            ],
             budget,
         )?;
         let source = page.version.stamps(&reached, budget)?;
@@ -218,12 +251,43 @@ impl PageForms {
             .transpose()?;
         let resources = copy_for_edit(resources, budget)?;
         let entry = with_savepoint(transaction, |transaction| {
-            let dictionary = page.copy_resources(transaction, same_document, true, budget)?;
-            let form = write_form(transaction, &captured.content, bbox, dictionary, budget)?;
-            let target = transaction
-                .version()
-                .stamps(&[form, dictionary.number()], budget)?;
+            let copied = if let Some(layers) = &captured.retained_layers
+                && (!layers.empty() || group.is_some())
+            {
+                layers.copy(transaction, &page.version, page.resources(), group, budget)?
+            } else {
+                FormResources {
+                    dictionary: page.copy_resources(transaction, same_document, true, budget)?,
+                    group: None,
+                    layers: Vec::new(),
+                }
+            };
+            let dictionary = copied.dictionary;
+            let form = write_form(
+                transaction,
+                &captured.content,
+                bbox,
+                dictionary,
+                copied.group,
+                budget,
+            )?;
+            let version = transaction.version();
+            let target = if captured.retained_layers.is_some() {
+                // Only the retained source owns these pixels. If an editor changes
+                // even a nested destination resource, leave that edit in place
+                // and make the next placement from the captured version again.
+                let root = Value::Reference(Reference::new(form, 0));
+                let copied = sources::reachable(version, &[&root], budget)?;
+                version.stamps(&copied, budget)?
+            } else {
+                version.stamps(&[form, dictionary.number()], budget)?
+            };
             Ok(PageForm {
+                retained_layers: captured.retained_layers.clone(),
+                copied_groups: copied.layers,
+                group: group
+                    .map(|value| copy_for_edit(value, budget))
+                    .transpose()?,
                 page: page.reference,
                 contents,
                 resources,
@@ -256,6 +320,7 @@ fn write_form(
     content: &[u8],
     bbox: [f64; 4],
     resources: Reference,
+    group: Option<Value>,
     budget: &Budget,
 ) -> Result<u32> {
     let data = deflate(content, 6, usize::MAX, budget)?
@@ -274,6 +339,14 @@ fn write_form(
         .collect(),
         Bytes::from(data),
     );
+    if let Some(group) = group {
+        crate::annotations::version::require_version(
+            transaction,
+            crate::annotations::version::PdfVersion(1, 4),
+            budget,
+        )?;
+        stream.dict_mut().insert(Name::from("Group"), group);
+    }
     stream
         .dict_mut()
         .insert(Name::from("Filter"), Value::Name(Name::from("FlateDecode")));
