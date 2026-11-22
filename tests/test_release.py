@@ -391,10 +391,10 @@ def test_paired_wheels_select_the_base_and_compiler_directory(tmp_path: Path, ch
     base = tmp_path / "base"
     base.mkdir()
     output = tmp_path / "outputs"
-    env = os.environ | {"GITHUB_OUTPUT": str(output)}
+    env = os.environ | {"GITHUB_OUTPUT": str(output), "GIT_CONFIG_GLOBAL": os.devnull}
 
     def checked_git(*args: str) -> str:
-        return subprocess.check_output([git, *args], cwd=base, text=True).strip()  # noqa: S603 - fixed test repository.
+        return subprocess.check_output([git, *args], cwd=base, env=env, text=True).strip()  # noqa: S603 - fixed test repository.
 
     checked_git("init", "-q", "--initial-branch=main")
     checked_git("config", "user.email", "test@example.invalid")
