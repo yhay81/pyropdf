@@ -493,3 +493,44 @@ def test_copy_preserves_multi_level_parent_tree_and_bounds_leaves_at_64() -> Non
     assert list(leaves[1]["Limits"]) == [64, 66]
     assert root["ParentTreeNextKey"] == 67
     assert pyropdf.open(doc.to_bytes()).check().defects == ()
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_a_page_copy_keeps_shared_field_properties_and_separate_widget_overrides(*, incremental: bool) -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R 5 0 R] >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [4 0 R 5 0 R] >>",
+                4: "<< /Type /Annot /Subtype /Widget /FT /Tx /T (text) /Rect [0 0 50 20] /V (Ada) "
+                "/DA 9 0 R /Q 2 /DS (color:blue) /RV 8 0 R >>",
+                5: "<< /Type /Annot /Subtype /Widget /FT /Sig /T (sig) /Rect [0 20 50 40] /Lock 6 0 R /SV 7 0 R >>",
+                6: "<< /Type /SigFieldLock /Action /All >>",
+                7: "<< /Type /SV /Ff 2 /SubFilter [/adbe.pkcs7.detached] >>",
+                8: "<< /Length 16 >>\nstream\n<body>Ada</body>\nendstream",
+                9: "(/Helv 12 Tf)",
+            }
+        )
+    )
+    doc.pages.extend(doc.pages[0])
+    # When this widget already has a separate terminal field, its own
+    # appearance overrides belong to this widget and its copy.
+    override = _widgets(doc.pages[1])[0]
+    override["DA"] = b"/Helv 8 Tf"
+    override["Q"] = 1
+    doc.pages.extend(doc.pages[1])
+
+    with pyropdf.open(doc.to_bytes(incremental=incremental)) as reopened:
+        text = reopened.form["text"]
+        assert (text.value, text.rich_text, text.default_style) == ("Ada", "<body>Ada</body>", "color:blue")
+        assert (text.obj["DA"], text.obj["Q"]) == (b"/Helv 12 Tf", 2)
+        assert text.obj["RV"].xref == 8
+        first, second, third = text.obj["Kids"]
+        assert "DA" not in first
+        assert "Q" not in first
+        assert (second["DA"], second["Q"]) == (third["DA"], third["Q"]) == (b"/Helv 8 Tf", 1)
+        assert all("DS" not in kid and "RV" not in kid for kid in (first, second, third))
+        signature = reopened.form["sig"].obj
+        assert (signature["Lock"].xref, signature["SV"].xref) == (6, 7)
+        assert all("Lock" not in widget and "SV" not in widget for widget in signature["Kids"])

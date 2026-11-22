@@ -128,8 +128,9 @@ const MAX_ELEMENT_DEPTH: usize = 256;
 const MAX_TREE_NODES: usize = 1 << 20;
 /// The field entries that a merged field and widget dictionary moves to a
 /// new parent when the field gains a second widget.
-const FIELD_KEYS: [&str; 11] = [
-    "FT", "T", "TU", "TM", "Ff", "V", "DV", "Opt", "MaxLen", "TI", "I",
+const FIELD_KEYS: [&str; 17] = [
+    "FT", "T", "TU", "TM", "Ff", "V", "DV", "Opt", "MaxLen", "TI", "I", "DA", "Q", "RV", "DS",
+    "Lock", "SV",
 ];
 /// The triggers of `/AA` that belong to the field rather than its widget.
 const FIELD_TRIGGERS: [&str; 4] = ["K", "F", "V", "C"];
@@ -233,6 +234,9 @@ impl<'b> Copies<'b> {
                 // becomes a field with both widgets.
                 let merged = annotation.get("T").is_some() || annotation.get("Parent").is_none();
                 let field = if merged {
+                    for key in FIELD_KEYS {
+                        annotation.remove(key);
+                    }
                     old.ok_or_else(|| {
                         Error::malformed("a merged field/widget is not an indirect object")
                     })?
@@ -242,9 +246,6 @@ impl<'b> Copies<'b> {
                         _ => return Err(Error::malformed("a widget's /Parent is not a reference")),
                     }
                 };
-                for key in FIELD_KEYS {
-                    annotation.remove(key);
-                }
                 if let Some(mut actions) = actions_to_split(transaction, &annotation, budget)? {
                     for trigger in FIELD_TRIGGERS {
                         actions.remove(trigger);
@@ -722,7 +723,7 @@ fn join(
             if let Some(value) = old.get(key) {
                 #[expect(
                     clippy::disallowed_methods,
-                    reason = "the keys are FIELD_KEYS, so the parent gains 11 entries at most"
+                    reason = "the parent receives at most one entry per key in FIELD_KEYS"
                 )]
                 parent.insert(Name::from(key), copy_for_edit(value, budget)?);
             }
