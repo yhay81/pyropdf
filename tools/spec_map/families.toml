@@ -82,15 +82,13 @@ features = ["devicen-color-space"]
 dimensions = ["interpret"]
 behavior = "Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked."
 
-[families.text-fields-and-xfa]
+[families.rich-text-embedded-fonts]
 tracker = 249
-issue = 904
-title = "Support rich variable text, password appearances and legacy XFA form data"
-features = [
-    "variable-text", "text-fields", "xfa",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read and edit RV/DS field data, mask displayed password glyphs, and inspect, edit/remove and preserve existing XFA packets under the recorded creation exclusion. Verify field values and appearances independently."
+issue = 1032
+title = "Resolve embedded font fallbacks in rich text field appearances"
+features = ["variable-text"]
+dimensions = ["interpret"]
+behavior = "Select embedded fonts from the form resources for rich text CSS families, including shaped non-WinAnsi spans, and independently verify mixed appearances."
 
 [families.image-resources]
 tracker = 250

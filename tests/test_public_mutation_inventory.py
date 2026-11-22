@@ -167,7 +167,16 @@ MUTATIONS = (
         "fill_field",
         "Field edits redraw the field's widgets and settle their appearances.",
         "Field",
-        "flags= choices= label= del:label max_length= del:max_length default_value= del:default_value value= reset",
+        (
+            "flags= choices= label= del:label max_length= del:max_length default_value= del:default_value "
+            "value= rich_text= default_style= reset"
+        ),
+    ),
+    (
+        "xfa_packets",
+        "Replace and remove existing XFA packets while retaining live references to the original streams.",
+        "Form",
+        "replace_xfa_packet remove_xfa_packet remove_xfa",
     ),
     ("fill_field", "Bind the font used to regenerate field appearances.", "Form", "font="),
     (
@@ -624,7 +633,7 @@ READ_ONLY = {
     "DocumentLimits": "web",
     "Element": "to_dict",
     "Font": "from_file from_bytes standard chars char_widths char_bbox program text_width text_height has_glyph",
-    "Form": "to_fdf to_xfdf",
+    "Form": "to_fdf to_xfdf xfa_packet",
     "History": "save",
     "Layers": "visible",
     "Layout": "to_dict to_html to_xml",
