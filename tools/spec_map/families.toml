@@ -101,17 +101,6 @@ features = [
 dimensions = ["interpret"]
 behavior = "Apply and verify redaction annotations over text, paths and images, using item provenance for destructive removal."
 
-[families.name-tree-navigation]
-tracker = 251
-issue = 895
-title = "Resolve catalog name trees, structure destinations and viewer action parameters"
-features = [
-    "name-dictionary", "embedded-files", "destinations", "remote-goto-actions", "launch-actions",
-    "uri-actions", "named-actions", "fragment-identifiers",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Follow named resources and structure destinations, resolve base URI/IsMap, Windows launch and remote/named targets as data, and round-trip fragment selection and navigation options. Expose unresolved targets without executing actions."
-
 [families.aes-gcm-interpretation]
 tracker = 252
 issue = 968

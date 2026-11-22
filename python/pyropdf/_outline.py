@@ -16,9 +16,9 @@ from pyropdf._actions import (
 )
 from pyropdf._content import Color
 from pyropdf._errors import LimitError, StaleObjectError
-from pyropdf._metadata import _require_version
 from pyropdf._objects import Dictionary, _catalog
 from pyropdf._targets import Destination, Target, _target_from_core, _target_to_core
+from pyropdf._viewer_actions import require_navigation_version
 
 if TYPE_CHECKING:
     from pyropdf._core import _Document, _OutlineItem, _Target
@@ -123,10 +123,14 @@ def _rgb(color: Color | None) -> tuple[float, float, float] | None:
 
 def _resolve_outline_target(document: Document, item_id: tuple[int, int], raw: _Target) -> Target | None:
     resolved = _target_from_core(raw)
-    if resolved is not None or not item_id[0]:
+    if not item_id[0] or (resolved is not None and raw[0] not in {"uri", "goto", "launch", "gotor"}):
         return resolved
     holder = Dictionary(document, item_id)
-    return _read_custom_holder_action(document, holder)
+    if raw[0] == "gotor":
+        from pyropdf._presentations import _read_remote_destination  # noqa: PLC0415
+
+        return _read_remote_destination(holder["A"])
+    return _read_custom_holder_action(document, holder) or resolved
 
 
 class OutlineItem:
@@ -200,7 +204,7 @@ class OutlineItem:
             action_dict, minimum = _custom_target_action_dict(document, target)
             with document.transaction("outline target"):
                 _core.outline_set_target(core, self._id, ("none", None, None, None, None, None))
-                _require_version(document, _catalog(document), minimum)
+                require_navigation_version(document, _catalog(document), minimum)
                 Dictionary(document, self._id)["A"] = action_dict
             return
         core = self._core()
@@ -421,7 +425,7 @@ def _write_outline(document: Document, entries: Iterable[OutlineEntry]) -> None:
         return
     with document.transaction("outline"):
         _core.outline_write(core, specs)
-        _require_version(document, _catalog(document), min_version)
+        require_navigation_version(document, _catalog(document), min_version)
         written = _core.outline_entries(core)
         for index, action_dict in custom_actions:
             item_id = written[index][0]

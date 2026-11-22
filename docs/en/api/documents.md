@@ -142,6 +142,24 @@ The indirect objects, a mapping by object number.
 
 A locked encrypted document raises `EncryptedDocumentError`.
 
+### `Document.base_uri`
+
+```python
+Document.base_uri: str | None
+```
+
+The base URI for relative URI actions in this document.
+
+Settable.
+
+### `Document.named_resources`
+
+```python
+Document.named_resources(kind: str) -> NamedResources
+```
+
+Return the resource objects of a catalog name tree indexed by PDF byte-string keys.
+
 ### `Document.destinations`
 
 ```python

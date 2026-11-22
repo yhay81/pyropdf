@@ -35,6 +35,7 @@ from pyropdf._collections import (
 )
 from pyropdf._errors import LimitError, MalformedPdfError, PdfError
 from pyropdf._fonts import Font
+from pyropdf._metadata import _require_pdf20 as require_signature_pdf20
 from pyropdf._metadata import _require_version, pdf_date
 from pyropdf._objects import (
     _DEFAULT_MAX_STREAM_DATA_SIZE,
@@ -1158,24 +1159,6 @@ def signature_operation(document: Document, name: str) -> Generator[None, None, 
         _core.abort_canvas(core, operation)
         raise
     _core.end_transaction(core, True)  # noqa: FBT003 - commit the operation.
-
-
-def require_signature_pdf20(document: Document, catalog: Dictionary, feature: str) -> None:
-    """Refuse a PDF 2.0 promotion that introduces structural defects in existing objects."""
-    before = document.check() if _version(document) < (2, 0) else None
-    _require_collection_version(document, catalog, (2, 0))
-    if before is None:
-        return
-    after = document.check()
-    if after.truncated:
-        msg = f"cannot promote the document to PDF 2.0 for {feature}: structural defect report is truncated"
-        raise PdfError(msg)
-    existing = set(before.defects)
-    for defect in after.defects:
-        if defect not in existing:
-            location = "trailer" if defect.xref is None else f"object {defect.xref}"
-            msg = f"cannot promote the document to PDF 2.0 for {feature}: {location}, {defect.clause}: {defect.message}"
-            raise PdfError(msg)
 
 
 def prepare_signature(  # noqa: PLR0913 - mirrors Document.prepare_signature keyword options.

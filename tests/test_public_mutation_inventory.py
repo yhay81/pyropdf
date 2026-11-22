@@ -29,6 +29,19 @@ if TYPE_CHECKING:
 # denotes a property assignment and 'del:' denotes a property deletion.
 MUTATIONS = (
     (
+        "catalog_navigation",
+        "The catalog base URI and its siblings retain their values.",
+        "Document",
+        "base_uri= del:base_uri",
+    ),
+    (
+        "catalog_navigation",
+        "Copy the touched name-tree path and retain other resource references.",
+        "NamedResources",
+        "__setitem__ __delitem__",
+    ),
+    ("catalog_navigation", "Renew a named destination's structure and fallback pair.", "Destinations", "set_structure"),
+    (
         "typed_set",
         "Switch the movie target on the existing action; title and reference are exclusive.",
         "MovieAction",
@@ -660,7 +673,13 @@ READ_ONLY = {
     "Chars": "column",
     "Chunk": "to_dict",
     "Content": "path_clusters pixmap",
-    "Document": "changes check to_bytes render text markdown to_json to_chunks font_program",
+    "Document": "changes check to_bytes render text markdown to_json to_chunks font_program named_resources",
+    "Destinations": "structure",
+    "NamedAction": "resolve",
+    "RemoteDestination": "resolve resolve_structure",
+    "StructureDestination": "resolve",
+    "UriAction": "resolve",
+    "PdfFragment": "parse with_parameter resolve",
     "DocumentLimits": "web",
     "Element": "to_dict",
     "Font": "from_file from_bytes standard chars char_widths char_bbox program text_width text_height has_glyph",
