@@ -297,11 +297,17 @@ method and property of its classes with its full description.
 ## [Structure](structure.md)
 
 - [`MarkedContentReference`](structure.md#markedcontentreference): A marked-content item of a structure element (`/K` integer or `/Type /MCR` dictionary).
+- [`MATHML_NAMESPACE`](structure.md#mathml_namespace): Standard structure namespace URI for MathML 3.0 elements (ISO 32000-2 §14.8.6.3).
+- [`NamespaceRoleMap`](structure.md#namespacerolemap): Live `MutableMapping` over a `StructureNamespace`'s `/RoleMapNS` dictionary (Table 356).
 - [`ObjectReference`](structure.md#objectreference): An indirect PDF object item of a structure element (`/Type /OBJR` dictionary).
+- [`PDF_1_7_NAMESPACE`](structure.md#pdf_1_7_namespace): Standard structure namespace URI for PDF 1.7 tags (ISO 32000-2 §14.8.6.1, ISO/TS 32005).
+- [`PDF_2_0_NAMESPACE`](structure.md#pdf_2_0_namespace): Standard structure namespace URI for PDF 2.0 tags (ISO 32000-2 §14.8.6.2, ISO/TS 32005).
 - [`RoleMap`](structure.md#rolemap): The structure tree's `/RoleMap` dictionary as a live mutable mapping.
 - [`StructureChildren`](structure.md#structurechildren): The child `StructureElement` handles of one `StructureElement` in `/K` order.
 - [`StructureChildRule`](structure.md#structurechildrule): An Annex L relationship, its observed count and the applicable occurrence rule.
 - [`StructureElement`](structure.md#structureelement): A handle on an indirect `StructElem` dictionary in `Document.structure`.
+- [`StructureNamespace`](structure.md#structurenamespace): Live handle on an indirect `/Type /Namespace` dictionary (ISO 32000-2 §14.7.4, PDF 2.0).
+- [`StructureNamespaces`](structure.md#structurenamespaces): Live sequence of `StructureNamespace` handles in `StructTreeRoot['Namespaces']` (PDF 2.0).
 - [`StructureText`](structure.md#structuretext): One piece of logical text and its originating element or content reference.
 - [`StructureTree`](structure.md#structuretree): The document's logical structure tree as its top-level elements, as `doc.structure` returns it.
 
@@ -339,6 +345,20 @@ method and property of its classes with its full description.
 - [`RequirementHandler`](measurement-and-requirements.md#requirementhandler): Fallback handler invoked when a viewer cannot satisfy a `DocumentRequirement` (Table 276).
 - [`RequirementType`](measurement-and-requirements.md#requirementtype): Standard viewer capability requirement names for `Document.requirements` (ISO 32000-2 Table 275).
 - [`Viewport`](measurement-and-requirements.md#viewport): A rectangular measurement region on a page (`/Type /Viewport`, ISO 32000-2 Table 265).
+
+## [Interchange](interchange.md)
+
+- [`AssociatedFile`](interchange.md#associatedfile): Live handle on an `AFFileSpecification` dictionary (ISO 32000-2 §14.13).
+- [`AssociatedFileRelationship`](interchange.md#associatedfilerelationship_1): Semantic relationship of an associated file to its host object (`/AFRelationship`, Table 44).
+- [`AssociatedFiles`](interchange.md#associatedfiles): Live sequence of `AssociatedFile` handles in a host's `/AF` array (ISO 32000-2 §14.13).
+- [`DeveloperExtension`](interchange.md#developerextension): A developer or ISO extension entry in `Catalog['Extensions']` (ISO 32000-2 §7.12).
+- [`DocumentPart`](interchange.md#documentpart): Live handle on an indirect `DPart` node in `Document.parts` (ISO 32000-2 §14.12).
+- [`DocumentPartAction`](interchange.md#documentpartaction): An action that jumps to a `DocumentPart` (`/S /GoToDp`, ISO 32000-2 §12.6.4.5, PDF 2.0).
+- [`DocumentParts`](interchange.md#documentparts): Live view over `Catalog['DPartRoot']` and its top-level `DocumentPart` nodes (ISO 32000-2 §14.12).
+- [`Extensions`](interchange.md#extensions): Live container for `Catalog['Extensions']` keyed by developer prefix (ISO 32000-2 §7.12).
+- [`ISO_EXTENSIONS`](interchange.md#iso_extensions): Canonical `(url, extension_revision)` metadata for registered ISO/TS extensions (ISO 32000-2 §7.12).
+- [`PieceData`](interchange.md#piecedata): One application's entry in a `/PieceInfo` page-piece dictionary (ISO 32000-2 Table 351).
+- [`PieceInfo`](interchange.md#pieceinfo): Live `MutableMapping` over `Catalog['PieceInfo']` or `PageObject['PieceInfo']` (ISO 32000-2 §14.5).
 
 ## [History and changes](history-and-changes.md)
 

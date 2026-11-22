@@ -163,6 +163,19 @@ from pyropdf._fragments import FragmentParameter, PdfFragment
 from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
 from pyropdf._images import ImageRewriteReport, PageImage, StoredImage
+from pyropdf._interchange import (
+    ISO_EXTENSIONS,
+    AssociatedFile,
+    AssociatedFileRelationship,
+    AssociatedFiles,
+    DeveloperExtension,
+    DocumentPart,
+    DocumentPartAction,
+    DocumentParts,
+    Extensions,
+    PieceData,
+    PieceInfo,
+)
 from pyropdf._layers import Layer, LayerConfig, LayerMembership, Layers, VisibilityPolicy
 from pyropdf._limit_codes import LimitCode
 from pyropdf._limits import LIMIT_CODES, CancellationToken, DocumentLimits
@@ -242,12 +255,18 @@ from pyropdf._signature_structures import (
 )
 from pyropdf._signing import Signature, SignatureVerification, Signer, Timestamper
 from pyropdf._structure import (
+    MATHML_NAMESPACE,
+    PDF_1_7_NAMESPACE,
+    PDF_2_0_NAMESPACE,
     MarkedContentReference,
+    NamespaceRoleMap,
     ObjectReference,
     RoleMap,
     StructureChildren,
     StructureChildRule,
     StructureElement,
+    StructureNamespace,
+    StructureNamespaces,
     StructureText,
     StructureTree,
 )
@@ -352,8 +371,12 @@ for _public in _PUBLIC_MODULE_EXPORTS:
 LimitCode.__doc__ = "A stable code that :attr:`LimitError.code` carries."
 
 __all__ = [
+    "ISO_EXTENSIONS",
     "LIMIT_CODES",
+    "MATHML_NAMESPACE",
     "METADATA_KEYS",
+    "PDF_1_7_NAMESPACE",
+    "PDF_2_0_NAMESPACE",
     "Access",
     "ActionTriggers",
     "Annotation",
@@ -364,6 +387,9 @@ __all__ = [
     "AnnotationType",
     "Annotations",
     "Array",
+    "AssociatedFile",
+    "AssociatedFileRelationship",
+    "AssociatedFiles",
     "Attachment",
     "AttachmentIcon",
     "Attachments",
@@ -408,11 +434,15 @@ __all__ = [
     "DefectKind",
     "Destination",
     "Destinations",
+    "DeveloperExtension",
     "Dictionary",
     "DocMdpPermission",
     "Document",
     "DocumentClosedError",
     "DocumentLimits",
+    "DocumentPart",
+    "DocumentPartAction",
+    "DocumentParts",
     "DocumentRequirement",
     "DocumentScripts",
     "DocumentTrigger",
@@ -425,6 +455,7 @@ __all__ = [
     "EncryptedDocumentError",
     "EncryptedPayload",
     "Encryption",
+    "Extensions",
     "FallbackFont",
     "FallbackFonts",
     "FdfData",
@@ -507,6 +538,7 @@ __all__ = [
     "NamedAction",
     "NamedPages",
     "NamedResources",
+    "NamespaceRoleMap",
     "NavigationStep",
     "Navigator",
     "Note",
@@ -545,6 +577,8 @@ __all__ = [
     "PdfError",
     "PdfFragment",
     "Permissions",
+    "PieceData",
+    "PieceInfo",
     "Pixmap",
     "Point",
     "PointData",
@@ -622,6 +656,8 @@ __all__ = [
     "StructureChildren",
     "StructureDestination",
     "StructureElement",
+    "StructureNamespace",
+    "StructureNamespaces",
     "StructureText",
     "StructureTree",
     "SubmitFormAction",

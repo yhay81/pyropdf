@@ -411,6 +411,7 @@ Target: TypeAlias = (
     | GoTo3DView
     | RenditionAction
     | RichMediaExecute
+    | DocumentPartAction
     | Launch
     | NamedAction
     | TransitionAction

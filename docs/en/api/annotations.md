@@ -359,6 +359,14 @@ Read a popup's window and effective Contents, T, M and C (ISO 32000-2 §12.5.6.1
 A reciprocal Parent supplies the markup entries. A popup without a
 Parent uses its own entries. A conflicting Parent is malformed.
 
+### `Annotation.associated_files`
+
+```python
+Annotation.associated_files: AssociatedFiles
+```
+
+The annotation's `/AF` associated files as a live `AssociatedFiles` sequence.
+
 ### `Annotation.popup_rect`
 
 ```python

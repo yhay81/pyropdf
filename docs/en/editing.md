@@ -762,6 +762,57 @@ with pyropdf.open(saved) as reopened:
     assert reopened.requirements[0].type is RequirementType.GEOSPATIAL_2D
 ```
 
+## Interchange and structure namespaces
+
+`doc.extensions` manages direct developer and ISO extensions (`DeveloperExtension`,
+`ISO_EXTENSIONS`), `associated_files` attaches files with an
+`AssociatedFileRelationship` to the document, pages, structure elements,
+annotations, and document parts, `piece_info` stores `/PieceInfo` application
+dictionaries on the catalog and pages, `doc.parts` builds `/DPartRoot` page-range
+trees that `DocumentPartAction` targets, and `doc.structure.namespaces` mixes
+PDF 1.7 (`PDF_1_7_NAMESPACE`), PDF 2.0 (`PDF_2_0_NAMESPACE`), and custom
+namespaces in one structure tree.
+
+```python
+import pyropdf
+from pyropdf import (
+    PDF_1_7_NAMESPACE,
+    PDF_2_0_NAMESPACE,
+    AssociatedFileRelationship,
+    DeveloperExtension,
+    DocumentPartAction,
+    OutlineEntry,
+)
+
+with pyropdf.Document() as doc:
+    first = doc.pages.new()
+    second = doc.pages.new()
+    doc.extensions.add(DeveloperExtension("ISO_", "2.0", 32001))
+    doc.associated_files.add(
+        "source.xml",
+        b"<invoice><total>42</total></invoice>",
+        media_type="application/xml",
+        relationship=AssociatedFileRelationship.SOURCE,
+    )
+    first.piece_info.set("ACME", {"stage": "approved"})
+    part = doc.parts.add_part(first, second, dpm={"Record": "INV-1"})
+    doc.outline = [OutlineEntry(1, "Invoice part", DocumentPartAction(part))]
+
+    ns20 = doc.structure.namespaces.add(PDF_2_0_NAMESPACE)
+    ns17 = doc.structure.namespaces.add(PDF_1_7_NAMESPACE)
+    custom = doc.structure.namespaces.add("https://example.com/ns", role_map={"Callout": ("Aside", ns20)})
+    root_elem = doc.structure.add("Document", namespace=ns20)
+    root_elem.children.add("TOC", namespace=ns17)
+    note = root_elem.children.add("Callout", namespace=custom)
+    assert note.resolved_role == ("Aside", PDF_2_0_NAMESPACE)
+    saved = doc.to_bytes()
+
+with pyropdf.open(saved) as reopened:
+    assert not reopened.check()
+    assert reopened.associated_files[0].filename == "source.xml"
+    assert isinstance(reopened.outline[0].destination, DocumentPartAction)
+```
+
 ## Sanitizing
 
 `doc.sanitize(path)` removes JavaScript, actions, attachments, metadata,

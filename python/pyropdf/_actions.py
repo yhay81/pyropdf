@@ -13,6 +13,11 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, NoReturn, TypeAlias, Type
 from pyropdf import _core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Point
+from pyropdf._interchange import (
+    DocumentPartAction,
+    _gotodp_action_dict,
+    _read_gotodp_action_dict,
+)
 from pyropdf._media_actions import GoTo3DView, RenditionAction, RichMediaExecute, media_action_dict, read_media_action
 from pyropdf._objects import (
     Array,
@@ -664,6 +669,7 @@ def _is_custom_target(target: object) -> bool:
             RichMediaExecute,
             TransitionAction,
             ThreadAction,
+            DocumentPartAction,
             JavaScriptAction,
             EmbeddedDestination,
             StructureDestination,
@@ -895,6 +901,8 @@ def _custom_target_action_dict(  # noqa: C901, PLR0911, PLR0912 - dispatches one
             return _transition_action_dict(target)
         case ThreadAction():
             return _thread_action_dict(document, target)
+        case DocumentPartAction():
+            return _gotodp_action_dict(document, target)
         case JavaScriptAction(script=script):
             return {"Type": Name("Action"), "S": Name("JavaScript"), "JS": script}, (1, 3)
         case EmbeddedDestination():
@@ -943,8 +951,8 @@ def _target_action_dict(
             return {"Type": Name("Action"), "S": Name("Named"), "N": Name(name)}, (1, 2)
         case _:
             msg = (
-                "a target is a Destination, RemoteDestination, EmbeddedDestination, Launch, "
-                "NamedAction, TransitionAction, ThreadAction, JavaScriptAction, HideAction, "
+                "a target is a Destination, RemoteDestination, EmbeddedDestination, DocumentPartAction, "
+                "Launch, NamedAction, TransitionAction, ThreadAction, JavaScriptAction, HideAction, "
                 "SetLayerStateAction, SubmitFormAction, ResetFormAction, ImportDataAction, "
                 f"or URI string: {type(target).__name__}"
             )
@@ -1257,6 +1265,8 @@ def _read_custom_action_dict(
         return None if trans is None else TransitionAction(trans)
     if kind_name == "Thread":
         return _read_thread_action_dict(document, action, thread_index_map=thread_index_map)
+    if kind_name == "GoToDp":
+        return _read_gotodp_action_dict(document, action)
     reader = _STATELESS_ACTION_READERS.get(kind_name)
     return None if reader is None else reader(action)
 

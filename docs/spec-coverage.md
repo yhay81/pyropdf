@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 4 | 8 | 826 |
-| interpret | 17 | 19 | 0 | 6 | 12 | 784 |
-| create | 0 | 0 | 28 | 2 | 13 | 795 |
-| edit | 0 | 0 | 0 | 5 | 10 | 823 |
-| preserve | 0 | 0 | 0 | 0 | 10 | 828 |
+| read | 0 | 0 | 0 | 3 | 2 | 833 |
+| interpret | 17 | 19 | 0 | 6 | 5 | 791 |
+| create | 0 | 0 | 28 | 1 | 7 | 802 |
+| edit | 0 | 0 | 0 | 3 | 5 | 830 |
+| preserve | 0 | 0 | 0 | 0 | 4 | 834 |
 
 ## Clauses
 
@@ -77,7 +77,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.11.4 | Embedded file streams | `embedded-files` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11.4.2 | Related files arrays | `related-files` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11.6 | Collection items | `collection-items` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.12 | Extensions dictionary | `developer-extensions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.12 | Extensions dictionary | `developer-extensions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.3 | Coordinate transformations | `coordinate-systems` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.4 | Graphics state | `graphics-state` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.5 | Path construction and painting | `paths` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -168,7 +168,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.6.4.2 | Go-To actions | `goto-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.3 | Remote Go-To actions | `remote-goto-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.4 | Embedded Go-To actions | `embedded-goto-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.6.4.5 | Go-To-DPart actions | `goto-dpart-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.6.4.5 | Go-To-DPart actions | `goto-dpart-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.6 | Launch actions | `launch-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.7 | Thread actions | `thread-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.8 | URI actions | `uri-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -210,10 +210,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 14.3.2 | Metadata streams | `xmp-metadata` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.3.3 | Document information dictionary | `document-info` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.4 | File identifiers | `file-identifiers` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 14.5 | Page-piece dictionaries | `page-piece` | 1 planned | 1 planned | 1 planned | 1 partial | 1 planned |
+| 14.5 | Page-piece dictionaries | `page-piece` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.6 | Marked content | `marked-content` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.7 | Logical structure | `logical-structure` | 1 done | 1 partial | 1 done | 1 done | 1 done |
-| 14.7.4 | Structure namespaces | `structure-namespaces` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 14.7.4 | Structure namespaces | `structure-namespaces` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.8 | Tagged PDF | `tagged-pdf` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 14.9 | Accessibility support | `accessibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.10 | Web capture | `web-capture` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -223,8 +223,8 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 14.11.5 | Output intents | `output-intents` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
 | 14.11.6 | Trapping support | `trapping` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 14.11.7 | Open prepress interface | `opi` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
-| 14.12 | Document parts | `document-parts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 14.13 | Associated files | `associated-files` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
+| 14.12 | Document parts | `document-parts` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 14.13 | Associated files | `associated-files` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex D | PDF character tables | `character-tables` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex E | Extension naming rules | `private-names` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -242,12 +242,12 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32007 | RichMedia glTF assets | `gltf-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 
 ## Unfinished work by milestone
 
-87 unfinished cells in 838 features: 17 engine, 17 partial, 53 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+53 unfinished cells in 838 features: 17 engine, 13 partial, 23 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -347,9 +347,6 @@ Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 
 Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
 
-- [#839](https://github.com/yhay81/pyropdf/issues/839) Expose developer extensions, associated files, page-piece dictionaries, document parts, and structure namespaces. Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations.
-    - read, interpret, create, edit — `developer-extensions`, `page-piece`, `associated-files`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
-    - preserve — `developer-extensions`, `page-piece`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
 - [#863](https://github.com/yhay81/pyropdf/issues/863) Support STEP and glTF assets in RichMedia annotations under the published PDF 2.0 extensions. Read, author and verify STEP and glTF asset relationships against the published extensions.
     - read, interpret, create, edit, preserve — `step-rich-media`, `gltf-rich-media`.
 

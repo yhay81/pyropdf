@@ -132,6 +132,42 @@ Assigning a mapping replaces `Catalog['AA']` in one transaction, and
 
 Settable.
 
+### `Document.extensions`
+
+```python
+Document.extensions: Extensions
+```
+
+Return, replace, or delete `Catalog['Extensions']` as a live `Extensions` container.
+
+Settable.
+
+### `Document.associated_files`
+
+```python
+Document.associated_files: AssociatedFiles
+```
+
+The document catalog's `/AF` associated files as a live `AssociatedFiles` sequence.
+
+### `Document.piece_info`
+
+```python
+Document.piece_info: PieceInfo
+```
+
+Return, replace, or delete `Catalog['PieceInfo']` as a live `PieceInfo` mutable mapping.
+
+Settable.
+
+### `Document.parts`
+
+```python
+Document.parts: DocumentParts
+```
+
+Or delete the document part hierarchy (`Catalog['DPartRoot']`) as `DocumentParts`.
+
 ### `Document.objects`
 
 ```python

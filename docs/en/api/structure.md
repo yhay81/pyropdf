@@ -21,6 +21,99 @@ MarkedContentReference(
 
 A marked-content item of a structure element (`/K` integer or `/Type /MCR` dictionary).
 
+## `MATHML_NAMESPACE`
+
+```python
+MATHML_NAMESPACE: str
+```
+
+Standard structure namespace URI for MathML 3.0 elements (ISO 32000-2 §14.8.6.3).
+
+## `NamespaceRoleMap`
+
+```python
+class NamespaceRoleMap(MutableMapping[str, 'str | tuple[str, StructureNamespace]'])
+NamespaceRoleMap(namespace: StructureNamespace)
+```
+
+Live `MutableMapping` over a `StructureNamespace`'s `/RoleMapNS` dictionary (Table 356).
+
+Values are either a `str` role name in the default standard structure
+namespace (written as `Name(role)`) or `(role, target_namespace)`
+(written as `[Name(role), target_namespace_ref]`). Removing the last entry
+deletes `/RoleMapNS`.
+
+### `NamespaceRoleMap.__getitem__`
+
+```python
+NamespaceRoleMap.__getitem__(key: str) -> str | tuple[str, StructureNamespace]
+```
+
+Return the mapped role or `(role, StructureNamespace)` for `key`, or raise `KeyError`.
+
+### `NamespaceRoleMap.__iter__`
+
+```python
+NamespaceRoleMap.__iter__() -> Iterator[str]
+```
+
+Iterate over the custom role names in `/RoleMapNS`.
+
+### `NamespaceRoleMap.__len__`
+
+```python
+NamespaceRoleMap.__len__() -> int
+```
+
+Return the number of entries in `/RoleMapNS`.
+
+### `NamespaceRoleMap.__bool__`
+
+```python
+NamespaceRoleMap.__bool__() -> bool
+```
+
+Return whether `/RoleMapNS` has at least one entry.
+
+### `NamespaceRoleMap.__setitem__`
+
+```python
+NamespaceRoleMap.__setitem__(
+    key: TagRole | str,
+    value: TagRole | str | tuple[TagRole | str, StructureNamespace],
+)
+```
+
+Set one role mapping in one transaction.
+
+### `NamespaceRoleMap.__delitem__`
+
+```python
+NamespaceRoleMap.__delitem__(key: str)
+```
+
+Delete `key` from `/RoleMapNS`, removing `/RoleMapNS` when empty.
+
+### `NamespaceRoleMap.update`
+
+```python
+NamespaceRoleMap.update(
+    other: object = (),
+    /,
+    **values: TagRole | str | tuple[TagRole | str, StructureNamespace],
+)
+```
+
+Update multiple `/RoleMapNS` entries in one transaction.
+
+### `NamespaceRoleMap.clear`
+
+```python
+NamespaceRoleMap.clear()
+```
+
+Remove `/RoleMapNS` from this namespace in one transaction.
+
 ## `ObjectReference`
 
 ```python
@@ -28,6 +121,22 @@ ObjectReference(*, xref: int, page: int | None = None)
 ```
 
 An indirect PDF object item of a structure element (`/Type /OBJR` dictionary).
+
+## `PDF_1_7_NAMESPACE`
+
+```python
+PDF_1_7_NAMESPACE: str
+```
+
+Standard structure namespace URI for PDF 1.7 tags (ISO 32000-2 §14.8.6.1, ISO/TS 32005).
+
+## `PDF_2_0_NAMESPACE`
+
+```python
+PDF_2_0_NAMESPACE: str
+```
+
+Standard structure namespace URI for PDF 2.0 tags (ISO 32000-2 §14.8.6.2, ISO/TS 32005).
 
 ## `RoleMap`
 
@@ -159,7 +268,7 @@ StructureChildren.add(
     alt: str | None = None,
     actual_text: str | None = None,
     expanded: str | None = None,
-    namespace: str | None = None,
+    namespace: StructureNamespace | str | None = None,
 ) -> StructureElement
 ```
 
@@ -245,6 +354,32 @@ StructureElement.standard_role: str
 ```
 
 `role` resolved iteratively through `doc.structure.role_map`.
+
+### `StructureElement.namespace`
+
+```python
+StructureElement.namespace: StructureNamespace | None
+```
+
+Return, set, or delete the element's `StructureNamespace` (`/NS`, PDF 2.0).
+
+Settable.
+
+### `StructureElement.resolved_role`
+
+```python
+StructureElement.resolved_role: tuple[str, str | None]
+```
+
+Resolve `(role, namespace_uri)` iteratively across `/RoleMapNS` and `/RoleMap` (up to 32 hops).
+
+### `StructureElement.associated_files`
+
+```python
+StructureElement.associated_files: AssociatedFiles
+```
+
+The `/AF` associated files of this structure element.
 
 ### `StructureElement.title`
 
@@ -398,6 +533,168 @@ Updates both `/K` containers and this element's `/P` in one transaction,
 refusing moves into another document, into itself or a descendant, or past
 the 256-level depth limit.
 
+## `StructureNamespace`
+
+```python
+StructureNamespace(document: Document, xref: int, generation: int = 0)
+```
+
+Live handle on an indirect `/Type /Namespace` dictionary (ISO 32000-2 §14.7.4, PDF 2.0).
+
+Exposes `uri` (`/NS`), `schema` (`/Schema`), and
+`role_map` (`/RoleMapNS`). A deleted handle raises
+`StaleObjectError` and works again if undo restores it.
+
+### `StructureNamespace.document`
+
+```python
+StructureNamespace.document: Document
+```
+
+The owning `Document`.
+
+### `StructureNamespace.xref`
+
+```python
+StructureNamespace.xref: int
+```
+
+The indirect object number of this `Namespace` dictionary.
+
+### `StructureNamespace.obj`
+
+```python
+StructureNamespace.obj: Dictionary
+```
+
+The `Namespace` dictionary in the low-level object model.
+
+### `StructureNamespace.uri`
+
+```python
+StructureNamespace.uri: str
+```
+
+The namespace URI text string (`/NS`).
+
+Settable.
+
+### `StructureNamespace.schema`
+
+```python
+StructureNamespace.schema: AssociatedFile | str | None
+```
+
+Return, set, or delete `/Schema` (`AssociatedFile`, string, or `None`).
+
+Settable.
+
+### `StructureNamespace.role_map`
+
+```python
+StructureNamespace.role_map: NamespaceRoleMap
+```
+
+Return, replace, or delete `/RoleMapNS` as a live `NamespaceRoleMap`.
+
+Settable.
+
+### `StructureNamespace.delete`
+
+```python
+StructureNamespace.delete()
+```
+
+Delete this namespace, clearing element `/NS` and `/RoleMapNS` references to it.
+
+## `StructureNamespaces`
+
+```python
+class StructureNamespaces(Sequence[StructureNamespace])
+StructureNamespaces(document: Document)
+```
+
+Live sequence of `StructureNamespace` handles in `StructTreeRoot['Namespaces']` (PDF 2.0).
+
+### `StructureNamespaces.__getitem__`
+
+```python
+StructureNamespaces.__getitem__(
+    index: int | slice,
+) -> StructureNamespace | list[StructureNamespace]
+```
+
+Return one `StructureNamespace`, or a list for a slice.
+
+### `StructureNamespaces.__len__`
+
+```python
+StructureNamespaces.__len__() -> int
+```
+
+Return the number of namespaces in `StructTreeRoot['Namespaces']`.
+
+### `StructureNamespaces.__iter__`
+
+```python
+StructureNamespaces.__iter__() -> Iterator[StructureNamespace]
+```
+
+Iterate over the `StructureNamespace` handles.
+
+### `StructureNamespaces.__bool__`
+
+```python
+StructureNamespaces.__bool__() -> bool
+```
+
+Return whether at least one namespace is declared.
+
+### `StructureNamespaces.__contains__`
+
+```python
+StructureNamespaces.__contains__(item: object) -> bool
+```
+
+Return whether `item` (`StructureNamespace` or URI `str`) is declared.
+
+### `StructureNamespaces.find`
+
+```python
+StructureNamespaces.find(uri: str) -> StructureNamespace | None
+```
+
+Return the first `StructureNamespace` with `ns.uri == uri`, or `None`.
+
+### `StructureNamespaces.add`
+
+```python
+StructureNamespaces.add(
+    uri: str,
+    *,
+    schema: AssociatedFile | str | None = None,
+    role_map: Mapping[str, TagRole | str | tuple[TagRole | str, StructureNamespace]] | None = None,
+) -> StructureNamespace
+```
+
+Create and register an indirect `StructureNamespace` in one transaction (promoting to PDF 2.0).
+
+### `StructureNamespaces.__delitem__`
+
+```python
+StructureNamespaces.__delitem__(index: int | slice)
+```
+
+Delete one or more namespaces, scrubbing `/NS` and `/RoleMapNS` references.
+
+### `StructureNamespaces.clear`
+
+```python
+StructureNamespaces.clear()
+```
+
+Remove all structure namespaces and delete `StructTreeRoot['Namespaces']`.
+
 ## `StructureText`
 
 ```python
@@ -444,6 +741,14 @@ StructureTree.role_map: RoleMap
 Or replace `/RoleMap` as a live `RoleMap`; `del` removes `/RoleMap`.
 
 Settable.
+
+### `StructureTree.namespaces`
+
+```python
+StructureTree.namespaces: StructureNamespaces
+```
+
+The structure tree's `/Namespaces` array as a live `StructureNamespaces` sequence.
 
 ### `StructureTree.resolve_role`
 
@@ -508,7 +813,7 @@ StructureTree.add(
     alt: str | None = None,
     actual_text: str | None = None,
     expanded: str | None = None,
-    namespace: str | None = None,
+    namespace: StructureNamespace | str | None = None,
 ) -> StructureElement
 ```
 

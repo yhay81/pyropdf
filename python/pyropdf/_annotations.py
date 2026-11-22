@@ -31,6 +31,7 @@ from pyropdf._content import BlendMode, Color
 from pyropdf._errors import LimitError, MalformedPdfError, PdfError, StaleObjectError, StalePageError
 from pyropdf._fonts import Font, add_glyphs, embedded_font
 from pyropdf._geometry import Point, Quad, Rect, _rect_components
+from pyropdf._interchange import AssociatedFiles
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._media import (
     MediaAnnotation,
@@ -1496,6 +1497,12 @@ class Annotation(_AppearanceOwner):
             modified=_string_text(source.get("M")),
             color=_color(list(raw)) if raw is not None else None,
         )
+
+    @property
+    def associated_files(self) -> AssociatedFiles:
+        """Return the annotation's ``/AF`` associated files as a live :class:`AssociatedFiles` sequence."""
+        self._read()
+        return AssociatedFiles(self._page._document, lambda: self.obj)  # noqa: SLF001
 
     @property
     def popup_rect(self) -> Rect | None:

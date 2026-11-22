@@ -18,6 +18,7 @@ from pyropdf._actions import (
     _is_custom_target,
 )
 from pyropdf._geometry import Point
+from pyropdf._interchange import DocumentPartAction
 from pyropdf._media_actions import GoTo3DView, RenditionAction, RichMediaExecute
 from pyropdf._presentations import TransitionAction
 from pyropdf._threads import ThreadAction
@@ -196,6 +197,7 @@ Target: TypeAlias = (
     | GoTo3DView
     | RenditionAction
     | RichMediaExecute
+    | DocumentPartAction
     | Launch
     | NamedAction
     | TransitionAction
@@ -256,8 +258,8 @@ def _target_to_core(target: object, page_count: int) -> _Target:  # noqa: PLR091
             return ("named", None, None, None, None, name)
         case _:
             msg = (
-                "a target is a Destination, RemoteDestination, EmbeddedDestination, Launch, "
-                "NamedAction, TransitionAction, ThreadAction, JavaScriptAction, HideAction, "
+                "a target is a Destination, RemoteDestination, EmbeddedDestination, DocumentPartAction, "
+                "Launch, NamedAction, TransitionAction, ThreadAction, JavaScriptAction, HideAction, "
                 "SetLayerStateAction, SubmitFormAction, ResetFormAction, ImportDataAction, "
                 f"URI string, or None: {type(target).__name__}"
             )

@@ -629,6 +629,137 @@ def check_flattened_widgets(doc: pyropdf.Document) -> None:
     assert "AVA" in doc.pages[0].text(unmapped="replacement")
 
 
+def prepare_interchange(doc: pyropdf.Document) -> None:
+    if promotion_conflicts(doc):
+        return
+    parent = doc.structure[0] if doc.structure else doc.structure.add("Document")
+    parent.children.add(pyropdf.TagRole.DIV, title=MARKER)
+
+
+def edit_interchange(doc: pyropdf.Document) -> set[int]:  # noqa: PLR0915 - exercises every interchange mutation.
+    if conflicts := promotion_conflicts(doc):
+        with refused_promotion(doc, conflicts, match="PDF 2.0"):
+            doc.parts.ensure_root()
+        return set()
+
+    page = doc.pages[0]
+    root = doc.structure.obj
+    assert root is not None
+    elem = doc.structure[0].children[-1]
+    touched = {number(doc.catalog), page.xref, number(root), elem.xref}
+    info = doc.trailer.get("Info")
+    if isinstance(info, pyropdf.Dictionary) and info.xref is not None:
+        touched.add(info.xref)
+    for holder, keys in (
+        (doc.catalog, ("Extensions", "AF", "PieceInfo", "DPartRoot")),
+        (page.obj, ("PieceInfo",)),
+        (root, ("Namespaces",)),
+    ):
+        for key in keys:
+            val = holder.get(key)
+            if isinstance(val, (pyropdf.Dictionary, pyropdf.Array)) and val.xref is not None:
+                touched.add(val.xref)
+
+    ext = pyropdf.DeveloperExtension("PYRO", "2.0", 1)
+    doc.extensions.add(ext)
+    doc.extensions.remove(ext)
+    doc.extensions = [ext]
+    del doc.extensions["PYRO"]
+    doc.extensions.add(ext)
+    doc.extensions.clear()
+    doc.extensions.add(ext)
+    del doc.extensions
+    doc.extensions.add(ext)
+
+    af = doc.associated_files.add("tmp.txt", b"a", media_type="text/plain")
+    af.filename = "renamed.txt"
+    af.data = b"ab"
+    af.media_type = "text/csv"
+    af.relationship = pyropdf.AssociatedFileRelationship.DATA
+    af.description = "desc"
+    del af.description
+    af.created = "D:20260101000000Z"
+    del af.created
+    af.modified = "D:20260102000000Z"
+    del doc.associated_files[0]
+    doc.associated_files.add("drop.txt", b"x")
+    doc.associated_files.clear()
+    doc.associated_files.add("interchange.txt", b"saved", relationship=pyropdf.AssociatedFileRelationship.SUPPLEMENT)
+
+    doc.piece_info.set("TmpApp", {"k": 1}, last_modified="D:20260101000000Z")
+    doc.piece_info["TmpApp"] = pyropdf.PieceData("D:20260102000000Z", {"k": 2})
+    del doc.piece_info["TmpApp"]
+    doc.piece_info.set("TmpApp", {"k": 3}, last_modified="D:20260102000000Z")
+    doc.piece_info.clear()
+    doc.piece_info = {"PyroApp": pyropdf.PieceData("D:20260103000000Z", {"tag": MARKER})}
+    del doc.piece_info
+    doc.piece_info = {"PyroApp": pyropdf.PieceData("D:20260103000000Z", {"tag": MARKER})}
+
+    page.piece_info.set("PageApp", {"p": 1}, last_modified="D:20260103000000Z")
+    del page.piece_info
+    page.piece_info = {"PageApp": pyropdf.PieceData("D:20260103000000Z", {"tag": MARKER})}
+
+    part_root = doc.parts.ensure_root(record_level=1, node_names=["Job", "Item"])
+    part = part_root.add_child(page, dpm={"Tag": "tmp"})
+    part.start_page = page
+    part.end_page = page
+    part.dpm = {"Tag": MARKER}
+    del part.dpm
+    doc.parts.record_level = 1
+    del doc.parts.record_level
+    doc.parts.node_names = ["Job", "Item"]
+    del doc.parts.node_names
+    part.delete()
+    doc.parts.add_part(page, dpm={"Tag": MARKER})
+    doc.parts.clear()
+    doc.parts.add_part(page, dpm={"Tag": MARKER})
+    del doc.parts
+    doc.parts.add_part(page, dpm={"Tag": MARKER})
+
+    ns = doc.structure.namespaces.add("https://example.invalid/tmp")
+    ns.uri = "https://example.invalid/interchange"
+    ns.schema = "https://example.invalid/interchange.xsd"
+    del ns.schema
+    ns.role_map = {"TmpRole": "Span"}
+    del ns.role_map
+    ns.role_map["TmpRole"] = "Span"
+    ns.role_map.update({"InterchangeRole": "P"})
+    del ns.role_map["TmpRole"]
+    ns.role_map.clear()
+    ns.role_map["InterchangeRole"] = "P"
+    elem.namespace = ns
+    del elem.namespace
+    ns.delete()
+    ns2 = doc.structure.namespaces.add("https://example.invalid/drop")
+    del doc.structure.namespaces[0]
+    _ = ns2
+    doc.structure.namespaces.add("https://example.invalid/drop2")
+    doc.structure.namespaces.clear()
+    doc.structure.namespaces.add("https://example.invalid/drop3")
+    del doc.structure.namespaces
+    final_ns = doc.structure.namespaces.add(
+        "https://example.invalid/interchange",
+        role_map={"InterchangeRole": "P"},
+    )
+    elem.namespace = final_ns
+    return touched
+
+
+def check_interchange(doc: pyropdf.Document) -> None:
+    if promotion_conflicts(doc):
+        return
+    assert pyropdf.DeveloperExtension("PYRO", "2.0", 1) in doc.extensions
+    assert doc.associated_files[-1].filename == "interchange.txt"
+    assert doc.associated_files[-1].data == b"saved"
+    assert doc.piece_info["PyroApp"].private == {"tag": MARKER}
+    assert doc.pages[0].piece_info["PageApp"].private == {"tag": MARKER}
+    assert doc.parts[0].dpm == {"Tag": MARKER}
+    elem = doc.structure[0].children[-1]
+    assert elem.namespace is not None
+    assert elem.namespace.uri == "https://example.invalid/interchange"
+    assert elem.namespace.role_map["InterchangeRole"] == "P"
+
+
 def edit_prepress(doc: pyropdf.Document) -> set[int]:
     page = doc.pages[0]
     touched = page_annotations(page)
@@ -2389,6 +2520,7 @@ FAMILY_EDITS = {
     "import_form_data": Edit(
         prepare=prepare_field, apply=import_form_data, check=check_filled_field, affected_pages=first_page
     ),
+    "interchange": Edit(prepare=prepare_interchange, apply=edit_interchange, check=check_interchange),
     "links": Edit(prepare=prepare_links, apply=change_links, check=check_links, affected_pages=first_page),
     "named_pages": Edit(prepare=prepare_named_pages, apply=edit_named_pages, check=check_named_pages),
     "new_page_image": Edit(apply=new_page_image, check=check_new_image_page),
