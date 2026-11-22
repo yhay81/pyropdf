@@ -206,9 +206,12 @@ Return whether the signature is intact, covers its revision, verifies, and chain
 
 A signing key or callback, with its certificate chain, which `Document.sign` signs with.
 
-`from_pem` and `from_pkcs12` read ECDSA P-256 and P-384
-keys, which pyropdf signs with itself. `callback` signs with a
-key that stays outside pyropdf: an RSA key, an HSM, or PKCS#11.
+`from_pem` and `from_pkcs12` read NIST and Brainpool
+ECDSA, Ed25519 and Ed448 keys. P-256 and P-384 run in Rust; the
+other curves use the optional `cryptography` package. `callback` signs with a
+key that stays outside pyropdf, including P-521, Brainpool P256r1,
+P384r1 and P512r1, Ed25519, Ed448, RSA, or an HSM. Use the optional
+`cryptography` package to verify signatures on those additional curves.
 
 ### `Signer.from_pem`
 
@@ -218,43 +221,59 @@ Signer.from_pem(
     certificates: bytes | str,
     *,
     password: bytes | str | None = None,
+    digest_algorithm: str | None = None,
 ) -> Signer
 ```
 
 Read a PEM private key and the PEM certificate chain whose first certificate holds its public key.
 
 `key` is a `PRIVATE KEY` (PKCS#8), an `ENCRYPTED PRIVATE KEY`
-that `password` decrypts, or an `EC PRIVATE KEY` (SEC1), on P-256
-or P-384. `certificates` holds the signer's certificate first,
+that `password` decrypts, or an `EC PRIVATE KEY` (SEC1).
+`certificates` holds the signer's certificate first,
 then any intermediate certificates to embed. A key that pyropdf does
 not sign with, a wrong password, or a certificate of another key
-raises `ValueError`.
+raises `ValueError`. Choose the curve's digest with `digest_algorithm` as in `callback`.
 
 ### `Signer.from_pkcs12`
 
 ```python
-Signer.from_pkcs12(data: bytes, password: str | None = None) -> Signer
+Signer.from_pkcs12(
+    data: bytes,
+    password: str | None = None,
+    *,
+    digest_algorithm: str | None = None,
+) -> Signer
 ```
 
-Read the ECDSA key and the certificates of a PKCS#12 file.
+Read the ECDSA or EdDSA key and its certificates from a PKCS#12 file.
 
 The file is PBES2-encrypted with a SHA-2 MAC, as OpenSSL 3 and
 Python's `cryptography` write it; `None` is the empty password.
+`digest_algorithm` accepts the same hashes as `from_pem`.
 Legacy encryption, a wrong password, or a file without exactly one
 key and its certificate raises `ValueError`.
 
 ### `Signer.callback`
 
 ```python
-Signer.callback(certificates: Sequence[bytes], sign: Callable[[bytes], bytes]) -> Signer
+Signer.callback(
+    certificates: Sequence[bytes],
+    sign: Callable[[bytes], bytes],
+    *,
+    digest_algorithm: str | None = None,
+) -> Signer
 ```
 
 Sign with `sign`, which holds the key of the first of the DER `certificates`.
 
 `sign` receives the bytes to sign, the DER of the signed
-attributes, and returns their signature: PKCS#1 v1.5 with SHA-256
-for an RSA key, and the DER of an ECDSA signature with SHA-256 for a
-P-256 key or SHA-384 for a P-384 key. Its exceptions propagate from
+attributes, and returns their signature. For ECDSA return a DER
+signature using `digest_algorithm`. NIST curves use the corresponding
+SHA-2 or SHA-3 digest (256, 384 or 512 bits). Brainpool curves allow
+the same choices plus the longer digests. The default is the matching
+SHA-2 digest. Ed25519 and Ed448 sign the attributes directly and use
+`sha512` and `shake256` respectively for the document digest.
+RSA uses PKCS#1 v1.5 with a SHA-2 or SHA-3 digest (SHA-256 by default). Callback exceptions propagate from
 `Document.sign`.
 
 ### `Signer.certificates`
@@ -271,7 +290,7 @@ The DER certificates that the signature embeds, the signer's first.
 Signer.digest_algorithm: str
 ```
 
-The name of the signature's digest algorithm: `"sha256"` or `"sha384"`.
+The selected SHA-2, SHA-3, or fixed 512-bit SHAKE256 digest name.
 
 ## `Timestamper`
 
@@ -280,7 +299,7 @@ Timestamper: TypeAlias = Callable[[bytes, str], bytes]
 ```
 
 A time-stamp callback: it receives the digest of the signature value and
-the name of its hash algorithm (`"sha256"` or `"sha384"`) and returns
+the name of the selected SHA-2, SHA-3 or SHAKE256 algorithm and returns
 the DER of an RFC 3161 time-stamp token over that digest.
 
 ## `ValidationInfo`
