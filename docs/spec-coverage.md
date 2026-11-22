@@ -30,10 +30,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 16 | 22 | 799 |
-| interpret | 16 | 19 | 0 | 28 | 31 | 743 |
-| create | 0 | 0 | 25 | 23 | 30 | 759 |
-| edit | 0 | 0 | 0 | 37 | 30 | 770 |
+| read | 0 | 0 | 0 | 15 | 22 | 800 |
+| interpret | 16 | 19 | 0 | 27 | 31 | 744 |
+| create | 0 | 0 | 25 | 21 | 30 | 761 |
+| edit | 0 | 0 | 0 | 35 | 30 | 772 |
 | preserve | 0 | 0 | 0 | 17 | 24 | 796 |
 
 ## Clauses
@@ -187,11 +187,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 12.7.5.2 | Button fields | `button-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.5.3 | Text fields | `text-fields` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
 | 12.7.5.4 | Choice fields | `choice-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.7.5.5 | Signature fields | `signature-fields` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 12.7.5.5 | Signature fields | `signature-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.6 | Form actions | `form-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.8 | Forms data format | `fdf` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.9 | Non-interactive forms | `non-interactive-forms` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.8 | Digital signatures | `digital-signatures` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
+| 12.8 | Digital signatures | `digital-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.2 | Transform methods | `signature-transforms` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.4.3 | Document security store | `document-security-store` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.5 | Document timestamp dictionary | `document-timestamps` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-274 unfinished cells in 837 features: 16 engine, 121 partial, 137 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+268 unfinished cells in 837 features: 16 engine, 115 partial, 137 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -339,9 +339,6 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
     - read, create, edit, preserve — `public-key-security-handler`.
 - [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
     - interpret — `public-key-security-handler`.
-- [#905](https://github.com/yhay81/pyropdf/issues/905) Resolve signature seed constraints and build properties through signing and editing. Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification.
-    - read, interpret — `signature-fields`.
-    - create, edit — `signature-fields`, `digital-signatures`.
 - [#993](https://github.com/yhay81/pyropdf/issues/993) Render explicit legacy crypt filters and independently keyed recipient streams from the store. Interpret explicit legacy password filters and an independently keyed page stream through the authenticated version, including correct refusal for an unauthorized page.
     - interpret — `crypt-filters`.
 - [#982](https://github.com/yhay81/pyropdf/issues/982) Round-trip packed and wide predictor rows after adopting the hayro fix. Adopt the released row-local decoder through #603, then verify partially filled TIFF rows, externally filtered partial PNG pixel strides and predictor pixels wider than 255 bits in independent save and render controls.
