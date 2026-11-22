@@ -8,13 +8,14 @@ import json
 import os
 import re
 import runpy
+import shlex
 import shutil
 import struct
 import subprocess
 import sys
-import textwrap
 import tomllib
 from pathlib import Path
+from textwrap import dedent
 from urllib.parse import unquote_plus
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
@@ -24,20 +25,81 @@ import pyropdf
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+CI = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
 
-def test_ci_gives_the_floor_interpreter_time_to_collect_release_evidence() -> None:
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    (python_job,) = re.findall(r"\n  python:\n(.*?)(?=\n  \S|\Z)", workflow, flags=re.DOTALL)
-    assert 'python: ["3.11", "3.15", "3.15t"]' in python_job
-    assert "timeout-minutes: ${{ matrix.python == '3.11' && 30 || 20 }}" in python_job
-    assert "uv run --no-sync pytest" in python_job
-    floor_guard = "        if: matrix.python == '3.11'"
-    floor_steps = [step for step in python_job.split("\n      - ") if floor_guard in step.splitlines()]
-    assert any("tools/verapdf.py" in step and "--arlington" in step for step in floor_steps)
-    assert any("tools/oracles.py --readers pdfjs" in step for step in floor_steps)
-    assert any("tools/spec_map/release_evidence.py" in step for step in floor_steps)
-    assert any("actions/upload-artifact@" in step and "target/release-evidence.json" in step for step in floor_steps)
+def ci_job(name: str) -> str:
+    """Extract one top-level job from the CI workflow."""
+    (job,) = re.findall(rf"\n  {name}:\n(.*?)(?=\n  \S|\Z)", CI, flags=re.DOTALL)
+    return job
+
+
+def test_ci_runs_the_exhaustive_grid_on_the_floor_and_quick_corpus_on_other_interpreters() -> None:
+    job = ci_job("python")
+    assert 'python: ["3.11", "3.15", "3.15t"]' in job
+    steps = job.split("\n      - ")
+    (full,) = [step for step in steps if "--junitxml=" in step]
+    (quick,) = [step for step in steps if "--quick-corpus" in step]
+    assert "if: matrix.python == '3.11'" in full
+    assert "--quick-corpus" not in full
+    assert "--junitxml=target/ci-evidence/pytest.xml" in full
+    assert "junit_suite_name=pyropdf-${GITHUB_SHA}" in full
+    assert "if: matrix.python != '3.11'" in quick
+    (upload,) = [step for step in steps if "actions/upload-artifact@" in step]
+    assert "name: python-evidence-${{ matrix.python }}" in upload
+    assert "path: target/ci-evidence/" in upload
+    assert "needs: python" in ci_job("evidence")
+
+
+@pytest.mark.parametrize(
+    ("reader", "python", "command"),
+    [("verapdf", "3.15", "--arlington target/verapdf/"), ("pdfjs", "3.15t", "tools/oracles.py --readers pdfjs")],
+)
+def test_ci_records_the_checkout_after_its_reader_finishes(reader: str, python: str, command: str) -> None:
+    (step,) = [step for step in ci_job("python").split("\n      - ") if command in step]
+    assert f"if: matrix.python == '{python}'" in step
+    assert step.index(command) < step.index(f"git rev-parse HEAD > target/ci-evidence/{reader}-revision")
+
+
+@pytest.mark.parametrize("fault", [None, "missing-verapdf", "missing-pdfjs", "stale-reader", "stale-junit"])
+def test_ci_requires_both_readers_and_the_floor_suite_at_the_same_revision(fault: str | None, tmp_path: Path) -> None:
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("the Linux workflow runs its commands with Bash")
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()  # noqa: S607
+    target = tmp_path / "target"
+    for reader, version in (("verapdf", "3.15"), ("pdfjs", "3.15t")):
+        lane = target / f"python-evidence-{version}"
+        lane.mkdir(parents=True)
+        if fault != f"missing-{reader}":
+            value = "stale" if reader == "pdfjs" and fault == "stale-reader" else revision
+            (lane / f"{reader}-revision").write_text(value + "\n", encoding="utf-8", newline="\n")
+    floor = target / "python-evidence-3.11"
+    floor.mkdir()
+    suite = "stale" if fault == "stale-junit" else revision
+    (floor / "pytest.xml").write_text(
+        f'<testsuite name="pyropdf-{suite}"><testcase classname="tests.test_verify" '
+        'name="test_pyhanko_signatures_verify"/></testsuite>',
+        encoding="utf-8",
+    )
+
+    collector = "tools/spec_map/release_evidence.py"
+    (step,) = [s for s in ci_job("evidence").split("\n      - ") if collector in s]
+    command = dedent(step.split("        run: |\n")[1])
+    # Run the workflow's commands from the temporary download directory with this checkout's real collector.
+    command = command.replace(f"python3 {collector}", shlex.join([sys.executable, str(ROOT / collector)]))
+    result = subprocess.run(  # noqa: S603 - the repository's Linux workflow.
+        [bash, "-e", "-c", command],
+        cwd=tmp_path,
+        env={**os.environ, "GITHUB_SHA": revision},
+        check=False,
+    )
+    output = target / "release-evidence.json"
+    assert (result.returncode == 0) == (fault is None)
+    assert output.exists() == (fault is None)
+    if fault is None:
+        checks = json.loads(output.read_bytes())["checks"]
+        assert {checks[reader] for reader in ("verapdf", "arlington", "pdfjs", "pyhanko")} == {"passed"}
 
 
 def test_the_release_builds_with_the_pinned_toolchain() -> None:
@@ -420,7 +482,7 @@ def test_paired_wheels_select_the_base_and_compiler_directory(tmp_path: Path, ch
 
     workflow = (ROOT / ".github/workflows/wheel-size.yml").read_text(encoding="utf-8")
     step = workflow.split("      - name: Prepare the exact base", 1)[1].split("\n      - ", 1)[0]
-    script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+    script = dedent(step.split("        run: |\n", 1)[1])
     subprocess.run([bash, "-eo", "pipefail", "-c", script], cwd=tmp_path, env=env, check=True)  # noqa: S603 - checked-in workflow.
     assert checked_git("rev-parse", "HEAD") == revision
     assert output.read_text(encoding="utf-8").splitlines() == [
