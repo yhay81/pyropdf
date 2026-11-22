@@ -84,6 +84,14 @@ impl Filters {
                     b"V2" => Method::Rc4,
                     b"AESV2" => Method::Aes128,
                     b"AESV3" => Method::Aes256,
+                    b"AESV4" => {
+                        if !matches!(encrypt.get("V"), Some(Value::Integer(6))) {
+                            return Err(Error::malformed(
+                                "AESV4 requires standard security handler V6 and R7",
+                            ));
+                        }
+                        Method::AesGcm
+                    }
                     _ => return Err(Error::malformed("a crypt filter's /CFM is not supported")),
                 };
                 entries.try_push((name.clone(), method, Key::File))?;
@@ -245,7 +253,7 @@ impl Handler {
             ));
         }
         if matches!((method,shared_key.len()),(Method::Aes128,n) if n != 16)
-            || matches!((method,shared_key.len()),(Method::Aes256,n) if n != 32)
+            || matches!((method,shared_key.len()),(Method::Aes256 | Method::AesGcm,n) if n != 32)
         {
             return Err(Error::malformed(
                 "the selected crypt-filter key has the wrong AES length",
@@ -260,6 +268,13 @@ impl Handler {
         };
         if method == Method::Rc4 {
             return crypto::rc4(key, data, budget);
+        }
+        if method == Method::AesGcm {
+            return if encrypt {
+                crypto::gcm_encrypt(key, data, budget)
+            } else {
+                crypto::gcm_decrypt(key, data, budget)
+            };
         }
         if !encrypt {
             if data.len() < 16 {

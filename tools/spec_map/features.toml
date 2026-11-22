@@ -1285,6 +1285,7 @@ objects = []
 clause = "ISO/TS 32003"
 description = "AES-GCM encryption in PDF."
 objects = []
+interpret = { status = "partial", missing = "Standard and recipient AESV4 strings and streams are authenticated before use. Direct page rendering and extraction await the engine's authenticated object source (#968).", milestone = "Phase 4: Specification" }
 
 [features.integrity-protection]
 clause = "ISO/TS 32004"

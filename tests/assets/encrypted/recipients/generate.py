@@ -91,7 +91,10 @@ def generate(mode: str) -> None:
         )
         handler.add_recipients([editor], perms=rights)
     else:
-        version = SecurityHandlerVersion.AES256 if mode == "recipients" else SecurityHandlerVersion.RC4_OR_AES128
+        version = {
+            "gcm": SecurityHandlerVersion.AES_GCM,
+            "recipients": SecurityHandlerVersion.AES256,
+        }.get(mode, SecurityHandlerVersion.RC4_OR_AES128)
         handler = PubKeySecurityHandler.build_from_certs(
             [editor], version=version, use_aes=mode != "v2", perms=rights, pdf_mac=False, compat_entries=False
         )
@@ -103,5 +106,5 @@ def generate(mode: str) -> None:
 
 
 if __name__ == "__main__":
-    for variant in ("recipients", "identity-strings", "recipients-aes128", "s3", "s4", "v2"):
+    for variant in ("recipients", "identity-strings", "recipients-aes128", "s3", "s4", "v2", "gcm"):
         generate(variant)
