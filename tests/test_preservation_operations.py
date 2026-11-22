@@ -10,7 +10,7 @@ from __future__ import annotations
 import struct
 import tempfile
 import zlib
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -1576,6 +1576,20 @@ def edit_canvas_resources(doc: pyropdf.Document) -> set[int]:
     archival_one = (doc.profiles.pdfa or "").startswith("PDF/A-1")
     alpha = 1.0 if archival_one else 0.5
     mode = pyropdf.BlendMode.NORMAL if archival_one else pyropdf.BlendMode.MULTIPLY
+    mask = None
+    if not doc.profiles.pdfa and not doc.profiles.pdfua:
+        mask = doc.objects[
+            doc.objects.add_stream(
+                b"0 0 100 100 re f",
+                {
+                    "Type": pyropdf.Name("XObject"),
+                    "Subtype": pyropdf.Name("Form"),
+                    "BBox": [0, 0, 100, 100],
+                    "Resources": {},
+                    "Group": {"S": pyropdf.Name("Transparency"), "I": True},
+                },
+            )
+        ]
     with pyropdf.Document() as source:
         page = source.pages.new((40, 40))
         with page.draw() as canvas:
@@ -1585,6 +1599,7 @@ def edit_canvas_resources(doc: pyropdf.Document) -> set[int]:
             canvas.layer(layer),
             canvas.opacity(alpha),
             canvas.blend(mode),
+            canvas.soft_mask(mask) if mask is not None else nullcontext(),
         ):
             canvas.page((10, 10, 50, 50), page)
     return {target.xref}
@@ -1599,6 +1614,10 @@ def check_canvas_resources(doc: pyropdf.Document) -> None:
     archival_one = (doc.profiles.pdfa or "").startswith("PDF/A-1")
     assert any(state.get("ca") == (1 if archival_one else 0.5) for state in states)
     assert any(state.get("BM") == ("Normal" if archival_one else "Multiply") for state in states)
+    if not doc.profiles.pdfa and not doc.profiles.pdfua:
+        (mask,) = [state["SMask"] for state in states if "SMask" in state]
+        assert mask["S"] == "Alpha"
+        assert mask["G"]["Group"]["S"] == "Transparency"
     assert any(obj.get("Subtype") == "Form" for obj in resources["XObject"].values())
     red, green, blue = page.pixmap(dpi=72, background=(255, 255, 255)).pixel(20, 20)
     assert red == 255
@@ -1843,6 +1862,30 @@ def prepare_font_subset(doc: pyropdf.Document) -> None:
         doc.pages.extend([page])
 
 
+def write_font_cmap(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    font = page.obj["Resources"]["Font"]["PyroF1"]
+    code = next(bytes(op.operands[0]) for op in page.operations if op.operator == "Tj")
+    info = font["DescendantFonts"][0]["CIDSystemInfo"]
+    font["Encoding"] = doc.write_cmap(
+        {code: int.from_bytes(code, "big")},
+        name="XX-PageFont",
+        registry=bytes(info["Registry"]),
+        ordering=bytes(info["Ordering"]),
+        supplement=info["Supplement"],
+    )
+    return indirect_numbers(font)
+
+
+def check_font_cmap(doc: pyropdf.Document) -> None:
+    page = doc.pages[-1]
+    encoding = page.obj["Resources"]["Font"]["PyroF1"]["Encoding"]
+    assert isinstance(encoding, pyropdf.Stream)
+    assert encoding["CMapName"] == "XX-PageFont"
+    assert b"1 begincidchar" in encoding.read()
+    assert page.text().strip() == "A"
+
+
 def subset_font(doc: pyropdf.Document) -> set[int]:
     page = doc.pages[-1]
     font = page.obj["Resources"]["Font"]["PyroF1"]
@@ -2046,6 +2089,7 @@ FAMILY_EDITS = {
         prepare=prepare_structure_membership, apply=change_structure_membership, check=check_structure_membership
     ),
     "structure_role_map": Edit(prepare=prepare_structure, apply=edit_structure, check=check_structure),
+    "font_cmap": Edit(prepare=prepare_font_subset, apply=write_font_cmap, check=check_font_cmap),
     "subset_fonts": Edit(prepare=prepare_font_subset, apply=subset_font, check=check_subset_font),
     "tagged_drawing": Edit(
         prepare=prepare_tagged_drawing, apply=tagged_drawing, check=check_tagged_drawing, affected_pages=first_page

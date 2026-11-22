@@ -282,7 +282,7 @@ class _OcrEngine:
     ) -> list[tuple[float, float, float, float, str, float]]: ...
 
 def render_page(
-    document: _Document,
+    document: _Document | _PageSnapshot,
     number: int,
     generation: int,
     matrix: tuple[float, float, float, float],
@@ -463,7 +463,14 @@ def type3_draw(
     shadings: _Shadings | None = None,
     painted: list[tuple[str, float, int]] = ...,
 ) -> list[tuple[int, int, str | None]]: ...
-def subset_font_program(data: bytes, format: str, keep: list[int], /) -> tuple[bytes, int, int] | None: ...  # noqa: A002
+def subset_font_program(
+    data: bytes,
+    format: str,  # noqa: A002
+    keep: list[int],
+    lengths: tuple[int, int] | None = None,
+    document: _Document | None = None,
+    /,
+) -> tuple[bytes, int, int] | None: ...
 
 class _FontFile:
     def __init__(self, path: str, max_size: int | None, /) -> None: ...
@@ -479,7 +486,12 @@ def page_space(
     document: _Document, number: int, generation: int, /
 ) -> tuple[int, tuple[float, float, float, float], float] | None: ...
 def canvas_source_page(
-    source: _Document, number: int, generation: int, operation: _OperationBudget, /
+    source: _Document | _PageSnapshot,
+    number: int,
+    generation: int,
+    operation: _OperationBudget,
+    appearances: bool = False,
+    /,
 ) -> tuple[int, tuple[float, float, float, float], float, float, float, bytes, _CanvasSourceSnapshot] | None: ...
 def canvas_page_form(
     forms: _PageForms,

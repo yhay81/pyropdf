@@ -219,6 +219,7 @@ impl Profile {
                 owner: Arc::new(AtomicBool::new(permissions & 2 != 0)),
             }),
             password: Box::default(),
+            legacy_reader: None,
             version: self.version,
             revision: 0,
             strings: self.strings,
@@ -645,6 +646,7 @@ fn open_filters(
         None if document_public => Handler {
             key: Box::default(),
             password: Box::default(),
+            legacy_reader: None,
             recipient: Some(RecipientAccess {
                 profile_id: None,
                 subfilter: "adbe.pkcs7.s5",

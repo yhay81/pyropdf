@@ -16,6 +16,8 @@ hayro-svg = "0.9.0"
 # The stretch of a substitute font's glyph, which hayro-interpret keeps to
 # itself, for the advances of text (#656).
 hayro-font = "0.5.0"
+# The Type 1 interpreter that hayro-font uses for glyph IDs and seac.
+read-fonts = "0.46.0"
 # The font tables that hayro already reads, for the line metrics of text.
 skrifa = "0.50.0"
 # The bidirectional classes of the reading order of text.

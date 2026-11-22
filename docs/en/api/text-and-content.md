@@ -235,6 +235,29 @@ Content(*, items: tuple[ContentItem, ...])
 
 The items that a page paints, in paint order.
 
+### `Content.pixmap`
+
+```python
+Content.pixmap(
+    *,
+    dpi: float | None = None,
+    matrix: Sequence[float] | None = None,
+    fit: int | tuple[int, int] | None = None,
+    clip: Sequence[float] | None = None,
+    alpha: bool = False,
+    background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
+    colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
+    hinting: bool = False,
+    glyph_cache: bool = False,
+) -> Pixmap
+```
+
+Render this complete page capture with the options of `Page.pixmap`.
+
+Geometry, paints, resources and annotation visibility are those of the
+capture. Each call has its own budget. Filtered, constructed or unpickled
+content raises `ValueError`; a closed source raises `PdfError`.
+
 ### `Content.__getitem__`
 
 ```python

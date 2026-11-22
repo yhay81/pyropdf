@@ -577,6 +577,43 @@ fn encrypted_files_render_unedited_and_edited_as_their_decrypted_saves() {
 }
 
 #[test]
+fn legacy_owner_bridge_keeps_the_original_ciphertext_as_its_prefix() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/assets/encrypted");
+    let budget = Budget::default();
+    for name in [
+        "user-rc4-40.pdf",
+        "user-rc4-128-indirect-length.pdf",
+        "user-r4-rc4-128.pdf",
+        "user-aes-128.pdf",
+    ] {
+        let source = Bytes::new(fs::read(dir.join(name)).unwrap());
+        let base = FileBase::open_with_password(source.clone(), Some(b"ownerpw"), &budget).unwrap();
+        let document = Document::new(Arc::new(base), None);
+        let original = document.current();
+        let before = bridge(&original);
+        assert_eq!(before.stats().update, 0);
+        assert_eq!(before.pdf.data().as_ref(), source.as_slice());
+
+        let page = page_index(&original);
+        let first = page.get(0).unwrap();
+        let mut dict = first.dict().clone();
+        dict.insert(Name::from("Rotate"), 90.into());
+        let mut change = document.begin();
+        change
+            .write(
+                first.object().unwrap().number(),
+                &Value::Dict(dict),
+                &budget,
+            )
+            .unwrap();
+        let edited = change.commit(&budget).unwrap();
+        let after = bridge(&edited);
+        assert!(after.stats().update > 0);
+        assert!(after.pdf.data().as_ref().starts_with(source.as_slice()));
+    }
+}
+
+#[test]
 fn a_version_that_changes_the_encryption_is_refused() {
     let budget = Budget::default();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/assets/encrypted");
