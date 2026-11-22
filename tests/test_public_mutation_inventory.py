@@ -618,7 +618,7 @@ READ_ONLY = {
     "Attachment": "read",
     "Chars": "column",
     "Chunk": "to_dict",
-    "Content": "path_clusters",
+    "Content": "path_clusters pixmap",
     "Document": "changes check to_bytes render text markdown to_json to_chunks font_program",
     "DocumentLimits": "web",
     "Element": "to_dict",

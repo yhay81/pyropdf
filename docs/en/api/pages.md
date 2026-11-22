@@ -604,6 +604,10 @@ Page.content(
 
 Return the text runs, paths, and images that the page paints.
 
+A complete result can be rendered again with `Content.pixmap` or
+placed with `Canvas.page` while this document is open, even after a
+change to the original page. Filtering by kind or clip yields items only.
+
 Items come in paint order, in display coordinates, as hayro
 interprets the current version of the page, with optional-content
 visibility applied. Each carries its paints, its blend mode and soft

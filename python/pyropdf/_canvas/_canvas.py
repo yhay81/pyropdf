@@ -64,6 +64,7 @@ from pyropdf._canvas._text import (
 from pyropdf._content import (
     BlendMode,
     Color,
+    Content,
     FillRule,
     Gradient,
     GradientExtend,
@@ -1208,7 +1209,7 @@ class Canvas:
     def page(
         self,
         rect: Sequence[float],
-        source: Page,
+        source: Page | Content,
         *,
         clip: Sequence[float] | None = None,
         keep_aspect: bool = True,
@@ -1229,13 +1230,20 @@ class Canvas:
         ratio after the turn. A page placed several times, by any canvas of
         this document, is stored once while its content, its geometry and
         every object its resources reach are unchanged.
-        Annotations and form fields of the source page are not drawn.
+        A live page omits annotations and form fields. A complete :class:`Content`
+        uses the geometry, resources and annotation setting captured by
+        :meth:`Page.content`. Visible captured appearances become vector content.
         """
         from pyropdf._page import Page  # noqa: PLC0415 - pyropdf._page imports this module.
 
         self._check_open()
+        appearances = False
+        if isinstance(source, Content):
+            retained = source._retained_page()  # noqa: SLF001 - the capture supplies this placement.
+            source = retained
+            appearances = retained.annotations_included
         if not isinstance(source, Page):
-            msg = f"source must be a pyropdf.Page, not {type(source).__name__}"
+            msg = f"source must be a pyropdf.Page or pyropdf.Content, not {type(source).__name__}"
             raise TypeError(msg)
         box = _rect(rect, "rect")
         rotation = _quarter_turn(rotate)
@@ -1246,7 +1254,13 @@ class Canvas:
         operation = _core.begin_canvas(core)
 
         def read() -> tuple[int, tuple[float, float, float, float], float, Rect, Rect, int]:
-            page = _core.canvas_source_page(source_core, source.xref, source._generation, operation)  # noqa: SLF001
+            page = _core.canvas_source_page(
+                source._reader(),  # noqa: SLF001
+                source.xref,
+                source._generation,  # noqa: SLF001
+                operation,
+                appearances,
+            )
             if page is None:
                 raise source._stale()  # noqa: SLF001
             source_rotation, source_box, source_unit, width, height, _content, snapshot = page
