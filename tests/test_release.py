@@ -396,16 +396,27 @@ def test_paired_wheels_select_the_base_and_compiler_directory(tmp_path: Path, ch
     def checked_git(*args: str) -> str:
         return subprocess.check_output([git, *args], cwd=base, text=True).strip()  # noqa: S603 - fixed test repository.
 
-    checked_git("init", "-q")
+    checked_git("init", "-q", "--initial-branch=main")
     checked_git("config", "user.email", "test@example.invalid")
     checked_git("config", "user.name", "Test")
-    checked_git("commit", "--allow-empty", "-qm", "parent")
-    revision = checked_git("rev-parse", "HEAD")
+    checked_git("commit", "--allow-empty", "-qm", "common ancestor")
+    checked_git("switch", "-qc", "contribution")
     changed = base / change
     changed.parent.mkdir(parents=True, exist_ok=True)
     changed.write_text("changed\n", encoding="utf-8")
     checked_git("add", "--", change)
-    checked_git("commit", "-qm", "tested content")
+    checked_git("commit", "-qm", "contribution")
+    checked_git("switch", "-q", "main")
+    args = "--release --locked --out dist"
+    if change != "tools/native-wheel-args.txt":
+        args = "--release --locked --compression-level 9 --out dist"
+        flags = base / "tools/native-wheel-args.txt"
+        flags.parent.mkdir(exist_ok=True)
+        flags.write_text(args + "\n", encoding="utf-8")
+        checked_git("add", "--", "tools/native-wheel-args.txt")
+    checked_git("commit", "--allow-empty", "-qm", "advanced base")
+    revision = checked_git("rev-parse", "HEAD")
+    checked_git("merge", "--no-ff", "-qm", "tested merge", "contribution")
 
     workflow = (ROOT / ".github/workflows/wheel-size.yml").read_text(encoding="utf-8")
     step = workflow.split("      - name: Prepare the exact base", 1)[1].split("\n      - ", 1)[0]
@@ -415,7 +426,7 @@ def test_paired_wheels_select_the_base_and_compiler_directory(tmp_path: Path, ch
     assert output.read_text(encoding="utf-8").splitlines() == [
         f"revision={revision}",
         f"head-target={target}",
-        "args=--release --locked --out dist",
+        f"args={args}",
     ]
 
 
