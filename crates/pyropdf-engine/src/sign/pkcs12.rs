@@ -89,6 +89,32 @@ fn malformed(error: der::Error) -> Error {
 /// without exactly one key or without the key's certificate, or a key that
 /// [`Key`] does not read.
 pub fn parse(data: &[u8], password: &str) -> Result<(Key, Vec<Certificate>), Error> {
+    let (key, certificates) = material(data, password)?;
+    native_key(key.as_bytes(), certificates)
+}
+
+/// Reads a native key and places the matching signer certificate first.
+pub fn native_key(
+    data: &[u8],
+    mut certificates: Vec<Certificate>,
+) -> Result<(Key, Vec<Certificate>), Error> {
+    let key = Key::from_pkcs8(data)?;
+    let signer = certificates
+        .iter()
+        .position(|certificate| key.matches(certificate))
+        .ok_or_else(|| {
+            Error::Invalid("the PKCS#12 file holds no certificate of its key".to_owned())
+        })?;
+    certificates.swap(0, signer);
+    Ok((key, certificates))
+}
+
+/// Reads and authenticates one bounded PKCS#12 key and its certificates. The
+/// returned certificate order is the original bag order until the key is matched.
+pub fn material(
+    data: &[u8],
+    password: &str,
+) -> Result<(pkcs8::SecretDocument, Vec<Certificate>), Error> {
     let pfx = Pfx::from_der(data).map_err(malformed)?;
     if pfx.version != 3 || pfx.auth_safe.content_type != ID_DATA {
         return Err(Error::Invalid(
@@ -103,7 +129,7 @@ pub fn parse(data: &[u8], password: &str) -> Result<(Key, Vec<Certificate>), Err
     if let Some(mac) = &pfx.mac_data {
         verify_mac(mac, password, content.as_bytes())?;
     }
-    let mut keys = Vec::new();
+    let mut key = None;
     let mut certificates = Vec::new();
     for safe in Vec::<ContentInfo>::from_der(content.as_bytes()).map_err(malformed)? {
         let bags = if safe.content_type == ID_DATA {
@@ -128,18 +154,17 @@ pub fn parse(data: &[u8], password: &str) -> Result<(Key, Vec<Certificate>), Err
         };
         for bag in Vec::<SafeBag>::from_der(&bags).map_err(malformed)? {
             let value = || bag.bag_value.to_der().map_err(malformed);
-            if bag.bag_id == KEY_BAG {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "one key per bag of the file, which the caller holds"
-                )]
-                keys.push(Key::from_pkcs8(&value()?)?);
-            } else if bag.bag_id == SHROUDED_KEY_BAG {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "one key per bag of the file, which the caller holds"
-                )]
-                keys.push(Key::from_encrypted_pkcs8(&value()?, password.as_bytes())?);
+            if bag.bag_id == KEY_BAG || bag.bag_id == SHROUDED_KEY_BAG {
+                if key.is_some() {
+                    return Err(Error::Invalid(
+                        "the PKCS#12 file holds more than one private key".to_owned(),
+                    ));
+                }
+                key = Some(if bag.bag_id == KEY_BAG {
+                    pkcs8::SecretDocument::try_from(value()?).map_err(malformed)?
+                } else {
+                    super::key::decrypt_pkcs8(&value()?, password.as_bytes())?
+                });
             } else if bag.bag_id == CERT_BAG {
                 let cert = bag.bag_value.decode_as::<CertBag>().map_err(malformed)?;
                 if cert.cert_id == X509_CERTIFICATE {
@@ -154,19 +179,8 @@ pub fn parse(data: &[u8], password: &str) -> Result<(Key, Vec<Certificate>), Err
             }
         }
     }
-    let [key] = <[Key; 1]>::try_from(keys).map_err(|keys| {
-        Error::Invalid(format!(
-            "the PKCS#12 file holds {} private keys, not one",
-            keys.len()
-        ))
-    })?;
-    let signer = certificates
-        .iter()
-        .position(|certificate| key.matches(certificate))
-        .ok_or_else(|| {
-            Error::Invalid("the PKCS#12 file holds no certificate of its key".to_owned())
-        })?;
-    certificates.swap(0, signer);
+    let key =
+        key.ok_or_else(|| Error::Invalid("the PKCS#12 file holds no private key".to_owned()))?;
     Ok((key, certificates))
 }
 

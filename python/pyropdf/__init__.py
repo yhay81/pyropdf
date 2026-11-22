@@ -39,12 +39,15 @@ from pyropdf._annotations import (
     Highlight,
     Ink,
     LineAnnotation,
+    LineDetails,
     LineEnding,
     MarkupRects,
     Note,
     NoteIcon,
     Polygon,
     PolyLine,
+    PopupInfo,
+    RedactionMark,
     Sound,
     SoundEncoding,
     Square,
@@ -99,6 +102,7 @@ from pyropdf._content import (
     Paint,
     Path,
     Paths,
+    PatternPaint,
     RadialGradient,
     Segment,
     ShadingPattern,
@@ -148,6 +152,7 @@ from pyropdf._form import (
     SignatureFlags,
     TextField,
 )
+from pyropdf._fragments import FragmentParameter, PdfFragment
 from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
 from pyropdf._images import ImageRewriteReport, PageImage, StoredImage
@@ -177,9 +182,10 @@ from pyropdf._media import (
     ProjectionAnnotation,
     RichMedia,
     Screen,
+    SlideShow,
     ThreeD,
 )
-from pyropdf._media_actions import GoTo3DView, RenditionAction, RenditionOperation, RichMediaExecute
+from pyropdf._media_actions import GoTo3DView, MovieAction, RenditionAction, RenditionOperation, RichMediaExecute
 from pyropdf._metadata import (
     METADATA_KEYS,
     Duplex,
@@ -194,6 +200,7 @@ from pyropdf._metadata import (
     parse_pdf_date,
     pdf_date,
 )
+from pyropdf._name_resources import NamedResources
 from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, String
 from pyropdf._ocr import OcrEngine, OcrRotation, OcrWord
 from pyropdf._operations import InlineImage, Operation, Operations
@@ -231,14 +238,17 @@ from pyropdf._structure import (
     ObjectReference,
     RoleMap,
     StructureChildren,
+    StructureChildRule,
     StructureElement,
+    StructureText,
     StructureTree,
 )
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
 from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
 from pyropdf._threads import Bead, Beads, BeadSpecification, Thread, ThreadAction, Threads
-from pyropdf._widgets import Widget, Widgets
+from pyropdf._viewer_actions import StructureDestination, UriAction, WindowsLaunch
+from pyropdf._widgets import IconFit, Widget, Widgets
 
 _PUBLIC_MODULE_EXPORTS = (
     GoTo3DView,
@@ -248,12 +258,14 @@ _PUBLIC_MODULE_EXPORTS = (
     ModelMeasurement,
     ModelMeasurementType,
     ModelView,
+    MovieAction,
     ProjectionAnnotation,
     RenditionAction,
     RenditionOperation,
     RichMedia,
     RichMediaExecute,
     Screen,
+    SlideShow,
     ThreeD,
     Attachment,
     Attachments,
@@ -419,6 +431,7 @@ __all__ = [
     "FontProgram",
     "FontRef",
     "Form",
+    "FragmentParameter",
     "FreeText",
     "GeospatialMeasure",
     "Glyph",
@@ -430,6 +443,7 @@ __all__ = [
     "Highlight",
     "History",
     "IRect",
+    "IconFit",
     "Image",
     "ImageMask",
     "ImageRewriteReport",
@@ -452,6 +466,7 @@ __all__ = [
     "Line",
     "LineAnnotation",
     "LineCap",
+    "LineDetails",
     "LineEnding",
     "LineJoin",
     "LineTo",
@@ -474,9 +489,11 @@ __all__ = [
     "ModelMeasurementType",
     "ModelView",
     "MoveTo",
+    "MovieAction",
     "Name",
     "NamedAction",
     "NamedPages",
+    "NamedResources",
     "NavigationStep",
     "Navigator",
     "Note",
@@ -511,13 +528,16 @@ __all__ = [
     "PathBuilder",
     "PathInput",
     "Paths",
+    "PatternPaint",
     "PdfError",
+    "PdfFragment",
     "Permissions",
     "Pixmap",
     "Point",
     "PointData",
     "PolyLine",
     "Polygon",
+    "PopupInfo",
     "PrintScaling",
     "Probe",
     "Profiles",
@@ -535,6 +555,7 @@ __all__ = [
     "RecolorTarget",
     "Rect",
     "RectilinearMeasure",
+    "RedactionMark",
     "RelatedFile",
     "RemoteDestination",
     "RenditionAction",
@@ -562,6 +583,7 @@ __all__ = [
     "SignaturePermission",
     "SignatureVerification",
     "Signer",
+    "SlideShow",
     "SoftMask",
     "SoftMaskType",
     "Sound",
@@ -581,8 +603,11 @@ __all__ = [
     "Stroke",
     "StructuralDefect",
     "StructuralReport",
+    "StructureChildRule",
     "StructureChildren",
+    "StructureDestination",
     "StructureElement",
+    "StructureText",
     "StructureTree",
     "SubmitFormAction",
     "SubmitFormFlags",
@@ -612,12 +637,14 @@ __all__ = [
     "Unconverted",
     "Underline",
     "Unmapped",
+    "UriAction",
     "ValidationInfo",
     "ViewerPreferences",
     "Viewport",
     "VisibilityPolicy",
     "Widget",
     "Widgets",
+    "WindowsLaunch",
     "Word",
     "__version__",
     "open",

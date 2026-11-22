@@ -236,12 +236,41 @@ fn a_save_that_keeps_the_encryption_copies_untouched_encrypted_bytes() {
     }
 }
 
+#[test]
+fn legacy_reader_input_reproduces_the_authenticated_padded_bytes() {
+    let passwords: &[&[u8]] = &[
+        b"",
+        b"test",
+        b"ends in (",
+        b"\0()",
+        &[0xff, 0x28],
+        &[b'x'; 32],
+        b"1234567890123456789012345678901\xc2\xa3",
+        b"1234567890123456789012345678901\xe0\xa0\x80",
+        b"1234567890123456789012345678901\xf0\x90\x80\x80",
+        b"123456789012345678901234567890\xf4\x8f\x80\x80",
+    ];
+    for password in passwords {
+        let effective = super::padded(password);
+        let reader = super::legacy_reader_input(effective.to_vec());
+        assert_eq!(super::padded(&reader), effective);
+        assert_eq!(
+            std::str::from_utf8(&reader).is_ok(),
+            std::str::from_utf8(password).is_ok()
+        );
+    }
+}
+
 fn encryption(aes256: bool) -> Encryption {
     Encryption::Password(crate::security::PasswordEncryption {
         user: b"userpw".to_vec(),
         owner: b"ownerpw".to_vec(),
         permissions: 0b1111_0000_1100,
-        aes256,
+        method: if aes256 {
+            super::Method::Aes256
+        } else {
+            super::Method::Aes128
+        },
         random: core::array::from_fn(|i| (i * 37 + 11) as u8),
     })
 }

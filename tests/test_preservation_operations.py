@@ -10,7 +10,7 @@ from __future__ import annotations
 import struct
 import tempfile
 import zlib
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -256,6 +256,46 @@ def edit_annotation(doc: pyropdf.Document) -> set[int]:
         item.contents = MARKER + " edited"
         item.interior_color = Color(0.75, 0.5, 0.25)
     return touched
+
+
+def prepare_interaction(doc: pyropdf.Document) -> None:
+    """Save the original annotation, pushbutton and mark before exercising their editors."""
+    page = doc.pages[0]
+    line = page.annotations.add(pyropdf.LineAnnotation((16, 20), (80, 20), contents="Measured"))
+    line.name = MARKER + "-dimension"
+    mark = page.annotations.add(pyropdf.RedactionMark(pyropdf.Rect(16, 24, 80, 42)))
+    mark.name = MARKER + "-mark"
+    page.widgets.add(pyropdf.PushButton(MARKER + "-button", (16, 46, 80, 65), caption="Review"))
+
+
+def edit_interaction(doc: pyropdf.Document) -> set[int]:
+    """Edit existing markup and its pushbutton using explicit, independently allocated Forms."""
+    page = doc.pages[0]
+    line = next(item for item in page.annotations if item.name == MARKER + "-dimension")
+    mark = next(item for item in page.annotations if item.name == MARKER + "-mark")
+    widget = doc.form[MARKER + "-button"].widgets[0]
+    touched = {line.xref, mark.xref, widget.xref}
+    with doc.transaction():
+        icon = line.set_appearance("down", b"0 1 0 rg 0 0 10 10 re f", bbox=(0, 0, 10, 10))
+        line.line_details = pyropdf.LineDetails(leader_length=4, leader_extension=2, caption=True)
+        mark.redaction = pyropdf.RedactionMark(mark.rect, quads=(mark.rect.quad,), overlay=icon)
+        widget.set_icon("normal", icon)
+        widget.icon_fit = pyropdf.IconFit(when="never", anchor=(0, 1))
+        widget.set_appearance("rollover", icon)
+    return touched
+
+
+def check_interaction(doc: pyropdf.Document) -> None:
+    page = doc.pages[0]
+    line = next(item for item in page.annotations if item.name == MARKER + "-dimension")
+    mark = next(item for item in page.annotations if item.name == MARKER + "-mark")
+    widget = doc.form[MARKER + "-button"].widgets[0]
+    assert line.line_details == pyropdf.LineDetails(leader_length=4, leader_extension=2, caption=True)
+    assert line.appearance_stream("down") == widget.icon()
+    assert widget.appearance_stream("rollover") == widget.icon()
+    assert widget.icon_fit == pyropdf.IconFit(when="never", anchor=(0, 1))
+    assert mark.redaction is not None
+    assert mark.redaction.overlay == widget.icon()
 
 
 def delete_annotation(doc: pyropdf.Document) -> set[int]:
@@ -627,6 +667,7 @@ NEW_EDITS = {
     "add_screen": Edit(apply=add_screen, check=check_screen),
     "rich_media_settings": Edit(prepare=prepare_rich_media, apply=edit_rich_media, check=check_rich_media),
     "add_annotation": Edit(apply=add_annotation, check=check_annotation),
+    "edit_interaction": Edit(prepare=prepare_interaction, apply=edit_interaction, check=check_interaction),
     "edit_annotation": Edit(prepare=prepare_annotation, apply=edit_annotation, check=check_edited_annotation),
     "delete_annotation": Edit(prepare=prepare_annotation, apply=delete_annotation, check=check_removed_annotation),
     "flatten_annotations": Edit(
@@ -712,6 +753,34 @@ def check_structure(doc: pyropdf.Document) -> None:
     assert elem.role == "PreservationRole"
     assert elem.standard_role == "P"
     assert elem.actual_text == MARKER
+
+
+def edit_structure_attributes(doc: pyropdf.Document) -> set[int]:
+    root = doc.structure.obj
+    assert root is not None
+    elem = doc.structure[0].children[-1].children[0]
+    touched = {number(doc.catalog), number(root), elem.xref}
+    with doc.structure.edit() as tree:
+        tree.set_class_attributes("PreservationClass", "Layout", {"Placement": "Block"})
+        elem.add_class("PreservationClass")
+        elem.set_attributes("Layout", {"TextAlign": "Center"})
+        if pdf_version(doc) >= (1, 6):
+            elem.set_user_property("PreservationProperty", MARKER)
+    return touched
+
+
+def check_structure_attributes(doc: pyropdf.Document) -> None:
+    root = doc.structure.obj
+    assert root is not None
+    elem = doc.structure[0].children[-1].children[0]
+    assert elem.obj.get("C") == pyropdf.Name("PreservationClass")
+    assert root["ClassMap"]["PreservationClass"]["Placement"] == pyropdf.Name("Block")
+    attributes = elem.obj["A"]
+    if pdf_version(doc) >= (1, 6):
+        attributes, user = attributes
+        assert user["P"][0]["V"].text == MARKER
+        assert doc.catalog["MarkInfo"]["UserProperties"]
+    assert attributes["TextAlign"] == pyropdf.Name("Center")
 
 
 def prepare_actions(doc: pyropdf.Document) -> None:
@@ -1194,6 +1263,62 @@ def check_metadata(doc: pyropdf.Document) -> None:
     assert "2025-02-02T00:00:00" in doc.xmp
 
 
+def prepare_catalog_navigation(doc: pyropdf.Document) -> None:
+    doc.base_uri = "https://example.org/old/"
+    doc.named_resources("Templates")[MARKER.encode()] = doc.pages[0].obj
+    element = doc.structure[0] if doc.structure else doc.structure.add("Document", page=doc.pages[0])
+    if not promotion_conflicts(doc):
+        doc.destinations.set_structure(
+            MARKER, pyropdf.StructureDestination(element=element.xref, fallback=pyropdf.Destination(0))
+        )
+
+
+def edit_catalog_navigation(doc: pyropdf.Document) -> set[int]:
+    catalog = doc.catalog
+    names = catalog["Names"]
+    touched = {number(catalog)} | indirect_numbers(names, names["Templates"], catalog.get("URI"))
+    original = doc.destinations.structure(MARKER)
+    if original is not None:
+        # The name-tree writer replaces only the path to this existing key.
+        node = names["Dests"]
+        touched.update(indirect_numbers(node))
+        while "Kids" in node:
+            node = next(kid for kid in node["Kids"] if kid["Limits"][0] <= MARKER.encode() <= kid["Limits"][1])
+            touched.update(indirect_numbers(node))
+    del doc.base_uri
+    doc.base_uri = "https://example.org/new/"
+    resources = doc.named_resources("Templates")
+    del resources[MARKER.encode()]
+    resources[b"replacement"] = doc.pages[0].obj
+    if original is None:
+        clauses = promotion_conflicts(doc)
+        assert clauses
+        with refused_promotion(doc, clauses):
+            doc.destinations.set_structure(
+                MARKER, pyropdf.StructureDestination(element=doc.structure[0].xref, fallback=pyropdf.Destination(0))
+            )
+        return touched
+    doc.destinations.set_structure(
+        MARKER,
+        pyropdf.StructureDestination(
+            element=original.element, fallback=pyropdf.Destination(0), fit="FitH", operands=(15,)
+        ),
+    )
+    return touched
+
+
+def check_catalog_navigation(doc: pyropdf.Document) -> None:
+    assert doc.base_uri == "https://example.org/new/"
+    assert doc.named_resources("Templates")[b"replacement"] == doc.pages[0].obj
+    if pdf_version(doc) < (2, 0):
+        assert doc.destinations.structure(MARKER) is None
+        return
+    dest = doc.destinations.structure(MARKER)
+    assert dest is not None
+    assert dest.fit == "FitH"
+    assert dest.operands == (15,)
+
+
 def prepare_catalog_records(doc: pyropdf.Document) -> None:
     doc.legal_attestation = pyropdf.LegalAttestation(attestation="before")
     doc.requirements = (pyropdf.DocumentRequirement(pyropdf.RequirementType.ENABLE_JAVASCRIPTS),)
@@ -1576,6 +1701,20 @@ def edit_canvas_resources(doc: pyropdf.Document) -> set[int]:
     archival_one = (doc.profiles.pdfa or "").startswith("PDF/A-1")
     alpha = 1.0 if archival_one else 0.5
     mode = pyropdf.BlendMode.NORMAL if archival_one else pyropdf.BlendMode.MULTIPLY
+    mask = None
+    if not doc.profiles.pdfa and not doc.profiles.pdfua:
+        mask = doc.objects[
+            doc.objects.add_stream(
+                b"0 0 100 100 re f",
+                {
+                    "Type": pyropdf.Name("XObject"),
+                    "Subtype": pyropdf.Name("Form"),
+                    "BBox": [0, 0, 100, 100],
+                    "Resources": {},
+                    "Group": {"S": pyropdf.Name("Transparency"), "I": True},
+                },
+            )
+        ]
     with pyropdf.Document() as source:
         page = source.pages.new((40, 40))
         with page.draw() as canvas:
@@ -1585,6 +1724,7 @@ def edit_canvas_resources(doc: pyropdf.Document) -> set[int]:
             canvas.layer(layer),
             canvas.opacity(alpha),
             canvas.blend(mode),
+            canvas.soft_mask(mask) if mask is not None else nullcontext(),
         ):
             canvas.page((10, 10, 50, 50), page)
     return {target.xref}
@@ -1599,6 +1739,10 @@ def check_canvas_resources(doc: pyropdf.Document) -> None:
     archival_one = (doc.profiles.pdfa or "").startswith("PDF/A-1")
     assert any(state.get("ca") == (1 if archival_one else 0.5) for state in states)
     assert any(state.get("BM") == ("Normal" if archival_one else "Multiply") for state in states)
+    if not doc.profiles.pdfa and not doc.profiles.pdfua:
+        (mask,) = [state["SMask"] for state in states if "SMask" in state]
+        assert mask["S"] == "Alpha"
+        assert mask["G"]["Group"]["S"] == "Transparency"
     assert any(obj.get("Subtype") == "Form" for obj in resources["XObject"].values())
     red, green, blue = page.pixmap(dpi=72, background=(255, 255, 255)).pixel(20, 20)
     assert red == 255
@@ -1843,6 +1987,30 @@ def prepare_font_subset(doc: pyropdf.Document) -> None:
         doc.pages.extend([page])
 
 
+def write_font_cmap(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    font = page.obj["Resources"]["Font"]["PyroF1"]
+    code = next(bytes(op.operands[0]) for op in page.operations if op.operator == "Tj")
+    info = font["DescendantFonts"][0]["CIDSystemInfo"]
+    font["Encoding"] = doc.write_cmap(
+        {code: int.from_bytes(code, "big")},
+        name="XX-PageFont",
+        registry=bytes(info["Registry"]),
+        ordering=bytes(info["Ordering"]),
+        supplement=info["Supplement"],
+    )
+    return indirect_numbers(font)
+
+
+def check_font_cmap(doc: pyropdf.Document) -> None:
+    page = doc.pages[-1]
+    encoding = page.obj["Resources"]["Font"]["PyroF1"]["Encoding"]
+    assert isinstance(encoding, pyropdf.Stream)
+    assert encoding["CMapName"] == "XX-PageFont"
+    assert b"1 begincidchar" in encoding.read()
+    assert page.text().strip() == "A"
+
+
 def subset_font(doc: pyropdf.Document) -> set[int]:
     page = doc.pages[-1]
     font = page.obj["Resources"]["Font"]["PyroF1"]
@@ -2021,10 +2189,58 @@ def check_model_measurement(doc: pyropdf.Document) -> None:
     assert tuple(measure.TP.obj) == (0, 1, 0)
 
 
+def prepare_xfa_packets(doc: pyropdf.Document) -> None:
+    form = doc.catalog.get("AcroForm")
+    if form is None:
+        form = doc.objects[doc.objects.add({"Fields": []})]
+        doc.catalog["AcroForm"] = form
+
+    def stream(data: bytes) -> pyropdf.Stream:
+        return doc.objects[doc.objects.add_stream(data)]
+
+    # Two legal packets share one original stream. Editing either must retain
+    # the other, without adding an extension key to a profiled AcroForm.
+    shared = stream(b"<config/>")
+    form["XFA"] = [
+        "xdp:xdp",
+        stream(b'<x:xdp xmlns:x="http://ns.adobe.com/xdp/">'),
+        "config",
+        shared,
+        "template",
+        stream(b"<template/>"),
+        "config",
+        shared,
+        "/xdp:xdp",
+        stream(b"</x:xdp>"),
+    ]
+
+
+def edit_xfa_packets(doc: pyropdf.Document) -> set[int]:
+    form = doc.catalog["AcroForm"]
+    packets = form["XFA"]
+    touched = {form.xref if form.xref is not None else number(doc.catalog)} | indirect_numbers(packets, *packets)
+    shared = packets[3].xref
+    assert packets[7].xref == shared
+    doc.form.replace_xfa_packet(1, b'<config id="edited"/>')
+    assert doc.form.xfa_packet(1) == b'<config id="edited"/>'
+    assert form["XFA"][7].xref == shared
+    assert doc.form.xfa_packet(3) == b"<config/>"
+    doc.form.remove_xfa_packet(2)
+    assert doc.form.xfa_packet(2) == b"<config/>"
+    assert doc.form.remove_xfa()
+    return touched
+
+
+def check_xfa_packets(doc: pyropdf.Document) -> None:
+    assert doc.form.xfa_packet_names == ()
+    assert "XFA" not in doc.catalog["AcroForm"]
+
+
 FAMILY_EDITS = {
     "model_measurement": Edit(
         prepare=prepare_model_measurement, apply=edit_model_measurement, check=check_model_measurement
     ),
+    "xfa_packets": Edit(prepare=prepare_xfa_packets, apply=edit_xfa_packets, check=check_xfa_packets),
     "action_triggers": Edit(prepare=prepare_widget_events, apply=edit_widget_events, check=check_widget_events),
     "annotation_relations": Edit(
         prepare=prepare_replies, apply=edit_replies, check=check_replies, affected_pages=first_page
@@ -2038,6 +2254,9 @@ FAMILY_EDITS = {
         apply=edit_canvas_resources,
         check=check_canvas_resources,
         affected_pages=last_page,
+    ),
+    "catalog_navigation": Edit(
+        prepare=prepare_catalog_navigation, apply=edit_catalog_navigation, check=check_catalog_navigation
     ),
     "catalog_records": Edit(prepare=prepare_catalog_records, apply=edit_catalog_records, check=check_catalog_records),
     "clean_content": Edit(prepare=prepare_to_clean, apply=clean_page, check=check_clean_page),
@@ -2083,10 +2302,14 @@ FAMILY_EDITS = {
     "shared_action_trigger": Edit(prepare=prepare_actions, apply=edit_actions, check=check_actions),
     "sign_revision": Edit(prepare=prepare_signature, apply=sign_revision, check=check_signed_revision),
     "signature_field": Edit(prepare=prepare_signature, apply=edit_signature, check=check_signature),
+    "structure_attributes": Edit(
+        prepare=prepare_structure, apply=edit_structure_attributes, check=check_structure_attributes
+    ),
     "structure_membership": Edit(
         prepare=prepare_structure_membership, apply=change_structure_membership, check=check_structure_membership
     ),
     "structure_role_map": Edit(prepare=prepare_structure, apply=edit_structure, check=check_structure),
+    "font_cmap": Edit(prepare=prepare_font_subset, apply=write_font_cmap, check=check_font_cmap),
     "subset_fonts": Edit(prepare=prepare_font_subset, apply=subset_font, check=check_subset_font),
     "tagged_drawing": Edit(
         prepare=prepare_tagged_drawing, apply=tagged_drawing, check=check_tagged_drawing, affected_pages=first_page

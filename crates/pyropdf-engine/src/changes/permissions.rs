@@ -37,7 +37,10 @@ pub struct SignaturePermission {
 }
 
 enum Transform {
-    Doc(i64),
+    Doc {
+        level: i64,
+        field_lock: bool,
+    },
     Fields {
         action: &'static str,
         names: HashSet<String>,
@@ -75,11 +78,14 @@ struct Edit {
 impl Transform {
     fn verdict(&self, edit: &Edit) -> (&'static str, Option<bool>, &'static str) {
         match self {
-            Self::Doc(level) => {
-                let transform = match level {
-                    1 => "DocMDP P=1",
-                    2 => "DocMDP P=2",
-                    _ => "DocMDP P=3",
+            Self::Doc { level, field_lock } => {
+                let transform = match (field_lock, level) {
+                    (true, 1) => "Field lock P=1",
+                    (true, 2) => "Field lock P=2",
+                    (true, _) => "Field lock P=3",
+                    (false, 1) => "DocMDP P=1",
+                    (false, 2) => "DocMDP P=2",
+                    (false, _) => "DocMDP P=3",
                 };
                 let permitted = match edit.kind {
                     Kind::Fill | Kind::Sign => Some(*level >= 2),
@@ -88,6 +94,12 @@ impl Transform {
                     Kind::Unknown => None,
                 };
                 let reason = match permitted {
+                    Some(true) if *field_lock => {
+                        "the signature field permission allows this kind of edit"
+                    }
+                    Some(false) if *field_lock => {
+                        "the signature field permission forbids this kind of edit"
+                    }
                     Some(true) => "the certification permits this kind of edit",
                     Some(false) => "the certification forbids this kind of edit",
                     None => "the edit needs further modification-policy review",
@@ -176,7 +188,12 @@ fn check_count(count: usize, limit: usize) -> Result<()> {
     Ok(())
 }
 
-fn transforms(version: &Version, sig: &Dict, budget: &Budget) -> Result<Vec<Transform>> {
+fn transforms(
+    version: &Version,
+    sig: &Dict,
+    field_number: u32,
+    budget: &Budget,
+) -> Result<Vec<Transform>> {
     let mut result = BudgetVec::new(budget);
     let refs = entry(version, sig, "Reference", budget)?;
     if let Some(Value::Array(refs)) = refs.as_deref() {
@@ -196,7 +213,10 @@ fn transforms(version: &Version, sig: &Dict, budget: &Budget) -> Result<Vec<Tran
                         Some(Value::Integer(level @ 1..=3)) => *level,
                         _ => return Err(Error::Pdf("invalid DocMDP permission".into())),
                     };
-                    result.try_push(Transform::Doc(level))?;
+                    result.try_push(Transform::Doc {
+                        level,
+                        field_lock: false,
+                    })?;
                 }
                 Some(b"FieldMDP") => {
                     let Some(dict) = dict else {
@@ -234,13 +254,44 @@ fn transforms(version: &Version, sig: &Dict, budget: &Budget) -> Result<Vec<Tran
             }
         }
     }
+    if field_number != 0
+        && let Some(level) = field_permission(version, field_number, budget)?
+    {
+        result.try_push(Transform::Doc {
+            level,
+            field_lock: true,
+        })?;
+    }
     Ok(result.into_vec())
+}
+
+/// Table 236 /P applies to the whole document, separately from the field names in /Fields.
+fn field_permission(version: &Version, field: u32, budget: &Budget) -> Result<Option<i64>> {
+    let field = object(version, field, budget)?;
+    let Some(field) = field.as_deref().and_then(value_dict) else {
+        return Ok(None);
+    };
+    let lock = entry(version, field, "Lock", budget)?;
+    let permission = lock
+        .as_deref()
+        .and_then(value_dict)
+        .and_then(|lock| lock.get("P"));
+    match permission {
+        None => Ok(None),
+        Some(Value::Integer(level @ 1..=3)) => Ok(Some(*level)),
+        Some(Value::Real(real)) => [1, 2, 3]
+            .into_iter()
+            .find(|level| real.value() == f64::from(*level))
+            .map(|level| Some(i64::from(level)))
+            .ok_or_else(|| Error::Pdf("invalid signature field lock permission".into())),
+        _ => Err(Error::Pdf("invalid signature field lock permission".into())),
+    }
 }
 
 fn policy_in(version: &Version, signature: &Signature, budget: &Budget) -> Result<Vec<Transform>> {
     let from = |dict: Option<&Dict>| match dict {
         Some(dict) if byte_ranges(dict) == Some(signature.ranges) => {
-            transforms(version, dict, budget)
+            transforms(version, dict, signature.field, budget)
         }
         _ => Ok(Vec::new()),
     };

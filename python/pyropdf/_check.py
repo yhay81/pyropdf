@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pyropdf import _core
-from pyropdf._objects import Array, Dictionary, _catalog, _trailer
+from pyropdf._archival_colour import archival_colour
+from pyropdf._objects import Dictionary, _catalog, _trailer
 from pyropdf._profiles import profiles
 
 if TYPE_CHECKING:
@@ -81,20 +82,21 @@ def _defect(claim: str, xref: int | None, path: str, spec: str, message: str) ->
     )
 
 
-def _pdfa_defects(document: Document, claim: str, catalog: Dictionary) -> list[StructuralDefect]:
+def _pdfa_defects(document: Document, claim: str, catalog: Dictionary) -> tuple[list[StructuralDefect], bool]:
     """Return the document-level PDF/A rules that ``document`` breaks."""
     out = []
     if "Encrypt" in _trailer(document):
         out.append(_defect(claim, None, "Encrypt", "ISO 19005 6.1.3", f"{claim} forbids encryption"))
-    intents = catalog.get("OutputIntents")
-    entries = list(intents) if isinstance(intents, Array) else []
-    if not any(isinstance(entry, Dictionary) and entry.get("S") == "GTS_PDFA1" for entry in entries):
-        message = f"{claim} needs a /GTS_PDFA1 output intent"
-        out.append(_defect(claim, catalog.xref, "OutputIntents", "ISO 19005 6.2.2", message))
+    device, unsolved = archival_colour(document, claim)
+    if device is not None:
+        space = {"gray": "DeviceGray", "rgb": "DeviceRGB", "cmyk": "DeviceCMYK"}[device]
+        message = f"{claim} uses {space} without an applicable colour characterization"
+        spec = "ISO 19005-1 6.2.3" if claim.startswith("PDF/A-1") else "ISO 19005 6.2.4.3"
+        out.append(_defect(claim, catalog.xref, "OutputIntents", spec, message))
     script = _javascript(catalog)
     if script is not None:
         out.append(_defect(claim, catalog.xref, script, "ISO 19005 6.6.1", f"{claim} forbids JavaScript"))
-    return out
+    return out, unsolved
 
 
 def _pdfua_defects(claim: str, catalog: Dictionary) -> list[StructuralDefect]:
@@ -124,16 +126,17 @@ def _pdfua_defects(claim: str, catalog: Dictionary) -> list[StructuralDefect]:
     ]
 
 
-def _profile_defects(document: Document) -> list[StructuralDefect]:
+def _profile_defects(document: Document) -> tuple[list[StructuralDefect], bool]:
     """Return the document-level rules of the claimed PDF/A and PDF/UA profiles that it breaks."""
     claimed = profiles(document)
     catalog = _catalog(document)
     out = []
+    unsolved = False
     if claimed.pdfa is not None:
-        out += _pdfa_defects(document, claimed.pdfa, catalog)
+        out, unsolved = _pdfa_defects(document, claimed.pdfa, catalog)
     if claimed.pdfua is not None:
         out += _pdfua_defects(claimed.pdfua, catalog)
-    return out
+    return out, unsolved
 
 
 def structural_check(document: Document) -> StructuralReport:
@@ -143,11 +146,12 @@ def structural_check(document: Document) -> StructuralReport:
         StructuralDefect(xref=xref, path=path, clause=clause, spec=spec, kind=kind, message=message)
         for xref, path, clause, spec, kind, message in defects
     ]
-    findings.extend(_profile_defects(document))
+    profile_findings, unsolved = _profile_defects(document)
+    findings.extend(profile_findings)
     return StructuralReport(
         defects=tuple(findings),
         version=version,
         objects=objects,
-        unchecked=unchecked,
+        unchecked=unchecked + int(unsolved),
         truncated=truncated,
     )
