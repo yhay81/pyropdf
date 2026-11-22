@@ -84,7 +84,7 @@ impl<'a> Packer<'a> {
         // A member is never encrypted on its own: its object stream is.
         let bytes = match (renumbering, version.slot(row.number)) {
             (Some(renumbering), _) => {
-                renumbering.bytes(version, reference, Streams::Keep, budget)?
+                renumbering.bytes(version, reference, Streams::Keep, false, budget)?
             }
             (None, Some(Slot::Written(object))) => object.bytes().clone(),
             (None, _) => raw::body(&**version.base(), reference, budget).map_err(|error| {

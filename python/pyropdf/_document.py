@@ -71,6 +71,7 @@ from pyropdf._measurement import (
     _read_document_requirements,
     _write_document_requirements,
 )
+from pyropdf._media import SlideShow, alternate_presentations
 from pyropdf._metadata import (
     METADATA_KEYS,
     MarkInfo,
@@ -218,6 +219,12 @@ class Document:
         """Return the pages, a sequence of :class:`Page` handles that edits keep valid."""
         self._ensure_open()
         return Pages(self)
+
+    @property
+    def alternate_presentations(self) -> dict[bytes, SlideShow]:
+        """Read the catalog's multi-level AlternatePresentations name tree as existing slideshows."""
+        self._ensure_open()
+        return alternate_presentations(self)
 
     @property
     def attachments(self) -> Attachments:
@@ -1317,16 +1324,18 @@ class Document:
         *,
         field: str = "DocTimeStamp",
         reserve: int = DEFAULT_RESERVE,
+        digest_algorithm: str = "sha256",
     ) -> bytes:
         """Append an RFC 3161 ``/DocTimeStamp`` revision to the document and return its bytes (ISO 32000-2 §12.8.5).
 
-        ``timestamper`` receives the SHA-256 digest of the signed byte ranges
-        and ``"sha256"``, and returns the DER of an RFC 3161 ``TimeStampToken``
+        ``timestamper`` receives the digest of the signed byte ranges and its name.
+        Choose SHA-2 (``sha256`` by default), ``sha3_256``, ``sha3_384``,
+        ``sha3_512`` or ``shake256``. The callback returns the DER of an RFC 3161 ``TimeStampToken``
         stamping that digest; pyropdf makes no network access. Afterwards the
         document reads the timestamped revision and earlier signatures remain
         intact.
         """
-        return _timestamp(self, timestamper, field=field, reserve=reserve)
+        return _timestamp(self, timestamper, field=field, reserve=reserve, digest_algorithm=digest_algorithm)
 
     def render(  # noqa: PLR0913 - the rendering and batch options are all keyword-only
         self,

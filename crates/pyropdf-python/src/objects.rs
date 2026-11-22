@@ -721,6 +721,23 @@ pub(crate) fn set_data(
         .map_err(|error| store_error(&error))
 }
 
+fn set_data_in(
+    stream: &mut Stream,
+    data: &[u8],
+    options: Dict,
+    version: &Version,
+    budget: &Budget,
+) -> PyResult<()> {
+    pyropdf_store::value::encode::write_with_lookup(
+        stream,
+        data,
+        options,
+        &|r, b| version.filter_object(r, b),
+        budget,
+    )
+    .map_err(|e| store_error(&e))
+}
+
 /// Adds a stream of the tagged dictionary `dict` and the decoded `data`,
 /// in one transaction, and returns its number and generation.
 #[pyfunction]
@@ -739,8 +756,9 @@ pub fn object_add_stream(
                 ));
             };
             let mut stream = Stream::new(dict, Bytes::default());
-            let options = filter_options(options, transaction.version(), budget)?;
-            set_data(&mut stream, data, options, budget)?;
+            let version = transaction.version();
+            let options = filter_options(options, version, budget)?;
+            set_data_in(&mut stream, data, options, version, budget)?;
             add(transaction, &Value::Stream(Box::new(stream)), budget)
         })
     })?
@@ -774,7 +792,7 @@ pub fn stream_read<'py>(
             return Ok(PyBytes::new(py, stream.data()));
         }
         let data = py
-            .detach(|| stream.decoded(&budget))
+            .detach(|| stream.decoded_in(&version, &budget))
             .map_err(|e| store_error(&e))?;
         limit(data.len())?;
         Ok(PyBytes::new(py, &data))
@@ -796,10 +814,11 @@ pub fn stream_write(
             let Value::Stream(stream) = value else {
                 return Err(stale(Some(root), &[]));
             };
-            set_data(
+            set_data_in(
                 stream,
                 data,
                 filter_options(options, version, budget)?,
+                version,
                 budget,
             )
         })
