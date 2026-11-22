@@ -5,10 +5,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 import runpy
+import shutil
 import struct
+import subprocess
 import sys
+import textwrap
 import tomllib
 from pathlib import Path
 from urllib.parse import unquote_plus
@@ -333,13 +337,22 @@ def test_pr_wheels_match_the_native_release_builds() -> None:
         if setting.startswith(("uses: PyO3/", "rust-toolchain:", "maturin-version:", "manylinux:")):
             assert comparison.count(setting) == 2
     assert native.index("mkdir -p dist") < native.index("uses: PyO3/maturin-action")
-    assert comparison.index("mkdir -p base/dist head/dist") < comparison.index("uses: PyO3/maturin-action")
+    assert (
+        comparison.index("path: base")
+        < comparison.index("mkdir -p base/dist")
+        < comparison.index("- name: Build base release wheel")
+        < comparison.index("path: head")
+        < comparison.index("mkdir -p head/dist")
+        < comparison.index("- name: Build head release wheel")
+    )
+    assert "CARGO_TARGET_DIR: ${{ github.workspace }}/paired-target" in comparison
+    assert "CARGO_TARGET_DIR: ${{ github.workspace }}/${{ steps.base.outputs.head-target }}" in comparison
     assert "cat tools/native-wheel-args.txt" in native
     assert "args: ${{ steps.native.outputs.args }}" in native
-    assert "ref: ${{ github.sha }}" in comparison
-    assert "git -C head rev-parse HEAD^1" in comparison
-    assert "args: ${{ steps.native.outputs.base }}" in comparison
-    assert "args: ${{ steps.native.outputs.head }}" in comparison
+    assert comparison.count("ref: ${{ github.sha }}") == 2
+    assert "git -C base rev-parse HEAD^1" in comparison
+    assert "args: ${{ steps.base.outputs.args }}" in comparison
+    assert "args: ${{ steps.head.outputs.args }}" in comparison
     packaging = "uv run --locked --only-group wheel --python 3.14 python tools/repack_wheel.py dist"
     assert native.count(packaging) == comparison.count(packaging) == 1
     assert "for checkout in base head; do" in comparison[: comparison.index(packaging)].rsplit("      - name:", 1)[1]
@@ -352,6 +365,58 @@ def test_pr_wheels_match_the_native_release_builds() -> None:
         < native.index("actions/attest@")
         < native.index("actions/upload-artifact")
     )
+
+
+@pytest.mark.parametrize(
+    ("change", "target"),
+    [
+        ("crates/lib/src/lib.rs", "paired-target"),
+        ("python/pkg/__init__.py", "paired-target"),
+        ("tools/repack_wheel.py", "paired-target"),
+        ("Cargo.toml", "head/target"),
+        ("Cargo.lock", "head/target"),
+        ("crates/lib/Cargo.toml", "head/target"),
+        (".cargo/config.toml", "head/target"),
+        ("rust-toolchain.toml", "head/target"),
+        ("pyproject.toml", "head/target"),
+        ("tools/native-wheel-args.txt", "head/target"),
+    ],
+)
+def test_paired_wheels_select_the_base_and_compiler_directory(tmp_path: Path, change: str, target: str) -> None:
+    """Execute the workflow decision on a checkout of the tested source, before its first-parent build."""
+    bash = shutil.which("bash")
+    git = shutil.which("git")
+    if not bash or not git:
+        pytest.skip("the native wheel workflow runs with Bash and Git")
+    base = tmp_path / "base"
+    base.mkdir()
+    output = tmp_path / "outputs"
+    env = os.environ | {"GITHUB_OUTPUT": str(output)}
+
+    def checked_git(*args: str) -> str:
+        return subprocess.check_output([git, *args], cwd=base, text=True).strip()  # noqa: S603 - fixed test repository.
+
+    checked_git("init", "-q")
+    checked_git("config", "user.email", "test@example.invalid")
+    checked_git("config", "user.name", "Test")
+    checked_git("commit", "--allow-empty", "-qm", "parent")
+    revision = checked_git("rev-parse", "HEAD")
+    changed = base / change
+    changed.parent.mkdir(parents=True, exist_ok=True)
+    changed.write_text("changed\n", encoding="utf-8")
+    checked_git("add", "--", change)
+    checked_git("commit", "-qm", "tested content")
+
+    workflow = (ROOT / ".github/workflows/wheel-size.yml").read_text(encoding="utf-8")
+    step = workflow.split("      - name: Prepare the exact base", 1)[1].split("\n      - ", 1)[0]
+    script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+    subprocess.run([bash, "-eo", "pipefail", "-c", script], cwd=tmp_path, env=env, check=True)  # noqa: S603 - checked-in workflow.
+    assert checked_git("rev-parse", "HEAD") == revision
+    assert output.read_text(encoding="utf-8").splitlines() == [
+        f"revision={revision}",
+        f"head-target={target}",
+        "args=--release --locked --out dist",
+    ]
 
 
 @pytest.mark.parametrize("action", ["opened", "reopened", "synchronize"])
