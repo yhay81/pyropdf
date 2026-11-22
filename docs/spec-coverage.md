@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 8 | 16 | 813 |
-| interpret | 16 | 19 | 0 | 9 | 20 | 773 |
-| create | 0 | 0 | 25 | 5 | 22 | 785 |
-| edit | 0 | 0 | 0 | 10 | 18 | 809 |
-| preserve | 0 | 0 | 0 | 1 | 18 | 818 |
+| read | 0 | 0 | 0 | 8 | 15 | 814 |
+| interpret | 16 | 19 | 0 | 9 | 19 | 774 |
+| create | 0 | 0 | 25 | 5 | 21 | 786 |
+| edit | 0 | 0 | 0 | 10 | 17 | 810 |
+| preserve | 0 | 0 | 0 | 1 | 17 | 819 |
 
 ## Clauses
 
@@ -240,13 +240,13 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 done | 1 partial | 1 done | 1 done | 1 done |
-| ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32007 | RichMedia glTF assets | `gltf-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 
 ## Unfinished work by milestone
 
-143 unfinished cells in 837 features: 16 engine, 33 partial, 94 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+138 unfinished cells in 837 features: 16 engine, 33 partial, 89 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -315,8 +315,6 @@ Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 
 - [#968](https://github.com/yhay81/pyropdf/issues/968) Interpret AES-GCM encrypted pages through the authenticated store source. Render and extract from the authenticated AES-GCM store version without serializing untouched objects.
     - interpret — `aes-gcm`.
-- [#866](https://github.com/yhay81/pyropdf/issues/866) Verify and maintain document integrity protection for encrypted PDFs under ISO/TS 32004. Verify and maintain integrity protection during encrypted saves and refuse tampered data.
-    - read, interpret, create, edit, preserve — `integrity-protection`.
 - [#1014](https://github.com/yhay81/pyropdf/issues/1014) Read the remaining legacy RC2 and RC4 recipient envelope key lengths. Read and preserve older CMS RC2 effective key sizes and RC4 key lengths beyond the optional provider's defaults.
     - read, edit, preserve — `public-key-security-handler`.
 - [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.

@@ -11,10 +11,10 @@ use pyo3::types::PyBytes;
 use pyropdf_engine::sign::der::Encode;
 use pyropdf_engine::sign::{self, Chain, DigestAlgorithm, Error, Failure, Key};
 use pyropdf_store::save;
-use pyropdf_store::value::Bytes;
+use pyropdf_store::value::{Bytes, Reference};
 use pyropdf_store::version::Document;
 
-use crate::document::{_Document, open_base};
+use crate::document::_Document;
 use crate::errors::{PdfError, save_error, store_error};
 use crate::history::{begin_transaction, outside_transaction};
 
@@ -230,81 +230,145 @@ pub fn begin_signing(py: Python<'_>, document: &_Document) -> PyResult<()> {
 /// caller discards that transaction when this refuses. The digest and the
 /// save run without the GIL; the callbacks take it.
 #[pyfunction]
-#[pyo3(signature = (document, reserve, signer, timestamper=None))]
+#[pyo3(signature = (document, signature, reserve, signer, timestamper=None))]
 pub fn sign_document(
     py: Python<'_>,
     document: &_Document,
+    signature: u32,
     reserve: usize,
     signer: &_Signer,
     timestamper: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyBytes>> {
     crate::errors::boundary(|| {
-        if !document.in_outermost_transaction() {
-            return Err(PdfError::new_err(
-                "signing needs the transaction of begin_signing",
-            ));
-        }
-        let (version, _) = crate::security::prepare(py, document, true, None)?;
-        let before = document.reading()?;
-        let budget = document.budget();
-        let mut data = py.detach(|| {
-            let mut out = Vec::new();
-            save::incremental(&version, &mut out, &budget)
-                .map_err(|error| save_error(&error, "PDF bytes"))?;
-            Ok::<_, PyErr>(out)
-        })?;
-        let result = py.detach(|| {
-            let sign_value = |attributes: &[u8]| -> PyResult<Vec<u8>> {
-                match &signer.source {
-                    Source::Key(key) => key
-                        .sign_with_digest(attributes, signer.chain.digest())
-                        .map_err(sign_error),
-                    Source::Callback(callable) => Python::attach(|py| {
-                        let value = callable.call1(py, (PyBytes::new(py, attributes),))?;
-                        returned(value.bind(py), "the signer's callback")
-                    }),
-                }
-            };
-            let stamp = timestamper.as_ref().map(|callable| {
-                move |digest: &[u8], algorithm: DigestAlgorithm| {
-                    Python::attach(|py| {
-                        let value =
-                            callable.call1(py, (PyBytes::new(py, digest), algorithm.name()))?;
-                        returned(value.bind(py), "the timestamper")
-                    })
-                }
+        signed_revision(py, document, signature, reserve, "signed", |data| {
+            let result = py.detach(|| {
+                let sign_value = |attributes: &[u8]| -> PyResult<Vec<u8>> {
+                    match &signer.source {
+                        Source::Key(key) => key
+                            .sign_with_digest(attributes, signer.chain.digest())
+                            .map_err(sign_error),
+                        Source::Callback(callable) => Python::attach(|py| {
+                            let value = callable.call1(py, (PyBytes::new(py, attributes),))?;
+                            returned(value.bind(py), "the signer's callback")
+                        }),
+                    }
+                };
+                let stamp = timestamper.as_ref().map(|callable| {
+                    move |digest: &[u8], algorithm: DigestAlgorithm| {
+                        Python::attach(|py| {
+                            let value =
+                                callable.call1(py, (PyBytes::new(py, digest), algorithm.name()))?;
+                            returned(value.bind(py), "the timestamper")
+                        })
+                    }
+                });
+                sign::sign(data, reserve, &signer.chain, sign_value, stamp)
             });
-            sign::sign(&mut data, reserve, &signer.chain, sign_value, stamp)
-        });
-        match result {
-            Ok(()) => {}
-            Err(Failure::Sign(error)) => return Err(sign_error(error)),
-            Err(Failure::Callback(error)) => return Err(error),
-        }
-        // A callback that edited the document wrote into the transaction, which
-        // the signed bytes do not hold.
-        let after = document.reading()?;
-        let unchanged = Arc::ptr_eq(&before, &after)
-            || before
-                .changes(&after, &budget)
-                .map_err(|e| store_error(&e))?
-                .is_some_and(|changes| changes.is_empty());
-        if !unchanged {
-            return Err(PdfError::new_err(
-                "the document changed while it was being signed",
-            ));
-        }
-        let limit = document.document()?.history().limit;
-        let signed = Bytes::from(data);
-        let base = py
-            .detach(|| open_base(signed.clone(), None, &budget))
-            .map_err(|e| store_error(&e))?;
-        // Other threads' edits wait for the transaction's writer lock, which
-        // the replaced document's transaction holds until it is dropped; then
-        // they begin again on the signed document.
-        document.replace(Document::new(Arc::new(base), limit));
-        Ok(PyBytes::new(py, &signed).unbind())
+            match result {
+                Ok(()) => {}
+                Err(Failure::Sign(error)) => return Err(sign_error(error)),
+                Err(Failure::Callback(error)) => return Err(error),
+            }
+            Ok(())
+        })
     })?
+}
+
+/// Finish the caller's RFC 3161 token in an incremental signing revision.
+#[pyfunction]
+pub fn timestamp_document(
+    py: Python<'_>,
+    document: &_Document,
+    signature: u32,
+    reserve: usize,
+    stamp: Py<PyAny>,
+) -> PyResult<Py<PyBytes>> {
+    crate::errors::boundary(|| {
+        signed_revision(py, document, signature, reserve, "timestamped", |data| {
+            let token = stamp.call1(py, (PyBytes::new(py, data),))?;
+            let result = token.cast_bound::<PyBytes>(py)?.as_bytes();
+            if result.len() != data.len() {
+                return Err(PdfError::new_err(
+                    "the timestamp changed the reserved PDF length",
+                ));
+            }
+            data.copy_from_slice(result);
+            Ok(())
+        })
+    })?
+}
+
+fn signed_revision(
+    py: Python<'_>,
+    document: &_Document,
+    signature: u32,
+    reserve: usize,
+    operation: &'static str,
+    complete: impl FnOnce(&mut [u8]) -> PyResult<()>,
+) -> PyResult<Py<PyBytes>> {
+    if !document.in_outermost_transaction() {
+        return Err(PdfError::new_err(
+            "signing needs the transaction of begin_signing",
+        ));
+    }
+    let (version, _) = crate::security::prepare(py, document, true, None)?;
+    let before = document.reading()?;
+    let budget = document.budget();
+    let reference = Reference::new(
+        signature,
+        version
+            .generation(signature)
+            .ok_or_else(|| PdfError::new_err("missing signature object"))?,
+    );
+    let (mut data, mac) = py.detach(|| {
+        let mut data = Vec::new();
+        let mac = save::incremental_signature(&version, &mut data, &budget, reference)
+            .map_err(|e| save_error(&e, "PDF bytes"))?;
+        Ok::<_, PyErr>((data, mac))
+    })?;
+    let range = if mac.is_some() {
+        Some(
+            sign::Placeholder::find(&data, reserve)
+                .map_err(sign_error)?
+                .byte_range(data.len()),
+        )
+    } else {
+        None
+    };
+    complete(&mut data)?;
+    if let (Some(mac), Some([_, start, end, _])) = (mac, range) {
+        py.detach(|| mac.attach(&mut data, start, end, &budget))
+            .map_err(|e| store_error(&e))?;
+    }
+    // A callback that edited the document wrote into the transaction, which
+    // the signed bytes do not hold.
+    let after = document.reading()?;
+    let unchanged = Arc::ptr_eq(&before, &after)
+        || before
+            .changes(&after, &budget)
+            .map_err(|e| store_error(&e))?
+            .is_some_and(|changes| changes.is_empty());
+    if !unchanged {
+        return Err(PdfError::new_err(format!(
+            "the document changed while it was being {operation}"
+        )));
+    }
+    let limit = document.document()?.history().limit;
+    let signed = Bytes::from(data);
+    let base = py
+        .detach(|| {
+            save::FileBase::open_signed_revision(
+                signed.clone(),
+                version.base().file().expect("incremental source"),
+                &budget,
+            )
+        })
+        .map_err(|e| store_error(&e))?;
+    // Other threads' edits wait for the transaction's writer lock, which
+    // the replaced document's transaction holds until it is dropped; then
+    // they begin again on the signed document.
+    document.replace(Document::new(Arc::new(base), limit));
+    Ok(PyBytes::new(py, &signed).unbind())
 }
 
 /// A check of `sign::verify`: key, scheme, digest, signature, and message.

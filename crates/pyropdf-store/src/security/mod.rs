@@ -13,6 +13,7 @@
 mod crypto;
 pub(crate) mod embedded;
 pub(crate) mod filters;
+pub mod integrity;
 mod recipient;
 pub use recipient::{RecipientEncryption, RecipientPayload};
 #[cfg(test)]
@@ -757,13 +758,17 @@ pub enum Encryption {
     Password(PasswordEncryption),
     /// A public-key handler with CMS envelopes for the authorized recipients.
     Recipient(RecipientEncryption),
+    /// Password encryption with an ISO/TS 32004:2024 MAC on every revision.
+    PasswordWithMac(PasswordEncryption),
+    /// Recipient envelopes whose permission bit 13 is clear, with a document MAC.
+    RecipientWithMac(RecipientEncryption),
 }
 
 impl Encryption {
     pub(crate) fn method(&self) -> Method {
         match self {
-            Self::Password(password) => password.method,
-            Self::Recipient(recipient) => recipient.method,
+            Self::Password(password) | Self::PasswordWithMac(password) => password.method,
+            Self::Recipient(recipient) | Self::RecipientWithMac(recipient) => recipient.method,
         }
     }
 
@@ -772,6 +777,16 @@ impl Encryption {
         match self {
             Self::Password(password) => password.build(id, budget),
             Self::Recipient(recipient) => recipient.build(id, budget),
+            Self::PasswordWithMac(password) => {
+                let (mut dict, id, mut handler) = password.build(id, budget)?;
+                integrity::enable(&mut dict, &mut handler)?;
+                Ok((dict, id, handler))
+            }
+            Self::RecipientWithMac(recipient) => {
+                let (mut dict, id, mut handler) = recipient.build(id, budget)?;
+                integrity::enable(&mut dict, &mut handler)?;
+                Ok((dict, id, handler))
+            }
         }
     }
 }

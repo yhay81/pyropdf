@@ -23,6 +23,12 @@ sha2 = "0.11.1"
 sha1 = "0.11.0"
 # Fresh AES initialization vectors for recipient ciphertext.
 getrandom = "0.4.3"
+# The restricted ISO/TS 32004:2024 DER profile and its cryptographic primitives.
+der = { version = "0.8.3", features = ["alloc", "derive", "oid"] }
+aes-kw = { version = "0.3.1", default-features = false }
+hkdf = "0.13.0"
+hmac = "0.13.0"
+sha3 = { version = "0.11.0", default-features = false }
 
 # The Flate encoder of a save that compresses streams (DESIGN.md section
 # 4.4), the version that the binding and hayro already pull in.

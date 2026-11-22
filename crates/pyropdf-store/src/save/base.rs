@@ -93,6 +93,35 @@ impl FileBase {
         })
     }
 
+    /// Reopen a signed incremental successor using its original credentials.
+    /// Reject a different prefix or encryption dictionary before sharing its handler.
+    pub fn open_signed_revision(
+        bytes: Bytes,
+        predecessor: &Index,
+        budget: &Budget,
+    ) -> Result<Self> {
+        let source = predecessor.bytes();
+        let prefix = bytes
+            .get(..source.len())
+            .ok_or_else(|| Error::malformed("signed bytes do not extend the source"))?;
+        for (actual, expected) in prefix.chunks(64 * 1024).zip(source.chunks(64 * 1024)) {
+            budget.poll()?;
+            if actual != expected {
+                return Err(Error::malformed("signed bytes do not extend the source"));
+            }
+        }
+        let mut index = Index::open(bytes, budget)?;
+        if encryption_dict(&index, budget)? != encryption_dict(predecessor, budget)? {
+            return Err(Error::malformed(
+                "signing changed the encryption dictionary",
+            ));
+        }
+        if let Some(handler) = predecessor.security() {
+            index.unlock(handler.clone(), budget)?;
+        }
+        Self::new(index, budget)
+    }
+
     /// Opens revision `revision` (oldest = `0`) of `index` as an independent
     /// [`FileBase`] sharing `index`'s bytes, or `None` when `revision` is out
     /// of range.
@@ -304,7 +333,7 @@ fn unlock(index: &mut Index, password: Option<&[u8]>, budget: &Budget) -> Result
     Ok(())
 }
 
-fn encryption_dict(index: &Index, budget: &Budget) -> Result<Option<Dict>> {
+pub(crate) fn encryption_dict(index: &Index, budget: &Budget) -> Result<Option<Dict>> {
     Ok(match index.trailer().get("Encrypt") {
         Some(Value::Dict(dict)) => Some(dict.clone()),
         Some(&Value::Reference(reference)) => match index.object(reference, budget)? {

@@ -50,6 +50,7 @@ fn name<'a>(dict: &'a Dict, field: &str) -> Result<&'a [u8]> {
 
 #[derive(Clone)]
 pub(super) struct RecipientAccess {
+    pub(super) authenticated_permissions: bool,
     profile_id: Option<[u8; 32]>,
     pub(super) subfilter: &'static str,
     owner: Arc<AtomicBool>,
@@ -214,6 +215,7 @@ impl Profile {
             filters: super::filters::Filters::default(),
             key,
             recipient: Some(RecipientAccess {
+                authenticated_permissions: true,
                 profile_id: None,
                 subfilter: self.subfilter,
                 owner: Arc::new(AtomicBool::new(permissions & 2 != 0)),
@@ -548,6 +550,7 @@ fn open_filters(
     let mut entries = BudgetVec::new(budget);
     let mut primary: Option<(bool, Handler)> = None;
     let document_public = strings == IDENTITY && streams == IDENTITY;
+    let mut authenticated_permissions = false;
     let mut doc_permissions = if document_public { 0 } else { u32::MAX };
     let mut total = 0usize;
     for (name, filter) in filters.iter() {
@@ -595,13 +598,7 @@ fn open_filters(
                     RecipientPayload::Stream(bytes) => bytes,
                 };
                 let flags = if with_permissions {
-                    let flags = permissions(payload)?;
-                    if flags & (1 << 12) == 0 && version == 5 {
-                        return Err(Error::malformed(
-                            "public-key encryption requires unsupported PDF MAC validation",
-                        ));
-                    }
-                    flags
+                    permissions(payload)?
                 } else if payload.len() == 20 {
                     0
                 } else {
@@ -609,6 +606,8 @@ fn open_filters(
                         "a stream-specific CMS recipient payload must contain only a 20-byte seed",
                     ));
                 };
+                authenticated_permissions |=
+                    with_permissions && (required || name_bytes == embedded);
                 if required {
                     doc_permissions &= flags;
                 } else if document_public && name_bytes == embedded {
@@ -648,6 +647,7 @@ fn open_filters(
             password: Box::default(),
             legacy_reader: None,
             recipient: Some(RecipientAccess {
+                authenticated_permissions: true,
                 profile_id: None,
                 subfilter: "adbe.pkcs7.s5",
                 owner: Arc::new(AtomicBool::new(false)),
@@ -676,6 +676,7 @@ fn open_filters(
         Access::User
     };
     if let Some(access) = &mut handler.recipient {
+        access.authenticated_permissions = authenticated_permissions;
         // Subsequent credentials share only keys verified against this same encryption dictionary.
         access.profile_id = encrypt
             .lexeme()

@@ -349,6 +349,7 @@ method and property of its classes with its full description.
 
 - [`Access`](encryption.md#access): What a password opened: the user's restricted access, or the owner's full access.
 - [`Encryption`](encryption.md#encryption_1): How `Document.save` and `Document.to_bytes` encrypt a full save.
+- [`IntegrityReport`](encryption.md#integrityreport): Result of verifying the ISO/TS 32004:2024 MAC of an opened PDF revision.
 - [`Permissions`](encryption.md#permissions): What an encrypted document permits the user password, combined with `|`.
 - [`RecipientCredential`](encryption.md#recipientcredential): An X.509 recipient certificate and its matching RSA or ECDH private key.
 - [`RecipientEncryption`](encryption.md#recipientencryption): Encrypt a full save for certificate recipients with Adobe.PubSec, adbe.pkcs7.s5 and AES.
