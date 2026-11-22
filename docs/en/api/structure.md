@@ -159,10 +159,11 @@ StructureChildren.add(
     alt: str | None = None,
     actual_text: str | None = None,
     expanded: str | None = None,
+    namespace: str | None = None,
 ) -> StructureElement
 ```
 
-Create and insert a child `StructureElement` in one transaction.
+Insert a child in one transaction, registering its optional PDF 2.0 namespace URI.
 
 ### `StructureChildren.move`
 
@@ -171,6 +172,24 @@ StructureChildren.move(index: int, to: int)
 ```
 
 Move child element `index` to child-element position `to` in one transaction.
+
+## `StructureChildRule`
+
+```python
+StructureChildRule(
+    *,
+    parent_xref: int | None,
+    parent_role: str,
+    child_role: str,
+    count: int,
+    rule: str,
+    allowed: bool | None,
+)
+```
+
+An Annex L relationship, its observed count and the applicable occurrence rule.
+
+`allowed` is unknown for namespace or semantic conditions that the table alone cannot decide.
 
 ## `StructureElement`
 
@@ -311,6 +330,58 @@ StructureElement.items: tuple[StructureElement | MarkedContentReference | Object
 
 The child elements, marked-content items, and object references in `/K` reading order.
 
+### `StructureElement.set_attributes`
+
+```python
+StructureElement.set_attributes(
+    owner: str,
+    values: Mapping[str, object],
+    *,
+    namespace: str | None = None,
+)
+```
+
+Set standard or export-format attributes, or supply a registered namespace URI for the NSO owner.
+
+### `StructureElement.add_class`
+
+```python
+StructureElement.add_class(name: str)
+```
+
+Apply a defined attribute class without duplicating it or removing earlier class revisions.
+
+### `StructureElement.set_user_property`
+
+```python
+StructureElement.set_user_property(
+    name: str,
+    value: object,
+    *,
+    formatted: str | None = None,
+    hidden: bool = False,
+)
+```
+
+Create or update a named user property and declare it in the catalog's mark information.
+
+### `StructureElement.set_object_reference`
+
+```python
+StructureElement.set_object_reference(
+    target: Dictionary,
+    *,
+    page: Page | int,
+    replace: Dictionary | None = None,
+) -> ObjectReference
+```
+
+Attach an annotation or a drawn XObject to the specified page and its structure parent.
+
+A whole XObject drawn on several pages can have one reference per page in the same element.
+To retarget a reference, supply an untagged replacement and the page where it is drawn.
+When the old target has several references, this replaces the one on that page.
+
 ### `StructureElement.move`
 
 ```python
@@ -326,6 +397,21 @@ Move this element under `parent` (`None` for `/StructTreeRoot`) at child positio
 Updates both `/K` containers and this element's `/P` in one transaction,
 refusing moves into another document, into itself or a descendant, or past
 the 256-level depth limit.
+
+## `StructureText`
+
+```python
+StructureText(
+    *,
+    element: StructureElement,
+    item: MarkedContentReference | ObjectReference | None,
+    text: str | None,
+)
+```
+
+One piece of logical text and its originating element or content reference.
+
+A missing text value identifies a reference whose text cannot be resolved.
 
 ## `StructureTree`
 
@@ -422,6 +508,7 @@ StructureTree.add(
     alt: str | None = None,
     actual_text: str | None = None,
     expanded: str | None = None,
+    namespace: str | None = None,
 ) -> StructureElement
 ```
 
@@ -429,6 +516,59 @@ Create and insert a top-level `StructureElement` in one transaction.
 
 Creates `/StructTreeRoot` and sets `MarkInfo/Marked` to `True` when
 the document has no structure tree yet.
+
+### `StructureTree.set_class_attributes`
+
+```python
+StructureTree.set_class_attributes(
+    name: str,
+    owner: str,
+    values: Mapping[str, object],
+    *,
+    namespace: str | None = None,
+)
+```
+
+Define or update an attribute class, keeping existing owners and entries under other names.
+
+### `StructureTree.edit`
+
+```python
+StructureTree.edit() -> Generator[StructureTree]
+```
+
+Group edits and roll back newly invalid determinate PDF 2.0 Annex L relationships.
+
+The final child order and multiplicities are checked together, allowing temporarily
+incomplete groups such as Ruby. Conditional relationships remain available via child_rules().
+
+### `StructureTree.reading_order`
+
+```python
+StructureTree.reading_order(
+    *,
+    expand_abbreviations: bool = False,
+) -> tuple[StructureText, ...]
+```
+
+Extract logical text in mixed structure-child order, including cross-page references.
+
+Use element replacement text, or its expansion when requested. Each item retains
+its structure element. Unattributable text, including a Form stream without
+a replacement, has a missing text value. Untagged documents return an empty
+tuple. Both structure readers visit at most 65,536 child entries and
+256 levels, and reject cycles and malformed children.
+
+### `StructureTree.child_rules`
+
+```python
+StructureTree.child_rules() -> tuple[StructureChildRule, ...]
+```
+
+Read the observed parent/child multiplicities under the PDF 2.0 Annex L rules.
+
+A conditional or cross-namespace relationship retains its own rule and an
+indeterminate verdict where the namespace or role-specific specification is required.
 
 ### `StructureTree.walk`
 

@@ -10,7 +10,7 @@ pyHanko.
 from __future__ import annotations
 
 import typing
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -20,15 +20,17 @@ from pyropdf._core import _Signer
 from pyropdf._errors import PdfError
 from pyropdf._fallback_fonts import _set_fallback
 from pyropdf._form import FieldType
-from pyropdf._metadata import pdf_date
+from pyropdf._metadata import _require_version, pdf_date
 from pyropdf._objects import Array, Dictionary, Name, Stream, _catalog
+from pyropdf._signature_build import build_entries
+from pyropdf._signature_seeds import field_settings
 from pyropdf._signature_structures import (
     DocMdpPermission,
     FieldLock,
+    _updated_lock,
     _validate_doc_mdp,
     build_reference_entries,
     ensure_pades_version,
-    inherit_prepared_field_settings,
     is_timestamp_sig,
     parse_rfc3161_tst_info,
     read_certification,
@@ -40,15 +42,17 @@ from pyropdf._signature_structures import (
 )
 
 if TYPE_CHECKING:
+    from cryptography.hazmat.primitives.hashes import HashAlgorithm
+
     from pyropdf._document import Document
 
 #: A time-stamp callback: it receives the digest of the signature value and
-#: the name of its hash algorithm (``"sha256"`` or ``"sha384"``) and returns
+#: the name of the selected SHA-2, SHA-3 or SHAKE256 algorithm and returns
 #: the DER of an RFC 3161 time-stamp token over that digest.
 Timestamper: TypeAlias = typing.Callable[[bytes, str], bytes]
 Timestamper.__doc__ = (
     "A time-stamp callback: it receives the digest of the signature value and "
-    'the name of its hash algorithm (``"sha256"`` or ``"sha384"``) and returns '
+    "the name of the selected SHA-2, SHA-3 or SHAKE256 algorithm and returns "
     "the DER of an RFC 3161 time-stamp token over that digest."
 )
 
@@ -76,9 +80,12 @@ def _bytes(name: str, value: object) -> bytes:
 class Signer:
     """A signing key or callback, with its certificate chain, which :meth:`Document.sign` signs with.
 
-    :meth:`from_pem` and :meth:`from_pkcs12` read ECDSA P-256 and P-384
-    keys, which pyropdf signs with itself. :meth:`callback` signs with a
-    key that stays outside pyropdf: an RSA key, an HSM, or PKCS#11.
+    :meth:`from_pem` and :meth:`from_pkcs12` read NIST and Brainpool
+    ECDSA, Ed25519 and Ed448 keys. P-256 and P-384 run in Rust; the
+    other curves use the optional ``cryptography`` package. :meth:`callback` signs with a
+    key that stays outside pyropdf, including P-521, Brainpool P256r1,
+    P384r1 and P512r1, Ed25519, Ed448, RSA, or an HSM. Use the optional
+    ``cryptography`` package to verify signatures on those additional curves.
     """
 
     __slots__ = ("_core",)
@@ -97,41 +104,108 @@ class Signer:
         return signer
 
     @classmethod
-    def from_pem(cls, key: bytes | str, certificates: bytes | str, *, password: bytes | str | None = None) -> Signer:
+    def _local(
+        cls,
+        loaded: _Signer | tuple[bytes, list[bytes]],
+        digest_algorithm: str | None,
+        *,
+        ordered: bool,
+    ) -> Signer:
+        if isinstance(loaded, _Signer):
+            return cls._wrap(loaded)
+        try:
+            from cryptography import x509  # noqa: PLC0415
+            from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+            from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519  # noqa: PLC0415
+        except ImportError as error:
+            msg = (
+                "loading a P-521, Brainpool or EdDSA key requires cryptography; an external key can use Signer.callback"
+            )
+            raise ValueError(msg) from error
+        encoded, certificates = loaded
+        key = serialization.load_der_private_key(encoded, password=None)
+        if not isinstance(key, (ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey)):
+            msg = "this private key must sign through Signer.callback"
+            raise ValueError(msg)  # noqa: TRY004 - the encoded key type is an invalid file value.
+        public = key.public_key()
+        index = next(
+            (n for n, der in enumerate(certificates) if x509.load_der_x509_certificate(der).public_key() == public),
+            None,
+        )
+        if index is None or (ordered and index != 0):
+            msg = (
+                "the first certificate does not hold the key's public key"
+                if ordered
+                else "the PKCS#12 file holds no certificate of its key"
+            )
+            raise ValueError(msg)
+        certificates[0], certificates[index] = certificates[index], certificates[0]
+        if isinstance(key, ec.EllipticCurvePrivateKey):
+            # The CMS chain checks the selected curve/digest pair at construction.
+            def sign(data: bytes) -> bytes:
+                return key.sign(data, ec.ECDSA(algorithm))
+
+            result = cls.callback(certificates, sign, digest_algorithm=digest_algorithm)
+            algorithm = _backend_hash(result.digest_algorithm)
+            return result
+        return cls.callback(certificates, key.sign, digest_algorithm=digest_algorithm)
+
+    @classmethod
+    def from_pem(
+        cls,
+        key: bytes | str,
+        certificates: bytes | str,
+        *,
+        password: bytes | str | None = None,
+        digest_algorithm: str | None = None,
+    ) -> Signer:
         """Read a PEM private key and the PEM certificate chain whose first certificate holds its public key.
 
         ``key`` is a ``PRIVATE KEY`` (PKCS#8), an ``ENCRYPTED PRIVATE KEY``
-        that ``password`` decrypts, or an ``EC PRIVATE KEY`` (SEC1), on P-256
-        or P-384. ``certificates`` holds the signer's certificate first,
+        that ``password`` decrypts, or an ``EC PRIVATE KEY`` (SEC1).
+        ``certificates`` holds the signer's certificate first,
         then any intermediate certificates to embed. A key that pyropdf does
         not sign with, a wrong password, or a certificate of another key
-        raises :class:`ValueError`.
+        raises :class:`ValueError`. Choose the curve's digest with ``digest_algorithm`` as in :meth:`callback`.
         """
         secret = None if password is None else _bytes("password", password)
-        return cls._wrap(_Signer.from_pem(_bytes("key", key), _bytes("certificates", certificates), secret))
+        return cls._local(
+            _Signer.from_pem(_bytes("key", key), _bytes("certificates", certificates), secret, digest_algorithm),
+            digest_algorithm,
+            ordered=True,
+        )
 
     @classmethod
-    def from_pkcs12(cls, data: bytes, password: str | None = None) -> Signer:
-        """Read the ECDSA key and the certificates of a PKCS#12 file.
+    def from_pkcs12(cls, data: bytes, password: str | None = None, *, digest_algorithm: str | None = None) -> Signer:
+        """Read the ECDSA or EdDSA key and its certificates from a PKCS#12 file.
 
         The file is PBES2-encrypted with a SHA-2 MAC, as OpenSSL 3 and
         Python's ``cryptography`` write it; ``None`` is the empty password.
+        ``digest_algorithm`` accepts the same hashes as :meth:`from_pem`.
         Legacy encryption, a wrong password, or a file without exactly one
         key and its certificate raises :class:`ValueError`.
         """
         if password is not None and not isinstance(password, str):
             msg = f"password must be a str or None: {type(password).__name__}"
             raise TypeError(msg)
-        return cls._wrap(_Signer.from_pkcs12(_bytes("data", data), password or ""))
+        return cls._local(
+            _Signer.from_pkcs12(_bytes("data", data), password or "", digest_algorithm), digest_algorithm, ordered=False
+        )
 
     @classmethod
-    def callback(cls, certificates: Sequence[bytes], sign: Callable[[bytes], bytes]) -> Signer:
+    def callback(
+        cls, certificates: Sequence[bytes], sign: Callable[[bytes], bytes], *, digest_algorithm: str | None = None
+    ) -> Signer:
         """Sign with ``sign``, which holds the key of the first of the DER ``certificates``.
 
         ``sign`` receives the bytes to sign, the DER of the signed
-        attributes, and returns their signature: PKCS#1 v1.5 with SHA-256
-        for an RSA key, and the DER of an ECDSA signature with SHA-256 for a
-        P-256 key or SHA-384 for a P-384 key. Its exceptions propagate from
+        attributes, and returns their signature. For ECDSA return a DER
+        signature using ``digest_algorithm``. NIST curves use the corresponding
+        SHA-2 or SHA-3 digest (256, 384 or 512 bits). Brainpool curves allow
+        the same choices plus the longer digests. The default is the matching
+        SHA-2 digest. Ed25519 and Ed448 sign the attributes directly and use
+        ``sha512`` and ``shake256`` respectively for the document digest.
+        RSA uses PKCS#1 v1.5 with a SHA-2 or SHA-3 digest (SHA-256 by default). Callback exceptions propagate from
         :meth:`Document.sign`.
         """
         if not callable(sign):
@@ -141,7 +215,7 @@ class Signer:
             msg = "certificates must be a sequence of DER certificates, not one"
             raise TypeError(msg)
         chain = [_bytes("a certificate", certificate) for certificate in certificates]
-        return cls._wrap(_Signer.callback(chain, sign))
+        return cls._wrap(_Signer.callback(chain, sign, digest_algorithm))
 
     @property
     def certificates(self) -> tuple[bytes, ...]:
@@ -150,7 +224,7 @@ class Signer:
 
     @property
     def digest_algorithm(self) -> str:
-        """Return the name of the signature's digest algorithm: ``"sha256"`` or ``"sha384"``."""
+        """Return the selected SHA-2, SHA-3, or fixed 512-bit SHAKE256 digest name."""
         return self._core.digest_algorithm
 
     def __repr__(self) -> str:
@@ -229,29 +303,55 @@ def _validate_reserve(reserve: object) -> int:
     return reserve
 
 
-def _resolve_sign_settings(
+def _resolve_sign_settings(  # noqa: PLR0913 - the requested field and its signing settings.
     document: Document,
     field: str,
     checked_mdp: DocMdpPermission | None,
     field_lock: FieldLock | None,
     reason_text: str | None,
+    *,
+    signer: Signer,
+    timestamped: bool,
 ) -> tuple[DocMdpPermission | None, FieldLock | None, str | None]:
-    effective_mdp = checked_mdp
-    effective_lock = field_lock
-    effective_reason = reason_text
+    effective_mdp, effective_lock, effective_reason = checked_mdp, field_lock, reason_text
     if field in document.form:
         existing = document.form[field]
         if existing.type is FieldType.SIGNATURE and not existing.is_signed:
-            effective_mdp, effective_lock, effective_reason = inherit_prepared_field_settings(
+            effective_mdp, effective_lock, effective_reason = field_settings(
+                document,
                 existing.obj,
-                effective_mdp,
-                effective_lock,
-                effective_reason,
+                checked_mdp,
+                field_lock,
+                reason_text,
+                None if signer._core.fixed_digest else signer.digest_algorithm,  # noqa: SLF001
+                signer.certificates,
+                timestamped=timestamped,
             )
     if effective_mdp is not None and (read_certification(document) is not None or bool(document.signatures)):
         msg = "cannot add a DocMDP certification signature to a document that is already signed or certified"
         raise ValueError(msg)
     return effective_mdp, effective_lock, effective_reason
+
+
+def _apply_lock(document: Document, field: str, lock: FieldLock | None) -> None:
+    holder = document.form[field].obj
+    previous = bool(document.signatures)
+    if lock is not None and (
+        ("Lock" not in holder and not previous)
+        or (lock.permission is not None and ("Lock" not in holder or holder["Lock"].get("P") != lock.permission))
+    ):
+        # A later approval can add a FieldMDP transform without rewriting
+        # the unsigned field's previously certified structure.
+        holder["Lock"] = _updated_lock(document, holder.get("Lock"), lock)
+    if previous:
+        for verdict in document.changes(incremental=True).permissions:
+            if (
+                verdict.field == field
+                and verdict.transform.startswith(("FieldMDP", "Field lock P="))
+                and verdict.permitted is False
+            ):
+                msg = f"signing field {field!r} violates the {verdict.transform} lock from {verdict.signature!r}"
+                raise ValueError(msg)
 
 
 def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
@@ -265,6 +365,7 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
     reason: str | None,
     location: str | None,
     contact: str | None,
+    build_properties: Mapping[str, Mapping[str, object]] | None = None,
     reserve: int,
 ) -> bytes:
     """Sign ``document`` in a new revision, as :meth:`Document.sign` describes, and return the signed bytes."""
@@ -298,6 +399,14 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
             checked_mdp,
             field_lock,
             reason_text,
+            signer=signer,
+            timestamped=timestamper is not None,
+        )
+        build = build_entries(build_properties)
+        _require_version(
+            document,
+            _catalog(document),
+            (1, 7) if "SigQ" in build else (1, 6) if "REx" in build.get("App", {}) else (1, 5),
         )
         optional_entries = {
             key: text
@@ -316,8 +425,10 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
             "ByteRange": list(_BYTE_RANGE_PLACEHOLDER),
             "Contents": b"0" * (2 * reserve),
             "M": pdf_date(datetime.now(UTC)),
+            "Prop_Build": build,
             **optional_entries,
         }
+        _declare_signature_extensions(document, *signer._core.extensions)  # noqa: SLF001
         ensure_pades_version(document)
         if effective_mdp is not None or effective_lock is not None:
             entries["Reference"] = build_reference_entries(document, effective_mdp, effective_lock)
@@ -325,6 +436,7 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
         _signature_field(document, field, signature)
         if effective_mdp is not None:
             write_perms_doc_mdp(document, signature)
+        _apply_lock(document, field, effective_lock)
         signed = _core.sign_document(core, reserve, signer._core, timestamper)  # noqa: SLF001
     except BaseException:
         # Signing ends its transaction only once it replaced the document.
@@ -332,6 +444,45 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
         raise
     document._drawn = None  # noqa: SLF001 - what canvases drew lived in the replaced document.
     return signed
+
+
+def _declare_signature_extensions(document: Document, hash_extension: bool, curve_extension: bool) -> None:  # noqa: FBT001
+    if not (hash_extension or curve_extension):
+        return
+    catalog = _catalog(document)
+    require_signature_pdf20(document, catalog, "the selected signature algorithm")
+    if "Extensions" not in catalog:
+        catalog["Extensions"] = {}
+    extensions = catalog["Extensions"]
+    if not isinstance(extensions, Dictionary):
+        msg = "the catalog Extensions entry must be a dictionary"
+        raise PdfError(msg)
+    if "ISO_" not in extensions:
+        extensions["ISO_"] = []
+    declarations = extensions["ISO_"]
+    if isinstance(declarations, Dictionary):
+        extensions["ISO_"] = [declarations]
+        declarations = extensions["ISO_"]
+    if not isinstance(declarations, Array):
+        msg = "the ISO_ developer extensions must be an array in PDF 2.0"
+        raise PdfError(msg)
+    for level, standard, required in ((32001, 45874, hash_extension), (32002, 45875, curve_extension)):
+        if required and not any(
+            isinstance(item, Dictionary)
+            and item.get("BaseVersion") == "2.0"
+            and item.get("ExtensionLevel") == level
+            and getattr(item.get("ExtensionRevision"), "text", None) == ":2022"
+            for item in declarations
+        ):
+            declarations.append(
+                {
+                    "Type": Name("DeveloperExtensions"),
+                    "BaseVersion": Name("2.0"),
+                    "ExtensionLevel": level,
+                    "ExtensionRevision": ":2022",
+                    "URL": f"https://www.iso.org/standard/{standard}.html",
+                }
+            )
 
 
 def _find_placeholder(data: bytes, reserve: int) -> tuple[slice, slice]:
@@ -367,10 +518,9 @@ def _fill_timestamp(
     reserve: int,
     timestamper: Timestamper,
     unchanged: Callable[[], bool],
+    digest_algorithm: str,
 ) -> bytes:
     """Patch ``/ByteRange`` and ``/Contents`` with an RFC 3161 ``TimeStampToken`` over ``saved_bytes``."""
-    import hashlib  # noqa: PLC0415
-
     data = bytearray(saved_bytes)
     br_slice, contents_slice = _find_placeholder(saved_bytes, reserve)
     c_start = contents_slice.start
@@ -384,8 +534,11 @@ def _fill_timestamp(
     data[br_slice.start : br_slice.start + len(written)] = written
     data[br_slice.start + len(written) : br_slice.stop - 1] = b" " * padding_len
 
-    digest = hashlib.sha256(bytes(data[:c_start]) + bytes(data[c_end:])).digest()
-    raw_token = timestamper(digest, "sha256")
+    digest = _digest(digest_algorithm, bytes(data[:c_start]) + bytes(data[c_end:]))
+    if digest is None:
+        msg = f"unsupported timestamp digest {digest_algorithm}"
+        raise ValueError(msg)
+    raw_token = timestamper(digest, digest_algorithm)
     if not unchanged():
         msg = "the document changed while it was being timestamped"
         raise PdfError(msg)
@@ -399,8 +552,8 @@ def _fill_timestamp(
     except (ValueError, PdfError) as error:
         msg = f"the time-stamp token is not RFC 3161: {error}"
         raise ValueError(msg) from error
-    if imprint_alg != "sha256" or hashed_message != digest:
-        msg = "the time-stamp token does not stamp the document's sha256 digest"
+    if imprint_alg != digest_algorithm or hashed_message != digest:
+        msg = f"the time-stamp token does not stamp the document's {digest_algorithm} digest"
         raise ValueError(msg)
     if len(token) > reserve:
         msg = (
@@ -418,8 +571,12 @@ def timestamp(
     *,
     field: str = "DocTimeStamp",
     reserve: int = DEFAULT_RESERVE,
+    digest_algorithm: str = "sha256",
 ) -> bytes:
     """Append an RFC 3161 ``/DocTimeStamp`` revision to ``document`` and return the timestamped bytes."""
+    if digest_algorithm not in ("sha256", "sha384", "sha512", "sha3_256", "sha3_384", "sha3_512", "shake256"):
+        msg = f"unsupported timestamp digest {digest_algorithm!r}"
+        raise ValueError(msg)
     if not callable(timestamper):
         msg = f"timestamper must be callable: {type(timestamper).__name__}"
         raise TypeError(msg)
@@ -436,6 +593,11 @@ def timestamp(
     try:
         with signature_operation(document, "timestamp"):
             require_signature_pdf20(document, _catalog(document), "/DocTimeStamp")
+            _declare_signature_extensions(
+                document,
+                hash_extension=digest_algorithm.startswith("sha3_") or digest_algorithm == "shake256",
+                curve_extension=False,
+            )
             entries: dict[str, Any] = {
                 "Type": Name("DocTimeStamp"),
                 "Filter": Name("Adobe.PPKLite"),
@@ -453,6 +615,7 @@ def timestamp(
                 reserve,
                 timestamper,
                 lambda: bytes(core.to_bytes(*incremental_args)) == saved_bytes,
+                digest_algorithm,
             )
             max_history = document.history.max_size
             new_core = _core._Document.open_buffer(stamped, document._limits, None)  # noqa: SLF001
@@ -806,51 +969,96 @@ def _digest(name: str, data: bytes) -> bytes | None:
     import hashlib  # noqa: PLC0415
 
     try:
+        if name == "shake256":
+            return hashlib.shake_256(data).digest(64)
         return hashlib.new(name, data).digest()
     except ValueError:
         return None
 
 
-def _check(  # noqa: PLR0911
-    check: tuple[bytes, str, str, bytes, bytes | None], content: bytes, problems: list[str]
-) -> bool | None:
+def _check(check: _core._Check, content: bytes, problems: list[str]) -> bool | None:
     """Return whether one signature verifies: ``None`` when pyropdf cannot check it."""
-    key, scheme, digest_name, signature, message = check
-    prehash = _digest(digest_name, content if message is None else message)
+    key, scheme, digest_name, signature, message, _ = check
+    signed_bytes = content if message is None else message
+    prehash = _digest(digest_name, signed_bytes)
     if prehash is None:
         problems.append(f"the digest algorithm {digest_name} is not one that pyropdf computes")
         return None
     if scheme == "ecdsa":
         try:
             return _core.verify_ecdsa(key, prehash, signature)
-        except ValueError as error:
-            problems.append(str(error))
-            return None
-    if scheme not in ("rsa-pkcs1", "rsa-pss"):
+        except ValueError:
+            # P-521 and Brainpool keys use the same optional backend as RSA.
+            pass
+    if scheme not in ("ecdsa", "ed25519", "ed448", "rsa-pkcs1", "rsa-pss"):
         problems.append(f"the signature scheme {scheme} is not one that pyropdf verifies")
         return None
+    return _check_external(check, signed_bytes, prehash, problems)
+
+
+def _check_external(check: _core._Check, signed_bytes: bytes, prehash: bytes, problems: list[str]) -> bool | None:
     try:
-        from cryptography.exceptions import InvalidSignature  # noqa: PLC0415
-        from cryptography.hazmat.primitives import hashes, serialization  # noqa: PLC0415
-        from cryptography.hazmat.primitives.asymmetric import padding, rsa  # noqa: PLC0415
-        from cryptography.hazmat.primitives.asymmetric.utils import Prehashed  # noqa: PLC0415
+        from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm  # noqa: PLC0415
     except ImportError:
-        problems.append("RSA signatures verify through the cryptography package, which is not installed")
+        problems.append(f"{check[1]} verification with this key requires the cryptography package")
         return None
-    public = serialization.load_der_public_key(key)
-    algorithm = {"sha1": hashes.SHA1, "sha256": hashes.SHA256, "sha384": hashes.SHA384, "sha512": hashes.SHA512}[
-        digest_name
-    ]()
-    if not isinstance(public, rsa.RSAPublicKey):
-        return False
-    scheme_padding = (
-        padding.PKCS1v15()
-        if scheme == "rsa-pkcs1"
-        else padding.PSS(mgf=padding.MGF1(algorithm), salt_length=padding.PSS.AUTO)
-    )
     try:
-        public.verify(signature, prehash, scheme_padding, Prehashed(algorithm))
-    except InvalidSignature:
+        return _verify_external_key(check, signed_bytes, prehash)
+    except (ValueError, InvalidSignature):
+        return False
+    except UnsupportedAlgorithm as error:
+        problems.append(str(error))
+        return None
+
+
+def _backend_hash(name: str) -> HashAlgorithm:
+    from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
+    from cryptography.hazmat.primitives import hashes  # noqa: PLC0415
+
+    known = {
+        "sha1": hashes.SHA1,
+        "sha256": hashes.SHA256,
+        "sha384": hashes.SHA384,
+        "sha512": hashes.SHA512,
+        "sha3_256": hashes.SHA3_256,
+        "sha3_384": hashes.SHA3_384,
+        "sha3_512": hashes.SHA3_512,
+    }
+    factory = known.get(name)
+    if factory is None:
+        msg = f"unsupported signature hash {name}"
+        raise UnsupportedAlgorithm(msg)
+    return factory()
+
+
+def _verify_external_key(check: _core._Check, signed_bytes: bytes, prehash: bytes) -> bool:
+    from cryptography.exceptions import UnsupportedAlgorithm  # noqa: PLC0415
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric.utils import Prehashed  # noqa: PLC0415
+
+    key, scheme, digest_name, signature, _, pss = check
+    public = serialization.load_der_public_key(key)
+    if (scheme == "ed25519" and isinstance(public, ed25519.Ed25519PublicKey)) or (
+        scheme == "ed448" and isinstance(public, ed448.Ed448PublicKey)
+    ):
+        public.verify(signature, signed_bytes)
+        return True
+    if scheme == "ecdsa" and isinstance(public, ec.EllipticCurvePublicKey):
+        if public.curve.name not in ("secp521r1", "brainpoolP256r1", "brainpoolP384r1", "brainpoolP512r1"):
+            msg = f"unsupported ECDSA curve {public.curve.name}"
+            raise UnsupportedAlgorithm(msg)
+        public.verify(signature, prehash, ec.ECDSA(Prehashed(_backend_hash(digest_name))))
+    elif scheme in ("rsa-pkcs1", "rsa-pss") and isinstance(public, rsa.RSAPublicKey):
+        if pss is not None and pss[1] > (public.key_size + 6) // 8 - _backend_hash(digest_name).digest_size - 2:
+            return False
+        rsa_padding = (
+            padding.PKCS1v15()
+            if pss is None
+            else padding.PSS(mgf=padding.MGF1(_backend_hash(pss[0])), salt_length=pss[1])
+        )
+        public.verify(signature, prehash, rsa_padding, Prehashed(_backend_hash(digest_name)))
+    else:
         return False
     return True
 

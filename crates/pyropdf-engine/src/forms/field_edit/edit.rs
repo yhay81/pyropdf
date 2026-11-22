@@ -183,6 +183,19 @@ pub fn edit_field(
                     dict.remove(key);
                 }
             }
+            if field.kind == "text" && edit.reset {
+                dict.remove("RV");
+            } else if field.kind == "text"
+                && edit
+                    .flags
+                    .is_some_and(|flags| flags & crate::forms::rich_style::RICH_TEXT != 0)
+                && let Some(value) = read(reads, dict.get("RV"))?
+            {
+                let runs = crate::forms::rich_style::read(&value, budget)?;
+                let flat = crate::forms::rich_style::plain(&runs, budget)?;
+                #[expect(clippy::disallowed_methods, reason = "only the fixed /V key is added")]
+                dict.insert(Name::from("V"), encode_value(&flat, budget)?);
+            }
             let fillable = buttons || shows_text(field.kind);
             if edit.reset && fillable && default.is_none() {
                 dict.remove("V");

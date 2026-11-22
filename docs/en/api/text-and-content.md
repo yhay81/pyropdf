@@ -235,6 +235,29 @@ Content(*, items: tuple[ContentItem, ...])
 
 The items that a page paints, in paint order.
 
+### `Content.pixmap`
+
+```python
+Content.pixmap(
+    *,
+    dpi: float | None = None,
+    matrix: Sequence[float] | None = None,
+    fit: int | tuple[int, int] | None = None,
+    clip: Sequence[float] | None = None,
+    alpha: bool = False,
+    background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
+    colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
+    hinting: bool = False,
+    glyph_cache: bool = False,
+) -> Pixmap
+```
+
+Render this complete page capture with the options of `Page.pixmap`.
+
+Geometry, paints, resources and annotation visibility are those of the
+capture. Each call has its own budget. Filtered, constructed or unpickled
+content raises `ValueError`; a closed source raises `PdfError`.
+
 ### `Content.__getitem__`
 
 ```python
@@ -632,7 +655,7 @@ Start a new subpath at `to`.
 ## `Paint`
 
 ```python
-Paint: TypeAlias = Color | ShadingPattern | TilingPattern | Gradient
+Paint: TypeAlias = Color | PatternPaint | ShadingPattern | TilingPattern | Gradient
 ```
 
 ## `Path`
@@ -793,6 +816,25 @@ Return the rows as the PyCapsules of an Arrow schema and struct array.
 
 The array's buffers are the columns; `requested_schema` is ignored,
 as the interface allows.
+
+## `PatternPaint`
+
+```python
+PatternPaint(
+    *,
+    pattern: Dictionary,
+    space: Array | None = None,
+    components: tuple[float, ...] = (),
+)
+```
+
+Paint with an indirect tiling or shading pattern in the canvas document.
+
+Pass the pattern's store handle, for example the `obj` of a
+`typed.PatternType1` or `typed.PatternType2`. Its PDF matrix
+positions it in default user space. For an uncolored tiling pattern,
+supply an indirect `[/Pattern base]` color space and its color components.
+DeviceN bases support up to 32 components, matching the renderer.
 
 ## `RadialGradient`
 

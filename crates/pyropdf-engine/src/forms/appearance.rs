@@ -43,7 +43,7 @@ type Entries = [Option<Arc<Value>>; 5];
 
 /// How a field's value is laid out.
 #[derive(Clone, Copy)]
-enum TextLayout {
+pub(super) enum TextLayout {
     SingleLine,
     Multiline,
     /// A comb of this many cells.
@@ -125,6 +125,12 @@ fn draw(
                 Some(Value::Dict(form)) => Some(form),
                 _ => None,
             };
+            if name.as_bytes() == b"Btn"
+                && let Some(Value::Dict(mark)) = reader.entry(widget, "MK")?.as_deref()
+                && ["I", "RI", "IX"].iter().any(|key| mark.get(*key).is_some())
+            {
+                return super::icons::appearances(reader, widget, mark, form, &style).map(Some);
+            }
             return drawn(
                 reader,
                 widget,
@@ -170,8 +176,59 @@ fn draw(
     };
     let quadding = quadding.as_deref().or(form_quadding.as_deref());
     let align = Align::from_quadding(integer(quadding).unwrap_or(0));
-    let value = value_text(reader, value.as_deref())?;
+    let mut value = value_text(reader, value.as_deref())?;
+    if text_field && flags & PASSWORD != 0 {
+        let count = standard::grapheme_count(&value, reader.budget)?;
+        // One ASCII glyph per displayed character fits the already budgeted UTF-8 buffer,
+        // including when the original value cannot be encoded by the appearance font.
+        value.clear();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "each grapheme occupies at least one byte in the retained allocation"
+        )]
+        value.extend(std::iter::repeat_n('*', count));
+    }
     let style = WidgetStyle::read(reader, widget)?;
+    if text_field
+        && flags & (super::rich_style::RICH_TEXT | PASSWORD) == super::rich_style::RICH_TEXT
+    {
+        let parent = if widget.get("T").is_none() {
+            reader.entry(widget, "Parent")?
+        } else {
+            None
+        };
+        let field = match parent.as_deref() {
+            Some(Value::Dict(parent)) => parent,
+            _ => widget,
+        };
+        if let Some(value) = reader.entry(field, "RV")? {
+            let runs = super::rich_style::read(&value, reader.budget)?;
+            let css = match reader.entry(field, "DS")?.as_deref() {
+                Some(value @ Value::String(_)) => value_text(reader, Some(value))?,
+                None => String::new(),
+                _ => return Err(malformed("a rich text field's /DS must be a text string")),
+            };
+            let da = default_appearance(reader, widget, form)?;
+            let base = match (&da, form) {
+                (Some(da), Some(form)) => match form_standard_font(reader, form, &da.font)? {
+                    FormFont::Standard(name) => Some(name),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let text = TextStyle::new(da, base);
+            return super::rich_layout::draw(
+                &runs,
+                &css,
+                &style,
+                &text,
+                align,
+                layout,
+                reader.budget,
+            )
+            .map(Some);
+        }
+    }
     if let TextLayout::Comb(max_len) = layout {
         let count = standard::grapheme_count(
             &standard::single_line(&value, reader.budget)?,
@@ -206,7 +263,7 @@ fn draw(
     clippy::too_many_arguments,
     reason = "the parts of an appearance that `draw` reads"
 )]
-fn drawn(
+pub(super) fn drawn(
     reader: &Reader<'_>,
     widget: &Dict,
     form: Option<&Dict>,
@@ -275,6 +332,7 @@ fn drawn(
         content: content.into_vec(),
         size: (style.width, style.height),
         matrix: style.matrix,
+        icon: None,
         font,
     }))
 }
@@ -325,6 +383,7 @@ fn button_states(
                 content,
                 size: (style.width, style.height),
                 matrix: style.matrix,
+                icon: None,
                 font: None,
             },
         ))?;
@@ -371,7 +430,7 @@ fn entries(reader: &Reader<'_>, widget: &Dict) -> Result<Entries> {
 /// Returns a field value as text: a text string, a name, or the text
 /// strings of an array joined by commas, as `Field.value` reads it; else
 /// empty. Charges the text to the budget's memory.
-fn value_text(reader: &Reader<'_>, value: Option<&Value>) -> Result<String> {
+pub(super) fn value_text(reader: &Reader<'_>, value: Option<&Value>) -> Result<String> {
     let mut text = BudgetVec::new(reader.budget);
     match value {
         Some(Value::String(encoded)) => text::append_text(&mut text, encoded.as_bytes())?,

@@ -56,9 +56,10 @@ mod _core {
     };
     #[pymodule_export]
     use super::annotations::{
-        _stale_appearances, annotation_add, annotation_draw_face, annotation_edit, annotation_face,
-        annotation_geometry, annotation_list, annotation_open, annotation_pixmap, annotation_popup,
-        annotation_read, annotation_remove, annotation_reply, annotation_text,
+        _stale_appearances, annotation_add, annotation_attach, annotation_draw_face,
+        annotation_edit, annotation_face, annotation_geometry, annotation_list, annotation_open,
+        annotation_pixmap, annotation_popup, annotation_read, annotation_remove, annotation_reply,
+        annotation_text,
     };
     #[pymodule_export]
     use super::buffers::{CharColumns, Column, PathColumns};
@@ -111,8 +112,8 @@ mod _core {
     use super::objects::{
         decode_text_string, object_add, object_add_stream, object_delete, object_free_nominated,
         object_free_unreferenced, object_get, object_insert, object_keys, object_len,
-        object_lookup, object_numbers, object_replace, object_set, schema_change, schema_created,
-        schema_entry, schema_leaf, stream_read, stream_write,
+        object_lookup, object_numbers, object_reference_xobjects, object_replace, object_set,
+        schema_change, schema_created, schema_entry, schema_leaf, stream_read, stream_write,
     };
     #[pymodule_export]
     use super::ocr::{_OcrEngine, insert_ocr_layer};
