@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pyropdf import _core
-from pyropdf._errors import PdfError
+from pyropdf._errors import LimitError, PdfError
+from pyropdf._layers import _visible_with_state
 from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import InlineImage, Operation, Operations
@@ -64,6 +65,7 @@ _JP2_SIGNATURE = b"\x00\x00\x00\x0cjP  \r\n\x87\n"
 _J2K_SIGNATURE = b"\xff\x4f\xff\x51"
 #: JPEG markers that start a frame and state its size (ITU T.81 table B.1).
 _JPEG_FRAMES = frozenset({0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF})
+_MAX_IMAGE_ALTERNATES = 4096
 _DEVICE_SPACES = {1: "DeviceGray", 3: "DeviceRGB", 4: "DeviceCMYK"}
 _CMYK = 4
 _MARKER = 0xFF
@@ -193,6 +195,50 @@ def _image_stream(document: Document, xref: int) -> Stream:
         msg = f"object {xref} is not an image XObject"
         raise ValueError(msg)
     return stream
+
+
+def _alternates(base: Stream) -> Array | None:
+    alternates = base.get("Alternates")
+    if alternates is None:
+        return None
+    if not isinstance(alternates, Array):
+        msg = "an image's /Alternates must be an array"
+        raise PdfError(msg)
+    if len(alternates) > _MAX_IMAGE_ALTERNATES:
+        msg = f"an image has more than {_MAX_IMAGE_ALTERNATES} alternate entries"
+        code = "content_element_count"
+        raise LimitError(code, msg)
+    return alternates
+
+
+def _alternate_image(entry: Dictionary) -> Stream:
+    image = entry.get("Image")
+    if not isinstance(image, Stream) or image.get("Subtype") != "Image":
+        msg = "an alternate image's /Image must reference an image XObject"
+        raise PdfError(msg)
+    return image
+
+
+def image_for_output(document: Document, xref: int, *, printing: bool) -> Stream | None:
+    base = _image_stream(document, xref)
+    if isinstance(oc := base.get("OC"), Dictionary):
+        return base if document.layers.visible(oc) else None
+    alternates = _alternates(base)
+    if alternates is None:
+        return base
+    # A later print default takes precedence over any earlier visible entry.
+    if printing:
+        for entry in alternates:
+            if isinstance(entry, Dictionary) and entry.get("DefaultForPrinting") is True:
+                return _alternate_image(entry)
+    off = None
+    for entry in alternates:
+        if isinstance(entry, Dictionary) and isinstance(oc := entry.get("OC"), Dictionary):
+            if off is None:
+                off = document.layers._off()  # noqa: SLF001 - read the default configuration once per selection.
+            if _visible_with_state(oc, off):
+                return _alternate_image(entry)
+    return base
 
 
 def _write_samples(  # noqa: PLR0913 - the parts of one decoded image

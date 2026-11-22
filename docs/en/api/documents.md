@@ -322,6 +322,19 @@ The claims are what the document declares, not a validation. The
 metadata read is capped at 16 MiB, beyond which `LimitError`
 is raised with code `stream_data_size`.
 
+### `Document.image_for_output`
+
+```python
+Document.image_for_output(xref: int, /, *, printing: bool = False) -> Stream | None
+```
+
+Return the image stream selected for display or print, or `None` for a hidden base image.
+
+This reads the current layer configuration and the ordered `/Alternates`
+entries using the corrected ISO 32000-2 §8.9.5.4 selection rules. The
+returned stream can be inspected or edited through its Arlington view.
+Page rendering currently uses the base image for alternate-only visibility.
+
 ### `Document.replace_image`
 
 ```python

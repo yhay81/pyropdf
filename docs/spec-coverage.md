@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 8 | 15 | 814 |
-| interpret | 16 | 19 | 0 | 7 | 19 | 776 |
-| create | 0 | 0 | 25 | 4 | 21 | 787 |
-| edit | 0 | 0 | 0 | 9 | 17 | 811 |
-| preserve | 0 | 0 | 0 | 1 | 17 | 819 |
+| read | 0 | 0 | 0 | 7 | 14 | 816 |
+| interpret | 17 | 19 | 0 | 7 | 18 | 776 |
+| create | 0 | 0 | 25 | 3 | 19 | 790 |
+| edit | 0 | 0 | 0 | 8 | 16 | 813 |
+| preserve | 0 | 0 | 0 | 1 | 16 | 820 |
 
 ## Clauses
 
@@ -103,11 +103,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 8.7.4.5.7 | Type 6 Coons patch meshes | `coons-patch-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.7.4.5.8 | Type 7 tensor-product patch meshes | `tensor-patch-shading` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.8 | External objects | `xobjects` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 8.9.5 | Image dictionaries | `images` | 1 partial | 1 done | 1 partial | 1 partial | 1 done |
-| 8.9.6 | Masked images | `image-masks` | 1 done | 1 done | 1 planned | 1 done | 1 done |
+| 8.9.5 | Image dictionaries | `images` | 1 done | 1 engine | 1 done | 1 done | 1 done |
+| 8.9.6 | Masked images | `image-masks` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.9.7 | Inline images | `inline-images` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.10 | Form XObjects | `form-xobjects` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 8.10.4 | Reference XObjects | `reference-xobjects` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.10.4 | Reference XObjects | `reference-xobjects` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.11 | Optional content | `optional-content` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 9.3 | Text state parameters and operators | `text-state` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.4 | Text objects | `text-objects` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-134 unfinished cells in 837 features: 16 engine, 29 partial, 89 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+126 unfinished cells in 837 features: 17 engine, 26 partial, 83 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -294,10 +294,8 @@ Milestone [#249](https://github.com/yhay81/pyropdf/issues/249).
 
 Milestone [#250](https://github.com/yhay81/pyropdf/issues/250).
 
-- [#900](https://github.com/yhay81/pyropdf/issues/900) Support alternate image resources, masks and reference XObjects through rewriting. Read and rewrite image alternates, masks and reference XObject relationships, verifying selection, unchanged resource bytes, and output without fetching or executing external content.
-    - read, edit — `images`, `reference-xobjects`.
-    - interpret, preserve — `reference-xobjects`.
-    - create — `images`, `image-masks`, `reference-xobjects`.
+- [#947](https://github.com/yhay81/pyropdf/issues/947) Select visible alternate image XObjects in hayro rendering and content devices. Apply the alternate image choice during painting and report the chosen stream as the content item's source. The consumer can already resolve display and print alternatives in the stored data.
+    - interpret — `images`.
 - [#362](https://github.com/yhay81/pyropdf/issues/362) Redaction: remove text, images, and vector content under redaction annotations. Apply and verify redaction annotations over text, paths and images, using item provenance for destructive removal.
     - interpret — `redaction-annotations`.
 

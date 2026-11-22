@@ -62,15 +62,15 @@ features = ["devicen-color-space"]
 dimensions = ["interpret"]
 behavior = "Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked."
 
-[families.image-resources]
+[families.alternate-image-rendering]
 tracker = 250
-issue = 900
-title = "Support alternate image resources, masks and reference XObjects through rewriting"
-features = [
-    "images", "image-masks", "reference-xobjects",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read and rewrite image alternates, masks and reference XObject relationships, verifying selection, unchanged resource bytes, and output without fetching or executing external content."
+issue = 947
+parent = 7
+kind = "upstream"
+title = "Select visible alternate image XObjects in hayro rendering and content devices"
+features = ["images"]
+dimensions = ["interpret"]
+behavior = "Apply the alternate image choice during painting and report the chosen stream as the content item's source. The consumer can already resolve display and print alternatives in the stored data."
 
 [families.redaction]
 tracker = 250

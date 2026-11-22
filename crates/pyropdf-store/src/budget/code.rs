@@ -58,8 +58,10 @@ pub enum LimitCode {
     /// and clip segments, dash lengths, and items than `max_elements` (or
     /// `Document.subset_fonts` counts more than 262,144 elements), `Canvas`
     /// holds more than 1,048,576 path points or gradient stops or repeats a
-    /// gradient more than 4,096 cycles, or `Pages.new_from_image` reads more
-    /// than 4,096 frames or 256 million pixels of one image.
+    /// gradient more than 4,096 cycles, `Pages.new_from_image` reads more than
+    /// 4,096 frames or 256 million pixels of one image, or
+    /// `Document.image_for_output` reads an image with more than 4,096
+    /// alternate entries.
     ContentElementCount,
     /// `Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects
     /// more glyphs of one page than the call's `max_glyphs`.
@@ -237,9 +239,9 @@ pub enum LimitCode {
     /// The prefixes that setting `Document.page_labels` writes are longer than
     /// 1 MiB in UTF-8 together.
     PageLabelInputSize,
-    /// The document's `/OCGs`, `/Configs`, or an optional-content configuration
-    /// array holds, or `Layers.add` or `LayerMembership` would give it, more
-    /// than 4,096 entries. A usage lookup counts its application entries and
+    /// A document group list, membership group list, or optional-content
+    /// configuration array holds more than 4,096 entries, or `Layers.add` or
+    /// `LayerMembership` would exceed that limit. A usage lookup counts its application entries and
     /// the group entries of applications for the requested event together.
     OptionalContentCount,
     /// `Layers.visible` evaluates a `/VE` visibility expression deeper than 32
