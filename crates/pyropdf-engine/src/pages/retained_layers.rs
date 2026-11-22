@@ -10,6 +10,14 @@ use pyropdf_store::version::{Transaction, Version};
 
 use super::{PageError, Result, import, resolve, target, tree::Root};
 
+/// Source resources copied together so references shared with a page group
+/// keep one destination identity.
+pub(super) struct FormResources {
+    pub(super) dictionary: Reference,
+    pub(super) group: Option<Value>,
+    pub(super) layers: Vec<(Reference, bool)>,
+}
+
 /// The catalog's ordered group references and their effective default states.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct States {
@@ -118,7 +126,7 @@ impl States {
         resources: &Value,
         group: Option<&Value>,
         budget: &Budget,
-    ) -> Result<(Reference, Option<Value>, Vec<(Reference, bool)>)> {
+    ) -> Result<FormResources> {
         let root = Root::read(transaction.version(), budget)?.reference;
         let values = [
             copy_for_edit(resources, budget)?,
@@ -145,7 +153,11 @@ impl States {
         let resources = values.next().unwrap_or(Value::Null);
         transaction.write(reference.number(), &resources, budget)?;
         let group = values.next().filter(|value| *value != Value::Null);
-        Ok((reference, group, copied))
+        Ok(FormResources {
+            dictionary: reference,
+            group,
+            layers: copied,
+        })
     }
 }
 

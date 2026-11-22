@@ -16,8 +16,13 @@ use pyropdf_store::value::{Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{ObjectStamps, Transaction, Version};
 
 use super::{
-    PageError, Result, geometry::space, import, retained_layers::States, sources, target,
-    tree::Root, with_savepoint,
+    PageError, Result,
+    geometry::space,
+    import,
+    retained_layers::{FormResources, States},
+    sources, target,
+    tree::Root,
+    with_savepoint,
 };
 use crate::content::PageContent;
 use crate::display::{Box4, Display, display_box};
@@ -245,21 +250,22 @@ impl PageForms {
             .transpose()?;
         let resources = copy_for_edit(resources, budget)?;
         let entry = with_savepoint(transaction, |transaction| {
-            let (dictionary, copied_group, copied_groups) = if let Some(layers) = &captured.layers {
+            let copied = if let Some(layers) = &captured.layers {
                 layers.copy(transaction, &page.version, page.resources(), group, budget)?
             } else {
-                (
-                    page.copy_resources(transaction, same_document, true, budget)?,
-                    None,
-                    Vec::new(),
-                )
+                FormResources {
+                    dictionary: page.copy_resources(transaction, same_document, true, budget)?,
+                    group: None,
+                    layers: Vec::new(),
+                }
             };
+            let dictionary = copied.dictionary;
             let form = write_form(
                 transaction,
                 &captured.content,
                 bbox,
                 dictionary,
-                copied_group,
+                copied.group,
                 budget,
             )?;
             let target = transaction
@@ -267,7 +273,7 @@ impl PageForms {
                 .stamps(&[form, dictionary.number()], budget)?;
             Ok(PageForm {
                 layers: captured.layers.clone(),
-                copied_groups,
+                copied_groups: copied.layers,
                 group: group
                     .map(|value| copy_for_edit(value, budget))
                     .transpose()?,
