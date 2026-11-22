@@ -85,52 +85,72 @@ jobs:
           # GitHub tests the PR applied to its current base, including packaging
           # changes that landed after the contributor branched.
           ref: ${{ github.sha }}
-          path: head
+          path: base
           fetch-depth: 2
           persist-credentials: false
-      - name: Identify the exact base of the tested merge
+      - name: Prepare the exact base of the tested merge
         id: base
         shell: bash
         run: |
-          revision=$(git -C head rev-parse HEAD^1)
+          revision=$(git -C base rev-parse HEAD^1)
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ steps.base.outputs.revision }}
-          path: base
-          persist-credentials: false
-      - name: Prepare both native release builds
-        id: native
-        shell: bash
-        run: |
-          # Keep the output directories writable by the host after manylinux runs.
-          mkdir -p base/dist head/dist
-          for checkout in base head; do
-            # Releases before #858 passed these flags directly in release.yml.
-            if [[ $checkout == base && ! -f base/tools/native-wheel-args.txt ]]; then
-              args='--release --locked --out dist'
-            else
-              args=$(cat "$checkout/tools/native-wheel-args.txt")
-            fi
-            echo "$checkout=$args" >> "$GITHUB_OUTPUT"
-          done
+          # Cargo build scripts can read configuration outside their own source.
+          # Give a changed dependency graph, toolchain or build settings a cold build.
+          changes=$(git -C base diff --name-only --no-renames "$revision" HEAD -- \
+            ':(glob)**/Cargo.toml' ':(glob)**/Cargo.lock' ':(glob)**/.cargo/**' \
+            ':(glob)**/rust-toolchain*' ':(glob)**/pyproject.toml' ':(glob)**/.gitattributes' \
+            uv.lock tools/native-wheel-args.txt)
+          if [[ -z "$changes" ]]; then
+            echo 'head-target=paired-target' >> "$GITHUB_OUTPUT"
+            echo 'Head can reuse unchanged dependencies from the base build.'
+          else
+            echo 'head-target=head/target' >> "$GITHUB_OUTPUT"
+            echo "Cold head build because these build inputs changed: $changes"
+          fi
+          git -C base switch --detach "$revision"
+          mkdir -p base/dist
+          # Releases before #858 passed these flags directly in release.yml.
+          args='--release --locked --out dist'
+          if [[ -f base/tools/native-wheel-args.txt ]]; then
+            args=$(cat base/tools/native-wheel-args.txt)
+          fi
+          echo "args=$args" >> "$GITHUB_OUTPUT"
       - name: Build base release wheel
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/paired-target
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           working-directory: base
           target: ${{ matrix.platform.target }}
           rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
-          args: ${{ steps.native.outputs.base }}
+          args: ${{ steps.base.outputs.args }}
           manylinux: auto
+      # Materialize all local inputs after base compilation. Even when Cargo
+      # reuses external dependencies, a head source cannot look older than
+      # the base artifact built from a different checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: head
+          persist-credentials: false
+      - name: Prepare the tested merge's release build
+        id: head
+        shell: bash
+        run: |
+          mkdir -p head/dist
+          args=$(cat head/tools/native-wheel-args.txt)
+          echo "args=$args" >> "$GITHUB_OUTPUT"
       - name: Build head release wheel
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/${{ steps.base.outputs.head-target }}
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           working-directory: head
           target: ${{ matrix.platform.target }}
           rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
-          args: ${{ steps.native.outputs.head }}
+          args: ${{ steps.head.outputs.args }}
           manylinux: auto
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
