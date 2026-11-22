@@ -1063,17 +1063,57 @@ Screen(*, rect: Rect, asset: MediaAsset | None = None)
 
 A Screen annotation with an optional media clip and its rendition action.
 
+## `SlideShow`
+
+```python
+SlideShow(show: typed.SlideShow)
+```
+
+An existing embedded slideshow and the UTF-8 resource names in its virtual file system.
+
+### `SlideShow.resources`
+
+```python
+SlideShow.resources: dict[str, Dictionary]
+```
+
+Map UTF-8 resource names to their live image streams or file specifications.
+
+### `SlideShow.start_resource`
+
+```python
+SlideShow.start_resource: str
+```
+
+The name selected by StartResource. Assign the name of an existing resource to select it.
+
+Settable.
+
+### `SlideShow.rename_resource`
+
+```python
+SlideShow.rename_resource(old: str, new: str, *, keep_alias: bool = False)
+```
+
+Move a resource to a new UTF-8 name and update StartResource in one transaction.
+
+Shared resource trees keep their other slideshows' original names.
+Set keep_alias=True to retain the old name for references inside opaque media files.
+The media bytes are retained in both cases.
+
 ## `Sound`
 
 ```python
 Sound(
     *,
     data: bytes,
-    rate: float,
+    rate: float | None,
     channels: int,
     bits: int,
     encoding: SoundEncoding,
     compression: str | None,
+    compression_parameters: Array | Dictionary | None = None,
+    external_file: String | Dictionary | None = None,
 )
 ```
 
@@ -1083,6 +1123,19 @@ The sound of a sound annotation, `/Sound`, as `Annotation.sound` reads it.
 or the stream's bytes before them when read with `decode=False`; the
 samples stay in `encoding` and, for a compressed sound, in the format
 that `compression` names.
+
+### `Sound.from_stream`
+
+```python
+Sound.from_stream(
+    stream: Stream,
+    *,
+    decode: bool = True,
+    max_size: int | None = 67108864,
+) -> Sound
+```
+
+Read a sound stream's samples and metadata, including streams referenced by Sound actions.
 
 ## `SoundEncoding`
 

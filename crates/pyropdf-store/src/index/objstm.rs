@@ -9,7 +9,7 @@ use hayro_syntax::object as syntax;
 use super::{Entry, Location, Source, Ticker, decoded, find, lex};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::security::{Handler, Kind};
-use crate::value::{Bytes, Dict, Reference, Stream, Value};
+use crate::value::{Bytes, Dict, FilterLookup, Reference, Stream, Value};
 use crate::{Error, Result};
 
 /// An object stream, decoded: its data, and the member table at its start.
@@ -223,6 +223,7 @@ pub(super) fn decode(
     source: &Source<'_>,
     number: u32,
     security: Option<&Handler>,
+    lookup: &FilterLookup<'_>,
     budget: &Budget,
 ) -> Result<Decoded> {
     let reference = Reference::new(number, 0);
@@ -240,6 +241,10 @@ pub(super) fn decode(
         Some(&Value::Reference(length)) => resolve(source, length, budget)?,
         _ => None,
     };
+    let (dict, resolved_selectors) = match crate::value::filters::resolved(&dict, lookup, budget)? {
+        Cow::Owned(resolved) => (resolved, true),
+        Cow::Borrowed(_) => (dict, false),
+    };
     let decrypt = |dict: &Dict, raw: &[u8]| match security {
         Some(handler) => handler
             .transform_data(
@@ -253,7 +258,15 @@ pub(super) fn decode(
             .map(Some),
         None => Ok(None),
     };
-    let data = data(&bytes, &stream, dict, length, &decrypt, budget)?;
+    let data = data(
+        &bytes,
+        &stream,
+        dict,
+        length,
+        &decrypt,
+        resolved_selectors,
+        budget,
+    )?;
     let mut members = BudgetVec::new(budget);
     let mut ticker = Ticker::default();
     let mut pos = 0;
@@ -306,6 +319,7 @@ fn data(
     mut dict: Dict,
     length: Option<u64>,
     decrypt: &Decrypt<'_>,
+    resolved_selectors: bool,
     budget: &Budget,
 ) -> Result<Bytes> {
     let raw = stream.raw_data();
@@ -322,18 +336,22 @@ fn data(
     let end = declared.unwrap_or(start + raw.len());
     let decrypted = decrypt(&dict, &bytes[start..end])?;
     let decoded = match declared {
-        _ if decrypted.is_some() || end != start + raw.len() => {
+        _ if resolved_selectors || decrypted.is_some() || end != start + raw.len() => {
             let data = decrypted
                 .map(Bytes::from)
                 .or_else(|| bytes.slice(start..end))
                 .ok_or_else(|| Error::malformed("its data is not in its bytes"))?;
-            dict.remove("Length");
-            let rebuilt = Value::from(Stream::new(dict, data));
-            let mut copy = BudgetVec::new(budget);
-            crate::write::value(&mut copy, &rebuilt)?;
-            let stream = super::stream(&copy)
-                .ok_or_else(|| Error::malformed("it does not read with its length"))?;
-            decoded(&stream, budget)?.into_owned()
+            if resolved_selectors {
+                Stream::new(dict, data).decoded(budget)?
+            } else {
+                dict.remove("Length");
+                let rebuilt = Value::from(Stream::new(dict, data));
+                let mut copy = BudgetVec::new(budget);
+                crate::write::value(&mut copy, &rebuilt)?;
+                let stream = super::stream(&copy)
+                    .ok_or_else(|| Error::malformed("it does not read with its length"))?;
+                decoded(&stream, budget)?.into_owned()
+            }
         }
         _ => match decoded(stream, budget)? {
             Cow::Borrowed(data) => {

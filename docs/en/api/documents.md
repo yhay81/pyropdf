@@ -43,6 +43,14 @@ Document.pages: Pages
 
 The pages, a sequence of `Page` handles that edits keep valid.
 
+### `Document.alternate_presentations`
+
+```python
+Document.alternate_presentations: dict[bytes, SlideShow]
+```
+
+Read the catalog's multi-level AlternatePresentations name tree as existing slideshows.
+
 ### `Document.attachments`
 
 ```python
@@ -977,13 +985,15 @@ Document.timestamp(
     *,
     field: str = 'DocTimeStamp',
     reserve: int = 16384,
+    digest_algorithm: str = 'sha256',
 ) -> bytes
 ```
 
 Append an RFC 3161 `/DocTimeStamp` revision to the document and return its bytes (ISO 32000-2 §12.8.5).
 
-`timestamper` receives the SHA-256 digest of the signed byte ranges
-and `"sha256"`, and returns the DER of an RFC 3161 `TimeStampToken`
+`timestamper` receives the digest of the signed byte ranges and its name.
+Choose SHA-2 (`sha256` by default), `sha3_256`, `sha3_384`,
+`sha3_512` or `shake256`. The callback returns the DER of an RFC 3161 `TimeStampToken`
 stamping that digest; pyropdf makes no network access. Afterwards the
 document reads the timestamped revision and earlier signatures remain
 intact.
