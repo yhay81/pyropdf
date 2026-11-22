@@ -62,17 +62,37 @@ Members: `PRINT`, `MODIFY`, `COPY`, `ANNOTATE`, `FORM`, `ACCESSIBILITY`, `ASSEMB
 ## `RecipientCredential`
 
 ```python
-RecipientCredential(*, certificate: Certificate, private_key: RSAPrivateKey)
+RecipientCredential(
+    *,
+    certificate: Certificate,
+    private_key: RSAPrivateKey | EllipticCurvePrivateKey,
+)
 ```
 
-An X.509 recipient certificate and its matching RSA private key.
+An X.509 recipient certificate and its matching RSA or ECDH private key.
 
 Install the `recipients` extra, load the certificate and key with
 `cryptography`, and pass this credential to `open(credential=...)`,
 `probe(credential=...)` or `Document.unlock`. RSA keys between
-2048 and 8192 bits can unwrap CMS EnvelopedData with PKCS#1 v1.5
-key transport and AES-CBC content encryption. The store retains the
-authenticated file key. The private key stays with the caller.
+2048 and 8192 bits use PKCS#1 v1.5 or RSAES-OAEP key transport. OAEP
+reads the declared SHA-1, SHA-224, SHA-256, SHA-384 or SHA-512 digest,
+independent MGF1 digest and label. P-256, P-384 and P-521 certificates
+use ephemeral-static ECDH with X9.63 derivation and AES key wrap.
+
+ISO 32000-2:2020 §7.6.5 defines the CMS content ciphers. RSAES-OAEP
+and ephemeral-static ECDH follow the CMS formats in RFC 3560 and RFC 5753.
+
+| Envelope algorithm | Read | New PDF |
+| --- | --- | --- |
+| AES-CBC (RFC 3565) | 128, 192 and 256 bits | All three |
+| DES-CBC and three-key Triple DES-CBC | Both | Deprecated in PDF 2.0, read-only |
+| RC2-CBC | 128 effective bits | Deprecated in PDF 2.0, read-only |
+| RC4 | 40, 56, 64, 80, 128, 160, 192 and 256 bits | Deprecated in PDF 2.0, read-only |
+| RSA PKCS#1 v1.5 | 2048 to 8192-bit RSA | Default RSA transport |
+| RSAES-OAEP | Declared digest, MGF1 digest and label | SHA-256 and MGF1-SHA-256, empty label |
+| ECDH with AES key wrap | P-256, P-384 and P-521 | All three with AES-256 key wrap |
+
+The private key stays with the caller. The store retains the authenticated file key.
 
 ## `RecipientEncryption`
 
@@ -81,11 +101,13 @@ RecipientEncryption(
     *,
     recipients: Mapping[Certificate, Permissions | None],
     encrypt_metadata: bool = True,
+    cms_cipher: Literal['aes-128', 'aes-192', 'aes-256'] = 'aes-256',
+    rsa_padding: Literal['pkcs1v15', 'oaep'] = 'pkcs1v15',
     method: Literal['aes-256', 'aes-128', 'aes-gcm'] = 'aes-256',
 )
 ```
 
-Encrypt a full save for RSA certificate recipients with Adobe.PubSec, adbe.pkcs7.s5 and AES.
+Encrypt a full save for certificate recipients with Adobe.PubSec, adbe.pkcs7.s5 and AES.
 
 Install `pyropdf[recipients]` and supply up to 128 X.509 certificates.
 Recipients with the same permissions share a CMS envelope. The named filter for strings and
@@ -95,6 +117,16 @@ AES-GCM support store operations, including saving. Direct page rendering of
 these methods requires the authenticated store source in the rendering engine.
 Both an incremental save and a full save with
 `Encryption.KEEP` preserve untouched ciphertext.
+
+Select the PDF file cipher with `method`. The separate `cms_cipher`
+selects AES-128-CBC, AES-192-CBC or AES-256-CBC for each CMS envelope
+(RFC 3565). It defaults to AES-256-CBC. RSA certificates use
+`rsa_padding="pkcs1v15"` by default, or `"oaep"` with SHA-256,
+MGF1-SHA-256 and an empty label (RFC 3560). A P-256, P-384 or P-521
+certificate uses ECDH with the corresponding SHA-256, SHA-384 or
+SHA-512 digest, fresh user keying material and AES-256 key wrap
+(RFC 5753). Certificate key usage, when present, must permit RSA
+key encipherment or EC key agreement.
 
 Map each X.509 certificate to its permission flags. A value of `None` gives the recipient
 permission to change encryption and implies all other permissions (ISO 32000-2 Table 24 bit 2).

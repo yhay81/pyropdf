@@ -384,10 +384,10 @@ def recipient(label: str) -> pyropdf.RecipientCredential:
     """Load the published fixture credential, whose key is used only by these tests."""
     from cryptography import x509  # noqa: PLC0415
     from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
-    from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa  # noqa: PLC0415
 
     key = serialization.load_der_private_key((RECIPIENT_ASSETS / f"recipient-{label}.key").read_bytes(), None)
-    assert isinstance(key, rsa.RSAPrivateKey)
+    assert isinstance(key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey))
     cert = x509.load_der_x509_certificate((RECIPIENT_ASSETS / f"recipient-{label}.cer").read_bytes())
     return pyropdf.RecipientCredential(certificate=cert, private_key=key)
 
@@ -613,6 +613,210 @@ def test_public_key_equal_permissions_share_a_cms_envelope() -> None:
         with pyropdf.open(saved, credential=credential) as doc:
             assert doc.permissions == Permissions.COPY
             assert len(doc.trailer["Encrypt"]["CF"]["DefaultCryptFilter"]["Recipients"]) == 1
+
+
+@pytest.mark.spec("public-key-security-handler", "read", "edit", "preserve")
+@pytest.mark.parametrize(
+    "mode",
+    ["oaep", "ecdh", "ecdh384", "ecdh521", "aes192-oaep", "aes128-oaep-default", "3des", "des", "rc4", "rc2-128"],
+)
+@pytest.mark.parametrize("incremental", [False, True])
+def test_independent_cms_algorithms_preserve_ciphertext(mode: str, *, incremental: bool) -> None:
+    source = (RECIPIENT_ASSETS / f"cms-{mode}.pdf").read_bytes()
+    credential = recipient(mode.replace("ecdh", "ec") if mode.startswith("ecdh") else "owner")
+    with pyropdf.open(source) as doc:
+        with pytest.raises(pyropdf.PasswordError):
+            doc.unlock(recipient("editor"))
+        assert doc.needs_password
+        assert doc.unlock(credential) is Access.OWNER
+        assert doc.permissions == Permissions.ALL
+        page = doc.pages[0]
+        assert page.obj["Marker"] == b"CMS fixture string"
+        contents = page.obj["Contents"]
+        assert contents.read() == b"0 g 4 5 14 19 re f\n"
+        ciphertext = source.split(f"{contents.xref} 0 obj\n".encode(), 1)[1].split(b"\nendobj", 1)[0]
+        envelope = bytes(doc.trailer["Encrypt"]["CF"]["DefaultCryptFilter"]["Recipients"][0])
+        page.rotation = 90
+        saved = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
+    assert saved.startswith(source) is incremental
+    assert ciphertext in saved
+    with pyropdf.open(saved, credential=credential) as reopened:
+        assert reopened.pages[0].rotation == 90
+        assert reopened.pages[0].obj["Contents"].read() == b"0 g 4 5 14 19 re f\n"
+        assert reopened.trailer["Encrypt"]["CF"]["DefaultCryptFilter"]["Recipients"][0] == envelope
+
+
+@pytest.mark.spec("public-key-security-handler", "create")
+@pytest.mark.parametrize("cipher", ["aes-128", "aes-192", "aes-256"])
+@pytest.mark.parametrize("transport", ["pkcs1v15", "oaep"])
+@pytest.mark.parametrize("ec_label", ["ec", "ec384", "ec521"])
+def test_independent_reader_checks_each_cms_writer(
+    cipher: Literal["aes-128", "aes-192", "aes-256"], transport: Literal["pkcs1v15", "oaep"], ec_label: str
+) -> None:
+    import io  # noqa: PLC0415
+    import sysconfig  # noqa: PLC0415
+
+    if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
+        pytest.skip("pyHanko imports enable the GIL on free-threaded Python")
+    from asn1crypto import cms, keys, x509  # noqa: PLC0415
+    from pyhanko.pdf_utils.crypt.pubkey import SimpleEnvelopeKeyDecrypter  # noqa: PLC0415
+    from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
+
+    rsa, ec = recipient("owner"), recipient(ec_label)
+    settings = pyropdf.RecipientEncryption(
+        recipients={rsa.certificate: None, ec.certificate: Permissions.PRINT},
+        cms_cipher=cipher,
+        rsa_padding=transport,
+    )
+    with pyropdf.open(RECIPIENT_ASSETS / "cms-oaep.pdf", credential=rsa) as doc:
+        saved = doc.to_bytes(encryption=settings)
+    for label, expected, scheme in (
+        ("owner", int(Permissions.ALL) | 2, "ktri"),
+        (ec_label, int(Permissions.PRINT), "kari"),
+    ):
+        reader = PdfFileReader(io.BytesIO(saved))
+        encrypt = reader.encrypt_dict
+        assert encrypt is not None
+        envelopes = encrypt["/CF"]["/DefaultCryptFilter"]["/Recipients"]
+        content = [cms.ContentInfo.load(bytes(envelope))["content"] for envelope in envelopes]
+        message = next(m for m in content if m["recipient_infos"][0].name == scheme)
+        algo = message["encrypted_content_info"]["content_encryption_algorithm"]["algorithm"].native
+        assert algo == cipher.replace("-", "") + "_cbc"
+        if scheme == "ktri":
+            assert message["recipient_infos"][0].chosen["key_encryption_algorithm"]["algorithm"].native == (
+                "rsaes_oaep" if transport == "oaep" else "rsaes_pkcs1v15"
+            )
+        key = keys.PrivateKeyInfo.load((RECIPIENT_ASSETS / f"recipient-{label}.key").read_bytes())
+        cert = x509.Certificate.load((RECIPIENT_ASSETS / f"recipient-{label}.cer").read_bytes())
+        auth = reader.decrypt_pubkey(SimpleEnvelopeKeyDecrypter(cert, key))
+        assert auth.permission_flags is not None
+        assert auth.permission_flags.as_uint32() & (int(Permissions.ALL) | 2) == expected
+        page = reader.root["/Pages"]["/Kids"][0].get_object()
+        assert page["/Contents"].data == b"0 g 4 5 14 19 re f\n"
+        assert page["/Marker"] == "CMS fixture string"
+
+
+@pytest.mark.parametrize("problem", ["too-many", "bad-transport", "bad-digest", "bad-content", "trailing"])
+def test_invalid_cms_algorithms_refuse_before_unlocking(problem: str) -> None:
+    from asn1crypto import cms  # noqa: PLC0415
+
+    credential = recipient("owner")
+    with pyropdf.open(RECIPIENT_ASSETS / "cms-oaep.pdf", credential=credential) as original:
+        envelope = cms.ContentInfo.load(bytes(original.trailer["Encrypt"]["CF"]["DefaultCryptFilter"]["Recipients"][0]))
+    message = envelope["content"]
+    info = message["recipient_infos"][0]
+    if problem == "too-many":
+        # Short wrapped-key placeholders keep this control within the outer 64 KiB envelope bound.
+        info.chosen["encrypted_key"] = b"x"
+        message["recipient_infos"] = [info] * 129
+    elif problem == "bad-transport":
+        info.chosen["key_encryption_algorithm"] = {"algorithm": "1.2.3.4"}
+    elif problem == "bad-digest":
+        info.chosen["key_encryption_algorithm"]["parameters"]["hash_algorithm"] = {"algorithm": "md5"}
+    elif problem == "bad-content":
+        message["encrypted_content_info"]["content_encryption_algorithm"] = {"algorithm": "1.2.3.4"}
+    encoded = envelope.dump(force=True) + (b"junk" if problem == "trailing" else b"")
+    source = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [] /Count 0 >>",
+            3: "<< /Filter /Adobe.PubSec /SubFilter /adbe.pkcs7.s4 /V 2 /Length 128 "
+            f"/Recipients [<{encoded.hex()}>] >>",
+        }
+    ).replace(b"/Root 1 0 R >>", b"/Root 1 0 R /Encrypt 3 0 R >>")
+    with pyropdf.open(source) as doc:
+        if problem == "too-many":
+            with pytest.raises(pyropdf.LimitError) as refusal:
+                doc.unlock(credential)
+            assert refusal.value.code == "recipient_count"
+        else:
+            with pytest.raises(pyropdf.PasswordError):
+                doc.unlock(credential)
+        assert doc.needs_password
+        with pytest.raises(pyropdf.EncryptedDocumentError):
+            _ = doc.catalog
+
+
+@pytest.mark.parametrize("name", ["rc4", "rc2", "des", "3des"])
+def test_obsolete_cms_ciphers_are_read_only(name: str) -> None:
+    from typing import cast  # noqa: PLC0415
+
+    with pytest.raises(ValueError, match="CMS content encryption"):
+        pyropdf.RecipientEncryption(
+            recipients={recipient("owner").certificate: None}, cms_cipher=cast("Literal['aes-256']", name)
+        )
+
+
+@pytest.mark.parametrize("label", ["owner", "ec"])
+def test_cms_recipient_key_usage_must_allow_the_key_operation(label: str) -> None:
+    from cryptography import x509  # noqa: PLC0415
+    from cryptography.hazmat.primitives import hashes  # noqa: PLC0415
+
+    original = recipient(label)
+    cert = original.certificate
+    wrong_usage = x509.KeyUsage(
+        digital_signature=True,
+        content_commitment=False,
+        key_encipherment=False,
+        data_encipherment=False,
+        key_agreement=False,
+        key_cert_sign=False,
+        crl_sign=False,
+        encipher_only=False,
+        decipher_only=False,
+    )
+    signing_only = (
+        x509.CertificateBuilder()
+        .subject_name(cert.subject)
+        .issuer_name(cert.issuer)
+        .public_key(cert.public_key())
+        .serial_number(93601)
+        .not_valid_before(cert.not_valid_before_utc)
+        .not_valid_after(cert.not_valid_after_utc)
+        .add_extension(wrong_usage, critical=True)
+        .sign(original.private_key, hashes.SHA256())
+    )
+    with pytest.raises(ValueError, match="key usage"):
+        pyropdf.RecipientEncryption(recipients={signing_only: None})
+    with pytest.raises(ValueError, match="key usage"):
+        pyropdf.RecipientCredential(certificate=signing_only, private_key=original.private_key)
+
+
+def test_mixed_transport_recipients_can_share_permissions() -> None:
+    rsa, ec = recipient("owner"), recipient("ec")
+    settings = pyropdf.RecipientEncryption(
+        recipients={rsa.certificate: Permissions.COPY, ec.certificate: Permissions.COPY}
+    )
+    with pyropdf.open(RECIPIENT_ASSETS / "cms-oaep.pdf", credential=rsa) as doc:
+        saved = doc.to_bytes(encryption=settings)
+    for credential in (rsa, ec):
+        with pyropdf.open(saved, credential=credential) as reopened:
+            assert reopened.permissions == Permissions.COPY
+            assert len(reopened.trailer["Encrypt"]["CF"]["DefaultCryptFilter"]["Recipients"]) == 1
+            assert reopened.pages[0].obj["Marker"] == b"CMS fixture string"
+
+
+def test_recipient_open_before_timestamp_providers_register_their_content_types() -> None:
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    # A fresh process reproduces applications that first use CMS through the recipient API.
+    program = """
+from pathlib import Path
+import sys
+import pyropdf
+from cryptography import x509
+from cryptography.hazmat.primitives.serialization import load_der_private_key
+root = Path(sys.argv[1])
+cert = x509.load_der_x509_certificate((root / "recipient-owner.cer").read_bytes())
+key = load_der_private_key((root / "recipient-owner.key").read_bytes(), None)
+credential = pyropdf.RecipientCredential(certificate=cert, private_key=key)
+with pyropdf.open(root / "cms-oaep.pdf", credential=credential) as doc:
+    assert len(doc.pages) == 1
+from asn1crypto import cms, tsp
+assert cms.ContentType("tst_info").dotted == "1.2.840.113549.1.9.16.1.4"
+"""
+    subprocess.run([sys.executable, "-c", program, str(RECIPIENT_ASSETS)], check=True)  # noqa: S603
 
 
 GCM_SOURCE = ASSETS / "user-aes-gcm.pdf"
