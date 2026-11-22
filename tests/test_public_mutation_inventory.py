@@ -29,6 +29,20 @@ if TYPE_CHECKING:
 # denotes a property assignment and 'del:' denotes a property deletion.
 MUTATIONS = (
     (
+        "typed_set",
+        "Switch the movie target on the existing action; title and reference are exclusive.",
+        "MovieAction",
+        "target=",
+    ),
+    ("typed_set", "Override the action timing and preserve the annotation default.", "MovieAction", "start= duration="),
+    ("typed_set", "Select an existing name on the slideshow dictionary.", "SlideShow", "start_resource="),
+    (
+        "named_pages",
+        "Move a named target and preserve shared name-tree nodes; dedicated slideshow tests check StartResource.",
+        "SlideShow",
+        "rename_resource",
+    ),
+    (
         "sign_revision",
         "Adopt the signed incremental revision, binding the field and its byte ranges.",
         "Document",
@@ -597,6 +611,7 @@ MUTATIONS = (
 # Pure readers, value factories/transformations and external or session-only
 # effects are listed independently of edits to the versioned PDF.
 READ_ONLY = {
+    "Sound": "from_stream",
     "Annotation": "pixmap text sound",
     "CancellationToken": "cancelled",
     "AnnotationFile": "read",
@@ -640,7 +655,7 @@ READ_ONLY = {
     "Signer": "from_pem from_pkcs12 callback",
     "Dictionary": "geospatial_point",
     "Stream": "read",
-    "StructureTree": "resolve_role walk",
+    "StructureTree": "child_rules reading_order resolve_role walk",
     "Table": "markdown",
     "typed.LinkedTree": "lookup",
     "typed.View": "interpret",

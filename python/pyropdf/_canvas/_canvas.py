@@ -39,6 +39,7 @@ from pyropdf._canvas._path import (
     _unit,
     _user_from_display,
 )
+from pyropdf._canvas._patterns import _pattern_operands
 from pyropdf._canvas._resources import (
     _cache,
     _contents,
@@ -70,6 +71,7 @@ from pyropdf._content import (
     LinearGradient,
     MoveTo,
     Path,
+    PatternPaint,
     RadialGradient,
     ShadingPattern,
     SoftMaskType,
@@ -196,6 +198,7 @@ class Canvas:
         "_operation",
         "_page",
         "_pattern_names",
+        "_pattern_spaces",
         "_patterns",
         "_points",
         "_properties",
@@ -242,7 +245,8 @@ class Canvas:
         # space; and the objects that are written.
         self._masks: dict[int, str] = {}
         self._pattern_names: dict[tuple[int, Matrix, bool], str] = {}
-        self._patterns: dict[str, int] = {}
+        self._patterns: dict[str, int | Dictionary] = {}
+        self._pattern_spaces: dict[str, Array] = {}
         # From the space of what the canvas draws to the default space of the buffer that it goes to: the
         # canvas's own display space, or the opacity group's. Pattern space ignores the CTM.
         self._matrix = _IDENTITY
@@ -472,6 +476,7 @@ class Canvas:
             self._properties,
             self._patterns,
             self._masks,
+            self._pattern_spaces,
         )
 
     def _add_font(self, font: Font) -> str:
@@ -573,12 +578,24 @@ class Canvas:
         return name
 
     def _setting(
-        self, paint: Color | Gradient | ShadingPattern, segments: list[Segment], stroke: Stroke | None
+        self, paint: Color | Gradient | PatternPaint | ShadingPattern, segments: list[Segment], stroke: Stroke | None
     ) -> _Painting:
         """Return how to paint ``segments`` with ``paint``, as the fill, or as ``stroke`` if there is one."""
         if isinstance(paint, Color):
             operator = b" rg" if stroke is None else b" RG"
             return _Painting((_numbers(*paint.rgb) + operator,), None if paint.alpha >= 1 else paint.alpha, None)
+        if isinstance(paint, PatternPaint):
+            space, operands = _pattern_operands(self._page.document, paint)
+            name = f"PyroRP{paint.pattern.xref}G{paint.pattern.generation}"
+            if name not in self._patterns:
+                self._charge(len(name) + 64)
+            if paint.space is not None and space not in self._pattern_spaces:
+                self._charge(len(space) + 64)
+                self._pattern_spaces[space] = paint.space
+            self._patterns[name] = paint.pattern
+            colorspace = b"/" + space.encode() + (b" cs" if stroke is None else b" CS")
+            select = operands + b"/" + name.encode() + (b" scn" if stroke is None else b" SCN")
+            return _Painting((colorspace, select), None, None)
         # Past the path by half a line, or by a miter or a square cap, and a thin line's own width.
         pad = 1.0 if stroke is None else max(stroke.width, 1.0) / 2 * max(stroke.miter_limit, math.sqrt(2)) + 1.0
         area = _bounds(segments, pad)
@@ -657,7 +674,14 @@ class Canvas:
             data = b"q\n/" + name.encode() + b" Do\nQ\n"
         else:
             names = _merge_resources(
-                page, self._xobjects, self._gstates, self._fonts, self._properties, self._patterns, self._masks
+                page,
+                self._xobjects,
+                self._gstates,
+                self._fonts,
+                self._properties,
+                self._patterns,
+                self._masks,
+                self._pattern_spaces,
             )
             for old, new in names.items():
                 data = data.replace(b"/" + old.encode() + b" ", b"/" + new.encode() + b" ")
@@ -679,8 +703,8 @@ class Canvas:
         self,
         path: PathInput,
         *,
-        fill: Color | Gradient | ShadingPattern | None = None,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | ShadingPattern | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
         fill_rule: FillRule = FillRule.NONZERO,
     ) -> None:
         """Draw a path: a :class:`PathBuilder`, a :class:`Path` item's geometry, or segments."""
@@ -697,7 +721,7 @@ class Canvas:
         stroking = None
         if painted_stroke is not None:
             stroking = self._setting(
-                cast("Color | Gradient | ShadingPattern", painted_stroke.paint), segments, painted_stroke
+                cast("Color | Gradient | PatternPaint | ShadingPattern", painted_stroke.paint), segments, painted_stroke
             )
         if filling is not None and stroking is not None and (filling.mask is not None or stroking.mask is not None):
             # A soft mask is one graphics state, so each paints in its own.
@@ -739,7 +763,11 @@ class Canvas:
         return b"\n".join(parts)
 
     def line(
-        self, start: Sequence[float], end: Sequence[float], *, stroke: Stroke | Color | Gradient | None = None
+        self,
+        start: Sequence[float],
+        end: Sequence[float],
+        *,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     ) -> None:
         """Draw a straight line, with a 1-point black stroke by default."""
         self.path(PathBuilder().move_to(start).line_to(end), stroke=_BLACK if stroke is None else stroke)
@@ -749,8 +777,8 @@ class Canvas:
         rect: Sequence[float],
         *,
         radius: float = 0,
-        fill: Color | Gradient | None = None,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     ) -> None:
         """Draw a rectangle, with corners rounded by ``radius`` points."""
         self.path(PathBuilder().rect(rect, radius=radius), fill=fill, stroke=stroke)
@@ -760,8 +788,8 @@ class Canvas:
         center: Sequence[float],
         radius: float,
         *,
-        fill: Color | Gradient | None = None,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     ) -> None:
         """Draw a circle."""
         self.path(PathBuilder().circle(center, radius), fill=fill, stroke=stroke)
@@ -770,8 +798,8 @@ class Canvas:
         self,
         rect: Sequence[float],
         *,
-        fill: Color | Gradient | None = None,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     ) -> None:
         """Draw the ellipse inside ``rect``."""
         self.path(PathBuilder().ellipse(rect), fill=fill, stroke=stroke)
@@ -781,8 +809,8 @@ class Canvas:
         points: Iterable[Sequence[float]],
         *,
         close: bool = True,
-        fill: Color | Gradient | None = None,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
         fill_rule: FillRule = FillRule.NONZERO,
     ) -> None:
         """Draw straight segments through ``points``, closed unless ``close`` is false."""
@@ -795,7 +823,7 @@ class Canvas:
         control2: Sequence[float],
         end: Sequence[float],
         *,
-        stroke: Stroke | Color | Gradient | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     ) -> None:
         """Draw a cubic Bézier curve, with a 1-point black stroke by default."""
         builder = PathBuilder().move_to(start).curve_to(control1, control2, end)
@@ -810,8 +838,8 @@ class Canvas:
         *,
         font: Font | None = None,
         size: float = 11,
-        fill: Color | Gradient | None = _BLACK,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | None = _BLACK,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
         line_height: float | None = None,
         rotate: int = 0,
         max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
@@ -874,8 +902,8 @@ class Canvas:
         size: float = 11,
         align: Literal["left", "center", "right", "justify"] = "left",
         line_height: float | None = None,
-        fill: Color | Gradient | None = _BLACK,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | None = _BLACK,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
         rotate: int = 0,
         max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
     ) -> TextFit:
@@ -923,7 +951,7 @@ class Canvas:
         self,
         font: Font,
         size: float,
-        paint: tuple[Color | Gradient | None, Stroke | None],
+        paint: tuple[Color | Gradient | PatternPaint | None, Stroke | None],
         rotation: int,
         lines: list[tuple[str, float, float, float]],
     ) -> None:
@@ -940,7 +968,11 @@ class Canvas:
             else []
         )
         filling = None if fill is None else self._setting(fill, segments, None)
-        stroking = None if stroke is None else self._setting(cast("Color | Gradient", stroke.paint), segments, stroke)
+        stroking = (
+            None
+            if stroke is None
+            else self._setting(cast("Color | Gradient | PatternPaint", stroke.paint), segments, stroke)
+        )
         split = filling is not None and stroking is not None and (filling.mask is not None or stroking.mask is not None)
         parts: list[bytes] = []
         if font._font.standard_name is None:  # noqa: SLF001

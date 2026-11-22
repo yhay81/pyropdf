@@ -20,7 +20,7 @@ _MAX_PASSWORD_BYTES = 127
 _MIN_RSA_BITS = 2048
 _MAX_RSA_BITS = 8192
 _MAX_RECIPIENTS = 128
-#: RC4 methods, which pyropdf reads but never writes.
+#: RC4 methods excluded from new encryption configurations.
 _RC4_METHODS = frozenset({"rc4", "rc4-40", "rc4-128"})
 
 
@@ -72,10 +72,10 @@ class Encryption:
     defaults to ``user_password``. Each password is capped at 127 UTF-8 bytes.
 
     ``method`` is ``"aes-256"``, the AES-256 encryption of PDF 2.0 (revision
-    6), or ``"aes-128"``, AES-128 with crypt filters (revision 4). pyropdf
-    reads RC4 but never writes it. :attr:`Encryption.KEEP` keeps the
-    encryption that the document was opened with, copying its untouched
-    encrypted bytes. Without ``encryption``, a full save writes the document
+    6), or ``"aes-128"``, AES-128 with crypt filters (revision 4).
+    :attr:`Encryption.KEEP` retains the existing handler, including legacy
+    RC4 and AES-256 revision 5. It copies untouched encrypted bytes and
+    encrypts new strings and streams with that handler. Without ``encryption``, a full save writes the document
     decrypted, and an incremental save keeps its encryption.
     """
 

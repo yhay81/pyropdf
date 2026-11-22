@@ -25,6 +25,8 @@ unicode-bidi = "0.3.18"
 pdf-base14-metrics = "0.0.2"
 unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.13.3"
+# Rich-text field values use the XHTML subset of XFA.
+quick-xml = { version = "0.42.0", default-features = false }
 # PP-OCR inference in pure Rust, with pylopdf's pins (DESIGN.md section 14).
 rten = { version = "0.28.0", default-features = false, features = ["rten_format"] }
 rten-tensor = "0.28.0"
@@ -41,6 +43,7 @@ p384 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pem
 # PKCS#12 file's MAC.
 pkcs8 = { version = "0.11.0", features = ["encryption", "pem"] }
 sha2 = "0.11.1"
+sha3 = { version = "0.11.0", default-features = false }
 hmac = "0.13.0"
 harfrust = "0.16.0"
 unicode-script = "0.5.9"
