@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import Generator, Iterable, Iterator, Mapping, MutableMapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias, cast, overload
 
 from pyropdf import _core
 from pyropdf._canvas._tags import TagRole
-from pyropdf._errors import LimitError, StaleObjectError
+from pyropdf._errors import LimitError, MalformedPdfError, StaleObjectError
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._metadata import _require_version, _validate_language_tag
 from pyropdf._objects import Array, Dictionary, Name, Stream, String, _catalog, _Handle
@@ -304,13 +305,18 @@ def _collect_subtree_xrefs(roots: Iterable[Dictionary]) -> set[int]:
     return collected
 
 
-def _discover_tree_nodes(tree_root: Dictionary, label: str) -> list[tuple[Dictionary, int | None]]:
+def _discover_tree_nodes(
+    tree_root: Dictionary, label: str, budget: _core._OperationBudget | None = None
+) -> list[tuple[Dictionary, int | None]]:
     """Discover number- or name-tree nodes iteratively in pre-order up to ``_MAX_TREE_DEPTH``."""
     order: list[tuple[Dictionary, int | None]] = []
     stack: list[tuple[Dictionary, int | None, int]] = [(tree_root, None, 1)]
     seen: set[int] = set()
     while stack:
         node, parent_idx, depth = stack.pop()
+        if budget is not None:
+            budget.poll()
+            budget.charge("memory_size", 256)
         if depth > _MAX_TREE_DEPTH:
             msg = f"{label} exceeds {_MAX_TREE_DEPTH} levels"
             raise LimitError(_CODE_STRUCTURE_TREE, msg)
@@ -322,6 +328,8 @@ def _discover_tree_nodes(tree_root: Dictionary, label: str) -> list[tuple[Dictio
         order.append((node, parent_idx))
         kids = node.get("Kids")
         if isinstance(kids, Array):
+            if budget is not None:
+                budget.charge("memory_size", 160 * len(kids))
             child_dicts = [item for item in kids if isinstance(item, Dictionary) and not isinstance(item, Stream)]
             stack.extend((kid, my_idx, depth + 1) for kid in reversed(child_dicts))
     return order
@@ -677,6 +685,41 @@ def _replace_role_map(document: Document, mapping: Mapping[str, TagRole | str]) 
             root["RoleMap"] = entries
 
 
+def _iter_kids(holder: Dictionary) -> Iterator[object]:
+    if "K" not in holder:
+        return iter(())
+    value = holder.get("K")
+    return iter(value) if isinstance(value, Array) else iter((value,))
+
+
+def _structure_item(document: Document, item: object, default_page: int | None) -> StructureItem | None:  # noqa: PLR0911 - typed PDF child alternatives.
+    if isinstance(item, int) and not isinstance(item, bool) and item >= 0:
+        return MarkedContentReference(mcid=item, page=default_page)
+    if not isinstance(item, Dictionary) or isinstance(item, Stream):
+        return None
+    if _is_struct_elem_dict(item):
+        assert item.xref is not None  # noqa: S101
+        assert item.generation is not None  # noqa: S101
+        return StructureElement(document, item.xref, item.generation)
+    kind = item.get("Type")
+    if kind == Name("MCR"):
+        mcid = item.get("MCID")
+        if isinstance(mcid, int) and not isinstance(mcid, bool) and mcid >= 0:
+            page = _page_index_from_dict(document, item.get("Pg")) if "Pg" in item else default_page
+            stream = item.get("Stm")
+            if "Stm" in item and (not isinstance(stream, Stream) or stream.xref is None):
+                return None
+            return MarkedContentReference(
+                mcid=mcid, page=page, stream_xref=stream.xref if isinstance(stream, Stream) else None
+            )
+    if kind == Name("OBJR"):
+        target = item.get("Obj")
+        if isinstance(target, _Handle) and target.xref is not None:
+            page = _page_index_from_dict(document, item.get("Pg")) if "Pg" in item else default_page
+            return ObjectReference(xref=target.xref, page=page)
+    return None
+
+
 class RoleMap(MutableMapping[str, str]):
     """The structure tree's ``/RoleMap`` dictionary as a live mutable mapping.
 
@@ -832,8 +875,9 @@ class StructureChildren(Sequence["StructureElement"]):
         alt: str | None = None,
         actual_text: str | None = None,
         expanded: str | None = None,
+        namespace: str | None = None,
     ) -> StructureElement:
-        """Create and insert a child :class:`StructureElement` in one transaction."""
+        """Insert a child in one transaction, registering its optional PDF 2.0 namespace URI."""
         document = self._parent.document
         holder = self._parent._dict()  # noqa: SLF001
         parent_level = _element_level(document, holder)
@@ -859,6 +903,10 @@ class StructureChildren(Sequence["StructureElement"]):
             value: dict[str, object] = {"Type": Name("StructElem"), "S": Name(checked_role), "P": holder}
             if resolved_page is not None:
                 value["Pg"] = resolved_page.obj
+            if namespace is not None:
+                from pyropdf._structure_authoring import namespace_object  # noqa: PLC0415
+
+                value["NS"] = namespace_object(document, namespace)
             value.update(entries)
             xref = document.objects.add(value)
             node = cast("Dictionary", document.objects[xref])
@@ -1099,33 +1147,57 @@ class StructureElement:
     @property
     def items(self) -> tuple[StructureElement | MarkedContentReference | ObjectReference, ...]:
         """Return the child elements, marked-content items, and object references in ``/K`` reading order."""
-        d = self._dict()
-        default_page = _page_index_from_dict(self._document, d.get("Pg"))
-        out: list[StructureItem] = []
-        for item in _raw_kids(d):
-            if isinstance(item, int) and not isinstance(item, bool) and item >= 0:
-                out.append(MarkedContentReference(mcid=item, page=default_page, stream_xref=None))
-                continue
-            if not isinstance(item, Dictionary) or isinstance(item, Stream):
-                continue
-            kind = item.get("Type")
-            if isinstance(kind, Name) and str(kind) == "MCR":
-                mcid = item.get("MCID")
-                if isinstance(mcid, int) and not isinstance(mcid, bool) and mcid >= 0:
-                    pg = _page_index_from_dict(self._document, item.get("Pg")) if "Pg" in item else default_page
-                    stm = item.get("Stm")
-                    stm_xref = stm.xref if isinstance(stm, Dictionary) and stm.is_indirect else None
-                    out.append(MarkedContentReference(mcid=mcid, page=pg, stream_xref=stm_xref))
-            elif isinstance(kind, Name) and str(kind) == "OBJR":
-                target = item.get("Obj")
-                if isinstance(target, _Handle) and target.is_indirect and target.xref is not None:
-                    pg = _page_index_from_dict(self._document, item.get("Pg")) if "Pg" in item else default_page
-                    out.append(ObjectReference(xref=target.xref, page=pg))
-            elif _is_struct_elem_dict(item):
-                assert item.xref is not None  # noqa: S101
-                assert item.generation is not None  # noqa: S101
-                out.append(StructureElement(self._document, item.xref, item.generation))
-        return tuple(out)
+        return tuple(self._iter_items())
+
+    def _iter_items(self, budget: _core._OperationBudget | None = None) -> Iterator[StructureItem]:
+        holder = self._dict()
+        default_page = _page_index_from_dict(self._document, holder.get("Pg"))
+        for raw in _iter_kids(holder):
+            if budget is not None:
+                budget.poll()
+            item = _structure_item(self._document, raw, default_page)
+            if item is not None:
+                yield item
+            elif budget is not None:
+                msg = "invalid structure element child in /K"
+                raise MalformedPdfError(msg)
+
+    def set_attributes(self, owner: str, values: Mapping[str, object], *, namespace: str | None = None) -> None:
+        """Set standard or export-format attributes, or supply a registered namespace URI for the NSO owner."""
+        from pyropdf._structure_authoring import set_attributes  # noqa: PLC0415
+
+        with self._document.transaction("structure attributes"):
+            set_attributes(self._document, self.obj, "A", owner, values, namespace=namespace)
+
+    def add_class(self, name: str) -> None:
+        """Apply a defined attribute class without duplicating it or removing earlier class revisions."""
+        from pyropdf._structure_authoring import add_class  # noqa: PLC0415
+
+        with self._document.transaction("apply structure attribute class"):
+            add_class(self, name)
+
+    def set_user_property(
+        self, name: str, value: object, *, formatted: str | None = None, hidden: bool = False
+    ) -> None:
+        """Create or update a named user property and declare it in the catalog's mark information."""
+        from pyropdf._structure_authoring import user_property  # noqa: PLC0415
+
+        with self._document.transaction("structure user property"):
+            user_property(self, name, value, formatted, hidden=hidden)
+
+    def set_object_reference(
+        self, target: Dictionary, *, page: Page | int, replace: Dictionary | None = None
+    ) -> ObjectReference:
+        """Attach an annotation or a drawn XObject to the specified page and its structure parent.
+
+        A whole XObject drawn on several pages can have one reference per page in the same element.
+        To retarget a reference, supply an untagged replacement and the page where it is drawn.
+        When the old target has several references, this replaces the one on that page.
+        """
+        from pyropdf._structure_authoring import object_reference  # noqa: PLC0415
+
+        with self._document.transaction("structure object reference"):
+            return object_reference(self, target, page, replace)
 
     def _resolve_move_destination(
         self,
@@ -1229,6 +1301,33 @@ class StructureElement:
             return f"StructureElement(xref={self._id[0]}, role={self.role!r})"
         except StaleObjectError:
             return f"<stale StructureElement xref={self._id[0]}>"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StructureText:
+    """One piece of logical text and its originating element or content reference.
+
+    A missing text value identifies a reference whose text cannot be resolved.
+    """
+
+    element: StructureElement
+    item: MarkedContentReference | ObjectReference | None
+    text: str | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StructureChildRule:
+    """An Annex L relationship, its observed count and the applicable occurrence rule.
+
+    `allowed` is unknown for namespace or semantic conditions that the table alone cannot decide.
+    """
+
+    parent_xref: int | None
+    parent_role: str
+    child_role: str
+    count: int
+    rule: str
+    allowed: bool | None
 
 
 class StructureTree(Sequence[StructureElement]):
@@ -1355,6 +1454,7 @@ class StructureTree(Sequence[StructureElement]):
         alt: str | None = None,
         actual_text: str | None = None,
         expanded: str | None = None,
+        namespace: str | None = None,
     ) -> StructureElement:
         """Create and insert a top-level :class:`StructureElement` in one transaction.
 
@@ -1383,6 +1483,10 @@ class StructureTree(Sequence[StructureElement]):
             value: dict[str, object] = {"Type": Name("StructElem"), "S": Name(checked_role), "P": root}
             if resolved_page is not None:
                 value["Pg"] = resolved_page.obj
+            if namespace is not None:
+                from pyropdf._structure_authoring import namespace_object  # noqa: PLC0415
+
+                value["NS"] = namespace_object(self._document, namespace)
             value.update(entries)
             xref = self._document.objects.add(value)
             node = cast("Dictionary", self._document.objects[xref])
@@ -1392,6 +1496,56 @@ class StructureTree(Sequence[StructureElement]):
                 _core.object_free_unreferenced(self._document._core(), candidates)  # noqa: SLF001
         assert node.generation is not None  # noqa: S101
         return StructureElement(self._document, xref, node.generation)
+
+    def set_class_attributes(
+        self, name: str, owner: str, values: Mapping[str, object], *, namespace: str | None = None
+    ) -> None:
+        """Define or update an attribute class, keeping existing owners and entries under other names."""
+        from pyropdf._structure_authoring import class_attributes  # noqa: PLC0415
+
+        with self._document.transaction("structure class attributes"):
+            class_attributes(self._document, name, owner, values, namespace)
+
+    @contextmanager
+    def edit(self) -> Generator[StructureTree]:
+        """Group edits and roll back newly invalid determinate PDF 2.0 Annex L relationships.
+
+        The final child order and multiplicities are checked together, allowing temporarily
+        incomplete groups such as Ruby. Conditional relationships remain available via child_rules().
+        """
+        with self._document.transaction("checked structure edit"):
+            failures = {row for row in self.child_rules() if row.allowed is False}
+            yield self
+            for row in self.child_rules():
+                if row.allowed is False and row not in failures:
+                    msg = f"{row.parent_role} with {row.count} {row.child_role} violates {row.rule}"
+                    raise ValueError(msg)
+
+    def reading_order(self, *, expand_abbreviations: bool = False) -> tuple[StructureText, ...]:
+        """Extract logical text in mixed structure-child order, including cross-page references.
+
+        Use element replacement text, or its expansion when requested. Each item retains
+        its structure element. Unattributable text, including a Form stream without
+        a replacement, has a missing text value. Untagged documents return an empty
+        tuple. Both structure readers visit at most 65,536 child entries and
+        256 levels, and reject cycles and malformed children.
+        """
+        from pyropdf._structure_reading import reading_order  # noqa: PLC0415
+
+        return _core.read_operation(
+            self._document._core(),  # noqa: SLF001
+            lambda budget: reading_order(self, budget, expand=expand_abbreviations),
+        )
+
+    def child_rules(self) -> tuple[StructureChildRule, ...]:
+        """Read the observed parent/child multiplicities under the PDF 2.0 Annex L rules.
+
+        A conditional or cross-namespace relationship retains its own rule and an
+        indeterminate verdict where the namespace or role-specific specification is required.
+        """
+        from pyropdf._structure_reading import child_rules  # noqa: PLC0415
+
+        return _core.read_operation(self._document._core(), lambda budget: child_rules(self, budget))  # noqa: SLF001
 
     def walk(self, *, max_elements: int | None = _DEFAULT_MAX_ELEMENTS) -> Iterator[StructureElement]:
         """Iterate over every :class:`StructureElement` in pre-order, bounded and without recursion.
@@ -1473,8 +1627,10 @@ for _public in (
     MarkedContentReference,
     ObjectReference,
     RoleMap,
+    StructureChildRule,
     StructureChildren,
     StructureElement,
+    StructureText,
     StructureTree,
 ):
     _public.__module__ = "pyropdf"
@@ -1483,7 +1639,9 @@ __all__ = [
     "MarkedContentReference",
     "ObjectReference",
     "RoleMap",
+    "StructureChildRule",
     "StructureChildren",
     "StructureElement",
+    "StructureText",
     "StructureTree",
 ]

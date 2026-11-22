@@ -90,7 +90,7 @@ pub fn default_appearance(reader: &Reader<'_>, dict: &Dict) -> Result<DefaultApp
 
 /// Returns the Standard 14 font that `name`, a PostScript name, selects
 /// and the resource name that `/DA` strings give it.
-fn resource(name: &str) -> Option<(Base14Font, FontResource)> {
+pub(super) fn resource(name: &str) -> Option<(Base14Font, FontResource)> {
     let (abbreviation, postscript) = DA_FONTS.iter().find(|(_, font)| *font == name)?;
     Some((font(postscript)?, (abbreviation, postscript)))
 }
