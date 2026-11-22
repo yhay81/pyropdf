@@ -218,13 +218,6 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations."
 
-[families.3d-scene-settings]
-tracker = 256
-issue = 913
-title = "Author 3D scene settings and dimensional measurements as PDF data"
-features = ["3d-artwork"]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Resolve scene, camera and activation settings and each dimensional measurement geometry. Verify view, stream and measurement references after editing."
 
 [families.legacy-media]
 tracker = 256

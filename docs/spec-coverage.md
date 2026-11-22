@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 10 | 17 | 810 |
-| interpret | 16 | 19 | 0 | 10 | 21 | 771 |
-| create | 0 | 0 | 25 | 7 | 23 | 782 |
-| edit | 0 | 0 | 0 | 12 | 19 | 806 |
-| preserve | 0 | 0 | 0 | 2 | 19 | 816 |
+| read | 0 | 0 | 0 | 9 | 17 | 811 |
+| interpret | 16 | 19 | 0 | 9 | 21 | 772 |
+| create | 0 | 0 | 25 | 6 | 23 | 783 |
+| edit | 0 | 0 | 0 | 11 | 19 | 807 |
+| preserve | 0 | 0 | 0 | 1 | 19 | 817 |
 
 ## Clauses
 
@@ -204,7 +204,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 13.3 | Sounds | `sounds` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 13.4 | Movies | `movies` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 13.5 | Alternate presentations | `alternate-presentations` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
-| 13.6 | 3D artwork | `3d-artwork` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 13.6 | 3D artwork | `3d-artwork` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 13.7 | Rich media | `rich-media` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.2 | Legacy resource procedure sets | `procedure-sets` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 14.3.2 | Metadata streams | `xmp-metadata` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-156 unfinished cells in 837 features: 16 engine, 41 partial, 99 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+151 unfinished cells in 837 features: 16 engine, 36 partial, 99 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -362,8 +362,6 @@ Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
 - [#839](https://github.com/yhay81/pyropdf/issues/839) Expose developer extensions, associated files, page-piece dictionaries, document parts, and structure namespaces. Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations.
     - read, interpret, create, edit — `developer-extensions`, `page-piece`, `associated-files`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
     - preserve — `developer-extensions`, `page-piece`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
-- [#913](https://github.com/yhay81/pyropdf/issues/913) Author 3D scene settings and dimensional measurements as PDF data. Resolve scene, camera and activation settings and each dimensional measurement geometry. Verify view, stream and measurement references after editing.
-    - read, interpret, create, edit, preserve — `3d-artwork`.
 - [#861](https://github.com/yhay81/pyropdf/issues/861) Complete prepress dictionaries and print annotation relationships. Resolve box colour, separations, trapping, OPI and print annotation relationships and preserve or edit them under the edition policy.
     - read, edit — `page-boundaries`, `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
     - interpret, create, preserve — `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
