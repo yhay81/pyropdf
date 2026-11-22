@@ -37,13 +37,19 @@ names the cryptographic filter (`/Subtype`, such as `"adbe.pkcs7.s5"`),
 ## `FieldLock`
 
 ```python
-FieldLock(action: FieldMdpAction = FieldMdpAction.ALL, fields: Sequence[str] = ())
+FieldLock(
+    action: FieldMdpAction = FieldMdpAction.ALL,
+    fields: Sequence[str] = (),
+    *,
+    permission: DocMdpPermission | None = None,
+)
 ```
 
 Form-field locking specification for `Field.lock` (`SigFieldLock`) and `FieldMDP` transforms.
 
 `FieldMdpAction.ALL` locks every field and forbids `fields`;
 `INCLUDE` and `EXCLUDE` require one to 4,096 non-empty field names.
+`permission` sets the PDF 2.0 document access level in a field lock (`/P`).
 
 ## `FieldMdpAction`
 

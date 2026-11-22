@@ -1287,7 +1287,7 @@ pub fn recolor_samples<'py>(
 #[expect(clippy::too_many_arguments, reason = "the options of Page.pixmap")]
 pub fn render_page(
     py: Python<'_>,
-    document: &_Document,
+    source: crate::pages::PageSource<'_>,
     number: u32,
     generation: u16,
     matrix: (f64, f64, f64, f64),
@@ -1301,7 +1301,10 @@ pub fn render_page(
     glyph_cache: bool,
 ) -> PyResult<Pixmap> {
     crate::errors::boundary(|| {
-        let (version, index, budget) = crate::pages::index(document)?;
+        let document = source.document();
+        document.document()?;
+        let budget = document.budget();
+        let (version, index) = source.paint_index(None, &budget)?;
         let (red, green, blue, opacity) = background;
         let options = render::Options {
             matrix,
@@ -1316,7 +1319,7 @@ pub fn render_page(
         let scale = fit.map_or(render::Scale::Matrix(matrix), |(w, h)| {
             render::Scale::Fit(w, h)
         });
-        let fallback = document.fallback();
+        let fallback = source.fallback();
         let raster = py.detach(|| -> PyResult<Raster> {
             budget.poll().map_err(|e| limit_error(&e))?;
             let at = index
