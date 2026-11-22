@@ -241,8 +241,9 @@ pub enum LimitCode {
     PageLabelInputSize,
     /// A document group list, membership group list, or optional-content
     /// configuration array holds more than 4,096 entries, or `Layers.add` or
-    /// `LayerMembership` would exceed that limit. A usage lookup counts its application entries and
-    /// the group entries of applications for the requested event together.
+    /// `LayerMembership` would exceed that limit. A usage lookup counts its
+    /// application entries and the group entries of applications for the
+    /// requested event together.
     OptionalContentCount,
     /// `Layers.visible` evaluates a `/VE` visibility expression deeper than 32
     /// levels or with more than 4,096 operands.

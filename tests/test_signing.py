@@ -28,7 +28,6 @@ if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
     # tests/test_threads.py checks that pyropdf keeps disabled.
     pytest.skip("pyHanko enables the GIL of a free-threaded build", allow_module_level=True)
 
-import pikepdf
 from asn1crypto import cms
 from asn1crypto import keys as asn1_keys
 from asn1crypto import x509 as asn1_x509

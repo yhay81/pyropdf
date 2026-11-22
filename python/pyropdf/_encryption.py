@@ -56,6 +56,15 @@ class Access(enum.IntEnum):
     OWNER = 2
 
 
+def _check_integrity(integrity: object, method: str) -> None:
+    if not isinstance(integrity, bool):
+        msg = "integrity must be a bool"
+        raise TypeError(msg)
+    if integrity and method in ("aes-128", "keep"):
+        msg = "new PDF MAC protection requires a 256-bit encryption method"
+        raise ValueError(msg)
+
+
 def _password_bytes(password: object, label: str = "password") -> bytes:
     """Return ``password`` in UTF-8, refusing a non-str and more than 127 bytes before any key derivation."""
     if not isinstance(password, str):
@@ -128,12 +137,7 @@ class Encryption:
         if self.method not in ("aes-256", "aes-128", "aes-gcm", "keep"):
             msg = f"method must be 'aes-256', 'aes-128' or 'aes-gcm': {self.method!r}"
             raise ValueError(msg)
-        if not isinstance(self.integrity, bool):
-            msg = "integrity must be a bool"
-            raise TypeError(msg)
-        if self.integrity and self.method in ("aes-128", "keep"):
-            msg = "new PDF MAC protection requires a 256-bit encryption method"
-            raise ValueError(msg)
+        _check_integrity(self.integrity, self.method)
         defaults = (self.user_password, self.owner_password, self.permissions) == ("", None, Permissions.ALL)
         if self.method == "keep" and not defaults:
             msg = "Encryption.KEEP takes the passwords and permissions of the document; pass none"
@@ -599,12 +603,7 @@ class RecipientEncryption:
 
     def __post_init__(self) -> None:
         """Validate the recipients and retain their order for file-key derivation."""
-        if not isinstance(self.integrity, bool):
-            msg = "integrity must be a bool"
-            raise TypeError(msg)
-        if self.integrity and self.method == "aes-128":
-            msg = "new PDF MAC protection requires a 256-bit encryption method"
-            raise ValueError(msg)
+        _check_integrity(self.integrity, self.method)
         if not isinstance(self.recipients, Mapping) or not self.recipients:
             msg = "recipients must map 1 to 128 certificates to permissions"
             raise ValueError(msg)

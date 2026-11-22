@@ -698,7 +698,10 @@ READ_ONLY = {
     "Chars": "column",
     "Chunk": "to_dict",
     "Content": "path_clusters pixmap",
-    "Document": "changes check to_bytes render text markdown to_json to_chunks font_program image_for_output verify_integrity named_resources",
+    "Document": (
+        "changes check to_bytes render text markdown to_json to_chunks font_program image_for_output "
+        "verify_integrity named_resources"
+    ),
     "Destinations": "structure",
     "NamedAction": "resolve",
     "RemoteDestination": "resolve resolve_structure",
