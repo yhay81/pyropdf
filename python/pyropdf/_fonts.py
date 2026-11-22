@@ -309,7 +309,8 @@ def _program(descriptor: object) -> tuple[Stream, str] | None:
             return stream, "sfnt"
         if subtype in _CFF:
             return stream, "cff"
-    return None
+    stream = descriptor.get("FontFile")
+    return (stream, "type1") if isinstance(stream, Stream) else None
 
 
 def _descriptors(font: Dictionary) -> Iterator[Dictionary]:
@@ -458,6 +459,27 @@ def _kept_glyphs(programs: dict[int, _Program], used: Iterator[list[int]]) -> di
     return keep
 
 
+def _rewrite_program(document: Document, program: _Program, keep: list[int]) -> tuple[bytes, int, int, int] | None:
+    """Update the program and its format-specific segment lengths, or keep it intact."""
+    data = program.stream.read()
+    lengths = None
+    if program.format == "type1":
+        clear, encrypted = program.stream.get("Length1"), program.stream.get("Length2")
+        if type(clear) is not int or type(encrypted) is not int or min(clear, encrypted) < 0:
+            return None
+        lengths = (clear, encrypted)
+    subset = _core.subset_font_program(data, program.format, keep, lengths, document._core())  # noqa: SLF001
+    if subset is None or len(subset[0]) >= len(data):
+        return None
+    new, glyphs, kept = subset
+    program.stream.write(new)
+    if lengths is not None:
+        program.stream["Length2"] = lengths[1] - (len(data) - len(new))
+    elif "Length1" in program.stream:
+        program.stream["Length1"] = len(new)
+    return new, len(data), glyphs, kept
+
+
 def subset_fonts(document: Document) -> tuple[SubsetFont, ...]:
     """Subset each embedded program to the glyphs drawn, in one transaction, and report what changed."""
     report: list[SubsetFont] = []
@@ -468,14 +490,10 @@ def subset_fonts(document: Document) -> tuple[SubsetFont, ...]:
         for xref, program in programs.items():
             if xref not in keep:
                 continue
-            data = program.stream.read()
-            subset = _core.subset_font_program(data, program.format, keep[xref])
-            if subset is None or len(subset[0]) >= len(data):
+            result = _rewrite_program(document, program, keep[xref])
+            if result is None:
                 continue
-            new, glyphs, kept = subset
-            program.stream.write(new)
-            if "Length1" in program.stream:
-                program.stream["Length1"] = len(new)
+            new, before, glyphs, kept = result
             tag = _tag(new)
             for descriptor in program.descriptors:
                 _rename(descriptor, "FontName", tag)
@@ -493,7 +511,7 @@ def subset_fonts(document: Document) -> tuple[SubsetFont, ...]:
                     name=str(name or ""),
                     glyphs=glyphs,
                     kept=kept,
-                    size_before=len(data),
+                    size_before=before,
                     size_after=len(new),
                 )
             )

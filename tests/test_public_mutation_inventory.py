@@ -29,6 +29,20 @@ if TYPE_CHECKING:
 # denotes a property assignment and 'del:' denotes a property deletion.
 MUTATIONS = (
     (
+        "typed_set",
+        "Switch the movie target on the existing action; title and reference are exclusive.",
+        "MovieAction",
+        "target=",
+    ),
+    ("typed_set", "Override the action timing and preserve the annotation default.", "MovieAction", "start= duration="),
+    ("typed_set", "Select an existing name on the slideshow dictionary.", "SlideShow", "start_resource="),
+    (
+        "named_pages",
+        "Move a named target and preserve shared name-tree nodes; dedicated slideshow tests check StartResource.",
+        "SlideShow",
+        "rename_resource",
+    ),
+    (
         "sign_revision",
         "Adopt the signed incremental revision, binding the field and its byte ranges.",
         "Document",
@@ -165,7 +179,16 @@ MUTATIONS = (
         "fill_field",
         "Field edits redraw the field's widgets and settle their appearances.",
         "Field",
-        "flags= choices= label= del:label max_length= del:max_length default_value= del:default_value value= reset",
+        (
+            "flags= choices= label= del:label max_length= del:max_length default_value= del:default_value "
+            "value= rich_text= default_style= reset"
+        ),
+    ),
+    (
+        "xfa_packets",
+        "Replace and remove existing XFA packets while retaining live references to the original streams.",
+        "Form",
+        "replace_xfa_packet remove_xfa_packet remove_xfa",
     ),
     ("fill_field", "Bind the font used to regenerate field appearances.", "Form", "font="),
     (
@@ -182,6 +205,24 @@ MUTATIONS = (
         "FDF and XFDF decode independently then share the atomic field/appearance update.",
         "Form",
         "import_fdf import_xfdf",
+    ),
+    (
+        "structure_attributes",
+        "Write ClassMap owners or group related structure edits under a checked transaction.",
+        "StructureTree",
+        "set_class_attributes edit",
+    ),
+    (
+        "structure_attributes",
+        "Write the element's A and C entries, class definitions and UserProperties mark information.",
+        "StructureElement",
+        "set_attributes add_class set_user_property",
+    ),
+    (
+        "tagged_drawing",
+        "Append through the same parent-tree writer and connect the owner's K entry to its content item.",
+        "StructureElement",
+        "set_object_reference",
     ),
     (
         "structure_role_map",
@@ -357,9 +398,9 @@ MUTATIONS = (
     ),
     (
         "canvas_resources",
-        "Opacity and blend modes register ExtGState entries for the drawing.",
+        "Opacity, blend modes and group soft masks register graphics state for the drawing.",
         "Canvas",
-        "opacity blend",
+        "opacity blend soft_mask",
     ),
     ("canvas_resources", "Use the layer's shared indirect OCG as the marked content property.", "Canvas", "layer"),
     (
@@ -514,6 +555,7 @@ MUTATIONS = (
         "Document",
         "rewrite_images",
     ),
+    ("font_cmap", "Write a font's code-to-CID mapping and stream metadata together.", "Document", "write_cmap"),
     (
         "subset_fonts",
         "Subset shared font programs and rename their descriptors while retaining glyph IDs.",
@@ -609,6 +651,7 @@ MUTATIONS = (
 # Pure readers, value factories/transformations and external or session-only
 # effects are listed independently of edits to the versioned PDF.
 READ_ONLY = {
+    "Sound": "from_stream",
     "Annotation": "pixmap text sound appearance_stream",
     "Widget": "appearance_stream icon",
     "CancellationToken": "cancelled",
@@ -616,12 +659,12 @@ READ_ONLY = {
     "Attachment": "read",
     "Chars": "column",
     "Chunk": "to_dict",
-    "Content": "path_clusters",
+    "Content": "path_clusters pixmap",
     "Document": "changes check to_bytes render text markdown to_json to_chunks font_program",
     "DocumentLimits": "web",
     "Element": "to_dict",
     "Font": "from_file from_bytes standard chars char_widths char_bbox program text_width text_height has_glyph",
-    "Form": "to_fdf to_xfdf",
+    "Form": "to_fdf to_xfdf xfa_packet",
     "History": "save",
     "Layers": "visible",
     "Layout": "to_dict to_html to_xml",
@@ -629,7 +672,10 @@ READ_ONLY = {
     "Operations": "parse to_bytes",
     "Outline": "walk entries",
     "OutlineItem": "to_entry",
-    "Page": "images fonts pixmap ocr svg content paths text words layout chars search selection markdown tables",
+    "Page": (
+        "images fonts pixmap ocr svg content paths text words layout chars search selection markdown tables "
+        "uses_transparency"
+    ),
     "PageImage": "pixmap stored",
     "PageLabelRange": "label",
     "Pages": "labeled index",
@@ -650,7 +696,7 @@ READ_ONLY = {
     "Signer": "from_pem from_pkcs12 callback",
     "Dictionary": "geospatial_point",
     "Stream": "read",
-    "StructureTree": "resolve_role walk",
+    "StructureTree": "child_rules reading_order resolve_role walk",
     "Table": "markdown",
     "typed.LinkedTree": "lookup",
     "typed.View": "interpret",

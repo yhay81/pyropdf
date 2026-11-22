@@ -162,10 +162,10 @@ pub(crate) fn prepare(
                 ));
             }
             if value.len()? == 4 {
-                let (seed, id, (encrypt_metadata, aes256), wrapped): (
+                let (seed, id, (encrypt_metadata, method), wrapped): (
                     [u8; 20],
                     [u8; 16],
-                    (bool, bool),
+                    (bool, String),
                     Bound<'_, PyAny>,
                 ) = value.extract()?;
                 let budget = document.budget();
@@ -193,13 +193,18 @@ pub(crate) fn prepare(
                         seed,
                         id,
                         encrypt_metadata,
-                        aes256,
+                        method: aes_method(&method)?,
                         envelopes: envelopes.into_vec(),
                     })),
                 ));
             }
-            let (user, owner, permissions, aes256, random): (Vec<u8>, Vec<u8>, u32, bool, Vec<u8>) =
-                value.extract()?;
+            let (user, owner, permissions, method, random): (
+                Vec<u8>,
+                Vec<u8>,
+                u32,
+                String,
+                Vec<u8>,
+            ) = value.extract()?;
             let random: [u8; 64] = random
                 .try_into()
                 .map_err(|_| PyValueError::new_err("encryption needs 64 random bytes"))?;
@@ -207,7 +212,7 @@ pub(crate) fn prepare(
                 user,
                 owner,
                 permissions,
-                aes256,
+                method: aes_method(&method)?,
                 random,
             });
             return Ok((saved(py, document, false)?, Some(encryption)));
@@ -241,4 +246,14 @@ fn saved(py: Python<'_>, document: &_Document, decrypt: bool) -> PyResult<Arc<Ve
         }
         Ok(transaction.snapshot())
     })
+}
+
+fn aes_method(name: &str) -> PyResult<pyropdf_store::security::Method> {
+    use pyropdf_store::security::Method;
+    match name {
+        "aes-128" => Ok(Method::Aes128),
+        "aes-256" => Ok(Method::Aes256),
+        "aes-gcm" => Ok(Method::AesGcm),
+        _ => Err(PyValueError::new_err("unknown encryption method")),
+    }
 }

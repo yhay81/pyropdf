@@ -11,6 +11,14 @@ writes with no library: V2 R3 128-bit RC4, with the same passwords and page
 texts. Each content stream's `/Length` refers to an object, one uncompressed
 and one in an object stream, and its encrypted data ends in a line feed.
 
+## Authenticated AES
+
+`generate_gcm.py` writes `user-aes-gcm.pdf` using pyHanko 0.38.1 and the
+standard handler from ISO/TS 32003:2023. The owner and user passwords are
+`ownerpw` and `userpw`. The page has a literal label and a separate painted
+content stream. Every run generates fresh keys and nonces. No document MAC
+is requested. The tests also use pyHanko to open pyropdf output.
+
 ## Public-key recipients
 
 Run `uv run python tests/assets/encrypted/recipients/generate.py` to recreate
@@ -22,6 +30,7 @@ permission to change encryption.
 
 | File in `recipients/` | Adobe.PubSec mode |
 | --- | --- |
+| `pyhanko-gcm.pdf` | adbe.pkcs7.s5, V6 AESV4 |
 | `pyhanko-recipients.pdf` | adbe.pkcs7.s5, V5 AESV3 |
 | `pyhanko-identity-strings.pdf` | V5 AESV3 streams, Identity strings and clear XMP |
 | `pyhanko-recipients-aes128.pdf` | adbe.pkcs7.s5, V4 AESV2 |
