@@ -236,12 +236,41 @@ fn a_save_that_keeps_the_encryption_copies_untouched_encrypted_bytes() {
     }
 }
 
+#[test]
+fn legacy_reader_input_reproduces_the_authenticated_padded_bytes() {
+    let passwords: &[&[u8]] = &[
+        b"",
+        b"test",
+        b"ends in (",
+        b"\0()",
+        &[0xff, 0x28],
+        &[b'x'; 32],
+        b"1234567890123456789012345678901\xc2\xa3",
+        b"1234567890123456789012345678901\xe0\xa0\x80",
+        b"1234567890123456789012345678901\xf0\x90\x80\x80",
+        b"123456789012345678901234567890\xf4\x8f\x80\x80",
+    ];
+    for password in passwords {
+        let effective = super::padded(password);
+        let reader = super::legacy_reader_input(effective.to_vec());
+        assert_eq!(super::padded(&reader), effective);
+        assert_eq!(
+            std::str::from_utf8(&reader).is_ok(),
+            std::str::from_utf8(password).is_ok()
+        );
+    }
+}
+
 fn encryption(aes256: bool) -> Encryption {
     Encryption::Password(crate::security::PasswordEncryption {
         user: b"userpw".to_vec(),
         owner: b"ownerpw".to_vec(),
         permissions: 0b1111_0000_1100,
-        aes256,
+        method: if aes256 {
+            super::Method::Aes256
+        } else {
+            super::Method::Aes128
+        },
         random: core::array::from_fn(|i| (i * 37 + 11) as u8),
     })
 }
@@ -527,4 +556,34 @@ fn a_budget_refusal_while_reading_an_indirect_length_refuses_the_read() {
             .unwrap()
             .is_some()
     );
+}
+
+#[test]
+fn mac_verification_propagates_its_budget_and_refusals_write_no_prefix() {
+    let source = fixture("integrity/standalone-table.pdf");
+    let document = open(&source, Some("userpw")).unwrap();
+    let version = document.current();
+    let index = version.base().file().unwrap();
+    let tight = Budget::default().with_limit(LimitCode::MemorySize, Some(256));
+    let error = super::integrity::verify(index, &tight).unwrap_err();
+    assert_eq!(error.limit().unwrap().code(), LimitCode::MemorySize);
+
+    let mut target = Vec::new();
+    let options = save::Options {
+        linearize: true,
+        ..Default::default()
+    };
+    let result = save::full_with(&version, &mut target, &Budget::default(), None, options);
+    assert!(matches!(
+        result,
+        Err(save::Error::Refused(save::Refusal::MacLinearization))
+    ));
+    assert!(target.is_empty());
+
+    let mut altered = source;
+    altered[7] = b'1';
+    let changed = open(&altered, Some("userpw")).unwrap();
+    let result = save::incremental(&changed.current(), &mut target, &Budget::default());
+    assert!(matches!(result, Err(save::Error::Store(_))));
+    assert!(target.is_empty());
 }

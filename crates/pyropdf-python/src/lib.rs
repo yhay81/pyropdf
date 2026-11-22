@@ -56,9 +56,10 @@ mod _core {
     };
     #[pymodule_export]
     use super::annotations::{
-        _stale_appearances, annotation_add, annotation_draw_face, annotation_edit, annotation_face,
-        annotation_geometry, annotation_list, annotation_open, annotation_pixmap, annotation_popup,
-        annotation_read, annotation_remove, annotation_reply, annotation_text,
+        _stale_appearances, annotation_add, annotation_attach, annotation_draw_face,
+        annotation_edit, annotation_face, annotation_geometry, annotation_list, annotation_open,
+        annotation_pixmap, annotation_popup, annotation_read, annotation_remove, annotation_reply,
+        annotation_text,
     };
     #[pymodule_export]
     use super::buffers::{CharColumns, Column, PathColumns};
@@ -139,13 +140,13 @@ mod _core {
     #[pymodule_export]
     use super::schema::{schema_names, schema_object};
     #[pymodule_export]
-    use super::security::{security_state, unlock};
+    use super::security::{security_state, unlock, verify_integrity};
     #[pymodule_export]
     use super::shadings::{CanvasShadings, canvas_gradient, canvas_gradient_pattern};
     #[pymodule_export]
     use super::sign::{
         _Signer, begin_signing, certificate_read, document_file, sign_document, signature_read,
-        verify_ecdsa,
+        timestamp_document, verify_ecdsa,
     };
     #[pymodule_export]
     use super::text::{

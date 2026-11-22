@@ -469,6 +469,27 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.attachments["data.csv"].read(), doc.collection.navigator.layout)
 ```
 
+## Web Capture
+
+`doc.web_capture.by_url(url)` and `by_id(source_digest)` return the page and image
+sets recorded for a source. Each is a writable Arlington view. A page set's
+`O` entries identify pages, an image set's `O` entries identify image streams,
+and `SI` contains source information, including URL aliases and stored commands.
+Reading these records works offline.
+
+To change source locations, call `doc.web_capture.set_sources(content, source)`
+with a `typed.SourceInformation` view or a tuple of views. This updates the URL
+index and preserves other sets sharing the old or new URL. `remove(content)`
+unlinks the set from its indexes and clears its members' parent identifiers.
+Remove the relevant set before deleting or copying one of its pages, or a page
+that uses one of its images. Reordering pages preserves set membership.
+
+To register an indirectly stored `typed.WebCapturePageSet` or
+`typed.WebCaptureImageSet` in PDF 1.3–1.7, call `doc.web_capture.add(content)`.
+Supply the 16-byte source digest, member references, source dictionaries and,
+for images, their page reference counts. PDF 2.0 deprecates new Web Capture
+records. Existing records may still be read, edited and removed.
+
 ## Page labels and named pages
 
 `doc.page_labels` lists the `PageLabelRange` records of the document, and

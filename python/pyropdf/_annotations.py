@@ -24,6 +24,7 @@ from pyropdf._actions import (
     _read_screen_action,
     _write_screen_action,
 )
+from pyropdf._appearance_states import AppearanceOwner as _AppearanceOwner
 from pyropdf._attachments import RelatedFile, _read_related, _write_related
 from pyropdf._canvas import _cache
 from pyropdf._content import BlendMode, Color
@@ -43,9 +44,10 @@ from pyropdf._media import (
     add_media,
     media_annotation,
 )
-from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Dictionary, Name, Stream, String
+from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Array, Dictionary, Name, Stream, String
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix
 from pyropdf._profiles import pdfa_claim
+from pyropdf._redaction_mark import RedactionMark, add_mark, read_mark, write_mark
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
@@ -64,6 +66,7 @@ _MAX_BORDER_DASHES = 32
 _MAX_CLOUDS = 2
 #: The components of a gray, an RGB, and a CMYK color.
 _GRAY, _RGB, _CMYK = 1, 3, 4
+_POINT_COMPONENTS = 2
 
 # The slots of an annotation record's texts.
 _CONTENTS, _ICON, _AUTHOR, _CREATED, _MODIFIED, _SUBJECT, _NAME, _INTENT = range(8)
@@ -333,9 +336,9 @@ class Sound:
     """
 
     data: bytes
-    """The sample data."""
-    rate: float
-    """Samples per second per channel, ``/R``."""
+    """Embedded samples, or empty bytes when the sound is in an external file."""
+    rate: float | None
+    """Samples per second per channel, or None when an external file defines its own rate."""
     channels: int
     """The sound channels, ``/C``: 1 when absent."""
     bits: int
@@ -344,6 +347,53 @@ class Sound:
     """The encoding of the sample values, ``/E``: :attr:`SoundEncoding.RAW` when absent."""
     compression: str | None
     """The sound compression format, ``/CO``, or ``None`` for uncompressed samples."""
+    compression_parameters: Array | Dictionary | None = None
+    """Live parameters for the sound compression format, including stream parameters."""
+    external_file: String | Dictionary | None = None
+    """The external file specification, if present. Reading sound metadata never opens it."""
+
+    @classmethod
+    def from_stream(
+        cls, stream: Stream, *, decode: bool = True, max_size: int | None = _DEFAULT_MAX_STREAM_DATA_SIZE
+    ) -> Sound:
+        """Read a sound stream's samples and metadata, including streams referenced by Sound actions."""
+        _validate_optional_positive_int("max_size", max_size)
+        if not isinstance(decode, bool):
+            msg = f"decode must be a bool: {decode!r}"
+            raise TypeError(msg)
+        if not isinstance(stream, Stream):
+            msg = "expected a sound stream"
+            raise TypeError(msg)
+        external = stream.get("F")
+        if external is not None and (not isinstance(external, (String, Dictionary)) or isinstance(external, Stream)):
+            msg = "the sound's /F must be a file specification"
+            raise MalformedPdfError(msg)
+        raw_rate = stream.get("R")
+        rate = None if external is not None and raw_rate is None else _sound_number(raw_rate, "R", integer=False)
+        channels = int(_sound_number(stream.get("C", 1), "C", integer=True))
+        bits = int(_sound_number(stream.get("B", 8), "B", integer=True))
+        encoding = stream.get("E", Name("Raw"))
+        if not isinstance(encoding, Name) or encoding not in SoundEncoding._value2member_map_:
+            msg = f"the sound's /E must be Raw, Signed, muLaw, or ALaw: {encoding!r}"
+            raise MalformedPdfError(msg)
+        compression = stream.get("CO")
+        if compression is not None and not isinstance(compression, Name):
+            msg = f"the sound's /CO must be a name: {compression!r}"
+            raise MalformedPdfError(msg)
+        parameters = stream.get("CP")
+        if parameters is not None and not isinstance(parameters, (Array, Dictionary)):
+            msg = "the sound's /CP must be an array, dictionary, or stream"
+            raise MalformedPdfError(msg)
+        return cls(
+            data=stream.read(decode=decode, max_size=max_size) if external is None else b"",
+            rate=rate,
+            channels=channels,
+            bits=bits,
+            encoding=SoundEncoding(encoding),
+            compression=None if compression is None else str(compression),
+            compression_parameters=parameters,
+            external_file=external,
+        )
 
 
 def _sound_number(value: object, name: str, *, integer: bool) -> float:
@@ -799,7 +849,48 @@ def _draw_face(page: Page, index: int, id: tuple[int, int], font: Font) -> None:
         raise page._stale()  # noqa: SLF001
 
 
-class Annotation:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LineDetails:
+    """Leader lengths in default user space and the caption placement of a line.
+
+    A positive leader extends clockwise from the drawn line to its endpoint.
+    The caption comes from the annotation's contents. Its offset is along and
+    perpendicular to the line, with positive values toward the end and above.
+    """
+
+    leader_length: float = 0.0
+    leader_extension: float = 0.0
+    leader_offset: float = 0.0
+    caption: bool = False
+    position: Literal["Inline", "Top"] = "Inline"
+    caption_offset: tuple[float, float] = (0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        """Validate leader lengths and caption placement."""
+        _number(self.leader_length, "leader length")
+        for value in (self.leader_extension, self.leader_offset):
+            if _number(value, "leader extension or offset") < 0:
+                msg = "leader extension and offset must be nonnegative"
+                raise ValueError(msg)
+        if not isinstance(self.caption, bool) or self.position not in ("Inline", "Top"):
+            msg = "a line caption requires a boolean and Inline or Top positioning"
+            raise ValueError(msg)
+        object.__setattr__(self, "caption_offset", tuple(_point(self.caption_offset)))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PopupInfo:
+    """Effective markup shown in a pop-up window and its initial display state."""
+
+    rect: Rect
+    is_open: bool
+    contents: str | None
+    author: str | None
+    modified: str | None
+    color: Color | None
+
+
+class Annotation(_AppearanceOwner):
     """A handle on one annotation of a page, as ``page.annotations`` lists it.
 
     Properties read the document on every access. A handle names the
@@ -1224,6 +1315,109 @@ class Annotation:
         self.triggers.clear()
 
     @property
+    def line_details(self) -> LineDetails | None:
+        """Return or replace a line's leader lengths and caption placement."""
+        obj = self.obj
+        if obj.get("Subtype") != Name("Line"):
+            return None
+        if "LLE" in obj and "LL" not in obj:
+            msg = "line /LLE requires /LL"
+            raise MalformedPdfError(msg)
+        co = obj.get("CO")
+        cp = obj.get("CP", Name("Inline"))
+        if (co is not None and (not isinstance(co, Array) or len(co) != _POINT_COMPONENTS)) or not isinstance(cp, Name):
+            msg = "a line requires a caption position name and two caption offset coordinates"
+            raise MalformedPdfError(msg)
+        try:
+            return LineDetails(
+                leader_length=obj.get("LL", 0),
+                leader_extension=obj.get("LLE", 0),
+                leader_offset=obj.get("LLO", 0),
+                caption=obj.get("Cap", False),
+                position=cast('Literal["Inline", "Top"]', str(cp)),
+                caption_offset=(0.0, 0.0) if co is None else (co[0], co[1]),
+            )
+        except (TypeError, ValueError, PdfError) as exc:
+            raise MalformedPdfError(str(exc)) from exc
+
+    @line_details.setter
+    def line_details(self, value: LineDetails) -> None:
+        if not isinstance(value, LineDetails) or self.type != AnnotationType.LINE:
+            msg = "line_details requires a Line annotation and LineDetails"
+            raise ValueError(msg)
+        doc = self._page.document
+        with doc.transaction("edit line leaders and caption"):
+            obj = self.obj
+            entries = {
+                "LL": value.leader_length if value.leader_length or value.leader_extension else None,
+                "LLE": value.leader_extension or None,
+                "LLO": value.leader_offset or None,
+                "Cap": value.caption or None,
+                "CP": Name(value.position) if value.position != "Inline" else None,
+                "CO": value.caption_offset if value.caption_offset != (0.0, 0.0) else None,
+            }
+            if any(entries[k] is not None for k in ("LLO", "CP", "CO")):
+                _require(doc, (1, 7))
+            elif any(v is not None for v in entries.values()):
+                _require(doc, (1, 6))
+            for key, entry in entries.items():
+                if entry is not None:
+                    obj[key] = entry
+                elif key in obj:
+                    del obj[key]
+            self._set()
+
+    @property
+    def redaction(self) -> RedactionMark | None:
+        """Return or replace the regions and replacement instructions of a redaction mark."""
+        return read_mark(self)
+
+    @redaction.setter
+    def redaction(self, mark: RedactionMark) -> None:
+        write_mark(self, mark)
+
+    @property
+    def popup_info(self) -> PopupInfo | None:
+        """Read a popup's window and effective Contents, T, M and C (ISO 32000-2 §12.5.6.14).
+
+        A reciprocal Parent supplies the markup entries. A popup without a
+        Parent uses its own entries. A conflicting Parent is malformed.
+        """
+        owner = self.obj
+        popup = owner.get("Popup")
+        if popup is None:
+            return None
+        if not isinstance(popup, Dictionary) or not popup.is_indirect or popup.get("Subtype") != Name("Popup"):
+            msg = "/Popup must refer to an indirect Popup annotation"
+            raise MalformedPdfError(msg)
+        parent = popup.get("Parent")
+        if parent is not None and (not isinstance(parent, Dictionary) or not parent.is_indirect or parent != owner):
+            msg = "the popup /Parent does not reference its owning annotation"
+            raise MalformedPdfError(msg)
+        rect = self.popup_rect
+        opened = popup.get("Open", False)
+        if rect is None or not isinstance(opened, bool):
+            msg = "the popup requires a usable rectangle and a boolean /Open"
+            raise MalformedPdfError(msg)
+        source = owner if parent is not None else popup
+        raw = source.get("C")
+        if raw is not None and (
+            not isinstance(raw, Array)
+            or len(raw) not in (0, _GRAY, _RGB, _CMYK)
+            or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in raw)
+        ):
+            msg = "invalid popup color"
+            raise MalformedPdfError(msg)
+        return PopupInfo(
+            rect=rect,
+            is_open=opened,
+            contents=_string_text(source.get("Contents")),
+            author=_string_text(source.get("T")),
+            modified=_string_text(source.get("M")),
+            color=_color(list(raw)) if raw is not None else None,
+        )
+
+    @property
     def popup_rect(self) -> Rect | None:
         """Return or set the display rectangle of the annotation's popup, ``None`` without one.
 
@@ -1464,25 +1658,7 @@ class Annotation:
         if not isinstance(stream, Stream):
             msg = f"the sound annotation's /Sound must be a stream: {stream!r}"
             raise MalformedPdfError(msg)
-        rate = _sound_number(stream.get("R"), "R", integer=False)
-        channels = int(_sound_number(stream.get("C", 1), "C", integer=True))
-        bits = int(_sound_number(stream.get("B", 8), "B", integer=True))
-        encoding = stream.get("E", Name("Raw"))
-        if not isinstance(encoding, Name) or encoding not in SoundEncoding._value2member_map_:
-            msg = f"the sound's /E must be Raw, Signed, muLaw, or ALaw: {encoding!r}"
-            raise MalformedPdfError(msg)
-        compression = stream.get("CO")
-        if compression is not None and not isinstance(compression, Name):
-            msg = f"the sound's /CO must be a name: {compression!r}"
-            raise MalformedPdfError(msg)
-        return Sound(
-            data=stream.read(decode=decode, max_size=max_size),
-            rate=float(rate),
-            channels=channels,
-            bits=bits,
-            encoding=SoundEncoding(encoding),
-            compression=None if compression is None else str(compression),
-        )
+        return Sound.from_stream(stream, decode=decode, max_size=max_size)
 
     def __eq__(self, other: object) -> bool:
         """Compare the page and the annotation: its object, or its position for a direct dictionary."""
@@ -2270,6 +2446,7 @@ class LineAnnotation(_Shape):
     bounds, widened for the stroke and the endings.
     """
 
+    details: LineDetails | None
     start: Point
     end: Point
     color: Color | None
@@ -2285,6 +2462,7 @@ class LineAnnotation(_Shape):
         start: Point | Sequence[float],
         end: Point | Sequence[float],
         *,
+        details: LineDetails | None = None,
         color: Color | None = Color(1.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         interior_color: Color | None = None,
         border: Border = Border(),
@@ -2294,6 +2472,10 @@ class LineAnnotation(_Shape):
         contents: str | None = None,
     ) -> None:
         """Validate the specification."""
+        if details is not None and not isinstance(details, LineDetails):
+            msg = "details must be a LineDetails value"
+            raise TypeError(msg)
+        object.__setattr__(self, "details", details)
         self._init_style("Line", color, interior_color, border, opacity, blend_mode, contents)
         object.__setattr__(self, "start", _point(start))
         object.__setattr__(self, "end", _point(end))
@@ -2431,6 +2613,7 @@ AnnotationSpecification: TypeAlias = (
     | FreeText
     | Stamp
     | MediaSpecification
+    | RedactionMark
 )
 _SPECIFICATIONS = (
     Highlight,
@@ -2512,6 +2695,8 @@ class Annotations(Sequence[Annotation]):
         The annotation is drawn when its transaction commits, or before a
         read in the transaction, so that every viewer draws it alike.
         """
+        if isinstance(specification, RedactionMark):
+            return add_mark(self._page, specification)
         if isinstance(specification, (Screen, ThreeD, RichMedia, ProjectionAnnotation)):
             return Annotation(self._page, add_media(self._page, specification), 0)
         if not isinstance(specification, _SPECIFICATIONS):
@@ -2521,6 +2706,14 @@ class Annotations(Sequence[Annotation]):
         payload = cast("dict[str, object]", specification._payload())  # noqa: SLF001
         face = specification._face() if isinstance(specification, FreeText) else None  # noqa: SLF001
         document = page._document  # noqa: SLF001
+        if isinstance(specification, LineAnnotation) and specification.details is not None:
+            with document.transaction("add dimension line"):
+                result = _core.annotation_add(document._core(), page._number, page._generation, payload)  # noqa: SLF001
+                if result is None:
+                    raise page._stale()  # noqa: SLF001
+                line = Annotation(page, result, 0)
+                line.line_details = specification.details
+                return line
         if face is None:
             result = _core.annotation_add(document._core(), page._number, page._generation, payload)  # noqa: SLF001
             if result is None:
@@ -2542,6 +2735,8 @@ class Annotations(Sequence[Annotation]):
 
 # The package re-exports these names; reprs, pickles, and documentation name them.
 for _public in (
+    LineDetails,
+    PopupInfo,
     Annotation,
     AnnotationFile,
     Annotations,

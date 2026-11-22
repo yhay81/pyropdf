@@ -1364,22 +1364,22 @@ def _collect_name_tree_xrefs(root: object) -> list[int]:
     return xrefs
 
 
-def _build_canonical_pages_tree(document: Document, entries: list[_NamedPageEntry]) -> Dictionary:
+def _build_name_tree(document: Document, entries: list[tuple[bytes, object]]) -> Dictionary:
     """Write sorted ``entries`` as canonical 64-pair ``/Names`` / ``/Limits`` / ``/Kids`` nodes."""
     if len(entries) <= _MAX_LEAF_PAIRS:
         flat: list[object] = []
-        for entry in entries:
-            flat.extend((entry.raw_key, Dictionary(document, entry.page_pair)))
+        for pair in entries:
+            flat.extend(pair)
         root_xref = document.objects.add({"Names": flat})
         return document.objects[root_xref]
 
     level_nodes: list[tuple[Dictionary, bytes, bytes]] = []
     for start in range(0, len(entries), _MAX_LEAF_PAIRS):
         chunk = entries[start : start + _MAX_LEAF_PAIRS]
-        low, high = chunk[0].raw_key, chunk[-1].raw_key
+        low, high = chunk[0][0], chunk[-1][0]
         flat_leaf: list[object] = []
-        for entry in chunk:
-            flat_leaf.extend((entry.raw_key, Dictionary(document, entry.page_pair)))
+        for pair in chunk:
+            flat_leaf.extend(pair)
         leaf_xref = document.objects.add({"Limits": [low, high], "Names": flat_leaf})
         level_nodes.append((document.objects[leaf_xref], low, high))
 
@@ -1420,7 +1420,9 @@ def _write_named_pages_entries(document: Document, entries: list[_NamedPageEntry
         msg = f"the Pages name tree's {_MAX_TREE_ENTRIES}-entry safety limit is reached"
         raise LimitError(code, msg)
     _require_version(document, catalog, (1, 3))
-    new_root = _build_canonical_pages_tree(document, entries_sorted)
+    new_root = _build_name_tree(
+        document, [(entry.raw_key, Dictionary(document, entry.page_pair)) for entry in entries_sorted]
+    )
     if names_dict is None:
         names_xref = document.objects.add({"Pages": new_root})
         catalog["Names"] = document.objects[names_xref]

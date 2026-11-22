@@ -650,6 +650,7 @@ fn pdf_2_0_standard_fonts_and_empty_appearances_emit_required_entries() {
         &Dict::new(),
         settle::Drawing::Drawn(settle::WidgetAppearance {
             content: Vec::new(),
+            icon: None,
             size: (80.0, 20.0),
             matrix: None,
             font: None,
