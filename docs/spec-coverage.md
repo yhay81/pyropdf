@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 15 | 22 | 800 |
-| interpret | 16 | 19 | 0 | 27 | 31 | 744 |
-| create | 0 | 0 | 25 | 21 | 30 | 761 |
-| edit | 0 | 0 | 0 | 35 | 30 | 772 |
-| preserve | 0 | 0 | 0 | 17 | 24 | 796 |
+| read | 0 | 0 | 0 | 15 | 21 | 801 |
+| interpret | 16 | 19 | 0 | 27 | 30 | 745 |
+| create | 0 | 0 | 25 | 17 | 27 | 768 |
+| edit | 0 | 0 | 0 | 34 | 24 | 779 |
+| preserve | 0 | 0 | 0 | 17 | 23 | 797 |
 
 ## Clauses
 
@@ -111,15 +111,15 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 8.11 | Optional content | `optional-content` | 1 partial | 1 engine | 1 partial | 1 partial | 1 done |
 | 9.3 | Text state parameters and operators | `text-state` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.4 | Text objects | `text-objects` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 9.6.2 | Type 1 fonts | `type1-fonts` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
-| 9.6.3 | TrueType fonts | `truetype-fonts` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
-| 9.6.4 | Type 3 fonts | `type3-fonts` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
-| 9.6.5 | Character encoding | `simple-font-encodings` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
+| 9.6.2 | Type 1 fonts | `type1-fonts` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 9.6.3 | TrueType fonts | `truetype-fonts` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 9.6.4 | Type 3 fonts | `type3-fonts` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 9.6.5 | Character encoding | `simple-font-encodings` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.7.4 | CIDFonts | `cid-fonts` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 9.7.5 | CMaps | `cmaps` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
+| 9.7.5 | CMaps | `cmaps` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.7.6 | Type 0 fonts | `type0-fonts` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.8 | Font descriptors | `font-descriptors` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 9.9 | Embedded font programs | `embedded-fonts` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
+| 9.9 | Embedded font programs | `embedded-fonts` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 9.10 | Extraction of text content | `text-extraction` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 10.3 | CIE-based colour to device colour | `color-conversion` | 1 done | 1 engine | 1 done | 1 done | 1 done |
 | 10.4 | Conversions among device colour spaces | `device-color-conversion` | 1 done | 1 done | 1 done | 1 partial | 1 done |
@@ -224,7 +224,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 14.11.7 | Open prepress interface | `opi` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.12 | Document parts | `document-parts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.13 | Associated files | `associated-files` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
-| Annex D | PDF character tables | `character-tables` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| Annex D | PDF character tables | `character-tables` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex E | Extension naming rules | `private-names` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex I | Compatibility across PDF versions | `version-compatibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-268 unfinished cells in 837 features: 16 engine, 115 partial, 137 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+251 unfinished cells in 837 features: 16 engine, 110 partial, 125 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -292,9 +292,6 @@ Milestone [#249](https://github.com/yhay81/pyropdf/issues/249).
     - create, edit — `appearance-streams`, `line-annotations`, `widget-annotations`.
 - [#903](https://github.com/yhay81/pyropdf/issues/903) Write rollover/down and widget icon appearances and line or popup annotation details. Inspect and edit stored redaction marks, overlay text and appearance streams. Preserve the marks through reopening before destructive application.
     - read, create, edit, preserve — `redaction-annotations`.
-- [#902](https://github.com/yhay81/pyropdf/issues/902) Complete font program, encoding and CMap creation and editing. Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement.
-    - read, interpret, preserve — `character-tables`.
-    - create, edit — `type1-fonts`, `truetype-fonts`, `type3-fonts`, `simple-font-encodings`, `cmaps`, `embedded-fonts`, `character-tables`.
 - [#1016](https://github.com/yhay81/pyropdf/issues/1016) hayro: offer DeviceN mixing hints to colour-proofing devices. Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked.
     - interpret — `devicen-color-space`.
 - [#904](https://github.com/yhay81/pyropdf/issues/904) Support rich variable text, password appearances and legacy XFA form data. Read and edit RV/DS field data, mask displayed password glyphs, and inspect, edit/remove and preserve existing XFA packets under the recorded creation exclusion. Verify field values and appearances independently.
