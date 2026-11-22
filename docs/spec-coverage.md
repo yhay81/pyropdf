@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 9 | 17 | 811 |
-| interpret | 16 | 19 | 0 | 9 | 21 | 772 |
-| create | 0 | 0 | 25 | 6 | 23 | 783 |
-| edit | 0 | 0 | 0 | 11 | 19 | 807 |
-| preserve | 0 | 0 | 0 | 1 | 19 | 817 |
+| read | 0 | 0 | 0 | 9 | 16 | 812 |
+| interpret | 16 | 19 | 0 | 9 | 20 | 773 |
+| create | 0 | 0 | 25 | 6 | 22 | 784 |
+| edit | 0 | 0 | 0 | 11 | 18 | 808 |
+| preserve | 0 | 0 | 0 | 1 | 18 | 818 |
 
 ## Clauses
 
@@ -216,7 +216,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 14.7.4 | Structure namespaces | `structure-namespaces` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.8 | Tagged PDF | `tagged-pdf` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 14.9 | Accessibility support | `accessibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 14.10 | Web capture | `web-capture` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 14.10 | Web capture | `web-capture` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.11.2 | Page boundaries | `page-boundaries` | 1 partial | 1 done | 1 done | 1 partial | 1 done |
 | 14.11.4 | Separation dictionaries | `separation-dictionaries` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.11.5 | Output intents | `output-intents` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-151 unfinished cells in 837 features: 16 engine, 36 partial, 99 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+146 unfinished cells in 837 features: 16 engine, 36 partial, 94 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -367,8 +367,6 @@ Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
     - interpret, create, preserve — `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
 - [#863](https://github.com/yhay81/pyropdf/issues/863) Support STEP and glTF assets in RichMedia annotations under the published PDF 2.0 extensions. Read, author and verify STEP and glTF asset relationships against the published extensions.
     - read, interpret, create, edit, preserve — `step-rich-media`, `gltf-rich-media`.
-- [#860](https://github.com/yhay81/pyropdf/issues/860) Read, edit and preserve Web Capture content sets and their indexes. Read, edit and round-trip captured content sets and their indexes.
-    - read, interpret, create, edit, preserve — `web-capture`.
 
 ## PDF/A and PDF/UA profiles
 

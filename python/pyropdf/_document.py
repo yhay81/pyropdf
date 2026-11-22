@@ -135,6 +135,7 @@ from pyropdf._signing import timestamp as _timestamp
 from pyropdf._structure import StructureTree, _delete_structure_tree
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 from pyropdf._threads import Threads, _delete_all_threads
+from pyropdf._web_capture import WebCapture
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -442,6 +443,12 @@ class Document:
     def structure(self) -> None:
         self._ensure_open()
         _delete_structure_tree(self)
+
+    @property
+    def web_capture(self) -> WebCapture:
+        """Return the stored Web Capture database and its URL and identifier indexes."""
+        self._ensure_open()
+        return WebCapture(self)
 
     @property
     def threads(self) -> Threads:

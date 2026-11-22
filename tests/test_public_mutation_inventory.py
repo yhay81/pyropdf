@@ -29,6 +29,12 @@ if TYPE_CHECKING:
 # denotes a property assignment and 'del:' denotes a property deletion.
 MUTATIONS = (
     (
+        "web_capture",
+        "Capture sets link both name trees, source locations and member identifiers.",
+        "WebCapture",
+        "add remove set_sources",
+    ),
+    (
         "model_measurement",
         "Update existing 3D geometry while retaining the measurement and its other entries.",
         "ModelMeasurement",
@@ -723,6 +729,7 @@ READ_ONLY = {
     "Dictionary": "geospatial_point",
     "Stream": "read",
     "StructureTree": "child_rules reading_order resolve_role walk",
+    "WebCapture": "by_id by_url",
     "Table": "markdown",
     "typed.LinkedTree": "lookup",
     "typed.View": "interpret",

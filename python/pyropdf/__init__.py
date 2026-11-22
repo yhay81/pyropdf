@@ -247,10 +247,12 @@ from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
 from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
 from pyropdf._threads import Bead, Beads, BeadSpecification, Thread, ThreadAction, Threads
+from pyropdf._web_capture import WebCapture
 from pyropdf._viewer_actions import StructureDestination, UriAction, WindowsLaunch
 from pyropdf._widgets import IconFit, Widget, Widgets
 
 _PUBLIC_MODULE_EXPORTS = (
+    WebCapture,
     GoTo3DView,
     MediaAsset,
     MediaKind,
@@ -642,6 +644,7 @@ __all__ = [
     "ViewerPreferences",
     "Viewport",
     "VisibilityPolicy",
+    "WebCapture",
     "Widget",
     "Widgets",
     "WindowsLaunch",

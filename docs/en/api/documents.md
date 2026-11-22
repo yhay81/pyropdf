@@ -203,6 +203,14 @@ accessibility attributes, and `doc.structure.role_map` reads and
 edits `/RoleMap`. `del doc.structure` removes `/StructTreeRoot`
 and frees unreferenced structure objects in one transaction.
 
+### `Document.web_capture`
+
+```python
+Document.web_capture: WebCapture
+```
+
+The stored Web Capture database and its URL and identifier indexes.
+
 ### `Document.threads`
 
 ```python
