@@ -16,6 +16,8 @@ hayro-svg = "0.9.0"
 # The stretch of a substitute font's glyph, which hayro-interpret keeps to
 # itself, for the advances of text (#656).
 hayro-font = "0.5.0"
+# The Type 1 interpreter that hayro-font uses for glyph IDs and seac.
+read-fonts = "0.46.0"
 # The font tables that hayro already reads, for the line metrics of text.
 skrifa = "0.50.0"
 # The bidirectional classes of the reading order of text.
@@ -43,6 +45,7 @@ p384 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pem
 # PKCS#12 file's MAC.
 pkcs8 = { version = "0.11.0", features = ["encryption", "pem"] }
 sha2 = "0.11.1"
+sha3 = { version = "0.11.0", default-features = false }
 hmac = "0.13.0"
 harfrust = "0.16.0"
 unicode-script = "0.5.9"

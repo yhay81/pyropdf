@@ -372,11 +372,12 @@ impl Walk<'_, '_> {
                 Value::Stream(stream) => Some(stream.dict()),
                 _ => None,
             };
-            if dict.is_some_and(crate::annotations::is_media_annotation)
-                && self.listed.binary_search(&reference).is_err()
+            if self.listed.binary_search(&reference).is_err()
+                && let Some(dict) = dict
+                && crate::annotations::is_linked_annotation(self.source, dict, self.budget)?
             {
                 return Err(Error::malformed(
-                    "the import selection omits a referenced multimedia annotation",
+                    "the import selection omits a referenced multimedia or print annotation",
                 ));
             }
             if let Some(Value::Name(kind)) = dict.and_then(|dict| dict.get("Type"))

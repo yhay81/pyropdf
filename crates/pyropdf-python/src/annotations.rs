@@ -18,6 +18,7 @@ use pyropdf_engine::extract;
 use pyropdf_engine::render::{self, Raster};
 use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::pages::PageIndex;
+use pyropdf_store::value::Reference;
 use pyropdf_store::version::Transaction;
 
 use crate::document::_Document;
@@ -345,6 +346,31 @@ pub fn _stale_appearances(py: Python<'_>, document: &_Document) -> PyResult<Vec<
         let budget = document.budget();
         py.detach(|| annotations::stale_appearances(&version, &budget))
             .map_err(annotation_error)
+    })?
+}
+
+/// Attach the freshly written dictionary of a print or multimedia annotation.
+#[pyfunction]
+pub fn annotation_attach(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    id: (u32, u16),
+) -> PyResult<bool> {
+    crate::errors::boundary(|| {
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, _| {
+                annots
+                    .attach(transaction, Reference::new(id.0, id.1))
+                    .map_err(annotation_error)
+            },
+        )
+        .map(|result| result.is_some())
     })?
 }
 

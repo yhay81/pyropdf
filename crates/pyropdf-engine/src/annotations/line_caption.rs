@@ -21,7 +21,7 @@ use crate::standard::{Align, Base14Font, DA_FONTS, char_metric, line_metrics, wi
 #[derive(Clone)]
 struct Span {
     text: Range<usize>,
-    style: Style,
+    style: Style<'static>,
     line: usize,
     advance: f64,
 }
@@ -70,6 +70,7 @@ impl Caption {
         let mut text = BudgetVec::new(reader.budget);
         let mut row_count = 1;
         let mut append = |ch: char, style: Style| -> std::result::Result<(), WidgetError> {
+            let style = style.caption_style();
             if ch == '\n' {
                 row_count += 1;
                 return Ok(());

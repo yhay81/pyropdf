@@ -453,6 +453,27 @@ options; an appearance that draws no text, or a hidden annotation,
 gives `""`. `/Contents` is not read; `contents` returns
 it.
 
+### `Annotation.print_appearance`
+
+```python
+Annotation.print_appearance: typed.XObjectFormPrinterMark | typed.XObjectFormTrapNet | typed.XObjectFormType1 | None
+```
+
+The active normal printer's mark, trap network or watermark Form.
+
+For a state dictionary this selects /AS. The Form view exposes
+resources, mark style and colorants or trapping process and regions.
+
+### `Annotation.fixed_print`
+
+```python
+Annotation.fixed_print: FixedPrint | None
+```
+
+The watermark placement matrix and translation fractions on the target print media.
+
+Settable.
+
 ### `Annotation.media`
 
 ```python
@@ -763,6 +784,8 @@ AnnotationSpecification: TypeAlias = (
     | FreeText
     | Stamp
     | MediaSpecification
+    | PrinterMark
+    | Watermark
     | RedactionMark
 )
 ```
@@ -1039,13 +1062,86 @@ Embedded base-standard 3D stream formats.
 
 Members: `U3D`, `PRC`.
 
+## `ModelMeasurement`
+
+```python
+ModelMeasurement(
+    *,
+    kind: ModelMeasurementType,
+    anchor: tuple[float, float, float],
+    text_position: tuple[float, float, float],
+    annotation_plane: tuple[float, float, float] | None = None,
+    second_anchor: tuple[float, float, float] | None = None,
+    first_direction: tuple[float, float, float] | None = None,
+    second_direction: tuple[float, float, float] | None = None,
+    text_x: tuple[float, float, float] | None = None,
+    text_y: tuple[float, float, float] | None = None,
+    third_anchor: tuple[float, float, float] | None = None,
+    fourth_anchor: tuple[float, float, float] | None = None,
+    value: float | None = None,
+    unit: str | None = None,
+)
+```
+
+Geometry of one 3D measurement in model coordinates.
+
+Every kind has an anchor and text position. Dimensional kinds also
+take the annotation plane, second anchor, text Y direction and value.
+Distance, perpendicular distance and radius take a unit. Perpendicular
+distance adds the first direction. Angle adds both directions and text
+X. Radius takes text X and optionally the third and fourth anchors.
+
+Pass the specification in `ModelView.measurements` to allocate it in
+the model's document. Use `apply_to` on a live measurement to change
+its geometry while keeping its projection and other references.
+
+### `ModelMeasurement.from_view`
+
+```python
+ModelMeasurement.from_view(measurement: Measure) -> ModelMeasurement
+```
+
+Read a stored 3D measurement as immutable geometry in model coordinates.
+
+### `ModelMeasurement.apply_to`
+
+```python
+ModelMeasurement.apply_to(measurement: Measure)
+```
+
+Replace geometry of the same subtype in one undo step, keeping its object identity.
+
+## `ModelMeasurementType`
+
+Kinds of stored 3D measurements and markups (ISO 32000-2, Tables 326–331).
+
+Members: `POINT_COMMENT`, `ANGLE`, `DISTANCE`, `PERPENDICULAR_DISTANCE`, `RADIUS`.
+
 ## `ModelView`
 
 ```python
-ModelView(*, name: str, measurements: tuple[Measure, ...] = ())
+ModelView(
+    *,
+    name: str,
+    measurements: tuple[ModelMeasurement | Measure, ...] = (),
+    camera_to_world: tuple[float, ...] | None = None,
+    lighting: str | None = None,
+    background: tuple[float, float, float] | None = None,
+    render_mode: str | None = None,
+    nodes: tuple[typed.ThreeDNode, ...] = (),
+    cross_sections: tuple[typed.ThreeDCrossSection, ...] = (),
+)
 ```
 
-A named 3D view with optional links to existing 3D measurements.
+A named 3D view, its camera-to-world matrix, scene settings and measurements.
+
+Lighting and render mode use the PDF subtype names. Background is a
+DeviceRGB triple in [0, 1]. Supply indirect Arlington node and cross
+section views to share their settings. Measurements may be new geometry
+specifications or existing indirect measurement views. For example,
+`camera_to_world=(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 5, 6)` sets an
+identity orientation with camera position (4, 5, 6). After creation,
+`annotation.media["3DD"].VA[0].LS.Subtype = "Day"` updates lighting.
 
 ## `Note`
 
@@ -1195,17 +1291,57 @@ Screen(*, rect: Rect, asset: MediaAsset | None = None)
 
 A Screen annotation with an optional media clip and its rendition action.
 
+## `SlideShow`
+
+```python
+SlideShow(show: typed.SlideShow)
+```
+
+An existing embedded slideshow and the UTF-8 resource names in its virtual file system.
+
+### `SlideShow.resources`
+
+```python
+SlideShow.resources: dict[str, Dictionary]
+```
+
+Map UTF-8 resource names to their live image streams or file specifications.
+
+### `SlideShow.start_resource`
+
+```python
+SlideShow.start_resource: str
+```
+
+The name selected by StartResource. Assign the name of an existing resource to select it.
+
+Settable.
+
+### `SlideShow.rename_resource`
+
+```python
+SlideShow.rename_resource(old: str, new: str, *, keep_alias: bool = False)
+```
+
+Move a resource to a new UTF-8 name and update StartResource in one transaction.
+
+Shared resource trees keep their other slideshows' original names.
+Set keep_alias=True to retain the old name for references inside opaque media files.
+The media bytes are retained in both cases.
+
 ## `Sound`
 
 ```python
 Sound(
     *,
     data: bytes,
-    rate: float,
+    rate: float | None,
     channels: int,
     bits: int,
     encoding: SoundEncoding,
     compression: str | None,
+    compression_parameters: Array | Dictionary | None = None,
+    external_file: String | Dictionary | None = None,
 )
 ```
 
@@ -1215,6 +1351,19 @@ The sound of a sound annotation, `/Sound`, as `Annotation.sound` reads it.
 or the stream's bytes before them when read with `decode=False`; the
 samples stay in `encoding` and, for a compressed sound, in the format
 that `compression` names.
+
+### `Sound.from_stream`
+
+```python
+Sound.from_stream(
+    stream: Stream,
+    *,
+    decode: bool = True,
+    max_size: int | None = 67108864,
+) -> Sound
+```
+
+Read a sound stream's samples and metadata, including streams referenced by Sound actions.
 
 ## `SoundEncoding`
 
@@ -1319,14 +1468,16 @@ ThreeD(
     format: ModelFormat,
     data: bytes,
     views: tuple[ModelView, ...] = (),
+    activation: typed.ThreeDActivation | None = None,
 )
 ```
 
 A 3D annotation whose stream holds an opaque U3D or PRC asset.
 
-Each named view is stored once. Supply existing measurement views to
-share the same geometry with a projection annotation. Viewers handle
-3D rendering. pyropdf preserves the model bytes across edits.
+Each named view is stored once. Supply an indirect Arlington activation
+dictionary to set the annotation's activation conditions. Attach a
+projection to a stored measurement from `annotation.media["3DD"].VA[0].MA`
+to share its geometry. Viewers handle 3D rendering.
 
 ## `Underline`
 

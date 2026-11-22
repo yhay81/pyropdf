@@ -46,6 +46,16 @@ from pyropdf._media import (
 )
 from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Array, Dictionary, Name, Stream, String
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix
+from pyropdf._prepress import (
+    FixedPrint,
+    PrinterMark,
+    Watermark,
+    _edit,
+    add_print,
+    fixed_print,
+    print_appearance,
+    write_fixed_print,
+)
 from pyropdf._profiles import pdfa_claim
 from pyropdf._redaction_mark import RedactionMark, add_mark, read_mark, write_mark
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
@@ -336,9 +346,9 @@ class Sound:
     """
 
     data: bytes
-    """The sample data."""
-    rate: float
-    """Samples per second per channel, ``/R``."""
+    """Embedded samples, or empty bytes when the sound is in an external file."""
+    rate: float | None
+    """Samples per second per channel, or None when an external file defines its own rate."""
     channels: int
     """The sound channels, ``/C``: 1 when absent."""
     bits: int
@@ -347,6 +357,53 @@ class Sound:
     """The encoding of the sample values, ``/E``: :attr:`SoundEncoding.RAW` when absent."""
     compression: str | None
     """The sound compression format, ``/CO``, or ``None`` for uncompressed samples."""
+    compression_parameters: Array | Dictionary | None = None
+    """Live parameters for the sound compression format, including stream parameters."""
+    external_file: String | Dictionary | None = None
+    """The external file specification, if present. Reading sound metadata never opens it."""
+
+    @classmethod
+    def from_stream(
+        cls, stream: Stream, *, decode: bool = True, max_size: int | None = _DEFAULT_MAX_STREAM_DATA_SIZE
+    ) -> Sound:
+        """Read a sound stream's samples and metadata, including streams referenced by Sound actions."""
+        _validate_optional_positive_int("max_size", max_size)
+        if not isinstance(decode, bool):
+            msg = f"decode must be a bool: {decode!r}"
+            raise TypeError(msg)
+        if not isinstance(stream, Stream):
+            msg = "expected a sound stream"
+            raise TypeError(msg)
+        external = stream.get("F")
+        if external is not None and (not isinstance(external, (String, Dictionary)) or isinstance(external, Stream)):
+            msg = "the sound's /F must be a file specification"
+            raise MalformedPdfError(msg)
+        raw_rate = stream.get("R")
+        rate = None if external is not None and raw_rate is None else _sound_number(raw_rate, "R", integer=False)
+        channels = int(_sound_number(stream.get("C", 1), "C", integer=True))
+        bits = int(_sound_number(stream.get("B", 8), "B", integer=True))
+        encoding = stream.get("E", Name("Raw"))
+        if not isinstance(encoding, Name) or encoding not in SoundEncoding._value2member_map_:
+            msg = f"the sound's /E must be Raw, Signed, muLaw, or ALaw: {encoding!r}"
+            raise MalformedPdfError(msg)
+        compression = stream.get("CO")
+        if compression is not None and not isinstance(compression, Name):
+            msg = f"the sound's /CO must be a name: {compression!r}"
+            raise MalformedPdfError(msg)
+        parameters = stream.get("CP")
+        if parameters is not None and not isinstance(parameters, (Array, Dictionary)):
+            msg = "the sound's /CP must be an array, dictionary, or stream"
+            raise MalformedPdfError(msg)
+        return cls(
+            data=stream.read(decode=decode, max_size=max_size) if external is None else b"",
+            rate=rate,
+            channels=channels,
+            bits=bits,
+            encoding=SoundEncoding(encoding),
+            compression=None if compression is None else str(compression),
+            compression_parameters=parameters,
+            external_file=external,
+        )
 
 
 def _sound_number(value: object, name: str, *, integer: bool) -> float:
@@ -1579,6 +1636,32 @@ class Annotation(_AppearanceOwner):
         return text
 
     @property
+    def print_appearance(
+        self,
+    ) -> typed.XObjectFormPrinterMark | typed.XObjectFormTrapNet | typed.XObjectFormType1 | None:
+        """The active normal printer's mark, trap network or watermark Form.
+
+        For a state dictionary this selects /AS. The Form view exposes
+        resources, mark style and colorants or trapping process and regions.
+        """
+        return print_appearance(self.obj)
+
+    @property
+    def fixed_print(self) -> FixedPrint | None:
+        """The watermark placement matrix and translation fractions on the target print media."""
+        return fixed_print(self.obj)
+
+    @fixed_print.setter
+    def fixed_print(self, placement: FixedPrint) -> None:
+        with _edit(self.page.document, "watermark placement"):
+            write_fixed_print(self.obj, placement)
+
+    @fixed_print.deleter
+    def fixed_print(self) -> None:
+        with _edit(self.page.document, "watermark placement"):
+            write_fixed_print(self.obj, None)
+
+    @property
     def media(self) -> MediaAnnotation | None:
         """Return the live Arlington view for Screen, 3D, RichMedia, Projection, Sound or Movie.
 
@@ -1681,25 +1764,7 @@ class Annotation(_AppearanceOwner):
         if not isinstance(stream, Stream):
             msg = f"the sound annotation's /Sound must be a stream: {stream!r}"
             raise MalformedPdfError(msg)
-        rate = _sound_number(stream.get("R"), "R", integer=False)
-        channels = int(_sound_number(stream.get("C", 1), "C", integer=True))
-        bits = int(_sound_number(stream.get("B", 8), "B", integer=True))
-        encoding = stream.get("E", Name("Raw"))
-        if not isinstance(encoding, Name) or encoding not in SoundEncoding._value2member_map_:
-            msg = f"the sound's /E must be Raw, Signed, muLaw, or ALaw: {encoding!r}"
-            raise MalformedPdfError(msg)
-        compression = stream.get("CO")
-        if compression is not None and not isinstance(compression, Name):
-            msg = f"the sound's /CO must be a name: {compression!r}"
-            raise MalformedPdfError(msg)
-        return Sound(
-            data=stream.read(decode=decode, max_size=max_size),
-            rate=float(rate),
-            channels=channels,
-            bits=bits,
-            encoding=SoundEncoding(encoding),
-            compression=None if compression is None else str(compression),
-        )
+        return Sound.from_stream(stream, decode=decode, max_size=max_size)
 
     def __eq__(self, other: object) -> bool:
         """Compare the page and the annotation: its object, or its position for a direct dictionary."""
@@ -2654,6 +2719,8 @@ AnnotationSpecification: TypeAlias = (
     | FreeText
     | Stamp
     | MediaSpecification
+    | PrinterMark
+    | Watermark
     | RedactionMark
 )
 _SPECIFICATIONS = (
@@ -2736,6 +2803,8 @@ class Annotations(Sequence[Annotation]):
         The annotation is drawn when its transaction commits, or before a
         read in the transaction, so that every viewer draws it alike.
         """
+        if isinstance(specification, (PrinterMark, Watermark)):
+            return Annotation(self._page, add_print(self._page, specification), 0)
         if isinstance(specification, RedactionMark):
             return add_mark(self._page, specification)
         if isinstance(specification, (Screen, ThreeD, RichMedia, ProjectionAnnotation)):

@@ -1,12 +1,61 @@
 //! XHTML text and scoped CSS used by rich PDF text appearances.
 
+use std::ops::Range;
+
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::value::Value;
+use unicode_bidi::BidiInfo;
 
 use crate::standard::{self, Align, Base14Font};
 
 use super::rich_text::{self, Element, Run};
 use super::{WidgetError, malformed, text};
+
+/// Intersect a line's styled byte ranges with Unicode directional runs.
+/// Preserve logical text inside each span for shaping, and reverse only the
+/// span order inside a right-to-left visual run. `start` is the byte offset
+/// of the line within the caller's complete text.
+pub(crate) fn visual_spans<'b, T>(
+    text: &str,
+    start: usize,
+    spans: &[T],
+    bounds: impl Fn(&T) -> Range<usize>,
+    budget: &'b Budget,
+) -> Result<BudgetVec<'b, (usize, Range<usize>)>, WidgetError> {
+    let mut ordered = BudgetVec::new(budget);
+    if spans.len() <= 1 || text.is_ascii() {
+        for (i, span) in spans.iter().enumerate() {
+            ordered.try_push((i, bounds(span)))?;
+        }
+        return Ok(ordered);
+    }
+    budget.charge(
+        LimitCode::MemorySize,
+        (text.len() as u64).saturating_mul(64),
+    )?;
+    let bidi = BidiInfo::new(text, None);
+    for para in &bidi.paragraphs {
+        let (levels, runs) = bidi.visual_runs(para, para.range.clone());
+        for run in runs {
+            budget.poll()?;
+            let from = start + run.start;
+            let to = start + run.end;
+            let i = spans.partition_point(|s| bounds(s).end <= from);
+            let j = spans.partition_point(|s| bounds(s).start < to);
+            let at = ordered.len();
+            for (offset, span) in spans[i..j].iter().enumerate() {
+                let own = bounds(span);
+                ordered.try_push((i + offset, own.start.max(from)..own.end.min(to)))?;
+            }
+            if levels[run.start].is_rtl() {
+                ordered[at..].reverse();
+            }
+        }
+    }
+    Ok(ordered)
+}
+
+pub(super) const RICH_TEXT: i64 = 1 << 25;
 
 /// The PDF text string or XML text stream containing /RV.
 pub(crate) fn read(value: &Value, budget: &Budget) -> Result<Vec<Run>, WidgetError> {
@@ -49,17 +98,20 @@ pub(crate) fn read(value: &Value, budget: &Budget) -> Result<Vec<Run>, WidgetErr
             }
         }
         _ => {
-            return Err(malformed("rich text must be a text string or stream"));
+            return Err(malformed(
+                "a rich text field's /RV must be a text string or stream",
+            ));
         }
     };
     rich_text::parse(xml.trim_start_matches('\u{feff}'), budget)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Style {
+pub(crate) struct Style<'s> {
+    pub(super) families: &'s str,
     pub(crate) family: Base14Font,
-    bold: bool,
-    italic: bool,
+    pub(super) bold: bool,
+    pub(super) italic: bool,
     pub(crate) size: f64,
     pub(crate) auto_size: bool,
     pub(crate) user_unit: f64,
@@ -70,10 +122,28 @@ pub(crate) struct Style {
     pub(crate) stretch: f64,
 }
 
-impl Style {
+pub(super) fn standard_family(name: &str) -> Option<Base14Font> {
+    standard::font(name).or(match name {
+        "sans-serif" | "Arial" => Some(Base14Font::Helvetica),
+        "serif" | "Times New Roman" | "Times" => Some(Base14Font::TimesRoman),
+        "monospace" | "Courier New" => Some(Base14Font::Courier),
+        _ => None,
+    })
+}
+
+impl<'s> Style<'s> {
+    /// Captions retain the resolved face after their XHTML runs are released.
+    pub(crate) fn caption_style(self) -> Style<'static> {
+        Style {
+            families: "",
+            ..self
+        }
+    }
+
     pub(crate) fn new(font: Base14Font, size: f64, color: [f64; 3], align: Align) -> Self {
         let mut s = Self {
             family: font,
+            families: "",
             auto_size: false,
             user_unit: 1.,
             bold: false,
@@ -96,6 +166,11 @@ impl Style {
         self.italic = name.contains("Italic") || name.contains("Oblique");
     }
 
+    pub(super) fn with_family(mut self, family: Base14Font) -> Self {
+        self.family = family;
+        self
+    }
+
     pub(crate) fn font(self) -> Base14Font {
         let name = self.family.pdf_base_name();
         let faces = if name.starts_with("Times") {
@@ -110,14 +185,10 @@ impl Style {
         faces[usize::from(self.bold) + 2 * usize::from(self.italic)]
     }
 
-    fn families(&mut self, value: &str) {
+    fn families(&mut self, value: &'s str) {
+        self.families = value;
         for name in value.split(',').map(|s| s.trim().trim_matches(['\'', '"'])) {
-            let face = standard::font(name).or(match name {
-                "sans-serif" | "Arial" => Some(Base14Font::Helvetica),
-                "serif" | "Times New Roman" | "Times" => Some(Base14Font::TimesRoman),
-                "monospace" | "Courier New" => Some(Base14Font::Courier),
-                _ => None,
-            });
+            let face = standard_family(name);
             if let Some(face) = face {
                 self.family = face;
                 break;
@@ -125,7 +196,7 @@ impl Style {
         }
     }
 
-    fn property(&mut self, key: &str, val: &str) {
+    fn property(&mut self, key: &str, val: &'s str) {
         match key {
             "text-align" => match val {
                 "left" => self.align = Align::Left,
@@ -209,7 +280,7 @@ impl Style {
         }
     }
 
-    pub(crate) fn css(&mut self, declaration: &str) {
+    pub(crate) fn css(&mut self, declaration: &'s str) {
         for property in declaration.split(';') {
             if let Some((key, value)) = property.split_once(':') {
                 self.property(key.trim(), value.trim());
@@ -254,11 +325,11 @@ fn color(value: &str) -> Option<[f64; 3]> {
 
 /// Emits styled characters, folding XHTML whitespace across inline scopes but
 /// preserving explicit breaks, empty paragraphs, and nonbreaking spaces.
-pub(crate) fn walk(
-    runs: &[Run],
-    initial: Style,
+pub(crate) fn walk<'s>(
+    runs: &'s [Run],
+    initial: Style<'s>,
     budget: &Budget,
-    mut emit: impl FnMut(char, Style) -> Result<(), WidgetError>,
+    mut emit: impl FnMut(char, Style<'s>) -> Result<(), WidgetError>,
 ) -> Result<(), WidgetError> {
     let mut styles = BudgetVec::new(budget);
     let mut style = initial;
@@ -327,4 +398,18 @@ pub(crate) fn walk(
         }
     }
     Ok(())
+}
+
+pub(super) fn plain(runs: &[Run], budget: &Budget) -> Result<String, WidgetError> {
+    let mut text = BudgetVec::new(budget);
+    walk(
+        runs,
+        Style::new(Base14Font::Helvetica, 12., [0.; 3], Align::Left),
+        budget,
+        |c, _| {
+            text.try_extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes())?;
+            Ok(())
+        },
+    )?;
+    String::from_utf8(text.into_vec()).map_err(|_| malformed("invalid decoded XHTML text"))
 }

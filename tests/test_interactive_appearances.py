@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import pikepdf
 import pytest
+from test_pages import build_raw_pdf
 
 import pyropdf as p
 
@@ -211,6 +212,40 @@ def test_popup_parent_overrides_local_values_and_conflict_is_reported(*, increme
     owner.obj["Popup"]["Parent"] = owner.page.obj
     with pytest.raises(p.MalformedPdfError, match="Parent"):
         _ = owner.popup_info
+
+
+@pytest.mark.spec("redaction-annotations", "create", "preserve")
+@pytest.mark.parametrize("incremental", [False, True])
+def test_adding_redaction_marks_keeps_the_trap_last_and_edits_only_the_selected_page(*, incremental: bool) -> None:
+    original = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 /MediaBox [0 0 100 100] /Resources << >> >>",
+            3: "<< /Type /Page /Parent 2 0 R /Annots [7 0 R] /LastModified (D:20230101000000Z) >>",
+            4: "<< /Type /Page /Parent 2 0 R /Annots 6 0 R >>",
+            5: "<< /Type /Page /Parent 2 0 R /Annots 6 0 R >>",
+            6: "[]",
+            7: "<< /Type /Annot /Subtype 8 0 R /P 3 0 R /Rect [0 0 100 100] /F 68 "
+            "/LastModified (D:20230101000000Z) /AP << /N 9 0 R >> >>",
+            8: "/TrapNet",
+            9: "<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] /Resources << >> /PCM /DeviceCMYK "
+            "/Length 0 >>\nstream\n\nendstream",
+        }
+    )
+    with p.open(original) as doc:
+        mark = p.RedactionMark(p.Rect(5, 6, 20, 24))
+        doc.pages[0].annotations.add(mark)
+        doc.pages[1].annotations.add(mark)
+        doc.history.undo()
+        assert len(doc.pages[1].annotations) == len(doc.pages[2].annotations) == 0
+        doc.history.redo()
+        data = saved(doc, original, incremental=incremental)
+    with pikepdf.open(io.BytesIO(data)) as pdf:
+        first, second, third = pdf.pages
+        assert [str(item.Subtype) for item in first.Annots] == ["/Redact", "/TrapNet"]
+        assert second.Annots[0].P.objgen == second.objgen
+        assert [str(item.Subtype) for item in second.Annots] == ["/Redact"]
+        assert len(third.Annots) == 0
 
 
 @pytest.mark.spec("redaction-annotations", "read", "create", "edit", "preserve")

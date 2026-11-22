@@ -231,3 +231,75 @@ Navigator presentation of a portable collection (`Navigator`, ISO 32000-2 Table 
 extension layout name) or a tuple of two or more standard layout names in
 decreasing order of preference. A one-element sequence is normalized to its
 single name string.
+
+## `WebCapture`
+
+```python
+WebCapture(document: Document)
+```
+
+The stored Web Capture database. Index lookups return writable Arlington content-set views.
+
+### `WebCapture.info`
+
+```python
+WebCapture.info: typed.WebCaptureInfo | None
+```
+
+The catalog's capture information, including its stored command dictionaries.
+
+### `WebCapture.by_id`
+
+```python
+WebCapture.by_id(
+    identifier: bytes,
+    /,
+) -> tuple[typed.WebCapturePageSet | typed.WebCaptureImageSet, ...]
+```
+
+Resolve a binary source identifier, keeping the order of sets sharing the key.
+
+### `WebCapture.by_url`
+
+```python
+WebCapture.by_url(
+    url: str,
+    /,
+) -> tuple[typed.WebCapturePageSet | typed.WebCaptureImageSet, ...]
+```
+
+Resolve an absolute source URL through the stored URLS index.
+
+### `WebCapture.add`
+
+```python
+WebCapture.add(content: typed.WebCapturePageSet | typed.WebCaptureImageSet, /)
+```
+
+Register an indirect page or image set, its sources and its members in a PDF before 2.0.
+
+Construct the set and its source dictionaries with the object API. Its ID is the 16-byte
+source digest defined in ISO 32000-1, 14.10.3.3. Image sets supply their page reference counts.
+
+### `WebCapture.remove`
+
+```python
+WebCapture.remove(content: typed.WebCapturePageSet | typed.WebCaptureImageSet, /)
+```
+
+Remove the set from both indexes and clear its members' matching parent identifiers.
+
+### `WebCapture.set_sources`
+
+```python
+WebCapture.set_sources(
+    content: typed.WebCapturePageSet | typed.WebCaptureImageSet,
+    sources: typed.SourceInformation | tuple[typed.SourceInformation, ...],
+    /,
+)
+```
+
+Replace a registered set's source information and update every URL index entry atomically.
+
+Pass a source dictionary's Arlington view or a tuple of those views. Command references,
+dates, URL aliases and private entries are retained as supplied.
