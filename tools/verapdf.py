@@ -476,6 +476,29 @@ def declares_pades(extensions: object) -> bool:
 ALTERNATES = runpy.run_path(str(ROOT / "tests/assets/profile_edits.py"))
 
 
+def line_caption_saves(directory: Path) -> dict[Path, str]:
+    """Isolate an unembedded Standard 14 font in an otherwise valid normal Line appearance."""
+    source = ROOT / "tests/assets/pdfa/pdfa-2b.pdf"
+    with pyropdf.open(source) as original:
+        line = original.pages[0].annotations.add(pyropdf.LineAnnotation((16, 20), (80, 20), contents="Measured"))
+        line.line_details = pyropdf.LineDetails(caption=False)
+        baseline = original.to_bytes()
+    files = {}
+    for caption in (False, True):
+        with pyropdf.open(baseline) as doc:
+            if caption:
+                doc.pages[0].annotations[0].line_details = pyropdf.LineDetails(caption=True)
+            for incremental in (False, True):
+                name = "caption" if caption else "no-caption"
+                mode = "incremental" if incremental else "full"
+                path = directory / f"pdfa-2b-line-{name}-{mode}.pdf"
+                doc.save(path, incremental=incremental)
+                files[path] = "2b"
+                if caption:
+                    EXPECTED[f"2b {path.name}"] = ("#1035", {"6.2.11.4.1-1"})
+    return files
+
+
 def alternate_report(doc: pyropdf.Document, case: str, operation: str, rules: dict[str, set[str]]) -> dict:
     """Apply the edit or its control and identify each newly failing claim's owner."""
     if operation == "edit":
@@ -524,7 +547,8 @@ def alternate_saves(source: Path, flavour: str, directory: Path) -> dict[Path, s
                     files[path] = flavour
                     for f in profiles:
                         if operation != "valid-control" and rules[f]:
-                            EXPECTED[f"{f} {path.name}"] = ("#932", rules[f])
+                            issue = "#1035" if case.startswith("appearance-") else "#932"
+                            EXPECTED[f"{f} {path.name}"] = (issue, rules[f])
     return files
 
 
@@ -976,6 +1000,8 @@ def main() -> int:
         files.update(language_saves(Path(directory)))
         files.update(remove_signature_saves(Path(directory) / "pdfa-2b-sign_revision-incremental.pdf", Path(directory)))
         targeted = profile_saves(Path(directory))
+        lines = line_caption_saves(Path(directory))
+        targeted.update(lines)
         for source, flavour in FIXTURES.items():
             targeted.update(alternate_saves(source, flavour, Path(directory)))
         failures = source_failures + archival_colour_controls(args.jar.resolve(), Path(directory))
@@ -991,6 +1017,13 @@ def main() -> int:
         failures += artifact_widget_label_controls(args.jar.resolve(), Path(directory))
         if args.arlington:
             models = {path: arlington(path, flavour) for path, flavour in files.items()}
+            models.update(
+                {
+                    path: arlington(path, flavour)
+                    for path, flavour in targeted.items()
+                    if "-appearance-" in path.name or path in lines
+                }
+            )
             models.update(rich_media_saves(Path(directory)))
             failures += run(args.arlington.resolve(), models)
             failures += run(args.arlington.resolve(), pades_comparisons(models))
