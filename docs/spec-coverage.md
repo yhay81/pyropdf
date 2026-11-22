@@ -31,9 +31,9 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
 | read | 0 | 0 | 0 | 8 | 15 | 814 |
-| interpret | 16 | 19 | 0 | 9 | 19 | 774 |
-| create | 0 | 0 | 25 | 5 | 21 | 786 |
-| edit | 0 | 0 | 0 | 10 | 17 | 810 |
+| interpret | 16 | 19 | 0 | 8 | 19 | 775 |
+| create | 0 | 0 | 25 | 4 | 21 | 787 |
+| edit | 0 | 0 | 0 | 9 | 17 | 811 |
 | preserve | 0 | 0 | 0 | 1 | 17 | 819 |
 
 ## Clauses
@@ -229,7 +229,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex I | Compatibility across PDF versions | `version-compatibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex K | XFA packets | `xfa` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
-| Annex L | Allowed structure children | `structure-children` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
+| Annex L | Allowed structure children | `structure-children` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex Q | Page transparency detection | `page-transparency` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 done | 3 done | 2 done, 1 planned | 3 done | 3 done |
@@ -246,7 +246,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-138 unfinished cells in 837 features: 16 engine, 33 partial, 89 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+135 unfinished cells in 837 features: 16 engine, 30 partial, 89 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -333,8 +333,6 @@ Milestone [#253](https://github.com/yhay81/pyropdf/issues/253).
 
 - [#989](https://github.com/yhay81/pyropdf/issues/989) Resolve tagged form text using the originating content stream. Resolve external Form stream MCIDs and text enclosed by page-level Form invocations once hayro supplies stream provenance.
     - interpret — `logical-structure`, `tagged-pdf`.
-- [#990](https://github.com/yhay81/pyropdf/issues/990) Resolve contextual Annex L rules and namespace-mapped structure children. Resolve cross-namespace roles, use as a grouping element and role-specific content for the remaining conditional Annex L verdicts.
-    - interpret, create, edit — `structure-children`.
 
 ### 254 Verification
 

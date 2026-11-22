@@ -149,14 +149,6 @@ features = ["logical-structure", "tagged-pdf"]
 dimensions = ["interpret"]
 behavior = "Resolve external Form stream MCIDs and text enclosed by page-level Form invocations once hayro supplies stream provenance."
 
-[families.contextual-structure-children]
-tracker = 253
-issue = 990
-title = "Resolve contextual Annex L rules and namespace-mapped structure children"
-features = ["structure-children"]
-dimensions = ["interpret", "create", "edit"]
-behavior = "Resolve cross-namespace roles, use as a grouping element and role-specific content for the remaining conditional Annex L verdicts."
-
 [families.display-space]
 tracker = 254
 issue = 851
