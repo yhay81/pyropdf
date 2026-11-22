@@ -94,8 +94,8 @@ fn local_rules(
     version: &Version,
     dict: &Dict,
     budget: &Budget,
-) -> Result<[Option<&'static str>; 8]> {
-    let mut reasons = [None; 8];
+) -> Result<[Option<&'static str>; 9]> {
+    let mut reasons = [None; 9];
     match claim {
         Claim::A(part, level) => {
             reasons[0] = widget_action(claim, dict)
@@ -103,6 +103,13 @@ fn local_rules(
             reasons[1] =
                 (part > 1 && named(dict, "Type", b"Page") && dict.get("PresSteps").is_some())
                     .then_some("the page contains forbidden presentation steps");
+            if is_annotation_dict(dict)
+                && let Some(appearance) = entry(version, dict, "AP", budget)?
+                && let Value::Dict(modes) = &*appearance
+                && modes.keys().any(|name| name.as_bytes() != b"N")
+            {
+                reasons[8] = Some("PDF/A permits only the normal annotation appearance");
+            }
             if part == 1 {
                 reasons[2] = (named(dict, "Type", b"Catalog")
                     && dict.get("OCProperties").is_some())
@@ -174,7 +181,7 @@ pub(super) fn object_changes<'b>(
     let before = old
         .map(|d| local_rules(claim, opened, d, budget))
         .transpose()?
-        .unwrap_or([None; 8]);
+        .unwrap_or([None; 9]);
     for reason in local_rules(claim, version, dict, budget)?
         .into_iter()
         .flatten()

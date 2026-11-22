@@ -88,6 +88,15 @@ for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
     if part not in "1234":
         continue
     edit_rules = {"action_triggers": {"6.6.1-3" if part == "1" else "6.4.1-1"}}
+    # The edit deliberately adds alternate appearances, an unembedded caption font,
+    # and a Redact annotation (which PDF/A-1 additionally forbids).
+    interaction_rules = {
+        "1": {"6.3.4-1", "6.5.2-1", "6.5.3-4"},
+        "2": {"6.2.11.4.1-1", "6.3.3-2"},
+        "3": {"6.2.11.4.1-1", "6.3.3-2"},
+        "4": {"6.2.10.4.1-1", "6.3.3-2"},
+    }
+    expect(source, profile, {"edit_interaction": interaction_rules[part]}, "#903")
     if part == "1":
         edit_rules.update(
             annotation_relations={"6.5.3-2"},
@@ -117,6 +126,14 @@ for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
             modes=("full",),
         )
 
+expect(
+    "pdfua-1",
+    "ua1",
+    {"edit_interaction": {"7.18.1-1", "7.18.1-2", "7.18.1-3", "7.18.3-1", "7.18.4-1", "7.21.4.1-1"}},
+    "#903",
+)
+for source in ("pdfua-2", DUAL):
+    expect(source, "ua2", {"edit_interaction": {"8.4.5.5.1-1", "8.9.2.3-1", "8.9.3.3-1", "8.10.2.3-1"}}, "#903")
 expect("pdfua-1", "ua1", UNTAGGED_RULES, "#794")
 expect("pdfua-1", "ua1", {"remove-language": {"7.2-22", "7.2-33"}}, "#847")
 expect(

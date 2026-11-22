@@ -549,6 +549,23 @@ Form.__len__() -> int
 
 Return the number of distinct field names.
 
+## `IconFit`
+
+```python
+IconFit(
+    *,
+    when: Literal['always', 'larger', 'smaller', 'never'] = 'always',
+    proportional: bool = True,
+    anchor: tuple[float, float] = (0.5, 0.5),
+    fit_bounds: bool = False,
+)
+```
+
+Pushbutton icon scaling and alignment, shared by its three display modes.
+
+Anchor coordinates select the fraction of unused space on the left and
+bottom. A true fit_bounds includes the border in the available rectangle.
+
 ## `ListBox`
 
 ```python
@@ -805,6 +822,48 @@ raises `StaleObjectError` while the widget is not on its page and
 `StalePageError` while the page is gone, and it works again if
 undo restores them.
 
+### `Widget.obj`
+
+```python
+Widget.obj: Dictionary
+```
+
+The widget dictionary as a live low-level handle.
+
+### `Widget.appearance_stream`
+
+```python
+Widget.appearance_stream(
+    mode: Mode = 'normal',
+    *,
+    state: str | None = None,
+) -> Stream | None
+```
+
+Return the displayed Form for a normal, rollover or down appearance.
+
+A missing interaction appearance falls back to normal. An appearance
+dictionary selects the named state or the annotation's current /AS.
+
+### `Widget.set_appearance`
+
+```python
+Widget.set_appearance(
+    mode: Mode,
+    source: Stream | bytes,
+    *,
+    state: str | None = None,
+    bbox: Sequence[float] | None = None,
+    resources: Mapping[str, object] | None = None,
+) -> Stream
+```
+
+Attach a Form or build it from PDF drawing commands in the given local bounding box.
+
+Byte sources use the owner's rectangle size when bbox is omitted. A named
+state updates one member of a state dictionary. Other interaction modes,
+state names and shared appearance objects retain their values.
+
 ### `Widget.page`
 
 ```python
@@ -820,14 +879,6 @@ Widget.xref: int
 ```
 
 The widget's object number, or 0 for a dictionary stored in `/Annots` itself.
-
-### `Widget.obj`
-
-```python
-Widget.obj: Dictionary
-```
-
-The widget dictionary as a live low-level handle.
 
 ### `Widget.scripts`
 
@@ -908,6 +959,43 @@ Widget.background_color: Color | None
 The background color, `/MK /BG`; `del` removes it.
 
 Settable.
+
+### `Widget.icon`
+
+```python
+Widget.icon(mode: Mode = 'normal') -> Stream | None
+```
+
+Return the explicit icon Form for normal, rollover or down.
+
+### `Widget.icon_fit`
+
+```python
+Widget.icon_fit: IconFit
+```
+
+Read or replace the shared pushbutton icon fit dictionary.
+
+Settable.
+
+### `Widget.set_icon`
+
+```python
+Widget.set_icon(
+    mode: Mode,
+    icon: Stream,
+    *,
+    fit: IconFit | None = None,
+    position: int | None = None,
+)
+```
+
+Set an interaction icon and redraw the pushbutton in one transaction.
+
+An indirect Form from this document supplies the icon. The first icon
+defaults to an icon-only layout. An explicit position selects the PDF
+caption layout (0 caption, 1 icon, 2 below, 3 above, 4 right, 5 left,
+6 overlaid). Existing explicit positions and other modes are retained.
 
 ### `Widget.caption`
 

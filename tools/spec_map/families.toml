@@ -54,23 +54,13 @@ features = ["transparency-color", "alpha-compositing"]
 dimensions = ["interpret"]
 behavior = "Render groups against their initial backdrop, honor knockout shape, and convert into the selected group space at the boundary. Verify explicit output-device samples after upstream adoption."
 
-[families.annotation-appearances]
+[families.rich-line-captions]
 tracker = 249
-issue = 903
-title = "Write rollover/down and widget icon appearances and line or popup annotation details"
-features = [
-    "appearance-streams", "line-annotations", "popup-annotations", "widget-annotations",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Implement rollover/down streams, widget MK icons and IF fitting, line captions and leaders, and popup parent semantics. Check independent rendering and relationships after edit/reopen."
-
-[families.redaction-marks]
-tracker = 249
-issue = 903
-title = "Write rollover/down and widget icon appearances and line or popup annotation details"
-features = ["redaction-annotations"]
-dimensions = ["read", "create", "edit", "preserve"]
-behavior = "Inspect and edit stored redaction marks, overlay text and appearance streams. Preserve the marks through reopening before destructive application."
+issue = 1025
+title = "Shape rich and Unicode captions in line annotation appearances"
+features = ["line-annotations"]
+dimensions = ["read", "interpret", "create", "edit"]
+behavior = "Resolve and shape RC or multilingual captions, including embedded fonts, along the measured line after authoring and editing."
 
 [families.devicen-mixing-hints]
 tracker = 249
