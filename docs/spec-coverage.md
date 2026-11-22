@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 14 | 20 | 803 |
-| interpret | 16 | 19 | 0 | 26 | 29 | 747 |
-| create | 0 | 0 | 25 | 15 | 27 | 770 |
-| edit | 0 | 0 | 0 | 32 | 23 | 782 |
-| preserve | 0 | 0 | 0 | 17 | 22 | 798 |
+| read | 0 | 0 | 0 | 14 | 19 | 804 |
+| interpret | 16 | 19 | 0 | 12 | 28 | 762 |
+| create | 0 | 0 | 25 | 15 | 26 | 771 |
+| edit | 0 | 0 | 0 | 17 | 22 | 798 |
+| preserve | 0 | 0 | 0 | 2 | 21 | 814 |
 
 ## Clauses
 
@@ -232,21 +232,21 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex L | Allowed structure children | `structure-children` | 1 done | 1 partial | 1 planned | 1 planned | 1 done |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex Q | Page transparency detection | `page-transparency` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 done | 3 partial | 2 done, 1 planned | 3 partial | 3 partial |
+| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 done | 3 done | 2 done, 1 planned | 3 done | 3 done |
 | ISO 15930 | PDF/X | `pdfx` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 done | 12 partial | 11 done, 1 planned | 12 partial | 12 partial |
+| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 done | 12 done | 11 done, 1 planned | 12 done | 12 done |
 | ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32007 | RichMedia glTF assets | `gltf-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 
 ## Unfinished work by milestone
 
-241 unfinished cells in 837 features: 16 engine, 104 partial, 121 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+192 unfinished cells in 837 features: 16 engine, 60 partial, 116 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -325,8 +325,8 @@ Milestone [#251](https://github.com/yhay81/pyropdf/issues/251).
 
 Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 
-- [#865](https://github.com/yhay81/pyropdf/issues/865) Read and write AES-GCM encrypted PDFs under ISO/TS 32003. Read and write authenticated AES-GCM objects with independent positive and negative cases.
-    - read, interpret, create, edit, preserve — `aes-gcm`.
+- [#968](https://github.com/yhay81/pyropdf/issues/968) Interpret AES-GCM encrypted pages through the authenticated store source. Render and extract from the authenticated AES-GCM store version without serializing untouched objects.
+    - interpret — `aes-gcm`.
 - [#866](https://github.com/yhay81/pyropdf/issues/866) Verify and maintain document integrity protection for encrypted PDFs under ISO/TS 32004. Verify and maintain integrity protection during encrypted saves and refuse tampered data.
     - read, interpret, create, edit, preserve — `integrity-protection`.
 - [#936](https://github.com/yhay81/pyropdf/issues/936) Extend CMS algorithm coverage for public-key PDF recipients. Verify and extend additional CMS provider algorithms for recipient access, creation, editing and preservation.
@@ -365,8 +365,6 @@ Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 - [#910](https://github.com/yhay81/pyropdf/issues/910) Validate PDF/X and PDF/VT profile rules through a print exchange round trip. Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour.
     - read, interpret, preserve — `pdfx`, `pdfvt`.
     - create, edit — `pdfx`, `pdfvt`, `output-intents`.
-- [#932](https://github.com/yhay81/pyropdf/issues/932) Verify profile edit effects on nested resources and alternate structure encodings. Extend the checked edit matrix to nested resources, alternate structure relationships, and font representations with positive and negative controls.
-    - interpret, edit, preserve — `pdfa`, `pdfua`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f`, `pdfua-1`, `pdfua-2`.
 
 ### 256 Specification completion
 
@@ -392,19 +390,19 @@ The machine and human checks are documented in the [corpus review](https://githu
 
 | Profile | read | interpret | create | edit | preserve |
 | --- | --- | --- | --- | --- | --- |
-| `pdfa-1a` | done | partial | done | partial | partial |
-| `pdfa-1b` | done | partial | done | partial | partial |
-| `pdfa-2a` | done | partial | done | partial | partial |
-| `pdfa-2b` | done | partial | done | partial | partial |
-| `pdfa-2u` | done | partial | done | partial | partial |
-| `pdfa-3a` | done | partial | done | partial | partial |
-| `pdfa-3b` | done | partial | done | partial | partial |
-| `pdfa-3u` | done | partial | done | partial | partial |
-| `pdfa-4` | done | partial | planned | partial | partial |
-| `pdfa-4e` | done | partial | done | partial | partial |
-| `pdfa-4f` | done | partial | done | partial | partial |
-| `pdfua-1` | done | partial | done | partial | partial |
-| `pdfua-2` | done | partial | planned | partial | partial |
+| `pdfa-1a` | done | done | done | done | done |
+| `pdfa-1b` | done | done | done | done | done |
+| `pdfa-2a` | done | done | done | done | done |
+| `pdfa-2b` | done | done | done | done | done |
+| `pdfa-2u` | done | done | done | done | done |
+| `pdfa-3a` | done | done | done | done | done |
+| `pdfa-3b` | done | done | done | done | done |
+| `pdfa-3u` | done | done | done | done | done |
+| `pdfa-4` | done | done | planned | done | done |
+| `pdfa-4e` | done | done | done | done | done |
+| `pdfa-4f` | done | done | done | done | done |
+| `pdfua-1` | done | done | done | done | done |
+| `pdfua-2` | done | done | planned | done | done |
 
 ## Specification baseline
 

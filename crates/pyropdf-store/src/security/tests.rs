@@ -266,7 +266,11 @@ fn encryption(aes256: bool) -> Encryption {
         user: b"userpw".to_vec(),
         owner: b"ownerpw".to_vec(),
         permissions: 0b1111_0000_1100,
-        aes256,
+        method: if aes256 {
+            super::Method::Aes256
+        } else {
+            super::Method::Aes128
+        },
         random: core::array::from_fn(|i| (i * 37 + 11) as u8),
     })
 }
