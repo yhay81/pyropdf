@@ -19,8 +19,8 @@ from pathlib import Path
 
 ASSETS = Path(__file__).resolve().parent / "assets" / "real_world"
 
-# The names of the corpus files, sorted.
-NAMES = tuple(sorted(path.name for path in ASSETS.glob("*.pdf")))
+SOURCES = tuple(sorted(ASSETS.glob("*.pdf")))
+NAMES = tuple(path.name for path in SOURCES)
 
 # The files that pyropdf added after DESIGN.md section 2.2 measured the
 # corpus, which its measurements leave out.
