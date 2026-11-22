@@ -209,12 +209,18 @@ def test_retained_page_transparency_group_is_copied_from_its_original_version() 
     captured = page.content()
     source.objects[group]["CS"] = pyropdf.Name("DeviceGray")
     target = pyropdf.Document()
-    placed = target.pages.new((64, 48))
+    placed = target.pages.new((128, 48))
     with placed.draw() as draw:
-        draw.page(placed.rect, captured)
+        draw.page((0, 0, 64, 48), captured)
+    (first,) = _forms(placed)
+    target.objects[first]["Group"]["CS"] = pyropdf.Name("DeviceCMYK")
+    with placed.draw() as draw:
+        draw.page((64, 0, 128, 48), captured)
     reread = pyropdf.open(target.to_bytes())
-    (form,) = _forms(reread.pages[0])
-    stored = reread.objects[form]["Group"]
+    first, second = _forms(reread.pages[0])
+    assert first != second
+    assert reread.objects[first]["Group"]["CS"] == "DeviceCMYK"
+    stored = reread.objects[second]["Group"]
     assert stored["S"] == "Transparency"
     assert stored["CS"] == "DeviceRGB"
     assert stored["I"] is True
