@@ -556,6 +556,8 @@ def alternate_saves(source: Path, flavour: str, directory: Path) -> dict[Path, s
                     for f in profiles:
                         if operation != "valid-control" and rules[f]:
                             issue = "#1035" if case.startswith("appearance-") else "#932"
+                            if case.startswith("program-"):
+                                issue = "#1041"
                             EXPECTED[f"{f} {path.name}"] = (issue, rules[f])
     return files
 

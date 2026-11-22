@@ -37,6 +37,8 @@ def cases(flavour: str, *, dual: bool) -> list[str]:
             "appearance-uncalled",
             "appearance-graphics-state",
         ]
+    if dual or flavour == "2b":
+        result += [f"program-{path}-{damage}" for path in ("page", "appearance") for damage in ("empty", "invalid")]
     if archival:
         result += ["nested-rgb", "nested-default-rgb", "inherited-default-rgb", "nested-gray", "nested-cmyk"]
     if dual or flavour.startswith("4"):
@@ -220,6 +222,8 @@ def prepare_colour(doc: pyropdf.Document, case: str) -> None:
 def prepare(doc: pyropdf.Document, case: str) -> bytes:
     page = doc.pages[0].obj
     cat = doc.catalog
+    if case.startswith("program-"):
+        case = "appearance-selected" if "-appearance-" in case else "nested-simple-font"
     if case.startswith("appearance-"):
         prepare_appearance(doc, case)
     elif case in {"nested-rgb", "nested-default-rgb", "inherited-default-rgb", "nested-gray", "nested-cmyk"}:
@@ -294,15 +298,32 @@ def nested_font_entry(page: pyropdf.Dictionary, case: str) -> tuple[pyropdf.Dict
     return owner, next(k for k in ("FontFile2", "FontFile3") if k in owner)
 
 
+def embedded_program(page: pyropdf.Dictionary, location: str) -> pyropdf.Stream:
+    if location == "appearance":
+        desc = page["Annots"][0]["AP"]["N"]["Yes"]["Resources"]["Font"]["F"]["FontDescriptor"]
+    else:
+        desc, _ = nested_font_entry(page, "nested-simple-font")
+    return desc["FontFile2"]
+
+
+def edit_font(page: pyropdf.Dictionary, case: str) -> int | None:
+    if case.startswith("program-"):
+        _, location, damage = case.split("-")
+        program = embedded_program(page, location)
+        program.write(b"" if damage == "empty" else b"fontdata")
+        return program.xref
+    ink = page["Annots"][0]["AP"]["N"]["Yes"]
+    if case in {"appearance-nested", "appearance-uncalled"}:
+        ink = ink["Resources"]["XObject"]["Inner"]
+    descriptor = ink["Resources"]["Font"]["F"]["FontDescriptor"]
+    del descriptor["FontFile2"]
+    return descriptor.xref
+
+
 def edit(doc: pyropdf.Document, case: str) -> int | None:
     page = doc.pages[0].obj
-    if case.startswith("appearance-"):
-        ink = page["Annots"][0]["AP"]["N"]["Yes"]
-        if case in {"appearance-nested", "appearance-uncalled"}:
-            ink = ink["Resources"]["XObject"]["Inner"]
-        descriptor = ink["Resources"]["Font"]["F"]["FontDescriptor"]
-        del descriptor["FontFile2"]
-        return descriptor.xref
+    if case.startswith(("program-", "appearance-")):
+        return edit_font(page, case)
     if case == "nested-cmyk":
         inner = page["Resources"]["XObject"]["Outer"]["Resources"]["XObject"]["Inner"]
         inner.write(b"0 1 0 0 k 10 10 30 40 re f")
@@ -339,7 +360,7 @@ def edit(doc: pyropdf.Document, case: str) -> int | None:
 def failed_rules(flavour: str, case: str) -> set[str]:
     """Pinned veraPDF 1.28.2 results for the destructive edit. Every prepared input passes."""
     group = flavour if flavour.startswith("ua") else flavour[0]
-    if case in {
+    if case.startswith("program-") or case in {
         "nested-simple-font",
         "nested-empty-show",
         "nested-composite-font",
