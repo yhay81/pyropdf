@@ -117,6 +117,8 @@ for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
     if part in "12" or profile == "4":
         attachment_rules = {"1": {"6.1.11-1", "6.1.11-2"}, "2": {"6.8-5"}, "4": {"6.9-3"}}[part]
         expect(source, profile, dict.fromkeys(ATTACHMENT_EDITS, attachment_rules), "#301")
+        interchange_rules = {"1": {"6.1.11-1"}, "2": {"6.8-5"}, "4": {"6.9-3"}}[part]
+        expect(source, profile, {"interchange": interchange_rules}, "#839")
     if part in "23":
         expect(
             source,

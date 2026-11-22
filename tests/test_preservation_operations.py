@@ -716,6 +716,7 @@ def edit_interchange(doc: pyropdf.Document) -> set[int]:  # noqa: PLR0915 - exer
     del doc.parts
     doc.parts.add_part(page, dpm={"Tag": MARKER})
 
+    had_ns = bool(doc.structure.namespaces)
     ns = doc.structure.namespaces.add("https://example.invalid/tmp")
     ns.uri = "https://example.invalid/interchange"
     ns.schema = "https://example.invalid/interchange.xsd"
@@ -731,15 +732,20 @@ def edit_interchange(doc: pyropdf.Document) -> set[int]:  # noqa: PLR0915 - exer
     del elem.namespace
     ns.delete()
     ns2 = doc.structure.namespaces.add("https://example.invalid/drop")
-    del doc.structure.namespaces[0]
+    del doc.structure.namespaces[-1]
     _ = ns2
-    doc.structure.namespaces.add("https://example.invalid/drop2")
-    doc.structure.namespaces.clear()
-    doc.structure.namespaces.add("https://example.invalid/drop3")
-    del doc.structure.namespaces
+    if not had_ns:
+        doc.structure.namespaces.add("https://example.invalid/drop2")
+        doc.structure.namespaces.clear()
+        doc.structure.namespaces.add("https://example.invalid/drop3")
+        del doc.structure.namespaces
+    ns20 = doc.structure.namespaces.find(pyropdf.PDF_2_0_NAMESPACE)
+    final_role_map: dict[str, str | tuple[str, pyropdf.StructureNamespace]] = {"InterchangeRole": "P"}
+    if ns20 is not None:
+        final_role_map["Div"] = ("Div", ns20)
     final_ns = doc.structure.namespaces.add(
         "https://example.invalid/interchange",
-        role_map={"InterchangeRole": "P"},
+        role_map=final_role_map,
     )
     elem.namespace = final_ns
     return touched

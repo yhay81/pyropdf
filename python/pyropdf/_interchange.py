@@ -18,8 +18,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMappin
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, cast, overload
+from typing import TYPE_CHECKING, Any, Final, cast, overload
 
 from pyropdf import _core
 from pyropdf._errors import LimitError, PdfError, StaleObjectError
@@ -68,8 +67,30 @@ _CODE_OBJECT_COUNT = "object_count"
 _PDF_DELIMITERS = frozenset("()<>[]{}/%")
 _AF_PDF17_RELATIONSHIPS = frozenset({"Source", "Data", "Alternative", "Supplement", "Unspecified"})
 
+
+class _IsoExtensions(Mapping[int, tuple[str, str]]):
+    """Canonical ``(url, extension_revision)`` metadata for registered ISO/TS extensions (ISO 32000-2 §7.12)."""
+
+    __slots__ = ("_mapping",)
+
+    def __init__(self, mapping: dict[int, tuple[str, str]]) -> None:
+        self._mapping = mapping
+
+    def __getitem__(self, key: int) -> tuple[str, str]:
+        return self._mapping[key]
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self._mapping)
+
+    def __len__(self) -> int:
+        return len(self._mapping)
+
+    def __repr__(self) -> str:
+        return repr(dict(self._mapping))
+
+
 #: Canonical ``(url, extension_revision)`` metadata for registered ISO/TS extensions (ISO 32000-2 §7.12).
-ISO_EXTENSIONS: Mapping[int, tuple[str, str]] = MappingProxyType(
+ISO_EXTENSIONS: Final[Mapping[int, tuple[str, str]]] = _IsoExtensions(
     {
         32001: ("https://www.iso.org/standard/45874.html", ":2022"),
         32002: ("https://www.iso.org/standard/45875.html", ":2022"),
