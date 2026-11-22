@@ -2,16 +2,6 @@
 # @arlington expands to the individual names of the pinned model, never to clause features.
 # Remove obsolete scopes after their cells are proved; assign any residual to an open task.
 
-[families.optional-content-usage]
-tracker = 245
-issue = 901
-title = "Read and edit optional-content usage and usage application dictionaries"
-features = [
-    "optional-content",
-]
-dimensions = ["read", "create", "edit"]
-behavior = "Resolve OCG Usage and configuration AS application dictionaries against their groups. Expose and modify the stored values, and verify configuration- and event-specific behavior through save/reopen."
-
 [families.print-device-engine]
 tracker = 248
 issue = 1001

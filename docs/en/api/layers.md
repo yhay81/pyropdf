@@ -90,6 +90,26 @@ Layers.configs: list[LayerConfig]
 
 The default configuration, then the alternate ones of `/Configs`.
 
+### `Layers.usage_applications`
+
+```python
+Layers.usage_applications(
+    layer: Layer,
+    /,
+    *,
+    event: Literal['View', 'Print', 'Export'],
+    config: int = 0,
+) -> tuple[typed.OptContentUsageApplication, ...]
+```
+
+Return the editable usage applications for a group, event and configuration, in stored order.
+
+A usage application's `Category` names select entries in the group's
+`typed.OptContentGroup.Usage` dictionary. An omitted or empty
+`OCGs` applies to no groups. Configuration 0 is the default; the
+indices of alternate configurations are listed in `configs`.
+Looking up these settings leaves visibility unchanged.
+
 ### `Layers.add`
 
 ```python
@@ -118,8 +138,8 @@ Layers.use(index: int)
 
 Make configuration `index` of `configs` the default, in one transaction.
 
-The configuration's `/BaseState`, `/ON`, `/OFF`, and
-`/Locked` replace those of `/D`; index 0 is `/D` itself.
+Its `/BaseState`, `/ON`, `/OFF`, `/Locked` and usage
+applications (`/AS`) replace those of `/D`; index 0 is `/D` itself.
 
 ### `Layers.visible`
 

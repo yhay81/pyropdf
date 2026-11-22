@@ -81,7 +81,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `page_label_ranges` | 4,096 ranges | The document's `/PageLabels` number tree holds more than 4,096 `/Nums` pairs. |
 | `page_label_text_size` | 1 MiB | The prefixes and style names of the document's `/PageLabels` number tree are longer than 1 MiB in UTF-8 together. |
 | `page_label_input_size` | 1 MiB | The prefixes that setting `Document.page_labels` writes are longer than 1 MiB in UTF-8 together. |
-| `optional_content_count` | 4,096 entries | The document's `/OCGs`, `/Configs`, or an optional-content configuration array holds, or `Layers.add` or `LayerMembership` would give it, more than 4,096 entries. |
+| `optional_content_count` | 4,096 entries | The document's `/OCGs`, `/Configs`, or an optional-content configuration array holds, or `Layers.add` or `LayerMembership` would give it, more than 4,096 entries. A usage lookup counts its application entries and the group entries of applications for the requested event together. |
 | `optional_content_expression` | 4,096 operands | `Layers.visible` evaluates a `/VE` visibility expression deeper than 32 levels or with more than 4,096 operands. |
 | `sanitize_action_chain` | 256 actions | `Document.sanitize` follows more than 256 actions along a `/Next` action chain when checking for JavaScript. |
 | `sanitize_forms` | 4,096 forms | `Document.sanitize` reaches more than 4,096 Form XObjects and appearance streams while removing hidden text. |
