@@ -1299,6 +1299,7 @@ dependencies = [
  "rten",
  "rten-tensor",
  "sha2",
+ "sha3",
  "skrifa 0.50.0",
  "tiff",
  "unicode-bidi",

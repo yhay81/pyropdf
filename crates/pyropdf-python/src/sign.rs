@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use pyo3::IntoPyObjectExt as _;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -44,32 +45,83 @@ impl _Signer {
     /// Reads a PEM private key and the PEM chain whose first certificate is
     /// the key's.
     #[staticmethod]
-    #[pyo3(signature = (key, certificates, password=None))]
-    fn from_pem(key: &[u8], certificates: &[u8], password: Option<&[u8]>) -> PyResult<Self> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one DER certificate per certificate already held by the supplied chain"
+    )]
+    #[pyo3(signature = (key, certificates, password=None, digest_algorithm=None))]
+    fn from_pem(
+        py: Python<'_>,
+        key: &[u8],
+        certificates: &[u8],
+        password: Option<&[u8]>,
+        digest_algorithm: Option<&str>,
+    ) -> PyResult<Py<PyAny>> {
         crate::errors::boundary(|| {
+            let chain = Chain::from_pem(certificates)
+                .and_then(|chain| chain.with_digest(digest_algorithm))
+                .map_err(sign_error)?;
+            if chain.algorithm().needs_extension() {
+                let material = sign::pem_key_material(key, password).map_err(sign_error)?;
+                let certificates = chain
+                    .certificates()
+                    .iter()
+                    .map(Encode::to_der)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                return (PyBytes::new(py, material.as_bytes()), certificates).into_py_any(py);
+            }
             let key = Key::from_pem(key, password).map_err(sign_error)?;
-            let chain = Chain::from_pem(certificates).map_err(sign_error)?;
             if !key.matches(chain.signer()) {
                 return Err(PyValueError::new_err(
                     "the first certificate does not hold the key's public key",
                 ));
             }
-            Ok(Self {
+            Self {
                 chain,
                 source: Source::Key(key),
-            })
+            }
+            .into_py_any(py)
         })?
     }
 
     /// Reads the key and the certificates of a PKCS#12 file.
     #[staticmethod]
-    fn from_pkcs12(data: &[u8], password: &str) -> PyResult<Self> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one DER certificate per input certificate"
+    )]
+    #[pyo3(signature = (data, password, digest_algorithm=None))]
+    fn from_pkcs12(
+        py: Python<'_>,
+        data: &[u8],
+        password: &str,
+        digest_algorithm: Option<&str>,
+    ) -> PyResult<Py<PyAny>> {
         crate::errors::boundary(|| {
-            let (key, certificates) = sign::parse_pkcs12(data, password).map_err(sign_error)?;
-            Ok(Self {
-                chain: Chain::new(certificates).map_err(sign_error)?,
+            let (material, certificates) =
+                sign::pkcs12_material(data, password).map_err(sign_error)?;
+            if sign::SignatureAlgorithm::from_pkcs8(material.as_bytes())
+                .map_err(sign_error)?
+                .needs_extension()
+            {
+                let encoded = certificates
+                    .iter()
+                    .map(Encode::to_der)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                return (PyBytes::new(py, material.as_bytes()), encoded).into_py_any(py);
+            }
+            let (key, certificates) =
+                sign::native_pkcs12_key(material.as_bytes(), certificates).map_err(sign_error)?;
+            let chain = Chain::new(certificates)
+                .and_then(|chain| chain.with_digest(digest_algorithm))
+                .map_err(sign_error)?;
+            Self {
+                chain,
                 source: Source::Key(key),
-            })
+            }
+            .into_py_any(py)
         })?
     }
 
@@ -80,11 +132,18 @@ impl _Signer {
         clippy::disallowed_methods,
         reason = "one borrowed slice per DER certificate already supplied by the caller, as Chain::from_der"
     )]
-    fn callback(certificates: Vec<Vec<u8>>, sign: Py<PyAny>) -> PyResult<Self> {
+    #[pyo3(signature = (certificates, sign, digest_algorithm=None))]
+    fn callback(
+        certificates: Vec<Vec<u8>>,
+        sign: Py<PyAny>,
+        digest_algorithm: Option<&str>,
+    ) -> PyResult<Self> {
         crate::errors::boundary(|| {
             let certificates: Vec<&[u8]> = certificates.iter().map(Vec::as_slice).collect();
             Ok(Self {
-                chain: Chain::from_der(&certificates).map_err(sign_error)?,
+                chain: Chain::from_der(&certificates)
+                    .and_then(|chain| chain.with_digest(digest_algorithm))
+                    .map_err(sign_error)?,
                 source: Source::Callback(sign),
             })
         })?
@@ -110,10 +169,34 @@ impl _Signer {
         })?
     }
 
+    /// Whether the signature mechanism itself fixes the document digest (Table 237).
+    #[getter]
+    fn fixed_digest(&self) -> PyResult<bool> {
+        crate::errors::boundary(|| {
+            matches!(
+                self.chain.algorithm(),
+                sign::SignatureAlgorithm::Ed25519 | sign::SignatureAlgorithm::Ed448
+            )
+        })
+    }
+
+    /// The ISO extension declarations required by this signature.
+    #[getter]
+    fn extensions(&self) -> PyResult<(bool, bool)> {
+        crate::errors::boundary(|| {
+            let hash = self.chain.digest().needs_extension();
+            let key = self.chain.algorithm();
+            (
+                hash,
+                key.needs_extension() || (hash && key != sign::SignatureAlgorithm::RsaSha256),
+            )
+        })
+    }
+
     /// Returns the name of the digest algorithm that the signature uses.
     #[getter]
     fn digest_algorithm(&self) -> PyResult<&'static str> {
-        crate::errors::boundary(|| self.chain.algorithm().digest().name())
+        crate::errors::boundary(|| self.chain.digest().name())
     }
 }
 
@@ -161,7 +244,9 @@ pub fn sign_document(
             let result = py.detach(|| {
                 let sign_value = |attributes: &[u8]| -> PyResult<Vec<u8>> {
                     match &signer.source {
-                        Source::Key(key) => Ok(key.sign(attributes)),
+                        Source::Key(key) => key
+                            .sign_with_digest(attributes, signer.chain.digest())
+                            .map_err(sign_error),
                         Source::Callback(callable) => Python::attach(|py| {
                             let value = callable.call1(py, (PyBytes::new(py, attributes),))?;
                             returned(value.bind(py), "the signer's callback")
@@ -293,6 +378,7 @@ type CheckData<'py> = (
     String,
     Bound<'py, PyBytes>,
     Option<Bound<'py, PyBytes>>,
+    Option<(String, u32)>,
 );
 
 /// A SignedData of `sign::verify`: digest, message digest, signing time,
@@ -320,6 +406,7 @@ fn check_data<'py>(py: Python<'py>, check: &sign::verify::Check) -> CheckData<'p
             .message
             .as_ref()
             .map(|message| PyBytes::new(py, message)),
+        check.pss.clone(),
     )
 }
 

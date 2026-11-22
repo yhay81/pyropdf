@@ -174,9 +174,50 @@ password, but calling `page.pixmap()` with that password currently raises
 
 ## Signing
 
-`Signer.from_pem` and `Signer.from_pkcs12` load ECDSA P-256 or P-384 keys with
-their certificate chains, and `Signer.callback` delegates signing to an
-external RSA key, HSM, or PKCS#11 token. `doc.sign(field, signer)` writes a CMS
+### Signature algorithms
+
+These are the PDF 2.0 curve and document digest combinations in
+ISO/TS 32002:2022 Tables 3 and 4. ISO/TS 32001:2022 adds SHA3-256,
+SHA3-384, SHA3-512 and SHAKE256 to signature and timestamp digests.
+Select a digest with `digest_algorithm=` on a signer or on
+`Document.timestamp`. pyropdf writes the required ISO extension entries
+when it uses an extended algorithm. SHAKE256 produces 64 bytes.
+
+| Signing key | Allowed document digests | Private-key operation |
+| --- | --- | --- |
+| NIST P-256 | `sha256`, `sha3_256` | PEM, PKCS#12 or callback |
+| NIST P-384 | `sha384`, `sha3_384` | PEM, PKCS#12 or callback |
+| NIST P-521 | `sha512`, `sha3_512` | PEM, PKCS#12 or callback |
+| Brainpool P256r1 | `sha256`, `sha384`, `sha512`, `sha3_256`, `sha3_384`, `sha3_512` | PEM, PKCS#12 or callback |
+| Brainpool P384r1 | `sha384`, `sha512`, `sha3_384`, `sha3_512` | PEM, PKCS#12 or callback |
+| Brainpool P512r1 | `sha512`, `sha3_512` | PEM, PKCS#12 or callback |
+| Ed25519 | `sha512` | PEM, PKCS#12 or callback, pure Ed25519 |
+| Ed448 | `shake256` | PEM, PKCS#12 or callback, pure Ed448 |
+
+`Signature.verify` checks the digest of the PDF byte ranges and the
+signature over the signed attributes. Install `cryptography` to load private keys and verify
+P-521, Brainpool and Edwards keys. RSA callbacks can also use the
+three SHA-3 digests with PKCS#1 v1.5 (RFC 9688). For Ed448, CMS with attributes
+specifies `id-shake256-len` with an integer parameter of 512. CMS
+without attributes uses `id-shake256` with absent parameters. The
+corresponding Ed25519 digest is SHA-512 with absent parameters.
+ISO/TS 32001 extends the signature-field seed dictionary's
+`/DigestMethod` names. Erratum 236 removes the proposed change to
+signature-reference dictionaries.
+
+The reproducible fixtures in `tests/test_signing.py` and
+`tests/test_verify.py` generate keys and certificates for each row.
+Each of the 20 pairs is used to fill an existing field, sign again,
+validate both revisions in pyHanko 0.38.1 and verify an independently
+signed PDF. pyHanko's Ed25519 fixture encoder explicitly omits the
+SHA-512 parameters required to be absent by RFC 8419. Separate tests
+check the explicit-NULL rejection and all four extension timestamp
+digests with a local RFC 3161 authority. The versions of pyHanko,
+its ASN.1 codec and its crypto backend are pinned in `uv.lock`.
+
+`Signer.from_pem` and `Signer.from_pkcs12` load keys from the table with
+their certificate chains. `Signer.callback` delegates the private operation
+to an external key, HSM, or PKCS#11 token. `doc.sign(field, signer)` writes a CMS
 / PAdES signature (`B-B`, or `B-T` when a `timestamper` callback returns an
 RFC 3161 token) in a new incremental revision, so earlier signed bytes stay
 unchanged, and returns the signed PDF bytes. `doc.signatures` lists the signed
