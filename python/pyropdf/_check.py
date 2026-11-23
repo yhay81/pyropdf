@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pyropdf import _core
 from pyropdf._archival_colour import archival_colour
-from pyropdf._objects import Dictionary, _catalog, _trailer
+from pyropdf._objects import Array, Dictionary, Name, Stream, String, _catalog, _trailer
 from pyropdf._profiles import profiles
 
 if TYPE_CHECKING:
@@ -126,8 +126,87 @@ def _pdfua_defects(claim: str, catalog: Dictionary) -> list[StructuralDefect]:
     ]
 
 
+def _pdfx4_defects(catalog: Dictionary) -> list[StructuralDefect]:
+    """Check the single embedded PDF/X output intent shared by PDF/X-4 and PDF/VT-1."""
+    spec = "ISO 15930-7:2010 6.4.2.1"
+    intents = catalog.get("OutputIntents")
+    match = None
+    if isinstance(intents, Array):
+        for index, entry in enumerate(intents):
+            if isinstance(entry, Dictionary) and entry.get("S") == Name("GTS_PDFX"):
+                if match is not None:
+                    message = "PDF/X-4 requires exactly one /GTS_PDFX output intent"
+                    return [_defect("PDF/X-4", catalog.xref, "OutputIntents", spec, message)]
+                match = (index, entry)
+    if match is None:
+        return [_defect("PDF/X-4", catalog.xref, "OutputIntents", spec, "PDF/X-4 requires a /GTS_PDFX output intent")]
+
+    index, entry = match
+    rules = (
+        (isinstance(entry.get("OutputConditionIdentifier"), String), "OutputConditionIdentifier", "a text identifier"),
+        (isinstance(entry.get("DestOutputProfile"), Stream), "DestOutputProfile", "an embedded output profile stream"),
+        ("DestOutputProfileRef" not in entry, "DestOutputProfileRef", "an output intent without an external profile"),
+    )
+    return [
+        _defect("PDF/X-4", catalog.xref, f"OutputIntents/{index}/{key}", spec, f"PDF/X-4 requires {needed}")
+        for holds, key, needed in rules
+        if not holds
+    ]
+
+
+def _vt_page_index(document: Document, obj: object) -> int | None:
+    """Resolve a page boundary through the existing page index."""
+    if not isinstance(obj, Dictionary) or obj.xref is None or obj.generation is None:
+        return None
+    return _core.page_index(document._core(), obj.xref, obj.generation)  # noqa: SLF001
+
+
+def _vt_leaf_covers(document: Document, leaf: object, index: int) -> bool:
+    """Check that the page points to a leaf whose inclusive range covers the page."""
+    if not isinstance(leaf, Dictionary) or leaf.xref is None or "DParts" in leaf:
+        return False
+    start = _vt_page_index(document, leaf.get("Start"))
+    end = _vt_page_index(document, leaf["End"]) if "End" in leaf else start
+    return start is not None and end is not None and start <= index <= end
+
+
+def _pdfvt1_defects(document: Document, pdfx: str | None, catalog: Dictionary) -> list[StructuralDefect]:
+    """Check the PDF/X-4 basis, hierarchy root, and page-to-leaf links of a PDF/VT-1 file."""
+    claim = "PDF/VT-1"
+    structure = "ISO 16612-2:2010 6.5"
+    out = []
+    if pdfx != "PDF/X-4":
+        message = "PDF/VT-1 requires a PDF/X-4 claim"
+        out.append(_defect(claim, catalog.xref, "Metadata", "ISO 16612-2:2010 6.2.1", message))
+    root = catalog.get("DPartRoot")
+    if not isinstance(root, Dictionary) or root.xref is None:
+        out.append(_defect(claim, catalog.xref, "DPartRoot", structure, "PDF/VT-1 requires an indirect /DPartRoot"))
+        return out
+    node = root.get("DPartRootNode")
+    if not isinstance(node, Dictionary) or node.xref is None:
+        out.append(_defect(claim, root.xref, "DPartRootNode", structure, "PDF/VT-1 requires an indirect root part"))
+        return out
+    children = node.get("DParts")
+    if "DParts" in node and (
+        not isinstance(children, Array) or not children or not all(isinstance(chunk, Array) for chunk in children)
+    ):
+        message = "A PDF/VT-1 part stores its children in an array of arrays"
+        out.append(_defect(claim, node.xref, "DParts", structure, message))
+    try:
+        for index, page in enumerate(document.pages):
+            if not _vt_leaf_covers(document, page.obj.get("DPart"), index):
+                message = "Each PDF/VT-1 page must refer to its leaf document part"
+                out.append(_defect(claim, page.xref, "DPart", structure, message))
+                break
+    except _core.MalformedPdfError:
+        # The core walk already reported the malformed page tree. Leaf ranges
+        # cannot be interpreted until there is a page order.
+        return out
+    return out
+
+
 def _profile_defects(document: Document) -> tuple[list[StructuralDefect], bool]:
-    """Return the document-level rules of the claimed PDF/A and PDF/UA profiles that it breaks."""
+    """Return the structural rules of the declared profiles that the document breaks."""
     claimed = profiles(document)
     catalog = _catalog(document)
     out = []
@@ -136,6 +215,10 @@ def _profile_defects(document: Document) -> tuple[list[StructuralDefect], bool]:
         out, unsolved = _pdfa_defects(document, claimed.pdfa, catalog)
     if claimed.pdfua is not None:
         out += _pdfua_defects(claimed.pdfua, catalog)
+    if claimed.pdfx == "PDF/X-4" or claimed.pdfvt == "PDF/VT-1":
+        out += _pdfx4_defects(catalog)
+    if claimed.pdfvt == "PDF/VT-1":
+        out += _pdfvt1_defects(document, claimed.pdfx, catalog)
     return out, unsolved
 
 

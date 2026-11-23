@@ -1335,15 +1335,15 @@ objects = []
 
 [features.pdfx]
 clause = "ISO 15930"
-description = "PDF/X: graphic exchange documents, read and kept."
+description = "PDF/X graphic exchange documents, with production round-trip evidence for PDF/X-4."
 objects = []
-read = { status = "partial", missing = "`Document.profiles` reads PDF/X claims and `GTS_PDFX` output intents, without structural checks for PDF/X.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "PDF/X-4 output intent multiplicity, embedded profile and identifier are checked. ICC device class, colour model and component consistency need a bounded profile check.", milestone = "Phase 4: Specification" }
 
 [features.pdfvt]
 clause = "ISO 16612"
-description = "PDF/VT: variable and transactional printing documents, read and kept."
+description = "PDF/VT variable and transactional printing documents, with production round-trip evidence for PDF/VT-1."
 objects = []
-read = { status = "partial", missing = "`Document.profiles` reads PDF/VT claims, without structural checks for PDF/VT.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "PDF/VT-1 root, top-level chunks, and individual page-to-leaf ranges are checked. Nested hierarchy membership, parenting and overlapping ranges need complete validation.", milestone = "Phase 4: Specification" }
 
 [features.unencrypted-wrapper]
 clause = "7.6.7"
