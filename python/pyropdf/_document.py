@@ -603,8 +603,8 @@ class Document:
         value direct where it must be indirect or the reverse, and value
         outside the key's possible values. It also reports the ``invariant``
         defects of page, name, number, and structure trees, references, and
-        appearance states, and the ``profile`` defects of a claimed PDF/A or
-        PDF/UA profile that need no rendering. Each defect names its object
+        appearance states, and the ``profile`` defects of a claimed PDF/A,
+        PDF/UA, PDF/X-4, or PDF/VT-1 profile that need no rendering. Each defect names its object
         and its clause. The walk runs under the document's limits.
         """
         self._ensure_open()
