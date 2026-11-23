@@ -1518,3 +1518,141 @@ fn file_base_open_revision_shares_bytes_zero_copy_and_saves_incrementally() {
         &Value::Integer(77)
     );
 }
+
+#[test]
+fn stale_generation_references_stay_null_and_cyclic_kids_linearize_cleanly() {
+    let budget = Budget::default();
+    let mut base = MemoryBase::new(
+        [(Name::from("Root"), Value::Reference(Reference::new(1, 0)))]
+            .into_iter()
+            .collect(),
+    );
+    base.insert(
+        Reference::new(1, 0),
+        Bytes::new(
+            &b"<</Type/Catalog/Pages 2 0 R/Stale 5 0 R/Live 5 1 R/DupA 4 1 R/StaleDup 4 0 R/StaleOnly 6 0 R>>"[..],
+        ),
+    );
+    // `2 1 R` is a stale-generation self-reference to `2 0 obj`.
+    base.insert(
+        Reference::new(2, 0),
+        Bytes::new(&b"<</Type/Pages/Kids[2 1 R 3 0 R]/Count 1>>"[..]),
+    );
+    base.insert(
+        Reference::new(3, 0),
+        Bytes::new(&b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]>>"[..]),
+    );
+    base.insert(Reference::new(4, 1), Bytes::new(&b"<</Tag (dup)>>"[..]));
+    base.insert(Reference::new(5, 1), Bytes::new(&b"<</Tag (dup)>>"[..]));
+    base.insert(Reference::new(6, 2), Bytes::new(&b"<</Orphan 1>>"[..]));
+    let doc = Document::new(Arc::new(base), None);
+    let version = doc.current();
+
+    // 1. Renumbering: stale refs become null, live refs resolve.
+    let (_, renumbered) = reopened(
+        &version,
+        Options {
+            renumber: true,
+            ..Options::default()
+        },
+        None,
+    );
+    let cat = catalog_of(&renumbered);
+    assert_eq!(cat.get("Stale"), Some(&Value::Null));
+    assert_eq!(cat.get("StaleDup"), Some(&Value::Null));
+    assert_eq!(cat.get("StaleOnly"), Some(&Value::Null));
+    assert!(matches!(cat.get("Live"), Some(Value::Reference(_))));
+    assert!(matches!(cat.get("DupA"), Some(Value::Reference(_))));
+
+    // 2. Deduplicating (without renumber): stale ref is not bound to merged live object.
+    let (_, deduped) = reopened(
+        &version,
+        Options {
+            dedupe: true,
+            ..Options::default()
+        },
+        None,
+    );
+    let cat = catalog_of(&deduped);
+    let Some(Value::Reference(live_ref)) = cat.get("Live") else {
+        panic!("expected live ref");
+    };
+    let Some(Value::Reference(dup_ref)) = cat.get("DupA") else {
+        panic!("expected dup ref");
+    };
+    assert_eq!(live_ref, dup_ref);
+    assert!(deduped.object(*live_ref, &budget).unwrap().is_some());
+    if let Some(Value::Reference(stale_ref)) = cat.get("Stale") {
+        assert!(deduped.object(*stale_ref, &budget).unwrap().is_none());
+    }
+
+    // 3. Deduplicating + renumbering: stale refs become null.
+    let (_, dedup_renum) = reopened(
+        &version,
+        Options {
+            dedupe: true,
+            renumber: true,
+            ..Options::default()
+        },
+        None,
+    );
+    let cat = catalog_of(&dedup_renum);
+    assert_eq!(cat.get("Stale"), Some(&Value::Null));
+    assert_eq!(cat.get("StaleDup"), Some(&Value::Null));
+    assert_eq!(cat.get("StaleOnly"), Some(&Value::Null));
+    assert_eq!(cat.get("Live"), cat.get("DupA"));
+
+    // 4. Pruning: object 6 (gen 2), named only by stale `6 0 R`, is pruned.
+    let (_, pruned) = reopened(
+        &version,
+        Options {
+            prune: true,
+            ..Options::default()
+        },
+        None,
+    );
+    assert!(
+        pruned
+            .object(Reference::new(6, 2), &budget)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        pruned
+            .object(Reference::new(5, 1), &budget)
+            .unwrap()
+            .is_some()
+    );
+
+    // 5. Linearized save: terminates despite stale cyclic `2 1 R` and nulls stale refs.
+    let (_, linearized) = reopened(
+        &version,
+        Options {
+            linearize: true,
+            ..Options::default()
+        },
+        None,
+    );
+    let Some(Value::Reference(root_ref)) = linearized.trailer().get("Root").cloned() else {
+        panic!("expected Root in linearized trailer");
+    };
+    let root_body = raw::body(&linearized, root_ref, &budget).unwrap();
+    let Value::Dict(cat) = Value::parse(&root_body, &budget).unwrap() else {
+        panic!("expected catalog dict after linearize");
+    };
+    let lin_doc = Document::new(Arc::new(linearized), None);
+    assert!(is_linearized(&lin_doc.current(), &budget).unwrap());
+    assert_eq!(cat.get("Stale"), Some(&Value::Null));
+    assert_eq!(cat.get("StaleDup"), Some(&Value::Null));
+    assert_eq!(cat.get("StaleOnly"), Some(&Value::Null));
+    let Some(Value::Reference(live_ref)) = cat.get("Live") else {
+        panic!("expected live ref after linearize");
+    };
+    assert!(
+        lin_doc
+            .current()
+            .get(live_ref.number(), &budget)
+            .unwrap()
+            .is_some()
+    );
+}

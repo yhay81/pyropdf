@@ -199,7 +199,27 @@ impl NameSlots {
         }
         // Only inspect the assigned subtree, or the suffix moved by this
         // insertion/removal. Ordinary scalar appends take constant work here.
-        let keep = affected_slot(value, path, suffix, budget)?;
+        // Mutating an even key index in a /Names array replaces the identity of
+        // its paired direct value slot (`at + 1`), matching NameEdit::Rebuild.
+        let mut paired_path = [NameStep::Other; MAX_NESTING + 1];
+        let mut paired_len = None;
+        if suffix.is_none()
+            && path.len() <= MAX_NESTING + 1
+            && let Some((&NameStep::Index(at), parent)) = path.split_last()
+            && at.is_multiple_of(2)
+            && (parent.is_empty() || parent.last() == Some(&NameStep::Names))
+            && let Some(Value::Array(array)) = at_path(value, parent)
+            && array.get(at + 1).is_some_and(|item| {
+                !matches!(item, Value::Reference(_))
+                    && (pair_key(array.get(at)) || matches!(item, Value::Dict(_)))
+            })
+        {
+            paired_path[..parent.len()].copy_from_slice(parent);
+            paired_path[parent.len()] = NameStep::Index(at + 1);
+            paired_len = Some(parent.len() + 1);
+        }
+        let effective_path = paired_len.map_or(path, |len| &paired_path[..len]);
+        let keep = paired_len.is_some() || affected_slot(value, path, suffix, budget)?;
         if !keep {
             let Some(changes) = &self.changes else {
                 return Ok(self.clone());
@@ -226,13 +246,13 @@ impl NameSlots {
                 if index.is_multiple_of(1024) {
                     budget.poll()?;
                 }
-                if !rule.covered(path, suffix) {
+                if !rule.covered(effective_path, suffix) {
                     Self::insert_rule(&mut rules, &rule.path, rule.suffix, rule.token, budget)?;
                 }
             }
         }
         if keep {
-            Self::insert_rule(&mut rules, path, suffix, fresh()?, budget)?;
+            Self::insert_rule(&mut rules, effective_path, suffix, fresh()?, budget)?;
         }
         Self::with_rules(self.default, rules, budget)
     }
@@ -588,5 +608,29 @@ mod tests {
         )
         .unwrap();
         assert!(previous.edited(&pairs, &[], Some(0), &budget).is_err());
+    }
+
+    #[test]
+    fn mutating_even_key_index_in_names_array_mints_paired_value_token() {
+        let budget = Budget::default();
+        let tree = Value::parse(
+            &Bytes::from(b"<< /Names [(a) << /F (x) >> (b) << /F (y) >>] >>".as_slice()),
+            &budget,
+        )
+        .unwrap();
+        let slot0 = [NameStep::Names, NameStep::Index(1)];
+        let slot1 = [NameStep::Names, NameStep::Index(3)];
+        let slots = NameSlots::default()
+            .edited(&tree, &[NameStep::Names, NameStep::Index(0)], None, &budget)
+            .unwrap();
+        let first = slots.token(&slot0);
+        assert_ne!(first, 0);
+        assert_eq!(slots.token(&slot1), 0);
+
+        let slots = slots
+            .edited(&tree, &[NameStep::Names, NameStep::Index(0)], None, &budget)
+            .unwrap();
+        assert_ne!(slots.token(&slot0), first);
+        assert_eq!(slots.token(&slot1), 0);
     }
 }
