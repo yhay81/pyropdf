@@ -199,6 +199,7 @@ method and property of its classes with its full description.
 - [`ProjectionAnnotation`](annotations.md#projectionannotation): A projection annotation that links back to a 3D measurement.
 - [`RedactionMark`](annotations.md#redactionmark): Mark a rectangle or quadrilaterals for later redaction.
 - [`RichMedia`](annotations.md#richmedia): A RichMedia annotation with a named asset, configuration, instance and optional 3D views.
+- [`RichMediaModel`](annotations.md#richmediamodel): A STEP or glTF model resolved from a PDF 2.0 RichMedia instance.
 - [`Screen`](annotations.md#screen): A Screen annotation with an optional media clip and its rendition action.
 - [`SlideShow`](annotations.md#slideshow): An existing embedded slideshow and the UTF-8 resource names in its virtual file system.
 - [`Sound`](annotations.md#sound): The sound of a sound annotation, `/Sound`, as `Annotation.sound` reads it.

@@ -30,11 +30,11 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 3 | 2 | 833 |
-| interpret | 17 | 19 | 0 | 6 | 5 | 791 |
-| create | 0 | 0 | 28 | 1 | 5 | 804 |
-| edit | 0 | 0 | 0 | 3 | 5 | 830 |
-| preserve | 0 | 0 | 0 | 0 | 4 | 834 |
+| read | 0 | 0 | 0 | 3 | 0 | 835 |
+| interpret | 17 | 19 | 0 | 6 | 3 | 793 |
+| create | 0 | 0 | 28 | 1 | 3 | 806 |
+| edit | 0 | 0 | 0 | 3 | 3 | 832 |
+| preserve | 0 | 0 | 0 | 0 | 2 | 836 |
 
 ## Clauses
 
@@ -237,17 +237,17 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | ISO 15930 | PDF/X | `pdfx` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 done | 12 done | 12 done | 12 done | 12 done |
-| ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| ISO/TS 32007 | RichMedia glTF assets | `gltf-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| ISO/TS 32007 | RichMedia glTF assets | `gltf-rich-media` | 1 done | 1 done | 1 done | 1 done | 1 done |
 
 ## Unfinished work by milestone
 
-51 unfinished cells in 838 features: 17 engine, 13 partial, 21 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+41 unfinished cells in 838 features: 17 engine, 13 partial, 11 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -345,8 +345,7 @@ Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 
 Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
 
-- [#863](https://github.com/yhay81/pyropdf/issues/863) Support STEP and glTF assets in RichMedia annotations under the published PDF 2.0 extensions. Read, author and verify STEP and glTF asset relationships against the published extensions.
-    - read, interpret, create, edit, preserve — `step-rich-media`, `gltf-rich-media`.
+No unfinished specification-map cells assigned.
 
 ## PDF/A and PDF/UA profiles
 
@@ -954,7 +953,7 @@ Of 296 correction IDs with behavioral dimensions, 12 have a reviewed crosswalk i
 | [801](https://github.com/pdf-association/pdf-issues/issues/801) | [Time used to validate an existing timestamp](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.4.2) | `digital-signatures` | read, interpret, create, edit, preserve | — |
 | [802](https://github.com/pdf-association/pdf-issues/issues/802) | [Reference to the certification transform dictionary](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html#H12.8.6) | `permissions` | read, interpret, create, edit, preserve | — |
 | [826](https://github.com/pdf-association/pdf-issues/issues/826) | [Delimiters between successive numeric values](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.3.3) | `basic-objects` | read, interpret, create, edit, preserve | — |
-| [835](https://github.com/pdf-association/pdf-issues/issues/835) | [Integer extension level in the glTF example](https://pdf-issues.pdfa.org/32007-2024/clause04.html#H4.8) | `developer-extensions`, `gltf-rich-media` | read, interpret, create, edit, preserve | [#863](https://github.com/yhay81/pyropdf/issues/863) |
+| [835](https://github.com/pdf-association/pdf-issues/issues/835) | [Integer extension level in the glTF example](https://pdf-issues.pdfa.org/32007-2024/clause04.html#H4.8) | `developer-extensions`, `gltf-rich-media` | read, interpret, create, edit, preserve | — |
 | [837](https://github.com/pdf-association/pdf-issues/issues/837) | [Filter order for ASCII-encoded inline images](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.9.7) | `inline-images`, `opi` | read, interpret, create, edit, preserve | — |
 | [839](https://github.com/pdf-association/pdf-issues/issues/839) | [ICC version of a profile used in a PDF colour space](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#H8.6.5.5) | `icc-based-color-space` | read, interpret, create, edit, preserve | — |
 | [845](https://github.com/pdf-association/pdf-issues/issues/845) | [Calendar used in PDF dates](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#H7.9.4) | `dates` | read, interpret, create, edit, preserve | — |
