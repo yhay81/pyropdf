@@ -32,7 +32,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | --- | --- | --- | --- | --- | --- | --- |
 | read | 0 | 0 | 0 | 3 | 2 | 833 |
 | interpret | 17 | 19 | 0 | 6 | 5 | 791 |
-| create | 0 | 0 | 28 | 1 | 7 | 802 |
+| create | 0 | 0 | 28 | 1 | 5 | 804 |
 | edit | 0 | 0 | 0 | 3 | 5 | 830 |
 | preserve | 0 | 0 | 0 | 0 | 4 | 834 |
 
@@ -233,10 +233,10 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex L | Allowed structure children | `structure-children` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex Q | Page transparency detection | `page-transparency` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 done | 3 done | 2 done, 1 planned | 3 done | 3 done |
+| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 done | 3 done | 3 done | 3 done | 3 done |
 | ISO 15930 | PDF/X | `pdfx` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 done | 12 done | 11 done, 1 planned | 12 done | 12 done |
+| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 done | 12 done | 12 done | 12 done | 12 done |
 | ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -247,7 +247,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-53 unfinished cells in 838 features: 17 engine, 13 partial, 23 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+51 unfinished cells in 838 features: 17 engine, 13 partial, 21 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -337,8 +337,6 @@ No unfinished specification-map cells assigned.
 
 Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 
-- [#846](https://github.com/yhay81/pyropdf/issues/846) Create accessible archival PDFs from a new Document through the public API. Create an accessible archival document with a valid claim and have an independent validator verify the result.
-    - create — `pdfa-4`, `pdfua-2`.
 - [#910](https://github.com/yhay81/pyropdf/issues/910) Validate PDF/X and PDF/VT profile rules through a print exchange round trip. Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour.
     - read, interpret, preserve — `pdfx`, `pdfvt`.
     - create, edit — `pdfx`, `pdfvt`, `output-intents`.
@@ -365,11 +363,11 @@ The machine and human checks are documented in the [corpus review](https://githu
 | `pdfa-3a` | done | done | done | done | done |
 | `pdfa-3b` | done | done | done | done | done |
 | `pdfa-3u` | done | done | done | done | done |
-| `pdfa-4` | done | done | planned | done | done |
+| `pdfa-4` | done | done | done | done | done |
 | `pdfa-4e` | done | done | done | done | done |
 | `pdfa-4f` | done | done | done | done | done |
 | `pdfua-1` | done | done | done | done | done |
-| `pdfua-2` | done | done | planned | done | done |
+| `pdfua-2` | done | done | done | done | done |
 
 ## Specification baseline
 

@@ -204,3 +204,48 @@ with open("input.pdf", "rb") as file:
 
 Limits bound the work of each operation; [Status and safety](status.md)
 says what they do not promise.
+
+## Create an accessible archival chart
+
+[Download the chart program](https://raw.githubusercontent.com/yhay81/pyropdf/main/docs/includes/accessible-archive.py). It starts with
+an empty document and writes a tagged, one-page chart. Pass an embeddable font
+covering the text and an ICC profile for your RGB drawing colours. To run both
+editions with the small font and RGB profile in this repository:
+
+```sh
+uv run python -c "import runpy; from pathlib import Path; Path('chart.icc').write_bytes(runpy.run_path('tests/assets/pdfa/generate.py')['icc']())"
+FONT=crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf
+uv run python docs/includes/accessible-archive.py "$FONT" chart.icc chart.pdf
+uv run python docs/includes/accessible-archive.py "$FONT" chart.icc earlier.pdf --earlier
+```
+
+| Output | Archival and accessibility profiles | What the writer supplies |
+| --- | --- | --- |
+| `chart.pdf` | PDF/A-4 and PDF/UA-2 | A PDF 2.0 header, the 2020 and 2024 revisions in XMP, and the standard PDF 2.0 namespace on the document and its three children |
+| `earlier.pdf` | PDF/A-2a and PDF/UA-1 | A PDF 1.7 header, conformance A, the PDF/UA identification extension schema in XMP, and the implicit PDF 1.7 structure namespace |
+
+Both editions embed the font and RGB output profile, identify the content as
+US English, and request that the viewer display the XMP title. To review
+accessibility, open the page and compare it with Poppler's reading-order report:
+
+```sh
+pdfinfo -struct-text chart.pdf
+pdftoppm -png -singlefile -scale-to 520 chart.pdf chart
+```
+
+In order, the tags are the heading “Air flow”, the paragraph “Air flow fell to
+1”, and a figure. In the image, the upper bar is labeled 2 and the lower bar is
+labeled 1 and is half as long. Confirm that the figure description conveys the
+same change across the two trials. To check the machine-verifiable rules, run
+each profile explicitly:
+
+```sh
+verapdf --flavour 4 chart.pdf
+verapdf --flavour ua2 chart.pdf
+verapdf --flavour 2a earlier.pdf
+verapdf --flavour ua1 earlier.pdf
+```
+
+The test edits the figure description and checks full and incremental saves.
+Deleting the description fails PDF/UA-2 rule `8.2.5.28.2-1` and PDF/UA-1 rule
+`7.3-1`; the two archival checks still pass.
