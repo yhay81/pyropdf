@@ -2,6 +2,7 @@
 
 {% block extrahead %}
   {{ super() }}
+  <meta name="color-scheme" content="light dark">
   {# The social plugin writes the other Open Graph and Twitter tags. #}
   <meta property="og:site_name" content="{{ config.site_name }}">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f3ec">
@@ -32,33 +33,150 @@
       label.textContent = button.dataset.copiedLabel;
       window.setTimeout(() => { label.textContent = previous; }, 1600);
     });
+
     // The home page's demo plays its steps in turn while it is on screen,
-    // and stops for good once the reader picks a step. Without motion, it
-    // stays on the step that the reader picks.
-    function playDemo() {
+    // exposes a pause/play button (WCAG 2.2.2), and stops when the reader
+    // picks a step. Under reduced motion it starts paused.
+    function initHome() {
       const reel = document.querySelector(".pp-reel");
-      if (!reel || reel.dataset.playing !== undefined) return;
-      reel.dataset.playing = "";
-      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-      const steps = [...reel.querySelectorAll('input[name="pp-step"]')];
-      const period = parseFloat(getComputedStyle(reel).getPropertyValue("--pp-step")) * 1000 || 5000;
-      let visible = false;
-      new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; }).observe(reel);
-      reel.classList.add("pp-reel--playing");
-      const timer = window.setInterval(() => {
-        if (!document.contains(reel)) return window.clearInterval(timer);
-        if (!visible || document.hidden) return;
-        const next = (steps.findIndex((step) => step.checked) + 1) % steps.length;
-        steps[next].checked = true;
-      }, period);
-      const stop = () => {
-        window.clearInterval(timer);
-        reel.classList.remove("pp-reel--playing");
-      };
-      reel.addEventListener("pointerdown", stop, { once: true });
-      reel.addEventListener("keydown", stop, { once: true });
+      if (reel && reel.dataset.init === undefined) {
+        reel.dataset.init = "";
+        const steps = [...reel.querySelectorAll('input[name="pp-step"]')];
+        const toggle = reel.querySelector("[data-reel-toggle]");
+        const period = parseFloat(getComputedStyle(reel).getPropertyValue("--pp-step")) * 1000 || 5000;
+        let visible = false;
+        let timer = null;
+        let playing = false;
+
+        new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; }).observe(reel);
+
+        const syncToggle = () => {
+          if (!toggle) return;
+          toggle.dataset.state = playing ? "playing" : "paused";
+          const label = playing ? toggle.dataset.pauseLabel : toggle.dataset.playLabel;
+          toggle.setAttribute("aria-label", label);
+          toggle.setAttribute("title", label);
+        };
+
+        const stop = () => {
+          if (timer !== null) {
+            window.clearInterval(timer);
+            timer = null;
+          }
+          playing = false;
+          reel.classList.remove("pp-reel--playing");
+          syncToggle();
+        };
+
+        const start = () => {
+          if (playing) return;
+          playing = true;
+          reel.classList.add("pp-reel--playing");
+          syncToggle();
+          timer = window.setInterval(() => {
+            if (!document.contains(reel)) return stop();
+            if (!visible || document.hidden) return;
+            const next = (steps.findIndex((step) => step.checked) + 1) % steps.length;
+            steps[next].checked = true;
+          }, period);
+        };
+
+        if (toggle) {
+          toggle.addEventListener("click", (event) => {
+            event.stopPropagation();
+            if (playing) stop();
+            else start();
+          });
+        }
+
+        const onUserPick = (event) => {
+          if (toggle && toggle.contains(event.target)) return;
+          stop();
+        };
+        for (const step of steps) {
+          step.addEventListener("change", onUserPick);
+        }
+        reel.querySelectorAll(".pp-reel__steps label").forEach((el) => {
+          el.addEventListener("pointerdown", stop);
+        });
+
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          syncToggle();
+        } else {
+          start();
+        }
+      }
+
+      // Interactive chapter navigation synced to the 30-second overview video.
+      const showcase = document.querySelector(".pp-showcase");
+      if (showcase && showcase.dataset.init === undefined) {
+        showcase.dataset.init = "";
+        const video = showcase.querySelector("video");
+        const chapters = [...showcase.querySelectorAll("[data-video-seek]")];
+        if (video && chapters.length > 0) {
+          const times = chapters.map((btn) => parseFloat(btn.dataset.videoSeek) || 0);
+
+          const setActive = (index) => {
+            chapters.forEach((btn, i) => {
+              const active = i === index;
+              btn.classList.toggle("is-active", active);
+              if (active) btn.setAttribute("aria-current", "step");
+              else btn.removeAttribute("aria-current");
+            });
+          };
+
+          const updateFromTime = () => {
+            const t = video.currentTime;
+            let idx = 0;
+            for (let i = 0; i < times.length; i++) {
+              if (t + 0.15 >= times[i]) idx = i;
+            }
+            setActive(idx);
+          };
+
+          setActive(0);
+          video.addEventListener("timeupdate", updateFromTime);
+          video.addEventListener("seeked", updateFromTime);
+
+          chapters.forEach((btn, idx) => {
+            btn.addEventListener("click", () => {
+              const target = times[idx];
+              setActive(idx);
+              const seekAndPlay = () => {
+                video.currentTime = target;
+                video.play().catch(() => {});
+              };
+              if (video.readyState >= 1) {
+                seekAndPlay();
+              } else {
+                video.preload = "auto";
+                video.addEventListener("loadedmetadata", seekAndPlay, { once: true });
+                video.load();
+              }
+            });
+          });
+        }
+      }
+
+      // Smooth jump from hero "Watch 30s tour" CTA to the video showcase.
+      document.querySelectorAll("[data-jump-video]").forEach((link) => {
+        if (link.dataset.bound !== undefined) return;
+        link.dataset.bound = "";
+        link.addEventListener("click", (event) => {
+          const target = document.getElementById("pp-overview")?.closest(".pp-showcase");
+          if (!target) return;
+          event.preventDefault();
+          const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          target.scrollIntoView({ behavior: reduced ? "instant" : "smooth", block: "start" });
+          const video = target.querySelector("video");
+          if (video) {
+            window.setTimeout(() => video.focus({ preventScroll: true }), reduced ? 0 : 420);
+          }
+        });
+      });
     }
-    if (window.document$) window.document$.subscribe(playDemo);
-    else playDemo();
+
+    if (window.document$) window.document$.subscribe(initHome);
+    else initHome();
   </script>
 {% endblock %}

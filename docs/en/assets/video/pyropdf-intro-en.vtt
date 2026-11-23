@@ -1,0 +1,43 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:00.373
+[Warm ambient synth pulse begins]
+
+00:00:00.373 --> 00:00:02.551
+Working with PDFs in Python shouldn't feel fragile.
+
+00:00:02.893 --> 00:00:06.129
+Meet pyropdf — Python ergonomics, powered by a Rust core.
+
+00:00:06.530 --> 00:00:08.246
+Read text, tables, and Markdown.
+
+00:00:08.568 --> 00:00:12.402
+Highlight matches, fill forms, stamp pages, and render live previews,
+
+00:00:12.452 --> 00:00:14.147
+all from one versioned object store.
+
+00:00:14.548 --> 00:00:16.572
+Every edit runs in an atomic transaction.
+
+00:00:16.894 --> 00:00:19.310
+Undo or redo in an instant,
+
+00:00:19.360 --> 00:00:21.980
+and if anything fails, your document stays untouched.
+
+00:00:22.381 --> 00:00:25.586
+Save incrementally to keep every original byte and signature.
+
+00:00:25.948 --> 00:00:27.613
+Zero required dependencies.
+
+00:00:27.914 --> 00:00:29.003
+MIT licensed.
+
+00:00:29.424 --> 00:00:31.726
+pip install pyropdf.
+
+00:00:31.876 --> 00:00:33.565
+[Warm synth chord resolves and fades]
