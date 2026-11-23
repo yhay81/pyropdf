@@ -232,8 +232,8 @@ def _validate_step_action(action: object, name: str, page_count: int) -> int:
         spec = _target_to_core(action, page_count)
     except TypeError as error:
         msg = (
-            f"{name} must be a Destination, RemoteDestination, Launch, NamedAction, "
-            f"TransitionAction, ThreadAction, URI string, or None: {type(action).__name__}"
+            f"{name} must be a Destination, RemoteDestination, DocumentPartAction, Launch, "
+            f"NamedAction, TransitionAction, ThreadAction, URI string, or None: {type(action).__name__}"
         )
         raise TypeError(msg) from error
     utf8_bytes = sum(len(text.encode("utf-8")) for text in spec[4:] if text is not None)

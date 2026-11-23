@@ -1150,7 +1150,6 @@ objects = []
 clause = "14.5"
 description = "Page-piece dictionaries: private data of applications."
 objects = ["PagePiece", "Data"]
-edit = { status = "partial", missing = "Sanitize removes `/PieceInfo` dictionaries, without a high-level API for reading or writing application data.", milestone = "Phase 4: Specification" }
 
 [features.marked-content]
 clause = "14.6"
@@ -1227,9 +1226,6 @@ objects = ["DPart", "DPartRoot", "DPM"]
 clause = "14.13"
 description = "Associated files of the document, its pages, and its objects."
 objects = ["AFFileSpecification", "AFEmbeddedFileStream", "AFEmbeddedFileParameter", "AFFileSpecEF"]
-read = { status = "partial", missing = "Catalog `/AF` entries are read and checked, without high-level readers for page or object associated files.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Attachments on PDF/A-3 and PDF/A-4 documents write catalog `/AF` entries and `/AFRelationship`, without page or object associated files.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Attachment deletion and sanitize update or remove `/AF` entries, without high-level APIs for page or object associated files.", milestone = "Phase 4: Specification" }
 
 [features.linearization]
 clause = "Annex F"

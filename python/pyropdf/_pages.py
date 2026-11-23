@@ -12,6 +12,7 @@ from pyropdf import _core
 from pyropdf._collections import _has_named_pages, _prune_named_pages_for_removed_pages
 from pyropdf._errors import LimitError
 from pyropdf._images import _J2K_SIGNATURE, _JP2_SIGNATURE, _PNG_SIGNATURE, add_image
+from pyropdf._interchange import _has_dparts, _prune_dparts_for_removed_pages
 from pyropdf._page import Page
 from pyropdf._page_labels import _label, _read_page_labels
 from pyropdf._threads import (
@@ -182,7 +183,8 @@ class Pages(Sequence[Page]):
         has_named = _has_named_pages(self._document)
         removed_pairs = {objects[at] for at in removed}
         has_capture = _has_capture_indexes(self._document)
-        if has_threads or has_named or has_capture:
+        has_dparts = _has_dparts(self._document)
+        if has_threads or has_named or has_capture or has_dparts:
             with self._document.transaction("pages"):
                 if has_capture:
                     _guard_capture_pages(self._document, removed_pairs)
@@ -190,6 +192,8 @@ class Pages(Sequence[Page]):
                     _prune_threads_for_removed_pages(self._document, removed_pairs)
                 if has_named:
                     _prune_named_pages_for_removed_pages(self._document, removed_pairs)
+                if has_dparts:
+                    _prune_dparts_for_removed_pages(self._document, objects, removed_pairs)
                 _core.set_pages(doc, kept)
             return
         _core.set_pages(doc, kept)
@@ -336,7 +340,8 @@ class Pages(Sequence[Page]):
         has_capture = bool(removed_pairs or any(copies)) and _has_capture_indexes(self._document)
         has_threads = _has_catalog_threads(self._document)
         has_named = bool(removed_pairs) and _has_named_pages(self._document)
-        if (has_threads and (removed_pairs or any(copies))) or has_named or has_capture:
+        has_dparts = bool(removed_pairs) and _has_dparts(self._document)
+        if (has_threads and (removed_pairs or any(copies))) or has_named or has_capture or has_dparts:
             with self._document.transaction("pages"):
                 if has_capture:
                     affected = removed_pairs.union(obj for obj, copied in zip(order, copies, strict=True) if copied)
@@ -345,6 +350,8 @@ class Pages(Sequence[Page]):
                     _prune_threads_for_removed_pages(self._document, removed_pairs)
                 if has_named:
                     _prune_named_pages_for_removed_pages(self._document, removed_pairs)
+                if has_dparts:
+                    _prune_dparts_for_removed_pages(self._document, objects, removed_pairs)
                 _core.set_pages(doc, order, copies)
                 if has_threads and any(copies):
                     after = _core.page_objects(doc)

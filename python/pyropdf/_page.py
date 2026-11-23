@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Literal, overload
 
 from pyropdf import _core, _markdown
@@ -16,6 +16,13 @@ from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._fonts import FontInfo, page_fonts
 from pyropdf._geometry import Quad, Rect
 from pyropdf._images import PageImage, page_images
+from pyropdf._interchange import (
+    AssociatedFiles,
+    PieceData,
+    PieceInfo,
+    _delete_piece_info,
+    _replace_piece_info,
+)
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._links import Links
 from pyropdf._measurement import (
@@ -342,6 +349,30 @@ class Page:
     @triggers.deleter
     def triggers(self) -> None:
         _delete_page_triggers(self)
+
+    @property
+    def associated_files(self) -> AssociatedFiles:
+        """Return the page's ``/AF`` associated files as a live :class:`AssociatedFiles` sequence."""
+        _ = self.index
+        return AssociatedFiles(self._document, self._page_host)
+
+    @property
+    def piece_info(self) -> PieceInfo:
+        """Return, replace, or delete the page's ``/PieceInfo`` application data as a live :class:`PieceInfo`."""
+        _ = self.index
+        return PieceInfo(self._document, self._page_host, is_page=True)
+
+    @piece_info.setter
+    def piece_info(self, values: Mapping[str, PieceData] | Iterable[tuple[str, PieceData]]) -> None:
+        _replace_piece_info(self._document, self._page_host, values, is_page=True)
+
+    @piece_info.deleter
+    def piece_info(self) -> None:
+        _delete_piece_info(self._document, self._page_host, is_page=True)
+
+    def _page_host(self) -> Dictionary:
+        _ = self.index
+        return self.obj
 
     @property
     def thumbnail(self) -> Pixmap | None:

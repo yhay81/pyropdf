@@ -215,6 +215,24 @@ Assigning a mapping replaces `Page['AA']` in one transaction, and
 
 Settable.
 
+### `Page.associated_files`
+
+```python
+Page.associated_files: AssociatedFiles
+```
+
+The page's `/AF` associated files as a live `AssociatedFiles` sequence.
+
+### `Page.piece_info`
+
+```python
+Page.piece_info: PieceInfo
+```
+
+Return, replace, or delete the page's `/PieceInfo` application data as a live `PieceInfo`.
+
+Settable.
+
 ### `Page.thumbnail`
 
 ```python
