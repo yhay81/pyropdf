@@ -22,7 +22,7 @@ use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::tree::{append_parent_tree, number_tree_pairs};
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
-use pyropdf_store::version::{Object, Transaction};
+use pyropdf_store::version::{Object, Transaction, Version};
 use pyropdf_store::{Error, LimitExceeded, Result};
 
 /// Hash table keys, values, slack, and rehash space share the operation budget.
@@ -184,12 +184,15 @@ impl<'b> Copies<'b> {
             )
             .into());
         }
+        // Snapshot before allocations so dangling /Annots references cannot resolve to
+        // objects allocated while copying earlier entries of the same page.
+        let before = transaction.snapshot();
         // Reserve all annotation identities before following links, including forward
         // references to widgets whose fields will gain a new child.
         let mut numbers: HashMap<Reference, Reference> = HashMap::new();
         for entry in entries.iter() {
             if let Value::Reference(reference) = entry
-                && let Some((old, object)) = locate_reference(transaction, *reference, budget)?
+                && let Some((old, object)) = locate_reference_in(&before, *reference, budget)?
                 && matches!(&**object.value(), Value::Dict(_))
                 && !numbers.contains_key(&old)
             {
@@ -202,8 +205,25 @@ impl<'b> Copies<'b> {
         annots.try_reserve_exact(entries.len())?;
         let mut copied: BudgetVec<'_, Copied> = BudgetVec::new(budget);
         for entry in entries.iter() {
-            let (mut annotation, old) = match located(transaction, Some(entry), budget)? {
-                Some((Value::Dict(annotation), old)) => (annotation, old),
+            let (mut annotation, old) = match entry {
+                Value::Reference(reference) => {
+                    let Some((old, object)) = locate_reference_in(&before, *reference, budget)?
+                    else {
+                        annots.try_push(copy_for_edit(entry, budget)?)?;
+                        continue;
+                    };
+                    let Value::Dict(annotation) = copy_for_edit(object.value(), budget)? else {
+                        annots.try_push(copy_for_edit(entry, budget)?)?;
+                        continue;
+                    };
+                    (annotation, Some(old))
+                }
+                Value::Dict(_) => {
+                    let Value::Dict(annotation) = copy_for_edit(entry, budget)? else {
+                        unreachable!("matched direct annotation dictionary")
+                    };
+                    (annotation, None)
+                }
                 _ => {
                     annots.try_push(copy_for_edit(entry, budget)?)?;
                     continue;
@@ -211,7 +231,10 @@ impl<'b> Copies<'b> {
             };
             let new = match old {
                 Some(old) => {
-                    let new = numbers[&old];
+                    let Some(&new) = numbers.get(&old) else {
+                        annots.try_push(copy_for_edit(entry, budget)?)?;
+                        continue;
+                    };
                     if !try_insert_set(&mut written, old, budget)? {
                         annots.try_push(Value::Reference(new))?;
                         continue;
@@ -1033,13 +1056,20 @@ fn located(
 
 fn locate_reference(
     transaction: &Transaction,
+    reference: Reference,
+    budget: &Budget,
+) -> Result<Option<(Reference, Object)>> {
+    locate_reference_in(transaction.version(), reference, budget)
+}
+
+fn locate_reference_in(
+    version: &Version,
     mut reference: Reference,
     budget: &Budget,
 ) -> Result<Option<(Reference, Object)>> {
     for _ in 0..MAX_CHAIN {
         budget.poll()?;
-        let Some(object) = transaction
-            .version()
+        let Some(object) = version
             .get(reference.number(), budget)?
             .filter(|object| object.generation() == reference.generation())
         else {
@@ -1107,5 +1137,53 @@ mod tests {
         let budget = Budget::default();
         let value = Value::Reference(Reference::new(1, 0));
         assert!(resolve(&transaction, Some(&value), &budget).is_err());
+    }
+
+    #[test]
+    fn dangling_annotation_colliding_with_allocated_copy_does_not_panic() {
+        let mut trailer = Dict::new();
+        trailer.insert(Name::from("Root"), Value::Reference(Reference::new(1, 0)));
+        let mut base = MemoryBase::new(trailer);
+        // Next allocated numbers: 4 (page copy), 5 (copy of direct annotation).
+        // The dangling reference `5 0 R` in /Annots matches the newly allocated
+        // direct-annotation object number.
+        for (number, body) in [
+            (1, b"<< /Type /Catalog /Pages 2 0 R >>".as_slice()),
+            (2, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".as_slice()),
+            (
+                3,
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [<< /Type /Annot /Subtype /Text /Rect [0 0 10 10] >> 5 0 R] >>"
+                    .as_slice(),
+            ),
+        ] {
+            base.insert(Reference::new(number, 0), Bytes::new(body.to_vec()));
+        }
+        let document = Document::new(Arc::new(base), None);
+        let budget = Budget::default();
+        let mut transaction = document.begin();
+        let Value::Dict(page) = (**transaction
+            .version()
+            .get(3, &budget)
+            .unwrap()
+            .unwrap()
+            .value())
+        .clone() else {
+            panic!("expected page dict");
+        };
+        let mut copies = Copies::new(&transaction, &budget).unwrap();
+        let copied = copies
+            .copy(&mut transaction, Reference::new(3, 0), page)
+            .unwrap();
+        copies.finish(&mut transaction).unwrap();
+        let committed = transaction.commit(&budget).unwrap();
+        let copied_object = committed.get(copied.number(), &budget).unwrap().unwrap();
+        let Value::Dict(copied_dict) = copied_object.value().as_ref() else {
+            panic!("expected copied page dict");
+        };
+        let Some(Value::Array(annots)) = copied_dict.get("Annots") else {
+            panic!("expected /Annots array");
+        };
+        assert_eq!(annots.len(), 2);
+        assert_eq!(annots.as_slice()[1], Value::Reference(Reference::new(5, 0)));
     }
 }

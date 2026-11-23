@@ -55,6 +55,9 @@ pub fn import_pages(
             "a page of another document can be inserted once per call".into(),
         ));
     }
+    if selected.is_empty() {
+        return Ok(None);
+    }
 
     let mut links = Links {
         source,
@@ -511,5 +514,40 @@ mod tests {
             dest.get(0),
             Some(&Value::Reference(imported.object().unwrap()))
         );
+    }
+
+    #[test]
+    fn empty_import_pages_makes_no_writes() {
+        let budget = Budget::default();
+        let source_doc = crate::pages::test_document(&[
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 100 100] >>",
+            "<< /Type /Page /Parent 2 0 R >>",
+        ]);
+        let destination = crate::pages::test_document(&[
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 200] >>",
+            "<< /Type /Page /Parent 2 0 R >>",
+        ]);
+        let version = source_doc.current();
+        let pages = PageIndex::build(&mut Reads::new(&version, &budget)).unwrap();
+        let source = Source {
+            version: &version,
+            index: &pages,
+            references: &refs::Cache::new(),
+            destinations: &Memo::new(1),
+        };
+        let mut transaction = destination.begin();
+        let result = import_pages(
+            &mut transaction,
+            &Memo::new(1),
+            &source,
+            std::iter::empty(),
+            0,
+            &budget,
+        )
+        .unwrap();
+        assert!(result.is_none());
+        assert_eq!(transaction.version().slots().count(), 0);
     }
 }
