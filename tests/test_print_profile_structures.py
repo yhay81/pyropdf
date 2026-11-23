@@ -51,7 +51,7 @@ def hierarchy_pdf(*, single_leaf: bool = False) -> bytes:
                 pdf.pages[first + 1].DPart = leaf
             job.DParts = [groups]
         result = io.BytesIO()
-        pdf.save(result)
+        pdf.save(result, fix_metadata_version=False)
         return result.getvalue()
 
 
@@ -381,7 +381,7 @@ def test_deep_hierarchy_uses_the_operation_budget_without_python_recursion() -> 
             page.DPart = node
         root.NodeNameList = [pikepdf.Name.Record] * 1101
         stream = io.BytesIO()
-        pdf.save(stream)
+        pdf.save(stream, fix_metadata_version=False)
         encoded = stream.getvalue()
     with pyropdf.open(encoded) as doc:
         assert not profile_findings(doc)
