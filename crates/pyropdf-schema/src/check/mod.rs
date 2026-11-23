@@ -30,6 +30,9 @@ pub const MAX_DEFECTS: usize = 10_000;
 /// How many `/Parent` links the search for an inherited key follows.
 const MAX_INHERITANCE: usize = 64;
 
+/// Maximum direct-dictionary nesting inspected inside a `/ParentTree` node.
+const MAX_DIRECT_TREE_DEPTH: usize = 64;
+
 /// A value of the document as the check sees it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum View<'v> {
@@ -269,7 +272,39 @@ fn finish<G: Graph>(mut walk: Walk<'_, G>, size: Option<i64>) -> Result<Report, 
             walk.object(Some(number), &value, target)?;
         }
     }
+    let parent_trees = std::mem::take(&mut walk.parent_trees);
+    for mut check in parent_trees {
+        let mut seen = HashSet::new();
+        while let Some(node_number) = check.pending.pop() {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "each node is deduplicated and bounded by the graph's visit budget below"
+            )]
+            let fresh = seen.insert(node_number);
+            if !fresh {
+                continue;
+            }
+            walk.graph.visit(false)?;
+            if let Some(value) = walk.graph.resolve(node_number)? {
+                inspect_parent_tree_node(
+                    walk.graph,
+                    &value,
+                    &mut check.greatest,
+                    &mut check.pending,
+                    0,
+                )?;
+            }
+        }
+        walk.check_parent_tree_next_key(check.root, check.next, check.greatest);
+    }
     Ok(walk.report)
+}
+
+struct ParentTreeCheck {
+    root: u32,
+    next: i64,
+    greatest: Option<i64>,
+    pending: Vec<u32>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -300,6 +335,9 @@ struct Walk<'g, G: Graph> {
     /// The page tree nodes and structure elements whose kids are checked,
     /// once each although a node is checked as more than one type.
     counted: HashSet<u32>,
+    /// Deferred `/ParentTreeNextKey` checks whose `/ParentTree` reaches
+    /// indirect nodes, run after the main walk validates object budgets.
+    parent_trees: Vec<ParentTreeCheck>,
 }
 
 /// A direct value waiting to be checked as `Target`, at `String`.
@@ -316,6 +354,7 @@ impl<'g, G: Graph> Walk<'g, G> {
             visited: HashSet::new(),
             targets: HashMap::new(),
             counted: HashSet::new(),
+            parent_trees: Vec::new(),
         }
     }
 
@@ -460,11 +499,9 @@ impl<'g, G: Graph> Walk<'g, G> {
             self.pages(number, dict)?;
         }
         if described.name.starts_with("Annot")
-            && let Some(number) = object
-            && path.is_empty()
-            && self.first_count(number)
+            && (!path.is_empty() || object.is_some_and(|number| self.first_count(number)))
         {
-            self.appearance_state(number, dict, described.name);
+            self.appearance_state(object, path, dict, described.name)?;
         }
         if matches!(described.name, "StructTreeRoot" | "StructElem")
             && let Some(number) = object
@@ -1246,46 +1283,51 @@ impl<'g, G: Graph> Walk<'g, G> {
         if name != "StructTreeRoot" {
             return Ok(());
         }
-        let next = self
-            .graph
-            .get(node, b"ParentTreeNextKey")
-            .map(|n| self.graph.view(n));
-        let Some(View::Integer(next)) = next else {
+        let Some(raw_next) = self.graph.get(node, b"ParentTreeNextKey") else {
             return Ok(());
         };
-        let Some(tree) = self.graph.get(node, b"ParentTree") else {
+        let mut next_owned = None;
+        let Some(View::Integer(next)) =
+            deref(self.graph, raw_next, &mut next_owned)?.map(|n| self.graph.view(n))
+        else {
             return Ok(());
         };
-        let resolved;
-        let tree = match self.graph.view(tree) {
-            View::Reference(at) => match self.graph.resolve(at)? {
-                Some(value) => {
-                    resolved = value;
-                    &*resolved
-                }
-                None => return Ok(()),
-            },
-            _ => tree,
+        let Some(raw_tree) = self.graph.get(node, b"ParentTree") else {
+            return Ok(());
         };
-        let greatest = if let Some(nums) = self.graph.get(tree, b"Nums") {
-            self.graph
-                .elements(nums)
-                .iter()
-                .step_by(2)
-                .filter_map(|key| match self.graph.view(key) {
-                    View::Integer(key) => Some(key),
-                    _ => None,
-                })
-                .max()
+        let mut greatest = None;
+        let mut pending = Vec::new();
+        match self.graph.view(raw_tree) {
+            View::Reference(at) => {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "one indirect parent-tree root per visited StructTreeRoot"
+                )]
+                pending.push(at);
+            }
+            View::Dictionary => {
+                inspect_parent_tree_node(self.graph, raw_tree, &mut greatest, &mut pending, 0)?;
+            }
+            _ => return Ok(()),
+        }
+        if pending.is_empty() {
+            self.check_parent_tree_next_key(number, next, greatest);
         } else {
-            self.graph
-                .get(tree, b"Limits")
-                .and_then(|limits| self.graph.elements(limits).get(1))
-                .and_then(|high| match self.graph.view(high) {
-                    View::Integer(high) => Some(high),
-                    _ => None,
-                })
-        };
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "at most one deferred parent-tree check per visited StructTreeRoot"
+            )]
+            self.parent_trees.push(ParentTreeCheck {
+                root: number,
+                next,
+                greatest,
+                pending,
+            });
+        }
+        Ok(())
+    }
+
+    fn check_parent_tree_next_key(&mut self, number: u32, next: i64, greatest: Option<i64>) {
         if let Some(greatest) = greatest
             && greatest >= next
         {
@@ -1297,28 +1339,62 @@ impl<'g, G: Graph> Walk<'g, G> {
                 format!("/ParentTreeNextKey is {next}, but the parent tree holds key {greatest}"),
             );
         }
-        Ok(())
     }
 
-    /// Checks that an annotation whose normal appearance is a dictionary of
-    /// states has an `/AS`. An `/AS` that names no normal state is allowed:
-    /// it draws nothing, as an unchecked box often does.
-    fn appearance_state(&mut self, number: u32, annotation: &G::Value, name: &str) {
-        let normal = self
-            .graph
-            .get(annotation, b"AP")
-            .and_then(|ap| self.graph.get(ap, b"N"));
-        if normal.is_some_and(|normal| self.graph.view(normal) == View::Dictionary)
-            && self.graph.get(annotation, b"AS").is_none()
-        {
+    /// Checks that an annotation whose appearance dictionary contains any
+    /// state subdictionary (`/N`, `/R`, or `/D`) has a non-null `/AS`
+    /// (ISO 32000-2 Table 166 and 12.5.5). An `/AS` that names no state is
+    /// allowed: it draws nothing, as an unchecked box often does.
+    fn appearance_state(
+        &mut self,
+        object: Option<u32>,
+        path: &str,
+        annotation: &G::Value,
+        name: &str,
+    ) -> Result<(), G::Error> {
+        let Some(raw_ap) = self.graph.get(annotation, b"AP") else {
+            return Ok(());
+        };
+        let mut ap_owned = None;
+        let Some(ap) = deref(self.graph, raw_ap, &mut ap_owned)? else {
+            return Ok(());
+        };
+        if self.graph.view(ap) != View::Dictionary {
+            return Ok(());
+        }
+        let mut has_states = false;
+        for entry_key in [b"N".as_slice(), b"R".as_slice(), b"D".as_slice()] {
+            if let Some(raw_entry) = self.graph.get(ap, entry_key) {
+                let mut entry_owned = None;
+                if let Some(entry) = deref(self.graph, raw_entry, &mut entry_owned)?
+                    && self.graph.view(entry) == View::Dictionary
+                {
+                    has_states = true;
+                    break;
+                }
+            }
+        }
+        if !has_states {
+            return Ok(());
+        }
+        let has_as = match self.graph.get(annotation, b"AS") {
+            Some(raw_as) => {
+                let mut as_owned = None;
+                deref(self.graph, raw_as, &mut as_owned)?
+                    .is_some_and(|value| self.graph.view(value) != View::Null)
+            }
+            None => false,
+        };
+        if !has_as {
             self.invariant(
-                Some(number),
-                "AS",
+                object,
+                &join(path, "AS"),
                 &format!("{name}/AS"),
                 "12.5.5",
-                "the normal appearance has states, but the annotation has no /AS".to_owned(),
+                "an appearance entry has states, but the annotation has no /AS".to_owned(),
             );
         }
+        Ok(())
     }
 
     /// Checks that the keys of a name or number tree node ascend strictly
@@ -1432,6 +1508,87 @@ impl<'g, G: Graph> Walk<'g, G> {
         }
         Ok(out)
     }
+}
+
+fn deref<'a, G: Graph>(
+    graph: &G,
+    raw: &'a G::Value,
+    slot: &'a mut Option<G::Owned>,
+) -> Result<Option<&'a G::Value>, G::Error> {
+    if let View::Reference(_) = graph.view(raw) {
+        *slot = graph.target(raw)?;
+        Ok(slot.as_deref())
+    } else {
+        Ok(Some(raw))
+    }
+}
+
+/// Reads the keys and bounds of one `/ParentTree` node, queuing indirect
+/// `/Kids` for the iterative walk and descending directly nested kids up to
+/// [`MAX_DIRECT_TREE_DEPTH`].
+fn inspect_parent_tree_node<G: Graph>(
+    graph: &G,
+    node: &G::Value,
+    greatest: &mut Option<i64>,
+    pending: &mut Vec<u32>,
+    depth: usize,
+) -> Result<(), G::Error> {
+    if depth > MAX_DIRECT_TREE_DEPTH || graph.view(node) != View::Dictionary {
+        return Ok(());
+    }
+    if let Some(raw_nums) = graph.get(node, b"Nums") {
+        let mut owned = None;
+        if let Some(nums) = deref(graph, raw_nums, &mut owned)?
+            && matches!(graph.view(nums), View::Array(_))
+        {
+            for key in graph.elements(nums).iter().step_by(2) {
+                let mut key_owned = None;
+                if let Some(resolved) = deref(graph, key, &mut key_owned)?
+                    && let View::Integer(value) = graph.view(resolved)
+                {
+                    *greatest = Some(greatest.map_or(value, |cur| cur.max(value)));
+                }
+            }
+        }
+    }
+    if let Some(raw_limits) = graph.get(node, b"Limits") {
+        let mut owned = None;
+        if let Some(limits) = deref(graph, raw_limits, &mut owned)?
+            && matches!(graph.view(limits), View::Array(_))
+        {
+            for bound in graph.elements(limits).iter().take(2) {
+                let mut bound_owned = None;
+                if let Some(resolved) = deref(graph, bound, &mut bound_owned)?
+                    && let View::Integer(value) = graph.view(resolved)
+                {
+                    *greatest = Some(greatest.map_or(value, |cur| cur.max(value)));
+                }
+            }
+        }
+    }
+    if let Some(raw_kids) = graph.get(node, b"Kids") {
+        let mut owned = None;
+        if let Some(kids) = deref(graph, raw_kids, &mut owned)?
+            && matches!(graph.view(kids), View::Array(_))
+        {
+            for kid in graph.elements(kids) {
+                match graph.view(kid) {
+                    View::Reference(number) => {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "follows references from a budgeted array; the deferred walk deduplicates and charges each node"
+                        )]
+                        pending.push(number);
+                    }
+                    View::Dictionary => {
+                        inspect_parent_tree_node(graph, kid, greatest, pending, depth + 1)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// An element of an array, with its position.
