@@ -519,12 +519,15 @@ def _probe(page: Page, fonts: list[_Font]) -> None:
     operations.append(Operation("ET"))
     document = page.document
     chars = []
+    probe_box = [0, 0, 16 * _PROBE_STEP, (len(fonts) * 16 + 1) * _PROBE_STEP]
     with contextlib.suppress(_Rollback), document.transaction():
         page.obj["Resources"] = {"Font": {f"P{number}": font.dictionary for number, font in enumerate(fonts)}}
-        for key in ("Rotate", "UserUnit"):
-            if key in page.obj:
-                del page.obj[key]
-        page.obj["MediaBox"] = [0, 0, 16 * _PROBE_STEP, (len(fonts) * 16 + 1) * _PROBE_STEP]
+        if "UserUnit" in page.obj:
+            del page.obj["UserUnit"]
+        # Set /Rotate and /CropBox explicitly so inherited page-tree values do not apply.
+        page.obj["Rotate"] = 0
+        page.obj["MediaBox"] = probe_box
+        page.obj["CropBox"] = probe_box
         page.operations = operations
         chars = list(page.chars(clipped=True, unmapped="replacement", max_glyphs=None))
         raise _Rollback

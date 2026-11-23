@@ -197,13 +197,13 @@ class Real(float):
         if isinstance(value, Real):
             return cls._make(float(value), value.lexeme)
         if isinstance(value, Decimal):
-            return cls._make(float(value), _decimal_lexeme(value))
+            return cls._make(_finite(float(value)), _decimal_lexeme(value))
         if isinstance(value, (str, bytes)):
             lexeme = value.encode("ascii", "replace") if isinstance(value, str) else bytes(value)
             if _REAL_LEXEME.fullmatch(lexeme) is None:
                 msg = f"not a PDF real, which has digits and one decimal point: {value!r}"
                 raise ValueError(msg)
-            return cls._make(float(lexeme), lexeme)
+            return cls._make(_finite(float(lexeme)), lexeme)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             msg = f"a Real is made from a float, a Decimal, or text: {value!r}"
             raise TypeError(msg)

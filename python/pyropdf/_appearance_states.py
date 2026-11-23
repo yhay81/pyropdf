@@ -36,10 +36,10 @@ def _box(value: object) -> tuple[float, float, float, float]:
         msg = "appearance coordinates must be numbers"
         raise TypeError(msg)
     x0, y0, x1, y1 = map(float, value)
-    if not all(math.isfinite(v) for v in (x0, y0, x1, y1)) or x0 >= x1 or y0 >= y1:
+    if not all(math.isfinite(v) for v in (x0, y0, x1, y1)) or x0 == x1 or y0 == y1:
         msg = "an appearance box must be finite and have positive area"
         raise ValueError(msg)
-    return x0, y0, x1, y1
+    return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
 
 
 def _entries(doc: Document, value: object, label: str) -> dict[str, object]:

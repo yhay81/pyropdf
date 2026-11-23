@@ -65,7 +65,11 @@ def present(doc: pyropdf.Document, kind: str) -> int:
         test = _any_javascript if kind == "javascript" else _actions
         count = int("JavaScript" in names)
         for dictionary in dictionaries:
-            count += sum(test(dictionary[key]) for key in ("A", "OpenAction") if key in dictionary)
+            count += sum(
+                test(dictionary[key])
+                for key in ("A", "OpenAction")
+                if key in dictionary and not (key == "A" and _sanitize._non_action_a(dictionary))  # noqa: SLF001
+            )
             triggers = dictionary.get("AA")
             if isinstance(triggers, pyropdf.Dictionary):
                 count += sum(test(triggers[key]) for key in triggers)

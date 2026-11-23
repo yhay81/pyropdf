@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pyropdf import _core
 from pyropdf._core import _Signer
-from pyropdf._errors import PdfError
+from pyropdf._errors import LimitError, PdfError
 from pyropdf._form import FieldType
 from pyropdf._metadata import _require_version, pdf_date
 from pyropdf._objects import Array, Dictionary, Name, Stream, _catalog
@@ -498,6 +498,8 @@ def _fill_timestamp(
     try:
         _, imprint_alg, hashed_message, _ = parse_rfc3161_tst_info(token)
         _core.signature_read(token)
+    except LimitError:
+        raise
     except (ValueError, PdfError) as error:
         msg = f"the time-stamp token is not RFC 3161: {error}"
         raise ValueError(msg) from error
@@ -714,9 +716,12 @@ def signatures(document: Document) -> list[Signature]:
         if not isinstance(value, Dictionary):
             continue
         byte_range = value.get("ByteRange")
-        ranges = tuple(int(part) for part in byte_range) if isinstance(byte_range, Array) else ()
+        if isinstance(byte_range, Array) and all(type(part) is int for part in byte_range):
+            ranges = tuple(byte_range)
+        else:
+            ranges = ()
         revision = None
-        if len(ranges) == 4 and found is not None:  # noqa: PLR2004 - two ranges of start and length
+        if len(ranges) == 4 and all(part >= 0 for part in ranges) and found is not None:  # noqa: PLR2004 - two ranges of start and length
             revision = _revision(found[0], origin + ranges[2] + ranges[3], ends)
         sig = Signature(field=name, xref=value.xref, byte_range=ranges, revision=revision)
         object.__setattr__(sig, "_document", document)
@@ -736,8 +741,10 @@ def _inherited(node: Any, key: str) -> Any:  # noqa: ANN401 - a PDF value
 
 def _revision(data: bytes, end: int, ends: list[int | None]) -> int | None:
     """Return the revision that ends at ``end``, or after only an end-of-line marker that follows it."""
+    if end < 0:
+        return None
     for index, revision_end in enumerate(ends):
-        if revision_end is not None and end <= revision_end and not data[end:revision_end].strip(b"\r\n"):
+        if revision_end is not None and 0 <= end <= revision_end and not data[end:revision_end].strip(b"\r\n"):
             return index
     return None
 
@@ -758,7 +765,20 @@ def _failure(problem: str, *, covers: bool = False, valid: bool | None = None) -
     )
 
 
-def _verify(signature: Signature, anchors: list[bytes] | None) -> SignatureVerification:  # noqa: C901
+def _byte_range_bounds(
+    byte_range: tuple[int, ...], origin: int, total_len: int
+) -> tuple[int, int, int, int, int] | str:
+    """Validate and resolve a 4-integer ``/ByteRange`` into ``(start, a, b, c, length)`` or an error message."""
+    start, first, second, length = byte_range
+    if min(start, first, second, length) < 0:
+        return "the /ByteRange contains negative values"
+    a, b, c = origin + start, origin + start + first, origin + second
+    if b > c or c + length > total_len:
+        return "the /ByteRange is outside the document or overlaps"
+    return start, a, b, c, length
+
+
+def _verify(signature: Signature, anchors: list[bytes] | None) -> SignatureVerification:  # noqa: C901, PLR0912
     problems: list[str] = []
     document = getattr(signature, "_document", None)
     found = None if document is None else _core.document_file(document._core())  # noqa: SLF001
@@ -766,17 +786,12 @@ def _verify(signature: Signature, anchors: list[bytes] | None) -> SignatureVerif
         reason = "the document was not read from a file" if found is None else "the /ByteRange is not two ranges"
         return _failure(reason)
     data, origin, revisions = found
-    start, first, second, length = signature.byte_range
-    a, b, c = origin + start, origin + start + first, origin + second
+    bounds = _byte_range_bounds(signature.byte_range, origin, len(data))
+    if isinstance(bounds, str):
+        return _failure(bounds, covers=False, valid=False)
+    start, a, b, c, length = bounds
     covers = (
-        start == 0
-        and first >= 0
-        and length >= 0
-        and b < c <= len(data)
-        and c + length <= len(data)
-        and data[b : b + 1] == b"<"
-        and data[c - 1 : c] == b">"
-        and signature.revision is not None
+        start == 0 and b < c and data[b : b + 1] == b"<" and data[c - 1 : c] == b">" and signature.revision is not None
     )
     if not covers:
         problems.append("the byte ranges do not cover the whole signed revision except /Contents")
@@ -784,7 +799,9 @@ def _verify(signature: Signature, anchors: list[bytes] | None) -> SignatureVerif
     try:
         contents = bytes.fromhex(data[b + 1 : c - 1].decode("latin-1")) if b + 1 < c - 1 else b""
         if signature.is_timestamp:
+            assert document is not None  # noqa: S101 - found came from document.
             return _verify_doc_timestamp(
+                document,
                 signature,
                 signed,
                 contents,
@@ -796,6 +813,8 @@ def _verify(signature: Signature, anchors: list[bytes] | None) -> SignatureVerif
                 problems=problems,
             )
         parsed, token = _core.signature_read(contents)
+    except LimitError:
+        raise
     except ValueError:
         return _failure("the /Contents between the byte ranges is not a hexadecimal string", covers=covers, valid=False)
     except PdfError as error:
@@ -825,7 +844,12 @@ def _verify(signature: Signature, anchors: list[bytes] | None) -> SignatureVerif
             certificates[signer_index], certificates, anchors, when or datetime.now(UTC), problems
         )
     later = {number for _, numbers in revisions[(signature.revision or 0) + 1 :] for number in numbers}
-    modifications = _classify(data[: c + length], data, later) if signature.revision is not None and later else "none"
+    assert document is not None  # noqa: S101 - found came from document.
+    modifications = (
+        _classify(document, signature.revision, data[: c + length], data, later)
+        if signature.revision is not None and later
+        else "none"
+    )
     return SignatureVerification(
         intact=intact,
         covers_revision=covers,
@@ -849,6 +873,7 @@ def _digest_matches(alg: str, data: bytes, expected: bytes | None, problems: lis
 
 
 def _verify_doc_timestamp(  # noqa: PLR0913 - all pieces of one timestamp verification.
+    document: Document,
     signature: Signature,
     signed: bytes,
     contents: bytes,
@@ -864,6 +889,8 @@ def _verify_doc_timestamp(  # noqa: PLR0913 - all pieces of one timestamp verifi
     try:
         tst_info_der, imprint_alg, hashed_message, stamp_time = parse_rfc3161_tst_info(contents)
         parsed, _ = _core.signature_read(contents)
+    except LimitError:
+        raise
     except (ValueError, PdfError) as error:
         return _failure(str(error), covers=covers, valid=False)
     digest_name, message_digest, signing_time, certificates, signer_index, check, _ = parsed
@@ -891,7 +918,11 @@ def _verify_doc_timestamp(  # noqa: PLR0913 - all pieces of one timestamp verifi
             certificates[signer_index], certificates, anchors, stamp_time, problems
         )
     later = {number for _, numbers in revisions[(signature.revision or 0) + 1 :] for number in numbers}
-    modifications = _classify(data[:end_offset], data, later) if signature.revision is not None and later else "none"
+    modifications = (
+        _classify(document, signature.revision, data[:end_offset], data, later)
+        if signature.revision is not None and later
+        else "none"
+    )
     return SignatureVerification(
         intact=intact,
         covers_revision=covers,
@@ -1056,11 +1087,7 @@ def _trusted(
     return False
 
 
-def _classify(before_data: bytes, after_data: bytes, written: set[int]) -> str:
-    """Return how the objects written after the signed revision modify it, as pyHanko's levels name them."""
-    from pyropdf._document import open as open_document  # noqa: PLC0415
-
-    before, after = open_document(before_data), open_document(after_data)
+def _classify_documents(before: Document, after: Document, written: set[int]) -> str:
     appearances = _appearance_objects(after)
     level = 0
     for number in sorted(written):
@@ -1076,6 +1103,27 @@ def _classify(before_data: bytes, after_data: bytes, written: set[int]) -> str:
         if level == len(_LEVELS) - 1:
             break
     return _LEVELS[level]
+
+
+def _classify(
+    document: Document,
+    revision: int,
+    before_data: bytes,
+    after_data: bytes,
+    written: set[int],
+) -> str:
+    """Return how the objects written after the signed revision modify it, as pyHanko's levels name them."""
+    from pyropdf._document import open as open_document  # noqa: PLC0415
+
+    revs = document.revisions
+    if 0 <= revision < len(revs):
+        with revs[revision].open() as before, revs[-1].open() as after:
+            return _classify_documents(before, after, written)
+    with (
+        open_document(before_data, limits=document.limits) as before,
+        open_document(after_data, limits=document.limits) as after,
+    ):
+        return _classify_documents(before, after, written)
 
 
 def _is_invisible_timestamp_widget(item: object) -> bool:
