@@ -145,14 +145,6 @@ features = [
 dimensions = ["create"]
 behavior = "Create an accessible archival document with a valid claim and have an independent validator verify the result."
 
-[families.print-profile-structures]
-tracker = 255
-issue = 1050
-title = "Complete ICC and nested recipient checks for PDF/X-4 and PDF/VT-1"
-features = ["pdfx", "pdfvt"]
-dimensions = ["interpret"]
-behavior = "Check the embedded output-device profile and complete document-part hierarchy within the operation limits."
-
 [families.interchange]
 tracker = 256
 issue = 839
