@@ -16,9 +16,9 @@ use crate::{Error as StoreError, write};
 /// number, with generation 0; otherwise each keeps its own.
 pub(super) struct Renumbering<'a> {
     written: BudgetVec<'a, (u32, u16)>,
-    /// Each merged object and the object that it merges into, in ascending
-    /// order.
-    merged: BudgetVec<'a, (u32, u32)>,
+    /// Each merged object (number and generation) and the object that it merges
+    /// into, in ascending order.
+    merged: BudgetVec<'a, (u32, u16, u32)>,
     /// The written objects that reference a merged one, in ascending order.
     referrers: BudgetVec<'a, u32>,
     consecutive: bool,
@@ -61,9 +61,9 @@ impl<'a> Renumbering<'a> {
     pub(super) fn get(&self, number: u32) -> Option<Reference> {
         let number = match self
             .merged
-            .binary_search_by_key(&number, |&(merged, _)| merged)
+            .binary_search_by_key(&number, |&(merged, _, _)| merged)
         {
-            Ok(at) => self.merged[at].1,
+            Ok(at) => self.merged[at].2,
             Err(_) => number,
         };
         let at = self
@@ -74,6 +74,45 @@ impl<'a> Renumbering<'a> {
             Some(Reference::new(u32::try_from(at + 1).ok()?, 0))
         } else {
             Some(Reference::new(number, self.written[at].1))
+        }
+    }
+
+    /// Returns the new reference of `reference` when its generation matches the
+    /// live (or merged) object, or `None` for a missing or stale reference
+    /// (ISO 32000-2 section 7.3.10).
+    fn get_reference(&self, reference: Reference) -> Option<Reference> {
+        let target = match self
+            .merged
+            .binary_search_by_key(&reference.number(), |&(merged, _, _)| merged)
+        {
+            Ok(at) => {
+                if self.merged[at].1 != reference.generation() {
+                    return None;
+                }
+                let target = self.merged[at].2;
+                let idx = self
+                    .written
+                    .binary_search_by_key(&target, |&(written, _)| written)
+                    .ok()?;
+                return Some(if self.consecutive {
+                    Reference::new(u32::try_from(idx + 1).ok()?, 0)
+                } else {
+                    Reference::new(target, self.written[idx].1)
+                });
+            }
+            Err(_) => reference,
+        };
+        let at = self
+            .written
+            .binary_search_by_key(&target.number(), |&(written, _)| written)
+            .ok()?;
+        if self.written[at].1 != target.generation() {
+            return None;
+        }
+        if self.consecutive {
+            Some(Reference::new(u32::try_from(at + 1).ok()?, 0))
+        } else {
+            Some(Reference::new(target.number(), self.written[at].1))
         }
     }
 
@@ -152,7 +191,7 @@ impl<'a> Renumbering<'a> {
             match value {
                 Value::Reference(reference) => {
                     *value = self
-                        .get(reference.number())
+                        .get_reference(*reference)
                         .map_or(Value::Null, Value::Reference);
                 }
                 Value::Array(array) => stack.try_extend(array.iter_mut())?,

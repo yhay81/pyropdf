@@ -722,3 +722,33 @@ fn streams_decode_through_their_filters_within_the_budget() {
     let error = stream(&image).decoded(&Budget::default()).unwrap_err();
     assert!(matches!(error.kind(), ErrorKind::Malformed(_)), "{error}");
 }
+
+#[test]
+fn unfiltered_streams_enforce_decompressed_page_content_and_total_budgets() {
+    use crate::budget::StreamKind;
+
+    let plain = parse(b"<</Length 11>>stream\nhello world\nendstream");
+    let decompressed = Budget::default().with_limit(LimitCode::DecompressedSize, Some(4));
+    let err = stream(&plain).decoded(&decompressed).unwrap_err();
+    assert_eq!(
+        err.limit().map(LimitExceeded::code),
+        Some(LimitCode::DecompressedSize)
+    );
+
+    let page_content = Budget::default().with_limit(LimitCode::PageContentSize, Some(4));
+    let err = stream(&plain)
+        .decoded_as(StreamKind::PageContent, &page_content)
+        .unwrap_err();
+    assert_eq!(
+        err.limit().map(LimitExceeded::code),
+        Some(LimitCode::PageContentSize)
+    );
+
+    let total = Budget::default().with_limit(LimitCode::TotalDecompressedSize, Some(15));
+    assert_eq!(stream(&plain).decoded(&total).unwrap(), b"hello world");
+    let err = stream(&plain).decoded(&total).unwrap_err();
+    assert_eq!(
+        err.limit().map(LimitExceeded::code),
+        Some(LimitCode::TotalDecompressedSize)
+    );
+}

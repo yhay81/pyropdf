@@ -587,3 +587,52 @@ fn mac_verification_propagates_its_budget_and_refusals_write_no_prefix() {
     assert!(matches!(result, Err(save::Error::Store(_))));
     assert!(target.is_empty());
 }
+
+#[test]
+fn r6_hash_and_aes_cbc_do_not_leak_memory_and_poll_cancellation() {
+    use crate::budget::{BudgetVec, CancellationToken, LimitCode};
+
+    // Tight 128 KiB MemorySize budget: previously R6 leaked 4-17.5 MiB across rounds.
+    let tight = Budget::default().with_limit(LimitCode::MemorySize, Some(128 * 1024));
+    let digest = crypto::hash(b"secret-password", b"12345678", &[0x55; 48], true, &tight).unwrap();
+    assert_eq!(digest.len(), 32);
+    assert_eq!(tight.used(LimitCode::MemorySize), 0);
+
+    // AES-CBC encrypt_into releases temporary MemorySize when its BudgetVec drops.
+    let key = [0x11u8; 32];
+    let iv = [0x22u8; 16];
+    let payload = vec![0x33u8; 4096];
+    {
+        let mut out = BudgetVec::new(&tight);
+        crypto::aes_cbc_encrypt_into(&key, &iv, &payload, true, &mut out, &tight).unwrap();
+        assert_eq!(out.len(), 4096 + 16);
+    }
+    assert_eq!(tight.used(LimitCode::MemorySize), 0);
+
+    // Cancelled token stops R6 hash and AES-CBC encrypt/decrypt cleanly.
+    let token = CancellationToken::new();
+    token.cancel();
+    let cancelled = Budget::default().with_cancellation(token);
+    assert_eq!(
+        crypto::hash(b"pw", b"12345678", b"", true, &cancelled)
+            .unwrap_err()
+            .limit()
+            .map(crate::LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+    let mut out = BudgetVec::new(&cancelled);
+    assert_eq!(
+        crypto::aes_cbc_encrypt_into(&key, &iv, &payload, true, &mut out, &cancelled)
+            .unwrap_err()
+            .limit()
+            .map(crate::LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+    assert_eq!(
+        crypto::aes_cbc_decrypt(&key, &iv, &payload, false, &cancelled)
+            .unwrap_err()
+            .limit()
+            .map(crate::LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+}

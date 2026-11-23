@@ -292,9 +292,11 @@ impl Handler {
             let tag = [u8::from(kind == Kind::Stream)];
             iv.copy_from_slice(&crypto::sha256(&[key, &tag, data])[..16]);
         }
+        let padding = 16 - data.len() % 16;
         let mut out = BudgetVec::new(budget);
+        out.try_reserve_exact(16 + data.len() + padding)?;
         out.try_extend_from_slice(&iv)?;
-        out.try_extend_from_slice(&crypto::aes_cbc_encrypt(key, &iv, data, true, budget)?)?;
+        crypto::aes_cbc_encrypt_into(key, &iv, data, true, &mut out, budget)?;
         Ok(out.into_vec())
     }
 }

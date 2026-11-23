@@ -179,7 +179,11 @@ impl Stream {
             return Err(Error::malformed("the stream's data is in an external file"));
         }
         match self.dict.get("Filter") {
-            None => return copy(&self.data, budget).map(Vec::from).map_err(Into::into),
+            None => {
+                let size = u64::try_from(self.data.len()).unwrap_or(u64::MAX);
+                budget.decode(kind).charge(size)?;
+                return copy(&self.data, budget).map(Vec::from).map_err(Into::into);
+            }
             Some(Value::Array(filters)) => {
                 budget.check(
                     LimitCode::StreamFilterCount,

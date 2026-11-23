@@ -573,6 +573,11 @@ impl Cache {
         Self::default()
     }
 
+    /// Drops any cached reverse-reference index.
+    pub fn clear(&self) {
+        *self.lock() = None;
+    }
+
     /// Returns the index of `version`: the one held, the one held updated
     /// with the change set from its version, or a new one when the held
     /// version is gone or belongs to another document.

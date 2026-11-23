@@ -4,7 +4,7 @@
 use super::{Result, Row};
 use crate::ErrorKind;
 use crate::budget::{Budget, BudgetVec};
-use crate::value::Value;
+use crate::value::{Reference, Value};
 use crate::version::Version;
 
 /// Frees each row of `rows`, which holds the numbers of a full save in
@@ -49,16 +49,17 @@ pub(super) fn reachable<'a>(
             references(value, &mut pending, budget)?;
         }
     }
-    while let Some(number) = pending.pop() {
+    while let Some(reference) = pending.pop() {
         budget.poll()?;
-        let Ok(at) = rows.binary_search_by_key(&number, |row| row.number) else {
+        let Ok(at) = rows.binary_search_by_key(&reference.number(), |row| row.number) else {
             continue;
         };
-        if reached[at] || rows[at].offset.is_none() {
+        if reached[at] || rows[at].offset.is_none() || rows[at].generation != reference.generation()
+        {
             continue;
         }
         reached[at] = true;
-        match version.get(number, budget) {
+        match version.get(reference.number(), budget) {
             Ok(Some(object)) => references(object.value(), &mut pending, budget)?,
             Ok(None) => {}
             Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => {}
@@ -68,14 +69,14 @@ pub(super) fn reachable<'a>(
     Ok(reached)
 }
 
-/// Pushes the number of every reference inside `value` onto `out`, walking
-/// arrays, dictionaries, and stream dictionaries with a stack.
-fn references(value: &Value, out: &mut BudgetVec<'_, u32>, budget: &Budget) -> Result<()> {
+/// Pushes every reference inside `value` onto `out`, walking arrays,
+/// dictionaries, and stream dictionaries with a stack.
+fn references(value: &Value, out: &mut BudgetVec<'_, Reference>, budget: &Budget) -> Result<()> {
     let mut stack = BudgetVec::new(budget);
     stack.try_push(value)?;
     while let Some(value) = stack.pop() {
         match value {
-            Value::Reference(reference) => out.try_push(reference.number())?,
+            Value::Reference(reference) => out.try_push(*reference)?,
             Value::Array(array) => stack.try_extend(array.iter())?,
             Value::Dict(dict) => stack.try_extend(dict.iter().map(|(_, item)| item))?,
             Value::Stream(stream) => {
