@@ -511,6 +511,18 @@ Annotation.rich_media_assets: Mapping[str, typed.FileSpecification]
 
 A snapshot of the named file specifications in this RichMedia annotation.
 
+### `Annotation.rich_media_models`
+
+```python
+Annotation.rich_media_models: tuple[RichMediaModel, ...]
+```
+
+Resolve declared STEP and glTF models in configuration and instance order.
+
+Read the shared file, external resources and selected glTF scene. Inconsistent
+declarations or asset references raise TypeError or ValueError. To replace a payload
+while retaining all references, write its stream inside `edit_rich_media()`.
+
 ### `Annotation.rich_media_configuration`
 
 ```python
@@ -1281,6 +1293,9 @@ RichMedia(
     kind: MediaKind,
     asset: MediaAsset,
     views: tuple[ModelView, ...] = (),
+    step_version: str | None = None,
+    resources: tuple[MediaAsset, ...] = (),
+    scene: int | None = None,
 )
 ```
 
@@ -1289,7 +1304,35 @@ A RichMedia annotation with a named asset, configuration, instance and optional 
 The asset name tree and instance reference the same file specification.
 Use the annotation's live Arlington view to inspect its configurations,
 rename one, and read or replace its embedded stream. A viewer can use
-the stored data for playback.
+the stored data for playback. For STEP, pass the AP 242 edition in
+`step_version`, such as `"2020.0"`. For glTF, pass external resources
+as MediaAsset values whose filenames match the model URIs. An optional
+zero-based `scene` overrides the glTF default. The PDF writer embeds each
+file and declares the matching ISO developer extension and requirement.
+
+## `RichMediaModel`
+
+```python
+RichMediaModel(
+    *,
+    format: str,
+    versions: tuple[str, ...],
+    configuration: typed.RichMediaConfiguration,
+    instance: typed.RichMediaInstance,
+    file: typed.FileSpecification,
+    resources: tuple[typed.FileSpecification, ...],
+    scene: int | None,
+)
+```
+
+A STEP or glTF model resolved from a PDF 2.0 RichMedia instance.
+
+`format` is STEP or glTF. `versions` lists the matching catalog requirements.
+The live file specification and resource file specifications share the stored assets.
+For glTF, `scene` is the instance override, the model default, or zero.
+Inspection resolves PDF links without fetching URIs or rendering geometry.
+Each operation bounds its relationships and JSON punctuation to 4,096 items,
+with a 4 MiB JSON chunk, 64 levels of JSON nesting and a 64 MiB model limit.
 
 ## `Screen`
 

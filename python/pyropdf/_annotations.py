@@ -40,6 +40,7 @@ from pyropdf._media import (
     MediaSpecification,
     ProjectionAnnotation,
     RichMedia,
+    RichMediaModel,
     Screen,
     ThreeD,
     add_media,
@@ -1691,6 +1692,16 @@ class Annotation(_AppearanceOwner):
     def rich_media_assets(self) -> Mapping[str, typed.FileSpecification]:
         """Return a snapshot of the named file specifications in this RichMedia annotation."""
         return _rich_media.assets(self)
+
+    @property
+    def rich_media_models(self) -> tuple[RichMediaModel, ...]:
+        """Resolve declared STEP and glTF models in configuration and instance order.
+
+        Read the shared file, external resources and selected glTF scene. Inconsistent
+        declarations or asset references raise TypeError or ValueError. To replace a payload
+        while retaining all references, write its stream inside `edit_rich_media()`.
+        """
+        return _rich_media.models(self)
 
     @property
     def rich_media_configuration(self) -> typed.RichMediaConfiguration:
