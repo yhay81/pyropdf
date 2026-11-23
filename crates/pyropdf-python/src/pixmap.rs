@@ -862,13 +862,14 @@ impl Pixmap {
                 let mut out = BufWriter::new(file);
                 let result = self
                     .encode(&mut out, encoding, &Budget::default())
-                    .map_err(|e| match e {
-                        EncodeError::Limit(refusal) => refusal.to_string(),
-                        EncodeError::Other(message) => message,
+                    .map_err(|e| {
+                        encode_error(
+                            e,
+                            &format!("failed to save the image to {}", path.display()),
+                        )
                     })
-                    .and_then(|()| out.flush().map_err(|e| e.to_string()))
-                    .and_then(|()| out.get_ref().sync_all().map_err(|e| e.to_string()))
-                    .map_err(|e| error(&e));
+                    .and_then(|()| out.flush().map_err(|e| error(&e)))
+                    .and_then(|()| out.get_ref().sync_all().map_err(|e| error(&e)));
                 drop(out);
                 let result = result.and_then(|()| {
                     if let Some(permissions) = permissions {
@@ -1255,27 +1256,31 @@ pub fn recolor_samples<'py>(
     crate::errors::boundary(|| {
         let layout = pixmap.layout();
         let budget = document.budget();
-        if tables.is_some() {
-            if components != 4 || quality.is_some() {
-                return Err(PyValueError::new_err(
-                    "device curves require raw CMYK output",
-                ));
-            }
-            // The native sample buffer and the new Python bytes coexist.
-            let pixels = u64::from(layout.width) * u64::from(layout.height);
-            budget
-                .charge(LimitCode::MemorySize, pixels.saturating_mul(8))
-                .map_err(|e| limit_error(&e))?;
+        if tables.is_some() && (components != 4 || quality.is_some()) {
+            return Err(PyValueError::new_err(
+                "device curves require raw CMYK output",
+            ));
         }
         let out = py.detach(|| -> PyResult<_> {
-            let mut data = pixel_ops::recolor_samples(&pixmap.data, layout, components, quality)
-                .map_err(PyValueError::new_err)?;
+            let mut data =
+                pixel_ops::recolor_samples(&pixmap.data, layout, components, quality, &budget)
+                    .map_err(|e| match e {
+                        EncodeError::Limit(refusal) => limit_error(&refusal),
+                        EncodeError::Other(message) => PyValueError::new_err(message),
+                    })?;
             if let Some((black, removal)) = tables {
                 pixel_ops::apply_black_tables(&mut data, &black, &removal, &budget)
                     .map_err(|e| limit_error(&e))?;
             }
             Ok(data)
         })?;
+        // The native buffer and the new Python bytes coexist briefly.
+        budget
+            .charge(
+                LimitCode::MemorySize,
+                u64::try_from(out.len()).unwrap_or(u64::MAX),
+            )
+            .map_err(|e| limit_error(&e))?;
         Ok(PyBytes::new(py, &out))
     })?
 }
