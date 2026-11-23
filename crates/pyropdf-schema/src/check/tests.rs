@@ -7,11 +7,14 @@ use crate::Version;
 /// A small document for the check's own tests.
 #[derive(Clone, Debug)]
 enum V {
+    Null,
+    Bool(bool),
     Int(i64),
     Name(&'static str),
     Str(&'static [u8]),
     Array(Vec<V>),
     Dict(Vec<(&'static str, V)>),
+    Stream(Vec<(&'static str, V)>),
     Ref(u32),
 }
 
@@ -42,18 +45,21 @@ impl Graph for Doc {
 
     fn view<'v>(&self, value: &'v V) -> View<'v> {
         match value {
+            V::Null => View::Null,
+            V::Bool(value) => View::Boolean(*value),
             V::Int(value) => View::Integer(*value),
             V::Name(name) => View::Name(name.as_bytes()),
             V::Str(bytes) => View::String(bytes),
             V::Array(items) => View::Array(items.len()),
             V::Dict(_) => View::Dictionary,
+            V::Stream(_) => View::Stream,
             V::Ref(number) => View::Reference(*number),
         }
     }
 
     fn get<'v>(&self, dict: &'v V, key: &[u8]) -> Option<&'v V> {
         match dict {
-            V::Dict(entries) => entries
+            V::Dict(entries) | V::Stream(entries) => entries
                 .iter()
                 .find(|(name, _)| name.as_bytes() == key)
                 .map(|(_, value)| value),
@@ -63,7 +69,7 @@ impl Graph for Doc {
 
     fn entries<'v>(&self, dict: &'v V) -> Vec<(&'v [u8], &'v V)> {
         match dict {
-            V::Dict(entries) => entries
+            V::Dict(entries) | V::Stream(entries) => entries
                 .iter()
                 .map(|(name, value)| (name.as_bytes(), value))
                 .collect(),
@@ -548,4 +554,264 @@ fn single_quoted_string_possible_values_are_admitted() {
     assert_eq!(bad_report.defects.len(), 1);
     assert_eq!(bad_report.defects[0].kind, DefectKind::Value);
     assert_eq!(bad_report.defects[0].clause, "ActionSubmitForm/CharSet");
+}
+
+fn with_image(entries: Vec<(&'static str, V)>) -> Vec<V> {
+    let mut objects = valid();
+    let V::Dict(page) = &mut objects[3] else {
+        unreachable!()
+    };
+    for (key, value) in page.iter_mut() {
+        if *key == "Resources" {
+            *value = V::Dict(vec![("XObject", V::Dict(vec![("Im0", V::Ref(4))]))]);
+        }
+    }
+    objects.push(V::Stream(entries));
+    objects
+}
+
+#[test]
+fn contains_checks_absent_single_name_and_array_filters_on_images() {
+    let base = || {
+        vec![
+            ("Type", V::Name("XObject")),
+            ("Subtype", V::Name("Image")),
+            ("Width", V::Int(1)),
+            ("Height", V::Int(1)),
+            ("Length", V::Int(1)),
+        ]
+    };
+
+    // Absent /Filter, single-Name /FlateDecode, and array [/FlateDecode] all require ColorSpace and BitsPerComponent.
+    for filter in [
+        None,
+        Some(V::Name("FlateDecode")),
+        Some(V::Array(vec![V::Name("FlateDecode")])),
+    ] {
+        let mut entries = base();
+        if let Some(filter) = filter {
+            entries.push(("Filter", filter));
+        }
+        let report = check(&doc(with_image(entries))).unwrap();
+        let required: Vec<_> = report
+            .defects
+            .iter()
+            .filter(|d| d.kind == DefectKind::Required)
+            .map(|d| d.clause.as_str())
+            .collect();
+        assert!(
+            required.contains(&"XObjectImage/ColorSpace"),
+            "missing ColorSpace check: {required:?}"
+        );
+        assert!(
+            required.contains(&"XObjectImage/BitsPerComponent"),
+            "missing BitsPerComponent check: {required:?}"
+        );
+    }
+
+    // JPXDecode (single Name or array) and ImageMask=true exempt ColorSpace and BitsPerComponent.
+    for extra in [
+        ("Filter", V::Name("JPXDecode")),
+        (
+            "Filter",
+            V::Array(vec![V::Name("FlateDecode"), V::Name("JPXDecode")]),
+        ),
+        ("ImageMask", V::Bool(true)),
+    ] {
+        let mut entries = base();
+        entries.push(extra);
+        let report = check(&doc(with_image(entries))).unwrap();
+        let required: Vec<_> = report
+            .defects
+            .iter()
+            .filter(|d| d.kind == DefectKind::Required)
+            .map(|d| d.clause.as_str())
+            .collect();
+        assert!(
+            !required.contains(&"XObjectImage/ColorSpace")
+                && !required.contains(&"XObjectImage/BitsPerComponent"),
+            "unexpected required defect: {required:?}"
+        );
+    }
+
+    // Soft-mask BitsPerComponent RequiredValue checks fire on single-Name filters too.
+    let mut smask_objs = with_image(vec![
+        ("Type", V::Name("XObject")),
+        ("Subtype", V::Name("Image")),
+        ("Width", V::Int(1)),
+        ("Height", V::Int(1)),
+        ("ColorSpace", V::Name("DeviceRGB")),
+        ("BitsPerComponent", V::Int(8)),
+        ("SMask", V::Ref(5)),
+        ("Length", V::Int(3)),
+    ]);
+    smask_objs.push(V::Stream(vec![
+        ("Type", V::Name("XObject")),
+        ("Subtype", V::Name("Image")),
+        ("Width", V::Int(1)),
+        ("Height", V::Int(1)),
+        ("ColorSpace", V::Name("DeviceGray")),
+        ("BitsPerComponent", V::Int(4)),
+        ("Filter", V::Name("DCTDecode")),
+        ("Length", V::Int(1)),
+    ]));
+    let report = check(&doc(smask_objs)).unwrap();
+    assert!(
+        report
+            .defects
+            .iter()
+            .any(|d| d.kind == DefectKind::Value
+                && d.clause == "XObjectImageSoftMask/BitsPerComponent"),
+        "{:?}",
+        report.defects
+    );
+}
+
+#[test]
+fn multi_level_parent_tree_next_key_is_checked() {
+    let build = |next: i64| {
+        let mut objects = valid();
+        objects[1] = V::Dict(vec![
+            ("Type", V::Name("Catalog")),
+            ("Pages", V::Ref(2)),
+            ("StructTreeRoot", V::Ref(4)),
+        ]);
+        // 4: StructTreeRoot -> indirect multi-level ParentTree 6 without /Limits on root
+        objects.push(V::Dict(vec![
+            ("Type", V::Name("StructTreeRoot")),
+            ("K", V::Ref(5)),
+            ("ParentTree", V::Ref(6)),
+            ("ParentTreeNextKey", V::Int(next)),
+        ]));
+        // 5: StructElem
+        objects.push(V::Dict(vec![
+            ("Type", V::Name("StructElem")),
+            ("S", V::Name("P")),
+            ("P", V::Ref(4)),
+        ]));
+        // 6: ParentTree root (/Kids only, no /Limits per ISO 32000-2 Table 37)
+        objects.push(V::Dict(vec![(
+            "Kids",
+            V::Array(vec![V::Ref(7), V::Ref(8)]),
+        )]));
+        // 7: Intermediate node
+        objects.push(V::Dict(vec![
+            ("Limits", V::Array(vec![V::Int(0), V::Int(2)])),
+            (
+                "Nums",
+                V::Array(vec![V::Int(0), V::Ref(5), V::Int(2), V::Ref(5)]),
+            ),
+        ]));
+        // 8: Intermediate node pointing to leaf 9
+        objects.push(V::Dict(vec![
+            ("Limits", V::Array(vec![V::Int(3), V::Int(7)])),
+            ("Kids", V::Array(vec![V::Ref(9)])),
+        ]));
+        // 9: Leaf holding key 7
+        objects.push(V::Dict(vec![
+            ("Limits", V::Array(vec![V::Int(3), V::Int(7)])),
+            (
+                "Nums",
+                V::Array(vec![V::Int(3), V::Ref(5), V::Int(7), V::Ref(5)]),
+            ),
+        ]));
+        let mut d = doc(objects);
+        d.trailer = V::Dict(vec![("Size", V::Int(12)), ("Root", V::Ref(1))]);
+        d
+    };
+
+    let ok_invariants: Vec<_> = check(&build(8))
+        .unwrap()
+        .defects
+        .into_iter()
+        .filter(|d| d.kind == DefectKind::Invariant)
+        .collect();
+    assert_eq!(ok_invariants, vec![]);
+
+    let bad_invariants: Vec<_> = check(&build(7))
+        .unwrap()
+        .defects
+        .into_iter()
+        .filter(|d| d.kind == DefectKind::Invariant)
+        .map(|d| (d.object, d.path, d.clause))
+        .collect();
+    assert_eq!(
+        bad_invariants,
+        vec![(
+            Some(4),
+            "ParentTreeNextKey".into(),
+            "StructTreeRoot/ParentTreeNextKey".into()
+        )]
+    );
+}
+
+#[test]
+fn appearance_state_checks_indirect_direct_null_and_rollover_down() {
+    let base_annot = |ap: V, state: Option<V>| {
+        let mut entries = vec![
+            ("Type", V::Name("Annot")),
+            ("Subtype", V::Name("Square")),
+            (
+                "Rect",
+                V::Array(vec![V::Int(0), V::Int(0), V::Int(9), V::Int(9)]),
+            ),
+            ("AP", ap),
+        ];
+        if let Some(state) = state {
+            entries.push(("AS", state));
+        }
+        V::Dict(entries)
+    };
+
+    // Indirect /AP with indirect /N state subdictionary and /AS null.
+    let mut objects = valid();
+    let V::Dict(page) = &mut objects[3] else {
+        unreachable!()
+    };
+    page.push(("Annots", V::Array(vec![V::Ref(4)])));
+    objects.push(base_annot(V::Ref(5), Some(V::Null)));
+    objects.push(V::Dict(vec![("N", V::Ref(6))]));
+    objects.push(V::Dict(vec![("On", V::Stream(vec![]))]));
+    assert_eq!(
+        invariants(objects),
+        vec![(Some(4), "AS".into(), "AnnotSquare/AS".into())]
+    );
+
+    // Rollover /R and Down /D state subdictionaries with single-stream /N.
+    for key in ["R", "D"] {
+        let mut objects = valid();
+        let V::Dict(page) = &mut objects[3] else {
+            unreachable!()
+        };
+        page.push(("Annots", V::Array(vec![V::Ref(4)])));
+        objects.push(base_annot(
+            V::Dict(vec![("N", V::Ref(5)), (key, V::Ref(6))]),
+            None,
+        ));
+        objects.push(V::Stream(vec![]));
+        objects.push(V::Dict(vec![("Over", V::Ref(5))]));
+        assert_eq!(
+            invariants(objects),
+            vec![(Some(4), "AS".into(), "AnnotSquare/AS".into())],
+            "expected missing /AS for /{key}"
+        );
+    }
+
+    // Direct annotation inside /Annots array.
+    let mut objects = valid();
+    let V::Dict(page) = &mut objects[3] else {
+        unreachable!()
+    };
+    page.push((
+        "Annots",
+        V::Array(vec![base_annot(
+            V::Dict(vec![("N", V::Dict(vec![("On", V::Ref(4))]))]),
+            None,
+        )]),
+    ));
+    objects.push(V::Stream(vec![]));
+    assert_eq!(
+        invariants(objects),
+        vec![(Some(3), "Annots/0/AS".into(), "AnnotSquare/AS".into())]
+    );
 }

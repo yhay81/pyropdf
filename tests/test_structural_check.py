@@ -498,3 +498,116 @@ def test_xfa_packet_arrays_still_require_alternating_names_and_indirect_streams(
         assert {
             (d.path.split("/")[-1], d.clause) for d in doc.check().defects if d.clause.startswith("ArrayOfXFA/")
         } == {("1", "ArrayOfXFA/1*"), ("2", "ArrayOfXFA/0*")}
+
+
+@pytest.mark.parametrize("filter_entry", [b"", b"/Filter /FlateDecode ", b"/Filter [/FlateDecode] "])
+def test_image_missing_colorspace_and_bpc_reported_for_absent_single_and_array_filter(filter_entry: bytes) -> None:
+    stream = (
+        b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 " + filter_entry + b"/Length 1 >>\nstream\nx\nendstream"
+    )
+    report = _resource_document(b"/XObject << /Im0 4 0 R >>", [stream]).check()
+    required = {(d.xref, d.clause) for d in report.defects if d.kind == "required"}
+    assert (4, "XObjectImage/ColorSpace") in required
+    assert (4, "XObjectImage/BitsPerComponent") in required
+
+
+@pytest.mark.parametrize("extra", [b"/Filter /JPXDecode ", b"/Filter [/FlateDecode /JPXDecode] ", b"/ImageMask true "])
+def test_image_exempt_filters_and_imagemask_do_not_require_colorspace_or_bpc(extra: bytes) -> None:
+    stream = b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 " + extra + b"/Length 1 >>\nstream\nx\nendstream"
+    report = _resource_document(b"/XObject << /Im0 4 0 R >>", [stream]).check()
+    required = {d.clause for d in report.defects if d.kind == "required"}
+    assert "XObjectImage/ColorSpace" not in required
+    assert "XObjectImage/BitsPerComponent" not in required
+
+
+def test_soft_mask_bpc_required_value_enforced_for_single_name_filter() -> None:
+    image = (
+        b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB "
+        b"/BitsPerComponent 8 /SMask 5 0 R /Length 3 >>\nstream\nabc\nendstream"
+    )
+    smask = (
+        b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray "
+        b"/BitsPerComponent 4 /Filter /DCTDecode /Length 1 >>\nstream\nx\nendstream"
+    )
+    report = _resource_document(b"/XObject << /Im0 4 0 R >>", [image, smask]).check()
+    assert (5, "XObjectImageSoftMask/BitsPerComponent", "value") in {(d.xref, d.clause, d.kind) for d in report.defects}
+
+
+def test_multi_level_parent_tree_next_key_is_validated() -> None:
+    def make_doc(next_key: int) -> pyropdf.Document:
+        return pyropdf.open(
+            CORPUS["pdf"](
+                [
+                    b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 4 0 R >>",
+                    b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                    b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>",
+                    f"<< /Type /StructTreeRoot /K 5 0 R /ParentTree 6 0 R /ParentTreeNextKey {next_key} >>".encode(),
+                    b"<< /Type /StructElem /S /P /P 4 0 R >>",
+                    b"<< /Kids [7 0 R 8 0 R] >>",
+                    b"<< /Limits [0 1] /Nums [0 5 0 R 1 5 0 R] >>",
+                    b"<< /Limits [2 5] /Kids [9 0 R] >>",
+                    b"<< /Limits [2 5] /Nums [2 5 0 R 5 5 0 R] >>",
+                ]
+            )
+        )
+
+    assert not [d for d in make_doc(6).check().defects if d.clause == "StructTreeRoot/ParentTreeNextKey"]
+    defects = [(d.xref, d.path, d.clause, d.kind) for d in make_doc(5).check().defects if d.kind == "invariant"]
+    assert defects == [(4, "ParentTreeNextKey", "StructTreeRoot/ParentTreeNextKey", "invariant")]
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_xref", "expected_path"),
+    [
+        ("indirect_ap_and_n", 4, "AS"),
+        ("as_null", 4, "AS"),
+        ("rollover_states", 4, "AS"),
+        ("down_states", 4, "AS"),
+        ("direct_annot", 3, "Annots/0/AS"),
+    ],
+)
+def test_appearance_state_defects_cover_indirect_direct_null_and_r_d(
+    case: str, expected_xref: int, expected_path: str
+) -> None:
+    form = b"<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << >> /Length 0 >>\nstream\n\nendstream"
+    if case == "indirect_ap_and_n":
+        objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> /Annots [4 0 R] >>",
+            b"<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /AP 5 0 R >>",
+            b"<< /N 6 0 R >>",
+            b"<< /On 7 0 R >>",
+            form,
+        ]
+    elif case == "as_null":
+        objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> /Annots [4 0 R] >>",
+            b"<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /AP << /N << /On 5 0 R >> >> /AS null >>",
+            form,
+        ]
+    elif case in ("rollover_states", "down_states"):
+        key = b"R" if case == "rollover_states" else b"D"
+        objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> /Annots [4 0 R] >>",
+            b"<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /AP << /N 5 0 R /" + key + b" 6 0 R >> >>",
+            form,
+            b"<< /Over 5 0 R >>",
+        ]
+    else:
+        objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            (
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> "
+                b"/Annots [<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /AP << /N << /On 4 0 R >> >> >>] >>"
+            ),
+            form,
+        ]
+    report = pyropdf.open(CORPUS["pdf"](objects)).check()
+    invariants = [(d.xref, d.path, d.clause, d.kind) for d in report.defects if d.kind == "invariant"]
+    assert invariants == [(expected_xref, expected_path, "AnnotSquare/AS", "invariant")]
