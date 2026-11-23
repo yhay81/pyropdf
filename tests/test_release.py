@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import fnmatch
 import hashlib
 import json
 import os
@@ -158,6 +159,53 @@ def test_the_github_release_is_checked_to_be_immutable() -> None:
     assert job.index("gh release create") < checked
     assert 'if [ "${immutable}" != true ]; then' in job[checked:]
     assert "exit 1" in job[checked:]
+
+
+def _expand_braces(pattern: str) -> list[str]:
+    match = re.search(r"\{([^{}]+)\}", pattern)
+    if match is None:
+        return [pattern]
+    prefix, suffix = pattern[: match.start()], pattern[match.end() :]
+    return [expanded for part in match.group(1).split(",") for expanded in _expand_braces(prefix + part + suffix)]
+
+
+def test_github_release_downloads_only_release_assets() -> None:
+    (job,) = re.findall(r"\n  github-release:\n(.*?)(?=\n  \S|\Z)", WORKFLOW, flags=re.DOTALL)
+    (download,) = [step for step in job.split("\n      - ") if "actions/download-artifact@" in step]
+    (pattern,) = re.findall(r'pattern:\s*"?([^"\n]+)"?', download)
+    globs = _expand_braces(pattern.strip())
+    uploaded = [
+        name.strip()
+        for match in re.finditer(r"actions/upload-artifact@\S+.*?\n((?:[ \t]{8,}.*\n?)+)", WORKFLOW)
+        for name in re.findall(r"^[ \t]+name:\s*(\S+)", match.group(1), flags=re.MULTILINE)
+    ]
+    assert len(uploaded) == 8
+    assert "minimum-workflows" in uploaded
+    internal = {"minimum-workflows"}
+    for template in uploaded:
+        concrete = re.sub(r"\$\{\{[^}]+\}\}", "sample", template)
+        matched = any(fnmatch.fnmatchcase(concrete, glob) for glob in globs)
+        assert matched == (template not in internal), f"unexpected match={matched} for {template!r} with {pattern!r}"
+
+
+def test_every_setup_uv_step_pins_the_same_version() -> None:
+    workflows = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+    assert workflows
+    pins: dict[str, list[str]] = {}
+    for path in workflows:
+        text = path.read_text(encoding="utf-8")
+        steps = re.split(r"\n(?=\s*- )", text)
+        for step in steps:
+            if "astral-sh/setup-uv@" not in step:
+                continue
+            found = re.findall(r'version:\s*"([^"]+)"', step)
+            assert len(found) == 1, f"{path.name} has an unpinned astral-sh/setup-uv step:\n{step}"
+            pins.setdefault(path.name, []).extend(found)
+    assert pins
+    all_versions = {version for versions in pins.values() for version in versions}
+    assert len(all_versions) == 1, f"mismatched setup-uv pins across workflows: {pins}"
+    (pinned,) = all_versions
+    assert re.fullmatch(r"\d+\.\d+\.\d+", pinned)
 
 
 def test_the_readme_links_to_available_good_first_issues() -> None:
