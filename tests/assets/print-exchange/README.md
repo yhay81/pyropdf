@@ -25,7 +25,18 @@ Both validators accepted the two fresh files and all four edited files. Poppler 
 | Use a flat child array, remove a page backlink, or point it at the other recipient | `VT_DPART_REBUILT`, `VT_SINGLE_PART` for VT-1, accepts X-4 | Accepts |
 | Declare PDF/X-4p on a PDF/VT-1 file | `XMP_NONCONFORMING` | Accepts |
 
-The structural report also identifies a non-text output condition identifier and a forbidden external profile reference alongside the embedded profile. #1050 tracks ICC device-class verification and arbitrary-depth document-part membership. This matrix covers the single-file PDF/X-4 and PDF/VT-1 flavours.
+The structural report also identifies a non-text output condition identifier and a forbidden external profile reference alongside the embedded profile. This matrix covers the single-file PDF/X-4 and PDF/VT-1 flavours.
+
+## ICC and document-part structure
+
+The same validator command also checks 62 comparisons on the Gray, RGB, and CMYK output profiles and on four-page nested and single-root-leaf jobs. Five valid source configurations and 26 isolated changes are saved both in full and incrementally. The ordinary tests open the ICC streams with LittleCMS, check their PDF stream component counts with pikepdf, and run transformations between the three device models and sRGB in both directions. A separate qpdf/pikepdf breadth-first inspection maps each page to its expected leaf and verifies the order independently of pyropdf's depth-first check.
+
+- Both external validators accept the functional output-device profiles and the job with two nested recipient records. Kura rejects the permitted single-root-leaf hierarchy, reporting `VT_DPART_REBUILT` and `VT_SINGLE_PART`. ISO 16612-2 6.5 allows one DPart node to own a page range. The independent traversal and phpdftk accept it.
+- Kura detects the substituted scanner profile, invalid ICC file signature, invalid device model, and inconsistent four-channel profile with `/N 3`. It accepts an absent or boolean `/N`. phpdftk accepts all these individual structural mutations.
+- Kura detects disconnected backlinks, missing and overlapping page ranges, repeated or cyclic children, wrong parenting, invalid record levels, and oversized or empty chunks. Both external validators accept a short nonfinal child group and a level name containing a space. The qpdf oracle and structural checker reject them.
+- The checker reports the actual ICC stream and its `N` entry, or the offending hierarchy node/page and path. An iterative check of 1,101 levels passes with the ordinary limits and raises `memory_size` with a one-MiB budget. A separate case verifies the decoded-stream limit on the embedded FOGRA39L profile.
+
+`virtual-gray.icc` uses the ICC v2 monochrome output model with a D50 white point and a gamma 2.2 tone curve. `virtual-rgb.icc` was fitted by ArgyllCMS 3.5.0 to 125 modelled RGB measurements; it contains bidirectional printer lookup tables. Both describe virtual test devices. Rebuild them with `python tests/assets/print-exchange/build_output_profiles.py --colprof /path/to/colprof`. The actual press positive remains FOGRA39L Coated. The negative `CGATS001Compat-v2-micro.icc` is a genuine four-channel input profile from the CC0 Compact ICC Profiles distribution. [ICC v2 profile structure](https://archive.color.org/files/ICC-1_1998-09.PDF) · [ArgyllCMS colprof](https://www.argyllcms.com/doc/colprof.html) · [Compact ICC Profiles at bdd84663](https://github.com/saucecontrol/Compact-ICC-Profiles/blob/bdd84663061bc4ae95ca70decff54f581e27f702/profiles/CGATS001Compat-v2-micro.icc) · [XML name tokens](https://www.w3.org/TR/xml/#NT-Nmtoken)
 
 ## Independent producer inputs
 

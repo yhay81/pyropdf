@@ -31,7 +31,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
 | read | 0 | 0 | 0 | 1 | 0 | 837 |
-| interpret | 17 | 19 | 0 | 8 | 1 | 793 |
+| interpret | 17 | 19 | 0 | 6 | 1 | 795 |
 | create | 0 | 0 | 28 | 1 | 0 | 809 |
 | edit | 0 | 0 | 0 | 3 | 0 | 835 |
 | preserve | 0 | 0 | 0 | 0 | 0 | 838 |
@@ -234,8 +234,8 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex Q | Page transparency detection | `page-transparency` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 done | 3 done | 3 done | 3 done | 3 done |
-| ISO 15930 | PDF/X | `pdfx` | 1 done | 1 partial | 1 done | 1 done | 1 done |
-| ISO 16612 | PDF/VT | `pdfvt` | 1 done | 1 partial | 1 done | 1 done | 1 done |
+| ISO 15930 | PDF/X | `pdfx` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| ISO 16612 | PDF/VT | `pdfvt` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 done | 12 done | 12 done | 12 done | 12 done |
 | ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -247,7 +247,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 
 ## Unfinished work by milestone
 
-31 unfinished cells in 838 features: 17 engine, 13 partial, 1 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+29 unfinished cells in 838 features: 17 engine, 11 partial, 1 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -337,8 +337,7 @@ No unfinished specification-map cells assigned.
 
 Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 
-- [#1050](https://github.com/yhay81/pyropdf/issues/1050) Complete ICC and nested recipient checks for PDF/X-4 and PDF/VT-1. Check the embedded output-device profile and complete document-part hierarchy within the operation limits.
-    - interpret — `pdfx`, `pdfvt`.
+No unfinished specification-map cells assigned.
 
 ### 256 Specification completion
 

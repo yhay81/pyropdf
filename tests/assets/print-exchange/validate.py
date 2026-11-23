@@ -94,6 +94,62 @@ def matrix(root: Path, args: argparse.Namespace) -> Counter[str]:
     return counts
 
 
+def structure_matrix(root: Path, args: argparse.Namespace) -> int:
+    """Run the ICC and nested-DPart controls, including known differences between the two validators."""
+    from test_print_profile_structures import (  # noqa: PLC0415 - the tests directory is installed above.
+        HIERARCHY_CASES,
+        ICC_CASES,
+        MEDIA,
+        _change_hierarchy,
+        break_profile,
+        hierarchy_pdf,
+        independent_hierarchy,
+        independent_icc,
+        media_pdf,
+    )
+
+    rebuilt = {"VT_DPART_REBUILT", "VT_SINGLE_PART"}
+    positives = [(media_pdf(model), "x4", set()) for model, *_ in MEDIA]
+    positives.extend([(hierarchy_pdf(), "vt1", set()), (hierarchy_pdf(single_leaf=True), "vt1", rebuilt)])
+    path = root / "structure.pdf"
+    comparisons = 0
+    for data, level, expected in positives:
+        for incremental in (False, True):
+            with pyropdf.open(data) as doc:
+                doc.catalog["OutputIntents"][0]["Info"] = "Verified print condition"
+                doc.save(path, incremental=incremental)
+            assert (independent_icc if level == "x4" else independent_hierarchy)(path.read_bytes())
+            assert validate(path, level, args) == (expected, set())
+            comparisons += 1
+
+    icc_rules = {
+        "input-profile": {"OUTPUT_INTENT_ADDED"},
+        "scanner": {"OUTPUT_INTENT_ADDED"},
+        "display": {"OUTPUT_INTENT_ADDED"},
+        "bad-signature": {"ICC_PROFILE_REPLACED"},
+        "short-header": {"ICC_PROFILE_REPLACED"},
+        "unrecognized-model": {"ICC_PROFILE_REPLACED"},
+        "wrong-components": {"ICC_PROFILE_REPLACED", "OUTPUT_INTENT_ADDED"},
+        "boolean-components": set(),
+        "missing-components": set(),
+    }
+    for case in [*HIERARCHY_CASES, *ICC_CASES]:
+        if case in HIERARCHY_CASES:
+            data, level, change, independent = hierarchy_pdf(), "vt1", _change_hierarchy, independent_hierarchy
+            expected = set() if case in ("nonfinal-short", "bad-name-token") else rebuilt
+        else:
+            data, level, change, independent = media_pdf("CMYK"), "x4", break_profile, independent_icc
+            expected = icc_rules[case]
+        for incremental in (False, True):
+            with pyropdf.open(data) as doc:
+                change(doc, case)
+                doc.save(path, incremental=incremental)
+            assert not independent(path.read_bytes()), case
+            assert validate(path, level, args) == (expected, set()), (level, incremental, case)
+            comparisons += 1
+    return comparisons
+
+
 def producer_inputs(source_dir: Path, root: Path) -> None:
     """Read the publisher originals, edit the job and verify the two saves independently of their producer."""
     samples = (
@@ -155,6 +211,8 @@ def main() -> None:
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as temporary:
         counts = matrix(Path(temporary), args)
+        structures = structure_matrix(Path(temporary), args)
+        print(f"{structures} ICC and hierarchy comparisons matched their expected independent outcomes")
         if args.sources:
             producer_inputs(args.sources, Path(temporary))
             print("Verified all three publisher inputs and their six edited saves")
