@@ -16,9 +16,9 @@ use crate::{Error as StoreError, write};
 /// number, with generation 0; otherwise each keeps its own.
 pub(super) struct Renumbering<'a> {
     written: BudgetVec<'a, (u32, u16)>,
-    /// Each merged object and the object that it merges into, in ascending
-    /// order.
-    merged: BudgetVec<'a, (u32, u32)>,
+    /// Each merged object (number and generation) and the object that it merges
+    /// into, in ascending order.
+    merged: BudgetVec<'a, (u32, u16, u32)>,
     /// The written objects that reference a merged one, in ascending order.
     referrers: BudgetVec<'a, u32>,
     consecutive: bool,
@@ -61,9 +61,9 @@ impl<'a> Renumbering<'a> {
     pub(super) fn get(&self, number: u32) -> Option<Reference> {
         let number = match self
             .merged
-            .binary_search_by_key(&number, |&(merged, _)| merged)
+            .binary_search_by_key(&number, |&(merged, _, _)| merged)
         {
-            Ok(at) => self.merged[at].1,
+            Ok(at) => self.merged[at].2,
             Err(_) => number,
         };
         let at = self
@@ -75,6 +75,71 @@ impl<'a> Renumbering<'a> {
         } else {
             Some(Reference::new(number, self.written[at].1))
         }
+    }
+
+    /// Returns the new reference of `reference` when its generation matches the
+    /// live (or merged) object, or `None` for a missing or stale reference
+    /// (ISO 32000-2 section 7.3.10).
+    fn get_reference(&self, reference: Reference) -> Option<Reference> {
+        let target = match self
+            .merged
+            .binary_search_by_key(&reference.number(), |&(merged, _, _)| merged)
+        {
+            Ok(at) => {
+                if self.merged[at].1 != reference.generation() {
+                    return None;
+                }
+                let target = self.merged[at].2;
+                let idx = self
+                    .written
+                    .binary_search_by_key(&target, |&(written, _)| written)
+                    .ok()?;
+                return Some(if self.consecutive {
+                    Reference::new(u32::try_from(idx + 1).ok()?, 0)
+                } else {
+                    Reference::new(target, self.written[idx].1)
+                });
+            }
+            Err(_) => reference,
+        };
+        let at = self
+            .written
+            .binary_search_by_key(&target.number(), |&(written, _)| written)
+            .ok()?;
+        if self.written[at].1 != target.generation() {
+            return None;
+        }
+        if self.consecutive {
+            Some(Reference::new(u32::try_from(at + 1).ok()?, 0))
+        } else {
+            Some(Reference::new(target.number(), self.written[at].1))
+        }
+    }
+
+    /// Read a filter referenced by an already renumbered stream dictionary.
+    pub(super) fn lookup(
+        &self,
+        version: &Version,
+        reference: Reference,
+        budget: &Budget,
+    ) -> crate::Result<Option<Value>> {
+        let original = if self.consecutive {
+            let Some(&(number, generation)) = reference
+                .number()
+                .checked_sub(1)
+                .and_then(|n| self.written.get(n as usize))
+            else {
+                return Ok(None);
+            };
+            Reference::new(number, generation)
+        } else {
+            reference
+        };
+        let Some(mut value) = version.filter_object(original, budget)? else {
+            return Ok(None);
+        };
+        self.rewrite(&mut value, budget)?;
+        Ok(Some(value))
     }
 
     /// Returns the new reference of the object `number`, which the save
@@ -119,14 +184,14 @@ impl<'a> Renumbering<'a> {
     /// an object that the save does not write with null, as ISO 32000-2
     /// section 7.3.10 reads it. The walk keeps a stack of the values still
     /// to visit, whatever their depth.
-    pub(super) fn rewrite(&self, value: &mut Value, budget: &Budget) -> Result<()> {
+    pub(super) fn rewrite(&self, value: &mut Value, budget: &Budget) -> crate::Result<()> {
         let mut stack = BudgetVec::new(budget);
         stack.try_push(value)?;
         while let Some(value) = stack.pop() {
             match value {
                 Value::Reference(reference) => {
                     *value = self
-                        .get(reference.number())
+                        .get_reference(*reference)
                         .map_or(Value::Null, Value::Reference);
                 }
                 Value::Array(array) => stack.try_extend(array.iter_mut())?,
@@ -140,12 +205,10 @@ impl<'a> Renumbering<'a> {
         Ok(())
     }
 
-    /// Returns a copy of `value` with its references renumbered, read again
-    /// from its bytes so that the copy grows through `budget`.
+    /// Returns a copy of `value` with its references renumbered, copied
+    /// through `budget`.
     pub(super) fn copy(&self, value: &Value, budget: &Budget) -> Result<Value> {
-        let mut bytes = BudgetVec::new(budget);
-        write::value(&mut bytes, value)?;
-        let mut value = Value::parse(&Bytes::new(bytes.into_vec()), budget)?;
+        let mut value = crate::value::copy_for_edit(value, budget)?;
         self.rewrite(&mut value, budget)?;
         Ok(value)
     }
@@ -159,9 +222,10 @@ impl<'a> Renumbering<'a> {
         version: &Version,
         reference: Reference,
         streams: Streams,
+        clear: bool,
         budget: &Budget,
     ) -> Result<Bytes> {
-        self.read(version, reference, streams, budget)
+        self.read(version, reference, streams, clear, budget)
             .map_err(|error| {
                 error.context(format!(
                     "saving object {} {}",
@@ -176,6 +240,7 @@ impl<'a> Renumbering<'a> {
         version: &Version,
         reference: Reference,
         streams: Streams,
+        clear: bool,
         budget: &Budget,
     ) -> Result<Bytes> {
         let base = version.base();
@@ -186,11 +251,21 @@ impl<'a> Renumbering<'a> {
         let mut value = Value::parse_with_lengths(&source, budget, &|reference| {
             base.object(reference, budget)
         })?;
+        if clear {
+            crate::security::filters::remove_explicit(
+                &mut value,
+                &|r, b| version.filter_object(r, b),
+                budget,
+            )?;
+        } else {
+            version.check_stream_filters(&value, budget)?;
+        }
         self.rewrite(&mut value, budget)?;
         let mut plain = BudgetVec::new(budget);
         write::value(&mut plain, &value)?;
         if streams != Streams::Keep
-            && let Some(recoded) = recode::recoded(&value, streams, budget)?
+            && let Some(recoded) =
+                recode::recoded(&value, streams, &|r, b| self.lookup(version, r, b), budget)?
         {
             let mut bytes = BudgetVec::new(budget);
             write::value(&mut bytes, &recoded)?;

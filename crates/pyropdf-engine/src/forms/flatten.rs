@@ -18,11 +18,12 @@ use std::sync::Arc;
 
 use pyropdf_store::Result;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_map};
-use pyropdf_store::pages::{MAX_CHAIN, Page};
+use pyropdf_store::memo::Reads;
+use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
 use pyropdf_store::refs::{copy_dict_for_edit, copy_for_edit};
 use pyropdf_store::tree::{append_parent_tree_entry, number_tree_pairs};
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
-use pyropdf_store::version::{Transaction, Version};
+use pyropdf_store::version::{Document, Transaction, Version};
 
 use crate::annotations::version::{DEFAULT_VERSION, PdfVersion, header_version, parse_version};
 use crate::annotations::{Reader, fmt, numbers_array};
@@ -60,6 +61,15 @@ pub struct Plan {
 /// `items` of a page, or `None` when it takes none of them off. The plan's
 /// lists and copied values are charged to `reader.budget`.
 pub fn plan(reader: &Reader<'_>, items: &Array, selection: Selection) -> Result<Option<Plan>> {
+    plan_appearances(reader, items, selection, false)
+}
+
+fn plan_appearances(
+    reader: &Reader<'_>,
+    items: &Array,
+    selection: Selection,
+    links: bool,
+) -> Result<Option<Plan>> {
     let budget = reader.budget;
     let mut keep = BudgetVec::new(budget);
     let mut drawn = BudgetVec::new(budget);
@@ -85,7 +95,7 @@ pub fn plan(reader: &Reader<'_>, items: &Array, selection: Selection) -> Result<
             _ => None,
         };
         let selected = match subtype {
-            Some(b"Link") => false,
+            Some(b"Link") => links,
             Some(b"Widget") => selection.widgets,
             _ => selection.annotations,
         };
@@ -114,6 +124,43 @@ pub fn plan(reader: &Reader<'_>, items: &Array, selection: Selection) -> Result<
         removed: removed.into_vec(),
         widgets: widgets.into_vec(),
     }))
+}
+
+/// Paint the captured page's visible annotation and widget appearances into a
+/// private store version for vector placement. The source and destination
+/// stay untouched. A link's visible appearance participates in this playback.
+pub fn captured_page(
+    version: Arc<Version>,
+    index: Arc<PageIndex>,
+    at: usize,
+    budget: &Budget,
+) -> crate::annotations::AnnotationResult<(Arc<Version>, Arc<PageIndex>)> {
+    let annots =
+        crate::annotations::PageAnnots::at(Arc::clone(&version), Arc::clone(&index), budget, at)?;
+    let selection = Selection {
+        annotations: true,
+        widgets: true,
+    };
+    let Some(plan) = plan_appearances(&annots.reader(), &annots.items, selection, true)? else {
+        return Ok((version, index));
+    };
+    let page = annots.page();
+    let number = page
+        .object()
+        .ok_or_else(|| {
+            crate::annotations::AnnotationError::Pdf("the page is not an indirect object".into())
+        })?
+        .number();
+    let mut missing = Missing::new(
+        crate::annotations::synthesized(&version, &index, budget)?,
+        budget,
+    )?;
+    let private = Document::from_version(Arc::clone(&version), Some(0));
+    let mut tx = private.begin();
+    draw(&mut tx, number, page, plan, &mut missing, budget)?;
+    let painted = tx.commit(budget)?;
+    let index = PageIndex::build(&mut Reads::new(&painted, budget))?;
+    Ok((painted, Arc::new(index)))
 }
 
 /// The appearances that a render synthesizes for annotations stored
@@ -328,8 +375,9 @@ pub fn draw(
     }
     if !struct_parents.is_empty() {
         let reader = Reader::new(transaction.version(), budget);
+        drawn_refs.as_mut_slice().sort_unstable();
         for &removed_ref in &plan.removed {
-            if drawn_refs.as_slice().contains(&removed_ref) {
+            if drawn_refs.as_slice().binary_search(&removed_ref).is_ok() {
                 continue;
             }
             let removed_val = Value::Reference(removed_ref);

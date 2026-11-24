@@ -199,6 +199,37 @@ def test_the_arrow_capsules_hold_a_struct_array_over_the_columns() -> None:
     del array_capsule, schema_capsule
 
 
+def test_arrow_release_callbacks_are_idempotent() -> None:
+    chars = pyropdf.open(ASSETS / "f1040.pdf").pages[0].chars()[:16]
+    schema_capsule, array_capsule = chars.__arrow_c_array__()
+    schema = _ArrowSchema.from_address(_get_pointer(schema_capsule, b"arrow_schema"))
+    array = _ArrowArray.from_address(_get_pointer(array_capsule, b"arrow_array"))
+
+    release_schema_ptr = ctypes.cast(schema.release, ctypes.c_void_p).value
+    release_array_ptr = ctypes.cast(array.release, ctypes.c_void_p).value
+    assert release_schema_ptr is not None
+    assert release_array_ptr is not None
+    release_schema = type(schema.release)(release_schema_ptr)
+    release_array = type(array.release)(release_array_ptr)
+
+    release_schema(ctypes.byref(schema))
+    assert not schema.release
+    assert schema.private_data is None
+    assert not schema.children
+    release_schema(ctypes.byref(schema))
+    release_schema(None)
+
+    release_array(ctypes.byref(array))
+    assert not array.release
+    assert array.private_data is None
+    assert not array.buffers
+    assert not array.children
+    release_array(ctypes.byref(array))
+    release_array(None)
+
+    del array_capsule, schema_capsule
+
+
 def test_pyarrow_imports_the_chars_without_a_copy() -> None:
     pa = pytest.importorskip("pyarrow")
     chars = pyropdf.open(ASSETS / "f1040.pdf").pages[0].chars()

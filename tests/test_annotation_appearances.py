@@ -244,7 +244,61 @@ def test_missing_underline_appearance_follows_slanted_quad() -> None:
     assert _has_dominant_color(_region_pixels(page, pyropdf.Rect(34, 35, 43, 43)), 0)
 
 
-def test_missing_text_markup_quad_budget_is_atomic() -> None:
+def test_rendering_draws_redactions_without_an_appearance() -> None:
+    """The frozen pylopdf ebb01d3c Redact rectangle and its unchanged page contents."""
+    data = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Annots [4 0 R] >>",
+            4: "<< /Type /Annot /Subtype /Redact /Rect [10 10 190 90] /C [0 0 1] /Border [0 0 4] >>",
+        }
+    )
+    with pyropdf.open(data) as doc:
+        page = doc.pages[0]
+        pix = page.pixmap(dpi=72)
+        assert pix.pixel(100, 11) == (0, 0, 255)
+        assert pix.pixel(100, 50) == (0, 0, 255)
+        assert pix.pixel(100, 25) == (255, 255, 255)
+        assert page.pixmap(dpi=72, annotations=False).pixel(100, 50) == (255, 255, 255)
+        assert "AP" not in page.annotations[0].obj
+        assert not doc.history.can_undo
+        assert doc.to_bytes(incremental=True) == data
+
+
+def test_rotated_redaction_marks_trace_separate_quads_and_keep_a_stored_appearance() -> None:
+    quads = "[20 80 80 80 20 60 80 60 120 40 180 40 132 20 192 20]"
+    mark = f"/Type /Annot /Subtype /Redact /QuadPoints {quads} /C [0 0 1] /Border [0 0 4]"
+    doc = _one_page(
+        "[4 0 R 5 0 R]",
+        {
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Rotate 90 /Annots [4 0 R 5 0 R] >>",
+            4: f"<< {mark} /Rect [0 0 1 1] >>",
+            5: f"<< {mark} /Rect [90 45 110 55] /AP << /N 6 0 R >> >>",
+            6: "<< /Type /XObject /Subtype /Form /BBox [0 0 20 10] /Length 24 >>\n"
+            "stream\n1 0 0 rg 0 0 20 10 re f\nendstream",
+        },
+    )
+    pix = doc.pages[0].pixmap(dpi=72)
+    assert pix.pixel(70, 50) == pix.pixel(30, 156) == (0, 0, 255)
+    assert pix.pixel(30, 126) == (0, 0, 255)
+    assert pix.pixel(75, 50) == pix.pixel(50, 120) == (255, 255, 255)
+    assert pix.pixel(50, 100) == (255, 0, 0)
+    assert list(doc.objects[4]["Rect"]) == [0, 0, 1, 1]
+    assert "AP" not in doc.objects[4]
+
+
+def test_a_redaction_mark_can_be_narrower_than_its_border() -> None:
+    doc = _one_page(
+        "[4 0 R]", {4: "<< /Type /Annot /Subtype /Redact /Rect [10 10 16 40] /Border [0 0 10] /C [0 0 1] >>"}
+    )
+    pix = doc.pages[0].pixmap(dpi=72)
+    assert pix.pixel(13, 75) == (0, 0, 255)
+    assert pix.pixel(8, 75) == (255, 255, 255)
+
+
+@pytest.mark.parametrize("subtype", ["Highlight", "Redact"])
+def test_missing_appearance_quad_budget_is_atomic(subtype: str) -> None:
     """Do not synthesize a partial set when one annotation holds more quads than the engine draws."""
     excessive_quads = "10 20 30 20 10 10 30 10 " * 4097
     pdf = build_raw_pdf(
@@ -258,7 +312,7 @@ def test_missing_text_markup_quad_budget_is_atomic() -> None:
                 "/QuadPoints [10 20 30 20 10 10 30 10] /C [1 1 0] >>"
             ),
             6: (
-                f"<< /Type /Annot /Subtype /Highlight /Rect [10 10 30 20] /QuadPoints [{excessive_quads}] /C [1 1 0] >>"
+                f"<< /Type /Annot /Subtype /{subtype} /Rect [10 10 30 20] /QuadPoints [{excessive_quads}] /C [1 1 0] >>"
             ),
         }
     )

@@ -96,7 +96,7 @@ base	14.7	clause	logical-structure structure-namespaces	Maintain the structure t
 base	14.8	clause	tagged-pdf	Express standard logical roles, attributes and artifacts in tagged content.
 base	14.9	clause	accessibility	Provide alternate text, language and replacement text.
 base	14.10	clause	web-capture	Associate captured web resources with a document.
-base	14.11	clause	page-boundaries separation-dictionaries output-intents trapping opi	Describe production geometry, colour and other press data.
+base	14.11	clause	page-boundaries printer-marks separation-dictionaries output-intents trapping opi	Describe production geometry, colour and other press data.
 base	14.12	clause	document-parts	Group pages and attach document-part metadata.
 base	14.13	clause	associated-files	Relate files to documents and objects with a declared relationship.
 base	Annex A	informative annex		Informative operator index repeats the operators defined in their respective clauses.
@@ -118,7 +118,7 @@ base	Annex P	informative annex	transparency-color	Example procedure for finding 
 base	Annex Q	normative annex	page-transparency transparency-groups	Determine whether page painting requires compositing.
 base	Bibliography	references		Background references introduce no independent behavior.
 standards	ISO/TS 24064:2023	extension	step-rich-media	Connect the STEP AP242 payload, configuration and view to its RichMedia annotation.
-standards	ISO/TS 32001:2022	extension	sha3-hashes	SHA-3 and SHA-512 hash algorithms in PDF.
+standards	ISO/TS 32001:2022	extension	sha3-hashes	SHA-3 and SHAKE256 hash algorithms in PDF.
 standards	ISO/TS 32002:2022	extension	ecc-signatures	ECDSA and EdDSA signature algorithms in PDF.
 standards	ISO/TS 32003:2023	extension	aes-gcm	AES-GCM encryption in PDF.
 standards	ISO/TS 32004:2024	extension	integrity-protection	Integrity protection of encrypted documents with a message authentication code.

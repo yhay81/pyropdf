@@ -39,7 +39,7 @@ edited, the mapping holds the faces of the installed font extras,
 deleting a language changes only that language, and the next rendering
 uses the change.
 
-### `FallbackFonts.__getitem__`
+### `__getitem__`
 
 ```python
 FallbackFonts.__getitem__(language: str) -> FallbackFont
@@ -47,7 +47,7 @@ FallbackFonts.__getitem__(language: str) -> FallbackFont
 
 Return the faces that render `language`, loading an installed extra's once per process.
 
-### `FallbackFonts.__setitem__`
+### `__setitem__`
 
 ```python
 FallbackFonts.__setitem__(language: str, value: FallbackFont)
@@ -55,7 +55,7 @@ FallbackFonts.__setitem__(language: str, value: FallbackFont)
 
 Render `language` with `value`'s faces.
 
-### `FallbackFonts.__delitem__`
+### `__delitem__`
 
 ```python
 FallbackFonts.__delitem__(language: str)
@@ -63,7 +63,7 @@ FallbackFonts.__delitem__(language: str)
 
 Render `language` without a fallback font, as a Standard 14 font draws it: without CJK glyphs.
 
-### `FallbackFonts.__contains__`
+### `__contains__`
 
 ```python
 FallbackFonts.__contains__(language: object) -> bool
@@ -71,7 +71,7 @@ FallbackFonts.__contains__(language: object) -> bool
 
 Return whether `language` has a fallback font.
 
-### `FallbackFonts.__iter__`
+### `__iter__`
 
 ```python
 FallbackFonts.__iter__() -> Iterator[str]
@@ -79,7 +79,7 @@ FallbackFonts.__iter__() -> Iterator[str]
 
 Iterate over the languages that have a fallback font.
 
-### `FallbackFonts.__len__`
+### `__len__`
 
 ```python
 FallbackFonts.__len__() -> int
@@ -131,7 +131,7 @@ its monochrome fallback outline. Drawing one with no outline raises
 than draw nothing under text that reads back, though it measures as any
 glyph does.
 
-### `Font.from_file`
+### `from_file`
 
 ```python
 Font.from_file(
@@ -159,7 +159,7 @@ program of an instance, are limited to 64 MiB by default (`max_size`,
 `None` for trusted input), refused with `LimitError` code
 `font_input_size`.
 
-### `Font.from_bytes`
+### `from_bytes`
 
 ```python
 Font.from_bytes(
@@ -176,7 +176,7 @@ Load an OpenType face from the bytes of a font file.
 
 `index`, `weight`, and `max_size` work as for `from_file`.
 
-### `Font.standard`
+### `standard`
 
 ```python
 Font.standard(name: StandardFontName) -> Font
@@ -188,7 +188,7 @@ The 14 names are those of `StandardFontName`. A Standard 14 font
 is drawn without embedding, so it prints WinAnsi (roughly Latin-1)
 text only.
 
-### `Font.name`
+### `name`
 
 ```python
 Font.name: str | None
@@ -196,7 +196,7 @@ Font.name: str | None
 
 The PostScript name of a Standard 14 font, or the full name of an embedded face.
 
-### `Font.family`
+### `family`
 
 ```python
 Font.family: str | None
@@ -204,7 +204,7 @@ Font.family: str | None
 
 The family name, such as `"Times"` for `"Times-Bold"`.
 
-### `Font.weight`
+### `weight`
 
 ```python
 Font.weight: int
@@ -212,7 +212,7 @@ Font.weight: int
 
 The weight class, such as 400 for a regular and 700 for a bold face, of the instance that it draws.
 
-### `Font.is_bold`
+### `is_bold`
 
 ```python
 Font.is_bold: bool
@@ -220,7 +220,7 @@ Font.is_bold: bool
 
 Whether the face is bold.
 
-### `Font.is_italic`
+### `is_italic`
 
 ```python
 Font.is_italic: bool
@@ -228,7 +228,7 @@ Font.is_italic: bool
 
 Whether the face is italic or oblique.
 
-### `Font.is_serif`
+### `is_serif`
 
 ```python
 Font.is_serif: bool
@@ -236,7 +236,7 @@ Font.is_serif: bool
 
 Whether the face has serifs.
 
-### `Font.units_per_em`
+### `units_per_em`
 
 ```python
 Font.units_per_em: int
@@ -244,7 +244,7 @@ Font.units_per_em: int
 
 The design units per em of the face; 1000 for Standard 14 fonts.
 
-### `Font.ascender`
+### `ascender`
 
 ```python
 Font.ascender: float
@@ -257,7 +257,7 @@ renderers commonly substitute for it, such as 1.075 for Helvetica.
 The canvas places lines of text with `ascender` and
 `descender`.
 
-### `Font.descender`
+### `descender`
 
 ```python
 Font.descender: float
@@ -265,7 +265,7 @@ Font.descender: float
 
 The descent below the baseline as a negative fraction of the font size.
 
-### `Font.bbox`
+### `bbox`
 
 ```python
 Font.bbox: Rect
@@ -278,7 +278,7 @@ commonly substitute for it, whose top and bottom are its
 `ascender` and `descender`, such as
 `Rect(-0.21, -0.299, 1.032, 1.075)` for Helvetica.
 
-### `Font.glyph_count`
+### `glyph_count`
 
 ```python
 Font.glyph_count: int
@@ -286,7 +286,7 @@ Font.glyph_count: int
 
 The number of glyphs: those of a Standard 14 font's AFM metrics.
 
-### `Font.is_monospaced`
+### `is_monospaced`
 
 ```python
 Font.is_monospaced: bool
@@ -294,7 +294,7 @@ Font.is_monospaced: bool
 
 Whether every glyph has the same advance, as Adobe's AFM metrics declare for the Courier fonts.
 
-### `Font.chars`
+### `chars`
 
 ```python
 Font.chars() -> str
@@ -306,7 +306,7 @@ A Standard 14 text font has the WinAnsi characters (roughly
 Latin-1), and Symbol and ZapfDingbats the characters whose WinAnsi
 byte their built-in encoding maps to a glyph.
 
-### `Font.char_widths`
+### `char_widths`
 
 ```python
 Font.char_widths(
@@ -324,7 +324,7 @@ is limited to 1 MiB of UTF-8 by default (`max_text_size`, `None`
 for trusted input), refused with `LimitError` code
 `text_input_size`.
 
-### `Font.char_bbox`
+### `char_bbox`
 
 ```python
 Font.char_bbox(char: str) -> Rect
@@ -337,7 +337,7 @@ on the baseline: Adobe's AFM box for a Standard 14 font. A glyph
 without ink, such as a space, has an empty box at its origin. A
 character the font has no glyph for raises `PdfError`.
 
-### `Font.program`
+### `program`
 
 ```python
 Font.program() -> bytes | None
@@ -349,7 +349,7 @@ The program is the face alone with all its glyphs, as an OpenType
 file, even when it was loaded from a collection; a save subsets it
 to the glyphs that the document draws.
 
-### `Font.text_width`
+### `text_width`
 
 ```python
 Font.text_width(text: str, size: float, *, max_text_size: int | None = 1048576) -> float
@@ -363,7 +363,7 @@ as does a character the font has no glyph for. Text is limited to
 1 MiB of UTF-8 by default (`max_text_size`, `None` for trusted
 input), refused with `LimitError` code `text_input_size`.
 
-### `Font.text_height`
+### `text_height`
 
 ```python
 Font.text_height(
@@ -389,7 +389,7 @@ lines by default (`max_text_size`, `None` for trusted input),
 refused with `LimitError` code `text_input_size` or
 `text_line_count`.
 
-### `Font.has_glyph`
+### `has_glyph`
 
 ```python
 Font.has_glyph(char: str) -> bool

@@ -21,10 +21,15 @@ pub mod fill;
 mod fill_index;
 pub mod flatten;
 mod form_font;
+mod icons;
 mod import;
 mod radio;
 mod read;
 pub mod remove;
+mod rich_codes;
+mod rich_fonts;
+mod rich_layout;
+pub(crate) mod rich_style;
 pub mod rich_text;
 mod settle;
 mod style;
@@ -37,6 +42,7 @@ pub mod widget_edit;
 pub use appearance::{OFF, appearance, face_appearance, restyled};
 pub use fill_index::FillCache;
 pub use form_font::{MAX_PARENTS, text_appearance};
+pub(crate) use form_font::{is_pdf_2_0, write_standard_type1};
 pub use import::{ImportDefaults, plan_imported_defaults, register_imported};
 pub use radio::repair_radio_groups;
 pub use read::{
@@ -44,8 +50,8 @@ pub use read::{
     form_fields, widget_list, widget_read,
 };
 pub use settle::{
-    Drawing, WidgetAppearance, has_normal_stream, has_state, has_state_stream, is_widget, settle,
-    settle_in_unit, with_normal_states, write,
+    Drawing, WidgetAppearance, has_normal_stream, has_state, is_widget, settle, settle_in_unit,
+    with_normal_states, write,
 };
 pub use text::text_string;
 pub use traversal::{Form, walk};

@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pyropdf import _core
-from pyropdf._errors import PdfError
+from pyropdf._errors import LimitError, PdfError
+from pyropdf._layers import _visible_with_state
 from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import InlineImage, Operation, Operations
@@ -64,6 +65,7 @@ _JP2_SIGNATURE = b"\x00\x00\x00\x0cjP  \r\n\x87\n"
 _J2K_SIGNATURE = b"\xff\x4f\xff\x51"
 #: JPEG markers that start a frame and state its size (ITU T.81 table B.1).
 _JPEG_FRAMES = frozenset({0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF})
+_MAX_IMAGE_ALTERNATES = 4096
 _DEVICE_SPACES = {1: "DeviceGray", 3: "DeviceRGB", 4: "DeviceCMYK"}
 _CMYK = 4
 _MARKER = 0xFF
@@ -175,11 +177,18 @@ def _jpx_size(data: bytes) -> tuple[int, int]:
     at = data.find(b"ihdr") if data.startswith(_JP2_SIGNATURE) else -1
     if at >= 0 and at + 12 <= len(data):
         height, width = struct.unpack(">II", data[at + 4 : at + 12])
-        return width, height
+        if width > 0 and height > 0:
+            return width, height
+        msg = "the JPEG 2000 image header has non-positive dimensions"
+        raise ValueError(msg)
     at = data.find(_J2K_SIGNATURE)
     if at >= 0 and at + 24 <= len(data):
-        width, height, x, y = struct.unpack(">IIII", data[at + 8 : at + 24])
-        return width - x, height - y
+        xsiz, ysiz, xosiz, yosiz = struct.unpack(">IIII", data[at + 8 : at + 24])
+        width, height = xsiz - xosiz, ysiz - yosiz
+        if width > 0 and height > 0:
+            return width, height
+        msg = "the JPEG 2000 codestream header has non-positive dimensions"
+        raise ValueError(msg)
     msg = "the JPEG 2000 data has no image header"
     raise ValueError(msg)
 
@@ -193,6 +202,50 @@ def _image_stream(document: Document, xref: int) -> Stream:
         msg = f"object {xref} is not an image XObject"
         raise ValueError(msg)
     return stream
+
+
+def _alternates(base: Stream) -> Array | None:
+    alternates = base.get("Alternates")
+    if alternates is None:
+        return None
+    if not isinstance(alternates, Array):
+        msg = "an image's /Alternates must be an array"
+        raise PdfError(msg)
+    if len(alternates) > _MAX_IMAGE_ALTERNATES:
+        msg = f"an image has more than {_MAX_IMAGE_ALTERNATES} alternate entries"
+        code = "content_element_count"
+        raise LimitError(code, msg)
+    return alternates
+
+
+def _alternate_image(entry: Dictionary) -> Stream:
+    image = entry.get("Image")
+    if not isinstance(image, Stream) or image.get("Subtype") != "Image":
+        msg = "an alternate image's /Image must reference an image XObject"
+        raise PdfError(msg)
+    return image
+
+
+def image_for_output(document: Document, xref: int, *, printing: bool) -> Stream | None:
+    base = _image_stream(document, xref)
+    if isinstance(oc := base.get("OC"), Dictionary):
+        return base if document.layers.visible(oc) else None
+    alternates = _alternates(base)
+    if alternates is None:
+        return base
+    # A later print default takes precedence over any earlier visible entry.
+    if printing:
+        for entry in alternates:
+            if isinstance(entry, Dictionary) and entry.get("DefaultForPrinting") is True:
+                return _alternate_image(entry)
+    off = None
+    for entry in alternates:
+        if isinstance(entry, Dictionary) and isinstance(oc := entry.get("OC"), Dictionary):
+            if off is None:
+                off = document.layers._off()  # noqa: SLF001 - read the default configuration once per selection.
+            if _visible_with_state(oc, off):
+                return _alternate_image(entry)
+    return base
 
 
 def _write_samples(  # noqa: PLR0913 - the parts of one decoded image
@@ -843,8 +896,8 @@ def _unmatte(color: bytes, alpha: bytes, matte: Array, components: int) -> bytes
 
 def _rewrite(
     document: Document, xref: int, candidate: _Candidate, size: tuple[int, int], options: _Options
-) -> int | None:
-    """Re-encode one image at ``size`` and store it when it is smaller enough; return its new stored length.
+) -> tuple[int, int | None]:
+    """Re-encode one image at ``size`` and store it when it is smaller enough; return its old and new stored lengths.
 
     A mask of another size than the image is resampled at its own
     resolution and stays a stencil ``/Mask`` or a soft mask; one that keeps
@@ -880,7 +933,7 @@ def _rewrite(
     for _, _, encoded in resampled:
         after = None if after is None or encoded is None else after + len(encoded[0])
     if after is None or after > limit:
-        return None
+        return before, None
     # Resampled stored samples keep the color space and the /Decode array, which stay in place.
     for key in _DATA_KEYS:
         if key in stream and key not in kept and not (candidate.samples and key in ("ColorSpace", "Decode")):
@@ -903,7 +956,7 @@ def _rewrite(
     for key, mask_size, encoded in resampled:
         if encoded is not None:
             stream[key] = _add_mask(document, mask_size, encoded, stencil=key == "Mask")
-    return after
+    return before, after
 
 
 def _encode_candidate(candidate: _Candidate, pixels: _Pixels, form: str, options: _Options, limit: int) -> bytes | None:
@@ -977,21 +1030,21 @@ def _mask_pixels(mask: Stream, *, stencil: bool) -> _Pixels:
     hayro decodes a mask of another size than its image only to paint it,
     so a scratch document paints the mask, its data copied as stored.
     """
-    scratch = _new_document()
-    entries = {str(key): _transfer(scratch, value, 0) for key, value in mask.items() if key not in _STREAM_KEYS}
-    entries.setdefault("Subtype", Name("Image"))
-    number = scratch.objects.add_stream(b"", entries, filter=None)
-    copy = scratch.objects[number]
-    copy.write(mask.read(decode=False), filter=None)
-    for key in ("Filter", "DecodeParms"):
-        if key in mask:
-            copy[key] = _transfer(scratch, mask[key], 0)
-    scratch.pages.new((1, 1))
-    page = scratch.pages[0]
-    page.obj["Resources"] = {"XObject": {"M": copy}}
-    page.operations = Operations([Operation("Do", (Name("M"),))])
-    (image,) = page.images()
-    painted = _from_pixmap(image.pixmap())
+    with _new_document() as scratch:
+        entries = {str(key): _transfer(scratch, value, 0) for key, value in mask.items() if key not in _STREAM_KEYS}
+        entries.setdefault("Subtype", Name("Image"))
+        number = scratch.objects.add_stream(b"", entries, filter=None)
+        copy = scratch.objects[number]
+        copy.write(mask.read(decode=False), filter=None)
+        for key in ("Filter", "DecodeParms"):
+            if key in mask:
+                copy[key] = _transfer(scratch, mask[key], 0)
+        scratch.pages.new((1, 1))
+        page = scratch.pages[0]
+        page.obj["Resources"] = {"XObject": {"M": copy}}
+        page.operations = Operations([Operation("Do", (Name("M"),))])
+        (image,) = page.images()
+        painted = _from_pixmap(image.pixmap())
     if stencil:
         size = painted.width * painted.height
         color = b"\x00" * size if painted.alpha is None else painted.alpha.translate(_INVERT)
@@ -1476,7 +1529,8 @@ def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments, and pyropdf'
                 continue
             if recolor:
                 candidate.gray, candidate.samples = True, False
-            tally.kept(item.encoded_size, _rewrite(document, xref, candidate, size, options))
+            before, after = _rewrite(document, xref, candidate, size, options)
+            tally.kept(before, after)
         nested = _Nested(tally)
         for index, (page, count) in enumerate(zip(document.pages, inline, strict=False)):
             missed = count - (_rewrite_page_inline(page, options, tally, nested) if count else 0)

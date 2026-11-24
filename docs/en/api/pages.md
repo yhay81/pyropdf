@@ -8,6 +8,33 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 # Pages
 
+## `BoxStyle`
+
+```python
+BoxStyle(
+    *,
+    color: tuple[float, float, float] = (0, 0, 0),
+    width: float = 1,
+    dashed: bool = False,
+    dashes: tuple[float, ...] = (3,),
+)
+```
+
+Stored DeviceRGB guideline colour, width, solid/dashed style and dash pattern.
+
+## `FixedPrint`
+
+```python
+FixedPrint(
+    *,
+    matrix: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+    horizontal: float = 0,
+    vertical: float = 0,
+)
+```
+
+Watermark matrix and translations as fractions of the target media width and height.
+
 ## `NavigationStep`
 
 ```python
@@ -39,7 +66,7 @@ reads raise `StalePageError`, and they work again if undo
 restores it. Two pages are equal when they name the same page object of
 the same document.
 
-### `Page.document`
+### `document`
 
 ```python
 Page.document: Document
@@ -47,7 +74,7 @@ Page.document: Document
 
 The document that holds the page.
 
-### `Page.xref`
+### `xref`
 
 ```python
 Page.xref: int
@@ -55,7 +82,7 @@ Page.xref: int
 
 The object number of the page dictionary.
 
-### `Page.obj`
+### `obj`
 
 ```python
 Page.obj: Dictionary
@@ -63,7 +90,7 @@ Page.obj: Dictionary
 
 The page dictionary as a handle of the low-level object model.
 
-### `Page.annotations`
+### `annotations`
 
 ```python
 Page.annotations: Annotations
@@ -71,7 +98,7 @@ Page.annotations: Annotations
 
 The page's annotations other than links and form widgets, in `/Annots` order.
 
-### `Page.links`
+### `links`
 
 ```python
 Page.links: Links
@@ -79,7 +106,7 @@ Page.links: Links
 
 The page's link annotations, in `/Annots` order.
 
-### `Page.widgets`
+### `widgets`
 
 ```python
 Page.widgets: Widgets
@@ -87,7 +114,7 @@ Page.widgets: Widgets
 
 The page's form widgets, in `/Annots` order.
 
-### `Page.index`
+### `index`
 
 ```python
 Page.index: int
@@ -95,7 +122,7 @@ Page.index: int
 
 The zero-based index of the page, in time that does not grow with the page count.
 
-### `Page.images`
+### `images`
 
 ```python
 Page.images(*, annotations: bool = True) -> list[PageImage]
@@ -107,7 +134,7 @@ Each `PageImage` decodes its pixels with `pixmap()` and
 returns its data as stored with `stored()`; `annotations` counts
 the images of annotation appearances, as in `content`.
 
-### `Page.fonts`
+### `fonts`
 
 ```python
 Page.fonts() -> list[FontInfo]
@@ -123,7 +150,7 @@ parents, more than 4096 forms, or more than 65536 font and XObject
 entries over the walk raise `LimitError`.
 `Document.font_program` returns a font's embedded program.
 
-### `Page.label`
+### `label`
 
 ```python
 Page.label: str
@@ -131,7 +158,7 @@ Page.label: str
 
 The page's label from `doc.page_labels`, or `""` when no range covers it.
 
-### `Page.duration`
+### `duration`
 
 ```python
 Page.duration: float | None
@@ -144,7 +171,7 @@ Assigning a non-negative finite number sets `/Dur` in one transaction;
 
 Settable.
 
-### `Page.transition`
+### `transition`
 
 ```python
 Page.transition: Transition | None
@@ -158,7 +185,7 @@ it; `del page.transition` removes it.
 
 Settable.
 
-### `Page.navigation_steps`
+### `navigation_steps`
 
 ```python
 Page.navigation_steps: tuple[NavigationStep, ...]
@@ -175,7 +202,7 @@ removes `/PresSteps` and frees unreferenced nodes.
 
 Settable.
 
-### `Page.triggers`
+### `triggers`
 
 ```python
 Page.triggers: PageTriggers
@@ -188,7 +215,25 @@ Assigning a mapping replaces `Page['AA']` in one transaction, and
 
 Settable.
 
-### `Page.thumbnail`
+### `associated_files`
+
+```python
+Page.associated_files: AssociatedFiles
+```
+
+The page's `/AF` associated files as a live `AssociatedFiles` sequence.
+
+### `piece_info`
+
+```python
+Page.piece_info: PieceInfo
+```
+
+The page's `/PieceInfo` application data as a live `PieceInfo`.
+
+Settable.
+
+### `thumbnail`
 
 ```python
 Page.thumbnail: Pixmap | None
@@ -204,7 +249,34 @@ when unreferenced.
 
 Settable.
 
-### `Page.viewports`
+### `box_styles`
+
+```python
+Page.box_styles: dict[str, BoxStyle]
+```
+
+Local guideline styles keyed by CropBox, BleedBox, TrimBox or ArtBox.
+
+An absent entry leaves the display choice to the reader. Assign a mapping
+to replace the known styles or delete the property to remove them.
+
+Settable.
+
+### `separations`
+
+```python
+Page.separations: dict[Page, SeparationPlate]
+```
+
+The ordered pages of this pre-separated group and their colorants.
+
+Assign a mapping including this page to create or replace the group.
+Omitted members become ordinary pages. Deleting dissolves the group
+in one transaction. A page already in another group must leave it first.
+
+Settable.
+
+### `viewports`
 
 ```python
 Page.viewports: tuple[Viewport, ...]
@@ -225,7 +297,7 @@ unreferenced objects.
 
 Settable.
 
-### `Page.rotation`
+### `rotation`
 
 ```python
 Page.rotation: int
@@ -238,7 +310,7 @@ transaction; another value raises `ValueError`.
 
 Settable.
 
-### `Page.remove_rotation`
+### `remove_rotation`
 
 ```python
 Page.remove_rotation()
@@ -263,7 +335,7 @@ else in the document, move with it; a horizontal fit becomes a vertical
 one on a quarter turn, and a null coordinate stays null. A page without
 rotation is left as it is.
 
-### `Page.rect`
+### `rect`
 
 ```python
 Page.rect: Rect
@@ -277,7 +349,7 @@ Display coordinates are points of 1/72 inch: a page's `/UserUnit`
 sets the size of its user space unit, so a 400 by 300 MediaBox with
 `/UserUnit 2` is 800 by 600 points.
 
-### `Page.media_box`
+### `media_box`
 
 ```python
 Page.media_box: Rect
@@ -293,7 +365,7 @@ box the page sets raises `ValueError`; set that box first.
 
 Settable.
 
-### `Page.crop_box`
+### `crop_box`
 
 ```python
 Page.crop_box: Rect
@@ -308,7 +380,7 @@ MediaBox raises `ValueError`.
 
 Settable.
 
-### `Page.bleed_box`
+### `bleed_box`
 
 ```python
 Page.bleed_box: Rect
@@ -322,7 +394,7 @@ MediaBox raises `ValueError`.
 
 Settable.
 
-### `Page.trim_box`
+### `trim_box`
 
 ```python
 Page.trim_box: Rect
@@ -336,7 +408,7 @@ MediaBox raises `ValueError`.
 
 Settable.
 
-### `Page.art_box`
+### `art_box`
 
 ```python
 Page.art_box: Rect
@@ -350,7 +422,7 @@ MediaBox raises `ValueError`.
 
 Settable.
 
-### `Page.pixmap`
+### `pixmap`
 
 ```python
 Page.pixmap(
@@ -418,7 +490,7 @@ These dimensions bound the output raster. Image decoding and
 rasterization inside hayro can exceed the document's memory and
 time limits. See [Reading and rendering](../limits.md#reading-and-rendering).
 
-### `Page.draw`
+### `draw`
 
 ```python
 Page.draw(*, underlay: bool = False) -> Canvas
@@ -429,7 +501,7 @@ Return a `Canvas` that draws on this page when its `with` block ends.
 The drawing is one transaction and one undo step, painted over the
 page's content or, with `underlay=True`, beneath it.
 
-### `Page.replace_text`
+### `replace_text`
 
 ```python
 Page.replace_text(old: str, new: str, *, count: int | None = None) -> int
@@ -458,7 +530,7 @@ A drawing of a Form XObject that changes draws a copy, so the other
 drawings, pages, and Forms that share it keep the old text. The
 replacement is one transaction.
 
-### `Page.recolor`
+### `recolor`
 
 ```python
 Page.recolor(target: RecolorTarget) -> RecolorReport
@@ -472,7 +544,7 @@ converts its images and the color arrays of its annotations; see
 `Document.recolor`. Returns what it converted and what it
 left as it was.
 
-### `Page.clean_contents`
+### `clean_contents`
 
 ```python
 Page.clean_contents(*, annotations: bool = True)
@@ -501,7 +573,7 @@ Content with bytes that hayro stops reading at raises
 `operations` raises `LimitError`; either leaves the
 document unchanged.
 
-### `Page.flatten`
+### `flatten`
 
 ```python
 Page.flatten(*, annotations: bool = True, widgets: bool = True)
@@ -513,7 +585,7 @@ As `Document.flatten` does for one page, except that the
 widgets leave their fields, and a field leaves the form with its
 last widget, rather than the form leaving the document.
 
-### `Page.ocr`
+### `ocr`
 
 ```python
 Page.ocr(
@@ -536,7 +608,7 @@ lifetime. `clip` recognizes one display-space region and returns
 boxes in full-page display space. `rotation` corrects sideways input
 clockwise without editing the page.
 
-### `Page.apply_ocr`
+### `apply_ocr`
 
 ```python
 Page.apply_ocr(
@@ -572,7 +644,7 @@ repeated calls idempotent and avoids duplicate text layers; with
 `rotation` is the clockwise correction that reads sideways input and
 orients the invisible baselines. An empty result changes nothing.
 
-### `Page.svg`
+### `svg`
 
 ```python
 Page.svg(*, annotations: bool = True, max_size: int | None = 67108864) -> str
@@ -588,7 +660,7 @@ is checked, so the limit keeps an oversized result from becoming a
 Python string rather than bounding the converter's memory. The GIL
 is released while hayro-svg converts.
 
-### `Page.content`
+### `content`
 
 ```python
 Page.content(
@@ -603,6 +675,10 @@ Page.content(
 ```
 
 Return the text runs, paths, and images that the page paints.
+
+A complete result can be rendered again with `Content.pixmap` or
+placed with `Canvas.page` while this document is open, even after a
+change to the original page. Filtering by kind or clip yields items only.
 
 Items come in paint order, in display coordinates, as hayro
 interprets the current version of the page, with optional-content
@@ -638,7 +714,7 @@ The element count bounds what pyropdf collects. hayro's stream
 decoding and interpretation can exceed the
 [document limits](../limits.md#reading-and-rendering).
 
-### `Page.paths`
+### `paths`
 
 ```python
 Page.paths(
@@ -663,7 +739,7 @@ Requesting only paths still runs hayro's interpreter. Its stream
 decoding and working memory can exceed the
 [document limits](../limits.md#reading-and-rendering).
 
-### `Page.text`
+### `text`
 
 ```python
 Page.text(
@@ -713,7 +789,7 @@ A page with little text can still take substantial memory and time
 for hayro to decode and interpret. See the
 [document limits for page reading](../limits.md#reading-and-rendering).
 
-### `Page.words`
+### `words`
 
 ```python
 Page.words(
@@ -744,7 +820,7 @@ As with `text`, the glyph and text limits bound what is collected.
 hayro can exceed the [document limits](../limits.md#reading-and-rendering)
 while decoding and interpreting the page.
 
-### `Page.layout`
+### `layout`
 
 ```python
 Page.layout(
@@ -783,7 +859,7 @@ page's vector rules and sets `Span.is_underlined` and
 out horizontal text. The other options are those of `text`, and
 `max_size` also bounds the UTF-8 of the layout's strings.
 
-### `Page.chars`
+### `chars`
 
 ```python
 Page.chars(
@@ -809,7 +885,7 @@ same options, built without a Python object per char: their
 row view builds each `Char` on demand. The options are those
 of `layout`.
 
-### `Page.search`
+### `search`
 
 ```python
 Page.search(
@@ -847,7 +923,7 @@ than `max_hits` raise `LimitError` with code
 `max_hits=None` lifts the limit for trusted input. The other
 options are those of `layout`.
 
-### `Page.selection`
+### `selection`
 
 ```python
 Page.selection(
@@ -870,7 +946,7 @@ points are in display space; `clip` limits the characters as
 `text` does, and so do the budgets. A page without text
 selects `""`.
 
-### `Page.markdown`
+### `markdown`
 
 ```python
 Page.markdown(
@@ -885,7 +961,7 @@ Return the current version of the page as Markdown.
 This is `Document.markdown` of this page alone, which infers
 heading sizes from this page.
 
-### `Page.tables`
+### `tables`
 
 ```python
 Page.tables(
@@ -919,7 +995,20 @@ Exceeding 4,096 vector rules, 4,096 cells per candidate table,
 65,536 merged-cell candidates per grid, or 32 text columns raises
 `LimitError`, with no partial table results.
 
-### `Page.operations`
+### `uses_transparency`
+
+```python
+Page.uses_transparency() -> bool
+```
+
+Return whether the current page uses transparent imaging under ISO 32000-2 Annex Q.
+
+Check paint operations, selected Forms, images, patterns, Type 3
+character procedures and annotation appearances. The query follows only
+the resources reached by painting. Cyclic resources and exhausted
+limits raise an error.
+
+### `operations`
 
 ```python
 Page.operations: Operations
@@ -964,7 +1053,7 @@ naming their pages through later edits. `new`, `insert`,
 `del`, `select`, and `move` each change the page tree in
 one transaction.
 
-### `Pages.__len__`
+### `__len__`
 
 ```python
 Pages.__len__() -> int
@@ -972,7 +1061,7 @@ Pages.__len__() -> int
 
 Return the number of pages.
 
-### `Pages.labeled`
+### `labeled`
 
 ```python
 Pages.labeled(label: str) -> list[int]
@@ -982,7 +1071,7 @@ Return the indexes of the pages whose page label is `label`.
 
 An empty label, or a document without page labels, matches no page.
 
-### `Pages.__getitem__`
+### `__getitem__`
 
 ```python
 Pages.__getitem__(index: int | slice) -> Page | list[Page]
@@ -990,7 +1079,7 @@ Pages.__getitem__(index: int | slice) -> Page | list[Page]
 
 Return page `index`, or a list of the pages of a slice.
 
-### `Pages.__iter__`
+### `__iter__`
 
 ```python
 Pages.__iter__() -> Iterator[Page]
@@ -998,7 +1087,7 @@ Pages.__iter__() -> Iterator[Page]
 
 Iterate over the pages; a structural edit during the iteration raises `RuntimeError`.
 
-### `Pages.__contains__`
+### `__contains__`
 
 ```python
 Pages.__contains__(page: object) -> bool
@@ -1006,7 +1095,7 @@ Pages.__contains__(page: object) -> bool
 
 Return whether `page` is a current page of this document.
 
-### `Pages.index`
+### `index`
 
 ```python
 Pages.index(page: object, start: int = 0, stop: int | None = None) -> int
@@ -1014,7 +1103,7 @@ Pages.index(page: object, start: int = 0, stop: int | None = None) -> int
 
 Return the index of `page`, in time that does not grow with the page count.
 
-### `Pages.__delitem__`
+### `__delitem__`
 
 ```python
 Pages.__delitem__(index: int | slice)
@@ -1026,7 +1115,7 @@ Links, outline destinations, named destinations, named pages, and
 article thread beads that refer to a removed page are pruned in the
 same transaction.
 
-### `Pages.new`
+### `new`
 
 ```python
 Pages.new(
@@ -1041,7 +1130,7 @@ Add a blank page of `size` points, A4 by default, where `list.insert` would put 
 Without `index` the page goes last. The page has its own MediaBox,
 and no rotation or crop of the page tree's root carries over to it.
 
-### `Pages.new_from_image`
+### `new_from_image`
 
 ```python
 Pages.new_from_image(
@@ -1065,7 +1154,7 @@ density or Exif resolution, PNG `pHYs`, or Pillow's `dpi`, else
 overrides it. The pages go where `new` puts one, in order, and
 are returned.
 
-### `Pages.insert`
+### `insert`
 
 ```python
 Pages.insert(index: int, pages: Page | Iterable[Page])
@@ -1088,7 +1177,7 @@ structure tree, under its single `Document` element when it has
 one. The iterable may hold up to the larger of the source's page
 count and 4,096 pages.
 
-### `Pages.extend`
+### `extend`
 
 ```python
 Pages.extend(pages: Page | Iterable[Page])
@@ -1096,7 +1185,7 @@ Pages.extend(pages: Page | Iterable[Page])
 
 Append copies of `pages`, as `insert` at the end inserts them.
 
-### `Pages.select`
+### `select`
 
 ```python
 Pages.select(indexes: Iterable[int], /)
@@ -1108,13 +1197,29 @@ Negative indexes count from the end. A repeated index adds a copy, as
 `insert` copies a page. The navigation that leads to a removed
 page goes, as for `del`.
 
-### `Pages.move`
+### `move`
 
 ```python
 Pages.move(index: int, to: int)
 ```
 
 Move page `index` so that it ends at index `to`, in one transaction.
+
+## `PrinterMark`
+
+```python
+PrinterMark(*, rect: Rect, appearance: Stream, name: Name | None = None)
+```
+
+A printable, read-only printer's mark with a supplied Form XObject and optional mark name.
+
+## `SeparationPlate`
+
+```python
+SeparationPlate(*, colorant: Name | String, color_space: Array | None = None)
+```
+
+The colorant of one pre-separated page and its optional Separation or DeviceN space.
 
 ## `Transition`
 
@@ -1165,3 +1270,11 @@ Members: `INWARD`, `OUTWARD`.
 Visual style of a page transition (`/S`, ISO 32000-2 Table 165).
 
 Members: `SPLIT`, `BLINDS`, `BOX`, `WIPE`, `DISSOLVE`, `GLITTER`, `REPLACE`, `FLY`, `PUSH`, `COVER`, `UNCOVER`, `FADE`.
+
+## `Watermark`
+
+```python
+Watermark(*, rect: Rect, appearance: Stream, fixed_print: FixedPrint | None = None)
+```
+
+A printable watermark with a supplied Form and optional fixed placement on the target media.

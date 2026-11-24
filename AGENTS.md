@@ -174,7 +174,7 @@ these before pushing. CI runs the same commands, with `--locked` added to
 
 ```bash
 uv sync
-uv run pytest
+uv run pytest --quick-corpus
 uv run ruff check .
 uv run ruff format --check .
 uv run ty check
@@ -188,8 +188,13 @@ check, with the lines of a failed check's log that name its failures; the
 full logs stay in `target/check/`. Name checks, or `python` or `rust`, to
 run fewer, and add `--locked` to match CI.
 
-`uv run pytest` includes `tests/test_crate_dependencies.py`, which fails
-when a crate's dependencies point against DESIGN.md section 11.
+`--quick-corpus` runs every edit in both save modes on two representative
+PDFs, plus rotation on every corpus PDF. It only narrows the preservation
+and consistency grids. Run `uv run pytest` for the full suite, which CI
+runs on Python 3.11 for every PR and push to main.
+
+`tests/test_crate_dependencies.py` runs in both selections and fails when
+a crate's dependencies point against DESIGN.md section 11.
 
 The audit job of CI checks `Cargo.lock` against the RustSec advisory
 database and the workflows with actionlint. An unmaintained, unsound, or

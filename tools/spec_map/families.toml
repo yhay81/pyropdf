@@ -2,29 +2,6 @@
 # @arlington expands to the individual names of the pinned model, never to clause features.
 # Remove obsolete scopes after their cells are proved; assign any residual to an open task.
 
-[families.optional-content-usage]
-tracker = 245
-issue = 901
-title = "Read and edit optional-content usage and usage application dictionaries"
-features = [
-    "optional-content",
-]
-dimensions = ["read", "create", "edit"]
-behavior = "Resolve OCG Usage and configuration AS application dictionaries against their groups. Expose and modify the stored values, and verify configuration- and event-specific behavior through save/reopen."
-
-[families.functions-and-shadings]
-tracker = 246
-issue = 896
-title = "Complete PDF function, pattern and mesh shading authoring and evaluation"
-features = [
-    "sampled-functions", "exponential-functions", "stitching-functions", "calculator-functions",
-    "tiling-patterns", "function-shading", "axial-shading", "radial-shading", "free-form-triangle-shading",
-    "lattice-triangle-shading", "coons-patch-shading", "tensor-patch-shading", "shading-patterns",
-    "pattern-color-space",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Exercise sampled/calculator functions, function edits, tiling and uncolored patterns and shading types 1–7. Create and edit resources through the store, verify mesh and function evaluation independently and round-trip untouched data."
-
 [families.print-device-engine]
 tracker = 248
 issue = 1001
@@ -58,45 +35,14 @@ features = [
 dimensions = ["interpret"]
 behavior = "Adopt engine evaluation of visibility expressions and annotation OC. Track the upstream issue directly. #373 owns local adoption."
 
-[families.transparency]
+[families.transparency-group-engine]
 tracker = 248
-issue = 899
-title = "Complete transparency group, soft-mask and compositing coverage"
-features = [
-    "blend-modes", "soft-masks", "transparency-groups", "transparency-color", "alpha-compositing",
-    "page-transparency",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Exercise non-isolated and knockout groups, group masks, blending colour spaces, alpha composition and Annex Q resource traversal. Verify isolated and nested results with independent rendered references."
-
-[families.annotation-appearances]
-tracker = 249
-issue = 903
-title = "Write rollover/down and widget icon appearances and line or popup annotation details"
-features = [
-    "appearance-streams", "line-annotations", "popup-annotations", "widget-annotations",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Implement rollover/down streams, widget MK icons and IF fitting, line captions and leaders, and popup parent semantics. Check independent rendering and relationships after edit/reopen."
-
-[families.redaction-marks]
-tracker = 249
-issue = 903
-title = "Write rollover/down and widget icon appearances and line or popup annotation details"
-features = ["redaction-annotations"]
-dimensions = ["read", "create", "edit", "preserve"]
-behavior = "Inspect and edit stored redaction marks, overlay text and appearance streams. Preserve the marks through reopening before destructive application."
-
-[families.font-programs]
-tracker = 249
-issue = 902
-title = "Complete font program, encoding and CMap creation and editing"
-features = [
-    "type1-fonts", "truetype-fonts", "type3-fonts", "simple-font-encodings", "cmaps", "embedded-fonts",
-    "character-tables",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Round-trip font resources with Type 1/custom fonts, Differences and embedded code-to-CID maps. Cover TrueType and Type 3 changes, standard character tables and preservation of text and glyph placement."
+issue = 1024
+kind = "upstream"
+title = "hayro: render non-isolated, knockout and blending-space group boundaries"
+features = ["transparency-color", "alpha-compositing"]
+dimensions = ["interpret"]
+behavior = "Render groups against their initial backdrop, honor knockout shape, and convert into the selected group space at the boundary. Verify explicit output-device samples after upstream adoption."
 
 [families.devicen-mixing-hints]
 tracker = 249
@@ -108,25 +54,15 @@ features = ["devicen-color-space"]
 dimensions = ["interpret"]
 behavior = "Offer the stored solidities, printing order and dot-gain functions to devices that opt into colourant-based proofing. Alternate RGB conversion and directly addressed process and spot plates are independently checked."
 
-[families.text-fields-and-xfa]
-tracker = 249
-issue = 904
-title = "Support rich variable text, password appearances and legacy XFA form data"
-features = [
-    "variable-text", "text-fields", "xfa",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read and edit RV/DS field data, mask displayed password glyphs, and inspect, edit/remove and preserve existing XFA packets under the recorded creation exclusion. Verify field values and appearances independently."
-
-[families.image-resources]
+[families.alternate-image-rendering]
 tracker = 250
-issue = 900
-title = "Support alternate image resources, masks and reference XObjects through rewriting"
-features = [
-    "images", "image-masks", "reference-xobjects",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read and rewrite image alternates, masks and reference XObject relationships, verifying selection, unchanged resource bytes, and output without fetching or executing external content."
+issue = 947
+parent = 7
+kind = "upstream"
+title = "Select visible alternate image XObjects in hayro rendering and content devices"
+features = ["images"]
+dimensions = ["interpret"]
+behavior = "Apply the alternate image choice during painting and report the chosen stream as the content item's source. The consumer can already resolve display and print alternatives in the stored data."
 
 [families.redaction]
 tracker = 250
@@ -139,64 +75,13 @@ features = [
 dimensions = ["interpret"]
 behavior = "Apply and verify redaction annotations over text, paths and images, using item provenance for destructive removal."
 
-[families.name-tree-navigation]
-tracker = 251
-issue = 895
-title = "Resolve catalog name trees, structure destinations and viewer action parameters"
-features = [
-    "name-dictionary", "embedded-files", "destinations", "remote-goto-actions", "launch-actions",
-    "uri-actions", "named-actions", "fragment-identifiers",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Follow named resources and structure destinations, resolve base URI/IsMap, Windows launch and remote/named targets as data, and round-trip fragment selection and navigation options. Expose unresolved targets without executing actions."
-
-[families.tagged-authoring]
-tracker = 251
-issue = 908
-title = "Author standard tagged attributes, class maps and legal structure children"
-features = [
-    "logical-structure", "tagged-pdf", "structure-children",
-]
-dimensions = ["create", "edit"]
-behavior = "Author and edit class maps, object references, user properties and standard structure attributes. Validate child multiplicities and relationships through page operations and independent checks."
-
-[families.aes-gcm]
+[families.aes-gcm-interpretation]
 tracker = 252
-issue = 865
-title = "Read and write AES-GCM encrypted PDFs under ISO/TS 32003"
-features = [
-    "aes-gcm",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read and write authenticated AES-GCM objects with independent positive and negative cases."
-
-[families.hash-signature-extensions]
-tracker = 252
-issue = 867
-title = "Complete the PDF hash and signature algorithm coverage for ISO/TS 32001 and 32002"
-features = [
-    "sha3-hashes", "ecc-signatures",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Verify and create each specified hash/signature algorithm against independent vectors, including Ed25519 and Ed448."
-
-[families.integrity-protection]
-tracker = 252
-issue = 866
-title = "Verify and maintain document integrity protection for encrypted PDFs under ISO/TS 32004"
-features = [
-    "integrity-protection",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Verify and maintain integrity protection during encrypted saves and refuse tampered data."
-
-[families.public-key-encryption]
-tracker = 252
-issue = 936
-title = "Extend CMS algorithm coverage for public-key PDF recipients"
-features = ["public-key-security-handler"]
-dimensions = ["read", "create", "edit", "preserve"]
-behavior = "Verify and extend additional CMS provider algorithms for recipient access, creation, editing and preservation."
+issue = 968
+title = "Interpret AES-GCM encrypted pages through the authenticated store source"
+features = ["aes-gcm"]
+dimensions = ["interpret"]
+behavior = "Render and extract from the authenticated AES-GCM store version without serializing untouched objects."
 
 [families.public-key-legacy-interpretation]
 tracker = 252
@@ -205,32 +90,6 @@ title = "Render legacy recipient-encrypted PDFs through the authenticated store 
 features = ["public-key-security-handler"]
 dimensions = ["interpret"]
 behavior = "Render authenticated pre-V5 recipient files through the engine object-source interface."
-
-[families.indirect-stream-filter-selection]
-tracker = 252
-issue = 1056
-title = "Resolve indirect stream filter selectors and parameters in their document revision"
-features = ["crypt-filter", "crypt-filters"]
-dimensions = ["read", "create", "preserve"]
-behavior = "Resolve filter names and parameter references in the correct revision before reading or creating encrypted streams, and retain their reference identities through saves."
-
-[families.crypt-filter-payload-edits]
-tracker = 252
-issue = 992
-title = "Keep stream crypt-filter selection when replacing attachment or stream data"
-features = ["crypt-filter", "crypt-filters"]
-dimensions = ["edit"]
-behavior = "Retain the leading security filter and its parameters when replacing the decoded payload or compression, including an attachment restricted to a distinct recipient audience."
-
-[families.signature-dictionaries]
-tracker = 252
-issue = 905
-title = "Resolve signature seed constraints and build properties through signing and editing"
-features = [
-    "signature-fields", "digital-signatures",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification."
 
 [families.crypt-filter-rendering]
 tracker = 252
@@ -256,153 +115,12 @@ features = ["logical-structure", "tagged-pdf"]
 dimensions = ["interpret"]
 behavior = "Resolve external Form stream MCIDs and text enclosed by page-level Form invocations once hayro supplies stream provenance."
 
-[families.contextual-structure-children]
-tracker = 253
-issue = 990
-title = "Resolve contextual Annex L rules and namespace-mapped structure children"
-features = ["structure-children"]
+[families.standard-byte-credential-interpretation]
+tracker = 252
+parent = 7
+kind = "upstream"
+issue = 1043
+title = "Interpret legacy encrypted PDFs with byte-encoded credentials in hayro-syntax"
+features = ["standard-security-handler", "standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4", "standard-aes-r4"]
 dimensions = ["interpret"]
-behavior = "Resolve cross-namespace roles, use as a grouping element and role-specific content for the remaining conditional Annex L verdicts."
-
-[families.display-space]
-tracker = 254
-issue = 851
-title = "Verify display-space coordinates across reading, editing and rendering on the same page"
-features = [
-    "coordinate-systems",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Verify display-space transformations at the reading, rendering and editing boundaries, including rotated, offset and scaled pages."
-
-[families.accessible-archival-authoring]
-tracker = 255
-issue = 846
-title = "Create accessible archival PDFs from a new Document through the public API"
-features = [
-    "pdfa-4", "pdfua-2",
-]
-dimensions = ["create"]
-behavior = "Create an accessible archival document with a valid claim and have an independent validator verify the result."
-
-[families.early-profile-authoring]
-tracker = 255
-issue = 911
-title = "Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour"
-features = [
-    "pdfa-2b", "pdfua-1",
-]
-dimensions = ["create"]
-behavior = "Create and independently validate the earlier PDF/A and PDF/UA profile examples."
-
-[families.pdf-profile-corpus]
-tracker = 255
-issue = 911
-title = "Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour"
-features = [
-    "pdfa", "pdfua", "pdfa-1a", "pdfa-1b", "pdfa-2a", "pdfa-2u", "pdfa-3a", "pdfa-3b", "pdfa-3u", "pdfa-4e",
-    "pdfa-4f",
-]
-dimensions = ["read", "create"]
-behavior = "Exercise independently sourced conforming and negative fixtures beyond the original vector example. Validate public authoring per listed part and level using independent validation and retain allowable source variations."
-
-[families.pdf-profile-reading]
-tracker = 255
-issue = 911
-title = "Broaden the PDF/A and PDF/UA claim-reading and authoring matrix by flavour"
-features = [
-    "pdfa-2b", "pdfa-4", "pdfua-1", "pdfua-2",
-]
-dimensions = ["read"]
-behavior = "Exercise additional conforming and negative sources beyond the original per-flavour vector example."
-
-[families.print-profiles]
-tracker = 255
-issue = 910
-title = "Validate PDF/X and PDF/VT profile rules through a print exchange round trip"
-features = [
-    "pdfx", "pdfvt", "output-intents",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour."
-
-[families.profile-edit-effects]
-tracker = 255
-issue = 932
-title = "Verify profile edit effects on nested resources and alternate structure encodings"
-features = [
-    "pdfa", "pdfua", "pdfa-1a", "pdfa-1b", "pdfa-2a", "pdfa-2b", "pdfa-2u", "pdfa-3a", "pdfa-3b", "pdfa-3u",
-    "pdfa-4", "pdfa-4e", "pdfa-4f", "pdfua-1", "pdfua-2",
-]
-dimensions = ["interpret", "edit", "preserve"]
-behavior = "Extend the checked edit matrix to nested resources, alternate structure relationships, and font representations with positive and negative controls."
-
-[families.interchange]
-tracker = 256
-issue = 839
-title = "Expose developer extensions, associated files, page-piece dictionaries, document parts, and structure namespaces"
-features = [
-    "developer-extensions", "page-piece", "associated-files", "document-parts", "goto-dpart-actions",
-    "structure-namespaces", "namespace-inclusion",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations."
-
-[families.3d-scene-settings]
-tracker = 256
-issue = 913
-title = "Author 3D scene settings and dimensional measurements as PDF data"
-features = ["3d-artwork"]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Resolve scene, camera and activation settings and each dimensional measurement geometry. Verify view, stream and measurement references after editing."
-
-[families.legacy-media]
-tracker = 256
-issue = 915
-title = "Complete existing legacy movie, sound and alternate-presentation relationship editing"
-features = [
-    "sound-annotations", "movie-annotations", "sound-actions", "movie-actions", "sounds", "movies",
-    "alternate-presentations",
-]
-dimensions = ["read", "interpret", "edit", "preserve"]
-behavior = "Resolve external sound parameters, movie posters, timing, title-based action targets and alternate-presentation name trees. Verify reference-safe edits in existing files."
-
-[families.prepress]
-tracker = 256
-issue = 861
-title = "Complete prepress dictionaries and print annotation relationships"
-features = [
-    "page-boundaries", "separation-dictionaries", "trapping", "opi", "printer-mark-annotations",
-    "trap-network-annotations", "watermark-annotations",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Resolve box colour, separations, trapping, OPI and print annotation relationships and preserve or edit them under the edition policy."
-
-[families.related-files]
-tracker = 256
-issue = 859
-title = "Expose and preserve related-file arrays on file specifications"
-features = [
-    "related-files",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Resolve and preserve RF arrays on file specifications, including edits to related targets."
-
-[families.richmedia-extensions]
-tracker = 256
-issue = 863
-title = "Support STEP and glTF assets in RichMedia annotations under the published PDF 2.0 extensions"
-features = [
-    "step-rich-media", "gltf-rich-media",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read, author and verify STEP and glTF asset relationships against the published extensions."
-
-[families.web-capture]
-tracker = 256
-issue = 860
-title = "Read, edit and preserve Web Capture content sets and their indexes"
-features = [
-    "web-capture",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read, edit and round-trip captured content sets and their indexes."
+behavior = "Interpret an owner-authenticated R2 to R4 document whose effective user credential is not UTF-8."

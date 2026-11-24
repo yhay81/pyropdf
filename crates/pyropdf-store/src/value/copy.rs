@@ -208,3 +208,36 @@ mod tests {
         }
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verifies `copy_bytes` (raw `alloc`, `MaybeUninit<u8>`,
+    /// `copy_nonoverlapping`, and `assume_init`) has no UB and preserves exact
+    /// bytes and budget charges.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    #[kani::stub(Budget::poll, Budget::kani_stub_poll)]
+    #[kani::stub(Budget::charge, Budget::kani_stub_charge)]
+    #[kani::stub(Budget::release, Budget::kani_stub_release)]
+    fn kani_copy_bytes_unsafe() {
+        let buf: [u8; 8] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= buf.len());
+        let mem_limit: u64 = kani::any();
+        let budget = Budget::kani_empty().with_limit(LimitCode::MemorySize, Some(mem_limit));
+
+        match copy_bytes(&buf[..len], &budget) {
+            Ok(copied) => {
+                assert_eq!(&*copied, &buf[..len]);
+                assert_eq!(budget.used(LimitCode::MemorySize), len as u64);
+                assert!(budget.used(LimitCode::MemorySize) <= mem_limit);
+            }
+            Err(_) => {
+                assert!((len as u64) > mem_limit);
+                assert_eq!(budget.used(LimitCode::MemorySize), 0);
+            }
+        }
+    }
+}

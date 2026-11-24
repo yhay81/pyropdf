@@ -1,7 +1,7 @@
 //! Squares, circles, lines, polygons, polylines, and ink, with their line
 //! endings and cloudy borders, as pylopdf draws them.
 
-use super::{Canvas, KAPPA, Paint, ellipse};
+use super::{Canvas, KAPPA, Paint, Quad, ellipse};
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::{Error, Result};
 
@@ -60,6 +60,36 @@ pub(super) fn polyline(
         }
         let (x, y) = to_canvas(point);
         canvas.path(if index == 0 { "m" } else { "l" }, &[x, y]);
+    }
+}
+
+/// Outline and cross each proposed redaction area, keeping the stroke
+/// inside the form even when the border is wider than the mark.
+pub(super) fn redaction(
+    canvas: &mut Canvas,
+    paint: &Paint,
+    size: (f64, f64),
+    quads: &[Quad],
+    to_canvas: impl Fn((f64, f64)) -> (f64, f64),
+) {
+    let Some(stroke) = paint.stroke(0, 0) else {
+        return;
+    };
+    let inset_x = paint.width.min(size.0) / 2.0;
+    let inset_y = paint.width.min(size.1) / 2.0;
+    for quad in quads {
+        if canvas.out.refusal.is_some() {
+            return;
+        }
+        let [a, b, c, d] = [quad[0], quad[1], quad[3], quad[2]].map(|point| {
+            let (x, y) = to_canvas(point);
+            [
+                x.max(inset_x).min(size.0 - inset_x),
+                y.max(inset_y).min(size.1 - inset_y),
+            ]
+        });
+        canvas.path("mlllhmlml", [a, b, c, d, a, c, b, d].as_flattened());
+        canvas.draw(None, Some(&stroke));
     }
 }
 

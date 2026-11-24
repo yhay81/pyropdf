@@ -5,6 +5,7 @@ from __future__ import annotations
 import enum
 import re
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from pyropdf import _core
@@ -129,6 +130,24 @@ class _Element:
         self.kids: list[int | _Element] = []
 
 
+@dataclass(frozen=True, slots=True)
+class _Group:
+    alpha: float
+    isolated: bool
+    knockout: bool
+    colorspace: str | None
+
+    def attributes(self) -> dict[str, object]:
+        result: dict[str, object] = {"S": Name("Transparency")}
+        if self.isolated:
+            result["I"] = True
+        if self.knockout:
+            result["K"] = True
+        if self.colorspace is not None:
+            result["CS"] = Name(self.colorspace)
+        return result
+
+
 class _Scope(AbstractContextManager[None]):
     """One clip, transform, opacity, blend, or layer scope of a canvas."""
 
@@ -138,7 +157,7 @@ class _Scope(AbstractContextManager[None]):
         opening: bytes,
         closing: bytes,
         *,
-        group: float | None = None,
+        group: _Group | None = None,
         matrix: Matrix | None = None,
     ) -> None:
         self._canvas = canvas

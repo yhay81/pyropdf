@@ -100,6 +100,20 @@ def _claims(document: Document) -> tuple[str, ...]:
     return tuple(claim for claim in (profiles.pdfa, profiles.pdfua, profiles.pdfx, profiles.pdfvt) if claim)
 
 
+def _admit_chain_node(seen: set[int], xref: int | None, count: int) -> int | None:
+    """Return the incremented node count, or ``None`` if ``xref`` was already visited."""
+    if xref is not None:
+        if xref in seen:
+            return None
+        seen.add(xref)
+    count += 1
+    if count > _MAX_ACTION_CHAIN:
+        msg = f"an action chain has more than {_MAX_ACTION_CHAIN} actions"
+        code: LimitCode = "sanitize_action_chain"
+        raise LimitError(code, msg)
+    return count
+
+
 def _chain(action: object) -> Iterator[Dictionary]:
     """Yield action ``action`` and the actions of its ``/Next`` entries, bounded and without repeats."""
     pending = [action]
@@ -108,19 +122,22 @@ def _chain(action: object) -> Iterator[Dictionary]:
     while pending:
         item = pending.pop()
         if isinstance(item, Array):
+            next_count = _admit_chain_node(seen, item.xref, count)
+            if next_count is None:
+                continue
+            count = next_count
+            if len(pending) + len(item) > _MAX_ACTION_CHAIN * 2:
+                msg = f"an action chain has more than {_MAX_ACTION_CHAIN} actions"
+                code: LimitCode = "sanitize_action_chain"
+                raise LimitError(code, msg)
             pending.extend(item)
             continue
         if not isinstance(item, Dictionary):
             continue
-        if item.xref is not None:
-            if item.xref in seen:
-                continue
-            seen.add(item.xref)
-        count += 1
-        if count > _MAX_ACTION_CHAIN:
-            msg = f"an action chain has more than {_MAX_ACTION_CHAIN} actions"
-            code: LimitCode = "sanitize_action_chain"
-            raise LimitError(code, msg)
+        next_count = _admit_chain_node(seen, item.xref, count)
+        if next_count is None:
+            continue
+        count = next_count
         yield item
         if "Next" in item:
             pending.append(item["Next"])
@@ -128,6 +145,16 @@ def _chain(action: object) -> Iterator[Dictionary]:
 
 def _has_javascript(action: object) -> bool:
     return any(item.get("S") == "JavaScript" for item in _chain(action))
+
+
+def _non_action_a(dictionary: Dictionary) -> bool:
+    """Return whether ``/A`` on ``dictionary`` is structure attributes or movie activation, not an action."""
+    kind = dictionary.get("Type")
+    if kind == "StructElem":
+        return True
+    if kind is None and "S" in dictionary and "P" in dictionary and "Subtype" not in dictionary:
+        return True
+    return dictionary.get("Subtype") == "Movie"
 
 
 def _remove_actions(document: Document, *, javascript_only: bool) -> int:
@@ -141,7 +168,8 @@ def _remove_actions(document: Document, *, javascript_only: bool) -> int:
 
     removed = 0
     for dictionary in _dictionaries(document):
-        for key in ("A", "OpenAction"):
+        keys = ("OpenAction",) if _non_action_a(dictionary) else ("A", "OpenAction")
+        for key in keys:
             if key in dictionary and doomed(dictionary[key]):
                 del dictionary[key]
                 removed += 1

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from pyropdf import _core, typed
+from pyropdf import _core, _rich_models, typed
 from pyropdf._errors import LimitError
 from pyropdf._media import (
     _MAX_ITEMS,
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from pyropdf._annotations import Annotation
     from pyropdf._document import Document
+    from pyropdf._media import RichMediaModel
 
 
 def _dict(value: object, description: str) -> Dictionary:
@@ -273,7 +274,7 @@ def add_configuration(
 
 def set_asset(annotation: Annotation, name: str, asset: MediaAsset | typed.FileSpecification | None) -> None:
     _text(name)
-    with _operation(annotation) as (annot, work):
+    with _operation(annotation, protect_models=True) as (annot, work):
         content = _content(annot)
         tree = _assets(content, work)
         entry = tree.entries.get(name)
@@ -473,6 +474,118 @@ def _validate_instances(annot: Dictionary, instances: set[Dictionary], files: se
                 raise ValueError(msg)
 
 
+def _models(doc: Document, configs: Array, files: set[Dictionary], work: _Work) -> tuple[RichMediaModel, ...]:
+    result = []
+    for raw in configs:
+        config = _indirect(raw, "RichMedia configuration")
+        if "Instances" not in config:
+            continue
+        for instance in _array(config["Instances"], work, "RichMedia instances"):
+            model = _rich_models.inspect_model(doc, config, _indirect(instance, "RichMedia instance"), files, work)
+            if model is not None:
+                if config.get("Subtype", Name("3D")) != "3D":
+                    msg = "a RichMedia model requires a 3D configuration"
+                    raise ValueError(msg)
+                result.append(model)
+    return tuple(result)
+
+
+def models_for(annot: Dictionary, doc: Document, work: _Work) -> tuple[RichMediaModel, ...]:
+    content = _content(annot)
+    files = {entry.file for entry in _assets(content, work).entries.values()}
+    configs = _array(content.get("Configurations"), work, "RichMedia configurations")
+    return _models(doc, configs, files, work)
+
+
+def models(annotation: Annotation) -> tuple[RichMediaModel, ...]:
+    annot = annotation.obj
+
+    def read(budget: _core._OperationBudget) -> tuple[RichMediaModel, ...]:
+        return models_for(annot, annot._document, _Work(budget))  # noqa: SLF001
+
+    return _core.read_operation(annot._core(), read)  # noqa: SLF001
+
+
+def initialize_model(doc: Document, annot: Dictionary, model: str, version: str) -> None:
+    def initialize(budget: _core._OperationBudget) -> None:
+        work = _Work(budget)
+        _rich_models.declarations(doc, model, work, add_version=version)
+        root = _content(annot)["Assets"]
+        names = root["Names"]
+        if len(names) > 128:  # noqa: PLR2004 - 64 name/file pairs per leaf.
+            work.add(0, 192 * len(names))
+            _write_path(_Tree(), root, list(names), work)
+        _validate(annot, work)
+
+    _core.read_operation(annot._core(), initialize)  # noqa: SLF001
+
+
+def _model_files(instances: set[Dictionary]) -> dict[Dictionary, Dictionary]:
+    result = {}
+    for instance in instances:
+        file = instance.get("Asset")
+        if isinstance(file, Dictionary):
+            stream = _rich_models.file_stream(file)
+            if stream is not None and _rich_models.format_for(stream.get("Subtype")):
+                result[instance] = file
+    return result
+
+
+def _check_retained_model_types(original: dict[Dictionary, Dictionary], retained: set[Dictionary]) -> None:
+    current = _model_files(retained)
+    for instance, file in original.items():
+        if instance in retained and instance.get("Asset") == file and instance not in current:
+            msg = "the shared model must retain its registered embedded MIME type"
+            raise ValueError(msg)
+
+
+def _file_objects(files: set[Dictionary], work: _Work) -> set[Dictionary]:
+    work.add(0, 256 * len(files))
+    return files | {stream for file in files if (stream := _rich_models.file_stream(file)) is not None}
+
+
+def _other_model_contents(annot: Dictionary, work: _Work) -> Generator[Dictionary, None, None]:
+    current = _content(annot)
+    for page in annot._document.pages:  # noqa: SLF001
+        work.add(1)
+        group = page.obj.get("Annots")
+        if not isinstance(group, Array):
+            continue
+        for other in _array(group, work, "page annotations"):
+            if isinstance(other, Dictionary) and other.get("Subtype") == "RichMedia" and other != annot:
+                content = other.get("RichMediaContent")
+                if isinstance(content, Dictionary) and content != current:
+                    yield content
+
+
+def _check_shared_model_files(annot: Dictionary, affected: set[Dictionary], work: _Work) -> None:
+    # Distinct RichMediaContent dictionaries can share a file specification or just its stream.
+    for content in _other_model_contents(annot, work):
+        raw = content.get("Configurations")
+        if not isinstance(raw, Array):
+            continue
+        candidates = set()
+        work.add(len(raw), 128 * len(raw))
+        for config in raw:
+            group = config.get("Instances") if isinstance(config, Dictionary) else None
+            if isinstance(group, Array):
+                work.add(len(group), 128 * len(group))
+                candidates.update(inst for inst in group if isinstance(inst, Dictionary))
+        primary = set(_model_files(candidates).values())
+        if not primary:
+            continue
+        primary_shared = bool(affected & _file_objects(primary, work))
+        try:
+            files = {entry.file for entry in _assets(content, work).entries.values()}
+        except (TypeError, ValueError):
+            if primary_shared:
+                raise
+            # An independently malformed name tree cannot resolve any ancillary resource.
+            continue
+        if primary_shared or affected & _file_objects(files, work):
+            _models(annot._document, raw, files, work)  # noqa: SLF001
+
+
 def _validate(annot: Dictionary, work: _Work) -> set[Dictionary]:
     content = _content(annot)
     named = _assets(content, work).entries
@@ -486,6 +599,7 @@ def _validate(annot: Dictionary, work: _Work) -> set[Dictionary]:
     views = set() if raw_views is None else _references(raw_views, work, "RichMedia view")
     instances = _instance_set(configs, work)
     _validate_instances(annot, instances, files)
+    _models(annot._document, content["Configurations"], files, work)  # noqa: SLF001
     _settings(annot, configs, views, files, work)
     for other in _annotations_sharing(annot, content, work):
         _settings(other, configs, views, files, work)
@@ -494,7 +608,7 @@ def _validate(annot: Dictionary, work: _Work) -> set[Dictionary]:
 
 @contextmanager
 def _operation(
-    annotation: Annotation, *, protect_actions: bool = False
+    annotation: Annotation, *, protect_actions: bool = False, protect_models: bool = False
 ) -> Generator[tuple[Dictionary, _Work], None, None]:
     core = annotation.page._document._core()  # noqa: SLF001
     budget = _core.begin_operation(core, "edit RichMedia")
@@ -506,12 +620,22 @@ def _operation(
         work = _Work(budget)
         before = set()
         original_views = _Views()
-        if protect_actions:
+        original_models: dict[Dictionary, Dictionary] = {}
+        affected: set[Dictionary] = set()
+        if protect_actions or protect_models:
             configs = _references(content.get("Configurations"), work, "RichMedia configuration")
             before = _instance_set(configs, work)
-            original_views = _view_choices(content, work)
+            if protect_actions:
+                original_views = _view_choices(content, work)
+            original_models = _model_files(before)
+            if original_models:
+                linked = set(original_models.values()) | {e.file for e in _assets(content, work).entries.values()}
+                affected = _file_objects(linked, work)
         yield annot, work
         retained = _validate(annot, _Work(budget))
+        if original_models:
+            _check_retained_model_types(original_models, retained)
+            _check_shared_model_files(annot, affected, work)
         if protect_actions:
             work.add(0, 128 * len(before))
             removed = before - retained

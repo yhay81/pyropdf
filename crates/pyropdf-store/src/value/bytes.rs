@@ -302,3 +302,68 @@ mod written_tests {
         assert_eq!(budget.used(LimitCode::MemorySize), 50_001);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verifies `WrittenBytes::copy` (raw `alloc`, `MaybeUninit<u8>`,
+    /// `copy_nonoverlapping`, `assume_init`, `Drop`, and `published`) has no
+    /// UB and preserves exact bytes and budget charges.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    #[kani::stub(Budget::poll, Budget::kani_stub_poll)]
+    #[kani::stub(Budget::charge, Budget::kani_stub_charge)]
+    #[kani::stub(Budget::release, Budget::kani_stub_release)]
+    fn kani_written_bytes_copy_unsafe() {
+        let buf: [u8; 8] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= buf.len());
+        let mem_limit: u64 = kani::any();
+        let publish: bool = kani::any();
+        let budget = Budget::kani_empty().with_limit(LimitCode::MemorySize, Some(mem_limit));
+
+        match Bytes::written_copy(&buf[..len], &budget) {
+            Ok(written) => {
+                assert_eq!(written.bytes().as_slice(), &buf[..len]);
+                assert_eq!(budget.used(LimitCode::MemorySize), len as u64);
+                assert!(budget.used(LimitCode::MemorySize) <= mem_limit);
+                if publish {
+                    written.published();
+                    assert_eq!(budget.used(LimitCode::MemorySize), len as u64);
+                } else {
+                    drop(written);
+                    assert_eq!(budget.used(LimitCode::MemorySize), 0);
+                }
+            }
+            Err(_) => {
+                assert!((len as u64) > mem_limit);
+                assert_eq!(budget.used(LimitCode::MemorySize), 0);
+            }
+        }
+    }
+
+    /// Verifies `Bytes::slice` and `offset_in` never panic for arbitrary
+    /// `usize` range endpoints and agree on valid subslices.
+    #[kani::proof]
+    #[kani::unwind(18)]
+    fn kani_bytes_slice_and_offset_in() {
+        let buf: [u8; 8] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= buf.len());
+        let start: usize = kani::any();
+        let end: usize = kani::any();
+
+        let bytes = Bytes::new(buf[..len].to_vec());
+        match bytes.slice(start..end) {
+            Some(sub) => {
+                assert!(start <= end && end <= len);
+                assert_eq!(sub.as_slice(), &buf[start..end]);
+                assert_eq!(offset_in(bytes.as_slice(), sub.as_slice()), Some(start));
+            }
+            None => {
+                assert!(start > end || end > len);
+            }
+        }
+    }
+}

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import io
+import subprocess
+import sys
 import sysconfig
 import threading
 import time
@@ -28,11 +30,12 @@ if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
     # tests/test_threads.py checks that pyropdf keeps disabled.
     pytest.skip("pyHanko enables the GIL of a free-threaded build", allow_module_level=True)
 
+from asn1crypto import cms
 from asn1crypto import keys as asn1_keys
 from asn1crypto import x509 as asn1_x509
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa
 from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from pyhanko.pdf_utils.reader import PdfFileReader
@@ -47,6 +50,7 @@ from pyhanko_certvalidator import ValidationContext
 from pyhanko_certvalidator.context import CertValidationPolicySpec
 from pyhanko_certvalidator.policy_decl import NO_REVOCATION, CertRevTrustPolicy
 from pyhanko_certvalidator.registry import SimpleTrustManager
+from test_prepress import prepress_source
 
 import pyropdf
 from pyropdf import FieldType, PdfError, SignatureField, Signer
@@ -126,6 +130,12 @@ def make_pki() -> Pki:
     keys: dict[str, Any] = {
         "p256": ec.generate_private_key(ec.SECP256R1()),
         "p384": ec.generate_private_key(ec.SECP384R1()),
+        "p521": ec.generate_private_key(ec.SECP521R1()),
+        "bp256": ec.generate_private_key(ec.BrainpoolP256R1()),
+        "bp384": ec.generate_private_key(ec.BrainpoolP384R1()),
+        "bp512": ec.generate_private_key(ec.BrainpoolP512R1()),
+        "ed25519": ed25519.Ed25519PrivateKey.generate(),
+        "ed448": ed448.Ed448PrivateKey.generate(),
         "rsa": rsa.generate_private_key(public_exponent=65537, key_size=2048),
     }
     for name, key in keys.items():
@@ -144,6 +154,7 @@ def _pem_signer(pki: Pki, name: str = "p256") -> Signer:
 def _timestamper(pki: Pki) -> Timestamper:
     key, certificate = pki.tsa
     stamper = DummyTimeStamper(
+        override_md="sha256",
         tsa_cert=asn1_x509.Certificate.load(certificate.public_bytes(DER)),
         tsa_key=asn1_keys.PrivateKeyInfo.load(key.private_bytes(DER, PKCS8, serialization.NoEncryption())),
     )
@@ -175,6 +186,53 @@ def _assert_whole_file(status: Any) -> None:  # noqa: ANN401 - pyHanko's status 
 
 def _document() -> pyropdf.Document:
     return pyropdf.open(DOCUMENT.read_bytes())
+
+
+def test_arlington_signature_comparison_imports_fixtures_standalone() -> None:
+    script = Path(__file__).resolve().parents[1] / "evidence" / "arlington-signatures" / "compare.py"
+    result = subprocess.run([sys.executable, "-I", str(script), "--help"], capture_output=True, text=True, check=False)  # noqa: S603
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.spec("trap-network-annotations", "edit", "preserve")
+@pytest.mark.parametrize("shared", [False, True], ids=["trap-network", "shared-empty-annots"])
+@pytest.mark.parametrize("operation", ["prepare-full", "prepare-incremental", "sign-incremental"])
+def test_implicit_signature_widget_preserves_page_annotation_relationships(
+    pki: Pki, operation: str, *, shared: bool
+) -> None:
+    source = prepress_source()
+    if shared:
+        with pikepdf.open(io.BytesIO(source)) as pdf:
+            annots = pdf.make_indirect(pikepdf.Array())
+            for page in pdf.pages[:2]:
+                page.Annots = annots
+            baseline = io.BytesIO()
+            pdf.save(baseline)
+            source = baseline.getvalue()
+    with pyropdf.open(source) as doc:
+        if operation == "sign-incremental":
+            output = doc.sign("Press", _pem_signer(pki))
+            [status] = _statuses(pki, output)
+            _assert_whole_file(status)
+        else:
+            doc.prepare_signature("Press")
+            output = doc.to_bytes(incremental=operation == "prepare-incremental")
+    if operation.endswith("incremental"):
+        assert output.startswith(source)
+    with pikepdf.open(io.BytesIO(output)) as pdf:
+        assert not pdf.check_pdf_syntax()
+        page, other = pdf.pages[:2]
+        if shared:
+            [widget] = page.Annots
+            assert list(other.Annots) == []
+            assert other.Annots.is_indirect
+        else:
+            mark, watermark, widget, trap = page.Annots
+            assert [mark.Subtype, watermark.Subtype, trap.Subtype] == ["/PrinterMark", "/Watermark", "/TrapNet"]
+        assert widget.Subtype == "/Widget"
+        assert widget.P.objgen == page.objgen
+        assert widget.objgen == pdf.Root.AcroForm.Fields[0].objgen
+        assert pdf.Root.AcroForm.SigFlags == (3 if operation == "sign-incremental" else 1)
 
 
 def _blank_pdf(version: str) -> bytes:
@@ -569,3 +627,244 @@ def test_a_tampered_signature_does_not_validate(pki: Pki) -> None:
     except SignatureValidationError:
         return
     assert not all(status.intact for status in statuses)
+
+
+# ISO/TS 32002:2022 Tables 3 and 4. Each pair is exercised in both directions.
+PDF_SIGNATURE_CASES = [
+    (curve, digest)
+    for curve, digests in {
+        "p256": ("sha256", "sha3_256"),
+        "p384": ("sha384", "sha3_384"),
+        "p521": ("sha512", "sha3_512"),
+        "bp256": ("sha256", "sha384", "sha512", "sha3_256", "sha3_384", "sha3_512"),
+        "bp384": ("sha384", "sha512", "sha3_384", "sha3_512"),
+        "bp512": ("sha512", "sha3_512"),
+        "ed25519": ("sha512",),
+        "ed448": ("shake256",),
+    }.items()
+    for digest in digests
+]
+
+
+def _extended_signer(pki: Pki, curve: str, digest: str) -> Signer:
+    key, certificate = pki.signers[curve]
+    if curve in ("p256", "p384"):
+        pem = key.private_bytes(PEM, PKCS8, serialization.NoEncryption())
+        return Signer.from_pem(pem, certificate.public_bytes(PEM) + pki.root.public_bytes(PEM), digest_algorithm=digest)
+    if curve in ("ed448", "ed25519"):
+        callback = key.sign
+    else:
+        algorithm = getattr(hashes, digest.upper())()
+
+        def callback(data: bytes) -> bytes:
+            return key.sign(data, ec.ECDSA(algorithm))
+
+    return Signer.callback(
+        [certificate.public_bytes(DER), pki.root.public_bytes(DER)], callback, digest_algorithm=digest
+    )
+
+
+@pytest.mark.spec("sha3-hashes", "create", "edit", "preserve")
+@pytest.mark.spec("ecc-signatures", "create", "edit", "preserve")
+@pytest.mark.parametrize(("curve", "digest"), PDF_SIGNATURE_CASES)
+def test_pdf_signature_profile_creation_and_preservation(pki: Pki, curve: str, digest: str) -> None:
+    doc = _document()
+    doc.prepare_signature("Approval")
+    previous = doc.to_bytes(incremental=True)
+    doc = pyropdf.open(previous)
+    signer = _extended_signer(pki, curve, digest)
+    assert signer.digest_algorithm == digest
+    signed = doc.sign("Approval", signer)
+    assert signed.startswith(previous)
+    reader = PdfFileReader(io.BytesIO(signed))
+    ext = reader.root.get("/Extensions", {}).get("/ISO_", [])
+    levels = {int(item["/ExtensionLevel"]) for item in ext}
+    if digest.startswith("sha3_") or digest == "shake256":
+        assert 32001 in levels
+    if curve not in ("p256", "p384") or digest.startswith("sha3_"):
+        assert 32002 in levels
+    for item in ext:
+        assert item["/BaseVersion"] == "/2.0"
+        assert item["/ExtensionRevision"] == ":2022"
+    [status] = _statuses(pki, signed)
+    _assert_whole_file(status)
+    later = doc.sign("Second", signer)
+    assert later.startswith(signed)
+    assert [item.intact and item.valid for item in _statuses(pki, later)] == [True, True]
+    assert len(PdfFileReader(io.BytesIO(later)).root.get("/Extensions", {}).get("/ISO_", [])) == len(levels)
+
+
+@pytest.mark.parametrize(
+    ("curve", "digest"),
+    [("p256", "sha3_512"), ("bp384", "sha256"), ("ed25519", "shake256"), ("ed448", "sha512"), ("p384", "sha1")],
+)
+def test_pdf_signature_profile_refuses_incompatible_digest(pki: Pki, curve: str, digest: str) -> None:
+    _, cert = pki.signers[curve]
+    with pytest.raises(ValueError, match="not a permitted PDF signature digest"):
+        Signer.callback([cert.public_bytes(DER)], lambda _: b"", digest_algorithm=digest)
+
+
+def test_mandatory_digest_seed_refuses_before_signing(pki: Pki) -> None:
+    doc = _document()
+    doc.prepare_signature("Approval")
+    doc.form["Approval"].obj["SV"] = {"Ff": 64, "DigestMethod": [pyropdf.Name("SHA3-256")]}
+    before = doc.to_bytes(incremental=True)
+    with pytest.raises(ValueError, match="DigestMethod"):
+        doc.sign("Approval", _pem_signer(pki))
+    assert doc.to_bytes(incremental=True) == before
+
+
+@pytest.mark.parametrize("digest", ["sha3_256", "sha3_384", "sha3_512", "shake256"])
+def test_timestamp_with_iso_extension_hash(pki: Pki, digest: str) -> None:
+    from pyhanko.sign.validation import validate_pdf_timestamp  # noqa: PLC0415
+
+    doc = _document()
+    timestamped = doc.timestamp(_timestamper(pki), digest_algorithm=digest)
+    [embedded] = PdfFileReader(io.BytesIO(timestamped)).embedded_signatures
+    status = validate_pdf_timestamp(embedded, _context(pki))
+    assert status.intact
+    assert status.valid
+    [signature] = doc.signatures
+    report = signature.verify([pki.root.public_bytes(DER)])
+    assert report.timestamp_valid, report.problems
+
+
+@pytest.mark.parametrize(("curve", "digest"), [("p256", "sha3_256"), ("p384", "sha3_384"), ("bp512", "sha3_512")])
+def test_standard_digest_name_in_required_seed(pki: Pki, curve: str, digest: str) -> None:
+    doc = _document()
+    doc.prepare_signature("Approval")
+    seed_name = pyropdf.Name(digest.upper().replace("_", "-"))
+    doc.form["Approval"].obj["SV"] = {"Ff": 64, "DigestMethod": [seed_name]}
+    signed = doc.sign("Approval", _extended_signer(pki, curve, digest))
+    assert doc.form["Approval"].obj["SV"]["DigestMethod"][0] == seed_name
+    [report] = _statuses(pki, signed)
+    assert report.intact
+    assert report.valid
+
+
+@pytest.mark.parametrize(("digest", "signature_oid"), [("sha3_256", 14), ("sha3_384", 15), ("sha3_512", 16)])
+def test_rsa_sha3_callbacks_use_rfc9688_identifiers(pki: Pki, digest: str, signature_oid: int) -> None:
+    key, cert = pki.signers["rsa"]
+    algorithm = getattr(hashes, digest.upper())()
+    signer = Signer.callback(
+        [cert.public_bytes(DER), pki.root.public_bytes(DER)],
+        lambda data: key.sign(data, padding.PKCS1v15(), algorithm),
+        digest_algorithm=digest,
+    )
+    doc = _document()
+    signed = doc.sign("Approval", signer)
+    embedded = PdfFileReader(io.BytesIO(signed)).embedded_signatures[0]
+    info = embedded.signer_info
+    assert info["signature_algorithm"]["algorithm"].dotted == f"2.16.840.1.101.3.4.3.{signature_oid}"
+    assert info["signature_algorithm"]["parameters"].dump() == b"\x05\x00"
+    assert info["digest_algorithm"]["parameters"].dump() == b""
+    # asn1crypto 1.5.1 does not name RFC 9688 RSA signature OIDs. Check the
+    # CMS wire values and both hashes with the independent OpenSSL backend.
+    raw = cms.CMSAttributes(info["signed_attrs"]).dump()
+    public = cert.public_key()
+    assert isinstance(public, rsa.RSAPublicKey)
+    public.verify(info["signature"].native, raw, padding.PKCS1v15(), algorithm)
+    digestor = hashes.Hash(algorithm)
+    _, first, second, length = embedded.byte_range
+    digestor.update(signed[:first])
+    digestor.update(signed[second : second + length])
+    assert (
+        next(a for a in info["signed_attrs"] if a["type"].native == "message_digest")["values"][0].native
+        == digestor.finalize()
+    )
+    assert doc.signatures[0].verify([pki.root.public_bytes(DER)])
+
+
+@pytest.mark.parametrize("container", ["pem", "pkcs12"])
+@pytest.mark.parametrize(("curve", "digest"), PDF_SIGNATURE_CASES)
+def test_local_key_containers_sign_each_profile(pki: Pki, curve: str, digest: str, container: str) -> None:
+    key, cert = pki.signers[curve]
+    password = b"test private key password"
+    protection = serialization.BestAvailableEncryption(password)
+    if container == "pem":
+        signer = Signer.from_pem(
+            key.private_bytes(PEM, PKCS8, protection),
+            cert.public_bytes(PEM) + pki.root.public_bytes(PEM),
+            password=password,
+            digest_algorithm=digest,
+        )
+    else:
+        encoded = pkcs12.serialize_key_and_certificates(b"Signer", key, cert, [pki.root], protection)
+        signer = Signer.from_pkcs12(encoded, password.decode(), digest_algorithm=digest)
+    assert signer.certificates[0] == cert.public_bytes(DER)
+    assert signer.digest_algorithm == digest
+    signed = _document().sign("Approval", signer)
+    [status] = _statuses(pki, signed)
+    _assert_whole_file(status)
+
+
+def test_extended_pem_key_must_match_first_certificate(pki: Pki) -> None:
+    key, _ = pki.signers["ed448"]
+    _, other = pki.signers["p521"]
+    with pytest.raises(ValueError, match="public key"):
+        Signer.from_pem(key.private_bytes(PEM, PKCS8, serialization.NoEncryption()), other.public_bytes(PEM))
+
+
+def test_iso_declarations_preserve_indirect_extensions_and_legacy_entry(pki: Pki) -> None:
+    doc = _document()
+    existing = doc.objects.add(
+        {"BaseVersion": pyropdf.Name("2.0"), "ExtensionLevel": 32003, "ExtensionRevision": ":2023"}
+    )
+    extensions = doc.objects.add(
+        {"ISO_": doc.objects[existing], "ADBE": {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": 3}}
+    )
+    doc.trailer["Root"]["Extensions"] = doc.objects[extensions]
+    doc.sign("Approval", _extended_signer(pki, "ed448", "shake256"))
+    updated = doc.trailer["Root"]["Extensions"]
+    assert updated.xref == extensions
+    assert updated["ISO_"][0].xref == existing
+    assert [item["ExtensionLevel"] for item in updated["ISO_"]] == [32003, 32001, 32002]
+    assert updated["ADBE"]["ExtensionLevel"] == 3
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["no-extensions", "existing-extensions"])
+def test_algorithm_promotion_preserves_pre_pdf20_pades_declarations(pki: Pki, *, existing: bool) -> None:
+    with pyropdf.open(_blank_pdf("1.7")) as doc:
+        if existing:
+            doc.catalog["Extensions"] = {
+                key: {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": level, "XXNote": b"keep"}
+                for key, level in (("ESIC", 1), ("ADBE", 3))
+            }
+        original = doc.to_bytes(incremental=True)
+    with pyropdf.open(original) as doc:
+        signed = doc.sign("Approval", _extended_signer(pki, "ed448", "shake256"))
+    assert signed.startswith(original)
+    _assert_whole_file(_statuses(pki, signed)[0])
+    with pikepdf.open(io.BytesIO(signed)) as pdf:
+        assert pdf.Root.Version == pikepdf.Name("/2.0")
+        extensions = pdf.Root.Extensions
+        assert {entry.ExtensionLevel for entry in extensions.ISO_} == {32001, 32002}
+        if existing:
+            assert extensions.ESIC.ExtensionLevel == 1
+            assert extensions.ADBE.ExtensionLevel == 3
+            assert bytes(extensions.ESIC.XXNote) == bytes(extensions.ADBE.XXNote) == b"keep"
+        else:
+            assert "/ESIC" not in extensions
+            assert "/ADBE" not in extensions
+
+
+def test_sha3_does_not_add_digest_method_to_signature_references(pki: Pki) -> None:
+    doc = _document()
+    doc.sign(
+        "Approval",
+        _extended_signer(pki, "p256", "sha3_256"),
+        doc_mdp=pyropdf.DocMdpPermission.FORM_FILLING_AND_SIGNATURES,
+    )
+    [reference] = doc.form["Approval"].obj["V"]["Reference"]
+    assert reference["TransformMethod"] == "DocMDP"
+    assert "DigestMethod" not in reference
+    assert "DigestMethod" not in reference["TransformParams"]
+
+
+@pytest.mark.parametrize(("curve", "digest"), [("ed25519", "sha512"), ("ed448", "shake256")])
+def test_seed_allows_the_digest_fixed_by_the_signature_mechanism(pki: Pki, curve: str, digest: str) -> None:
+    doc = _document()
+    doc.prepare_signature("Approval")
+    doc.form["Approval"].obj["SV"] = {"Ff": 64, "DigestMethod": [pyropdf.Name("SHA3-384")]}
+    doc.sign("Approval", _extended_signer(pki, curve, digest))
+    assert doc.signatures[0].verify([pki.root.public_bytes(DER)])

@@ -22,7 +22,7 @@ operation runs with the GIL released: the operation then refuses with
 cannot be undone, so a document whose token is cancelled refuses every
 later operation too; open it again with another token to go on.
 
-### `CancellationToken.cancel`
+### `cancel`
 
 ```python
 CancellationToken.cancel()
@@ -30,7 +30,7 @@ CancellationToken.cancel()
 
 Cancels every operation whose limits carry this token.
 
-### `CancellationToken.cancelled`
+### `cancelled`
 
 ```python
 CancellationToken.cancelled: bool
@@ -90,7 +90,7 @@ pyropdf polls the budget. A call into hayro can run past that deadline.
 For documents from outside your application, see
 [Reading a PDF in a worker](../limits.md#reading-a-pdf-in-a-worker).
 
-### `DocumentLimits.web`
+### `web`
 
 ```python
 DocumentLimits.web() -> DocumentLimits
@@ -138,7 +138,7 @@ LIMIT_CODES = {
     'content_operation_count': "Content holds more operations than the call's `max_operations`, or `Page.operations` reads more than 1,048,576.",
     'content_stream_size': "A page's content streams, decoded and joined, are larger than 64 MiB when `Page.operations` reads them.",
     'content_input_size': "The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that `Canvas`, `Page.operations`, `Page.clean_contents`, `Page.replace_text`, `Page.recolor`, `Document.recolor`, `Document.rewrite_images`, or `Document.sanitize` parses or writes is larger than 64 MiB.",
-    'content_element_count': '`Page.content`, `Page.paths`, or `Page.images` reads more glyphs, path and clip segments, dash lengths, and items than `max_elements` (or `Document.subset_fonts` counts more than 262,144 elements), `Canvas` holds more than 1,048,576 path points or gradient stops or repeats a gradient more than 4,096 cycles, or `Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image.',
+    'content_element_count': '`Page.content`, `Page.paths`, or `Page.images` reads more glyphs, path and clip segments, dash lengths, and items than `max_elements` (or `Document.subset_fonts` counts more than 262,144 elements), `Canvas` holds more than 1,048,576 path points or gradient stops or repeats a gradient more than 4,096 cycles, `Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image, or `Document.image_for_output` reads an image with more than 4,096 alternate entries.',
     'text_glyph_count': "`Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the call's `max_glyphs`.",
     'text_size': "The UTF-8 of a page's glyphs, of the text that `Page.text` or `Document.text` returns, or of the strings of the records that `Page.words` or `Page.layout` returns, is larger than the call's `max_size`.",
     'search_input_size': 'The text that `Page.search` looks for is longer than 4,096 bytes in UTF-8.',
@@ -182,7 +182,7 @@ LIMIT_CODES = {
     'text_line_count': "The text that a form field's appearance draws, or that `Canvas.text`, `Canvas.textbox`, or `Font.text_height` lays out, takes more than 4,096 lines.",
     'text_input_size': 'The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of UTF-8.',
     'shaped_glyph_count': 'Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit.',
-    'font_input_size': 'The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB.',
+    'font_input_size': 'The font that `Font.from_file` or `Font.from_bytes` loads, or the Type 1 program that `Document.subset_fonts` reads, is larger than 64 MiB.',
     'page_fonts_tree': '`Page.fonts` follows more than 64 `/Parent` links when looking up inherited page resources.',
     'page_fonts_entries': "`Page.fonts` visits more than 65,536 `/Font` and `/XObject` entries across the page's resources and its Form XObjects.",
     'page_fonts_forms': "`Page.fonts` reaches more than 4,096 Form XObjects from the page's resources.",
@@ -201,7 +201,7 @@ LIMIT_CODES = {
     'page_label_ranges': "The document's `/PageLabels` number tree holds more than 4,096 `/Nums` pairs.",
     'page_label_text_size': "The prefixes and style names of the document's `/PageLabels` number tree are longer than 1 MiB in UTF-8 together.",
     'page_label_input_size': 'The prefixes that setting `Document.page_labels` writes are longer than 1 MiB in UTF-8 together.',
-    'optional_content_count': "The document's `/OCGs`, `/Configs`, or an optional-content configuration array holds, or `Layers.add` or `LayerMembership` would give it, more than 4,096 entries.",
+    'optional_content_count': 'A document group list, membership group list, or optional-content configuration array holds more than 4,096 entries, or `Layers.add` or `LayerMembership` would exceed that limit. A usage lookup counts its application entries and the group entries of applications for the requested event together.',
     'optional_content_expression': '`Layers.visible` evaluates a `/VE` visibility expression deeper than 32 levels or with more than 4,096 operands.',
     'sanitize_action_chain': '`Document.sanitize` follows more than 256 actions along a `/Next` action chain when checking for JavaScript.',
     'sanitize_forms': '`Document.sanitize` reaches more than 4,096 Form XObjects and appearance streams while removing hidden text.',
@@ -325,7 +325,7 @@ class LimitError(PdfError)
 
 A refusal by a limit, whose `code` names the limit.
 
-### `LimitError.code`
+### `code`
 
 ```python
 LimitError.code: str

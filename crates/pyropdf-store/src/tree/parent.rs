@@ -18,6 +18,7 @@ struct AncestorFrame {
     dict: Dict,
     kids: Array,
     kids_array_object: Option<Reference>,
+    kids_dirty: bool,
 }
 
 struct LeafFrame {
@@ -68,6 +69,7 @@ fn walk_right_spine<'b>(
                                 dict: cur_dict,
                                 kids,
                                 kids_array_object: kids_arr_ref,
+                                kids_dirty: true,
                             })?;
                             return Ok((
                                 spine,
@@ -87,6 +89,7 @@ fn walk_right_spine<'b>(
                             dict: cur_dict,
                             kids,
                             kids_array_object: kids_arr_ref,
+                            kids_dirty: false,
                         })?;
                         cur_object = Some(child_ref);
                         cur_dict = child_dict;
@@ -108,6 +111,7 @@ fn walk_right_spine<'b>(
                             dict: cur_dict,
                             kids,
                             kids_array_object: kids_arr_ref,
+                            kids_dirty: true,
                         })?;
                         cur_object = Some(child_ref);
                         cur_dict = child_dict;
@@ -449,6 +453,13 @@ fn append_on_spine(
             );
         }
         if spine.is_empty() {
+            // Avoid emitting an invalid hybrid node if a malformed root held an empty /Kids.
+            if matches!(
+                resolve_in(transaction.version(), leaf.dict.get("Kids"), budget)?,
+                Some(Value::Array(kids)) if kids.is_empty()
+            ) {
+                leaf.dict.remove("Kids");
+            }
             return write_tree_root(transaction, root_dict, leaf.object, leaf.dict, budget);
         }
         let leaf_ref = leaf
@@ -458,6 +469,16 @@ fn append_on_spine(
 
         for (idx, mut anc) in spine.into_vec().into_iter().enumerate().rev() {
             budget.poll()?;
+            let mut must_write = anc.kids_dirty;
+            if anc.kids_dirty {
+                write_kids_on_node(
+                    transaction,
+                    &mut anc.dict,
+                    anc.kids_array_object,
+                    anc.kids.clone(),
+                    budget,
+                )?;
+            }
             if idx > 0 || anc.dict.get("Limits").is_some() {
                 let anc_low = leftmost_key(
                     transaction.version(),
@@ -471,13 +492,14 @@ fn append_on_spine(
                     Value::Integer(anc_low),
                     Value::Integer(last_added_key),
                 );
+                must_write = true;
+            }
+            if must_write || (idx == 0 && anc.object.is_none()) {
                 if idx == 0 {
                     write_tree_root(transaction, root_dict, anc.object, anc.dict, budget)?;
                 } else if let Some(anc_ref) = anc.object {
                     transaction.write(anc_ref.number(), &Value::Dict(anc.dict), budget)?;
                 }
-            } else if idx == 0 && anc.object.is_none() {
-                write_tree_root(transaction, root_dict, None, anc.dict, budget)?;
             }
         }
         return Ok(());
@@ -642,19 +664,30 @@ fn append_on_spine(
         )?;
 
         if extra_children.is_empty() {
+            let mut must_write = anc.kids_dirty;
+            if anc.kids_dirty {
+                write_kids_on_node(
+                    transaction,
+                    &mut anc.dict,
+                    anc.kids_array_object,
+                    anc.kids,
+                    budget,
+                )?;
+            }
             if idx > 0 || anc.dict.get("Limits").is_some() {
                 insert_limits(
                     &mut anc.dict,
                     Value::Integer(anc_low),
                     Value::Integer(last_added_key),
                 );
+                must_write = true;
+            }
+            if must_write || (idx == 0 && anc.object.is_none()) {
                 if idx == 0 {
                     write_tree_root(transaction, root_dict, anc.object, anc.dict, budget)?;
                 } else if let Some(anc_ref) = anc.object {
                     transaction.write(anc_ref.number(), &Value::Dict(anc.dict), budget)?;
                 }
-            } else if idx == 0 && anc.object.is_none() {
-                write_tree_root(transaction, root_dict, None, anc.dict, budget)?;
             }
             continue;
         }

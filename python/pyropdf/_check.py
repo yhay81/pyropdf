@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pyropdf import _core
-from pyropdf._objects import Array, Dictionary, _catalog, _trailer
+from pyropdf._archival_colour import archival_colour
+from pyropdf._objects import Array, Dictionary, Name, Stream, String, _catalog, _trailer
+from pyropdf._print_profiles import hierarchy_problem, icc_problem
 from pyropdf._profiles import profiles
 
 if TYPE_CHECKING:
@@ -81,20 +83,21 @@ def _defect(claim: str, xref: int | None, path: str, spec: str, message: str) ->
     )
 
 
-def _pdfa_defects(document: Document, claim: str, catalog: Dictionary) -> list[StructuralDefect]:
+def _pdfa_defects(document: Document, claim: str, catalog: Dictionary) -> tuple[list[StructuralDefect], bool]:
     """Return the document-level PDF/A rules that ``document`` breaks."""
     out = []
     if "Encrypt" in _trailer(document):
         out.append(_defect(claim, None, "Encrypt", "ISO 19005 6.1.3", f"{claim} forbids encryption"))
-    intents = catalog.get("OutputIntents")
-    entries = list(intents) if isinstance(intents, Array) else []
-    if not any(isinstance(entry, Dictionary) and entry.get("S") == "GTS_PDFA1" for entry in entries):
-        message = f"{claim} needs a /GTS_PDFA1 output intent"
-        out.append(_defect(claim, catalog.xref, "OutputIntents", "ISO 19005 6.2.2", message))
+    device, unsolved = archival_colour(document, claim)
+    if device is not None:
+        space = {"gray": "DeviceGray", "rgb": "DeviceRGB", "cmyk": "DeviceCMYK"}[device]
+        message = f"{claim} uses {space} without an applicable colour characterization"
+        spec = "ISO 19005-1 6.2.3" if claim.startswith("PDF/A-1") else "ISO 19005 6.2.4.3"
+        out.append(_defect(claim, catalog.xref, "OutputIntents", spec, message))
     script = _javascript(catalog)
     if script is not None:
         out.append(_defect(claim, catalog.xref, script, "ISO 19005 6.6.1", f"{claim} forbids JavaScript"))
-    return out
+    return out, unsolved
 
 
 def _pdfua_defects(claim: str, catalog: Dictionary) -> list[StructuralDefect]:
@@ -124,16 +127,81 @@ def _pdfua_defects(claim: str, catalog: Dictionary) -> list[StructuralDefect]:
     ]
 
 
-def _profile_defects(document: Document) -> list[StructuralDefect]:
-    """Return the document-level rules of the claimed PDF/A and PDF/UA profiles that it breaks."""
+def _pdfx4_defects(catalog: Dictionary) -> list[StructuralDefect]:
+    """Check the single embedded PDF/X output intent shared by PDF/X-4 and PDF/VT-1."""
+    spec = "ISO 15930-7:2010 6.4.2.1"
+    intents = catalog.get("OutputIntents")
+    match = None
+    if isinstance(intents, Array):
+        for index, entry in enumerate(intents):
+            if isinstance(entry, Dictionary) and entry.get("S") == Name("GTS_PDFX"):
+                if match is not None:
+                    message = "PDF/X-4 requires exactly one /GTS_PDFX output intent"
+                    return [_defect("PDF/X-4", catalog.xref, "OutputIntents", spec, message)]
+                match = (index, entry)
+    if match is None:
+        return [_defect("PDF/X-4", catalog.xref, "OutputIntents", spec, "PDF/X-4 requires a /GTS_PDFX output intent")]
+
+    index, entry = match
+    rules = (
+        (isinstance(entry.get("OutputConditionIdentifier"), String), "OutputConditionIdentifier", "a text identifier"),
+        (isinstance(entry.get("DestOutputProfile"), Stream), "DestOutputProfile", "an embedded output profile stream"),
+        ("DestOutputProfileRef" not in entry, "DestOutputProfileRef", "an output intent without an external profile"),
+    )
+    out = [
+        _defect("PDF/X-4", catalog.xref, f"OutputIntents/{index}/{key}", spec, f"PDF/X-4 requires {needed}")
+        for holds, key, needed in rules
+        if not holds
+    ]
+    profile = entry.get("DestOutputProfile")
+    if isinstance(profile, Stream) and (problem := icc_problem(profile)) is not None:
+        path, message = problem
+        out.append(
+            StructuralDefect(
+                xref=profile.xref,
+                path=path,
+                clause="PDF/X-4/OutputIntents",
+                spec=spec,
+                kind="profile",
+                message=message,
+            )
+        )
+    return out
+
+
+def _pdfvt1_defects(document: Document, pdfx: str | None, catalog: Dictionary) -> list[StructuralDefect]:
+    """Check the PDF/X-4 basis, hierarchy root, and page-to-leaf links of a PDF/VT-1 file."""
+    claim = "PDF/VT-1"
+    structure = "ISO 16612-2:2010 6.5"
+    out = []
+    if pdfx != "PDF/X-4":
+        message = "PDF/VT-1 requires a PDF/X-4 claim"
+        out.append(_defect(claim, catalog.xref, "Metadata", "ISO 16612-2:2010 6.2.1", message))
+    root = catalog.get("DPartRoot")
+    if not isinstance(root, Dictionary) or isinstance(root, Stream) or root.xref is None:
+        out.append(_defect(claim, catalog.xref, "DPartRoot", structure, "PDF/VT-1 requires an indirect /DPartRoot"))
+        return out
+    if problem := hierarchy_problem(document, root):
+        xref, path, message = problem
+        out.append(_defect(claim, xref, path, structure, message))
+    return out
+
+
+def _profile_defects(document: Document) -> tuple[list[StructuralDefect], bool]:
+    """Return the structural rules of the declared profiles that the document breaks."""
     claimed = profiles(document)
     catalog = _catalog(document)
     out = []
+    unsolved = False
     if claimed.pdfa is not None:
-        out += _pdfa_defects(document, claimed.pdfa, catalog)
+        out, unsolved = _pdfa_defects(document, claimed.pdfa, catalog)
     if claimed.pdfua is not None:
         out += _pdfua_defects(claimed.pdfua, catalog)
-    return out
+    if claimed.pdfx == "PDF/X-4" or claimed.pdfvt == "PDF/VT-1":
+        out += _pdfx4_defects(catalog)
+    if claimed.pdfvt == "PDF/VT-1":
+        out += _pdfvt1_defects(document, claimed.pdfx, catalog)
+    return out, unsolved
 
 
 def structural_check(document: Document) -> StructuralReport:
@@ -143,11 +211,12 @@ def structural_check(document: Document) -> StructuralReport:
         StructuralDefect(xref=xref, path=path, clause=clause, spec=spec, kind=kind, message=message)
         for xref, path, clause, spec, kind, message in defects
     ]
-    findings.extend(_profile_defects(document))
+    profile_findings, unsolved = _profile_defects(document)
+    findings.extend(profile_findings)
     return StructuralReport(
         defects=tuple(findings),
         version=version,
         objects=objects,
-        unchecked=unchecked,
+        unchecked=unchecked + int(unsolved),
         truncated=truncated,
     )

@@ -406,4 +406,84 @@ fn tree_helpers_enforce_depth_limit_cycles_and_memory_budget() {
     let mut tx = cyclic_doc.begin();
     let assigned = append_parent_tree_entry(&mut tx, Value::Array(Array::new()), &budget).unwrap();
     assert_eq!(assigned, 0);
+    let committed = tx.commit(&budget).unwrap();
+    // Root 10 points to intermediate 11, whose persisted /Kids now includes the new leaf.
+    let node11_obj = committed.get(11, &budget).unwrap().unwrap();
+    let Value::Dict(node11_dict) = node11_obj.value().as_ref() else {
+        panic!("expected intermediate dict 11");
+    };
+    let Value::Array(kids11) = node11_dict.get("Kids").expect("node 11 /Kids must persist") else {
+        panic!("expected /Kids array on node 11");
+    };
+    let Some(Value::Reference(leaf_ref)) = kids11.get(1) else {
+        panic!("expected persisted leaf ref in node 11 /Kids: {node11_dict:?}");
+    };
+    let leaf_obj = committed.get(leaf_ref.number(), &budget).unwrap().unwrap();
+    let Value::Dict(leaf_dict) = leaf_obj.value().as_ref() else {
+        panic!("expected leaf dict");
+    };
+    let Some(Value::Array(nums)) = leaf_dict.get("Nums") else {
+        panic!("expected /Nums in persisted leaf: {leaf_dict:?}");
+    };
+    assert_eq!(nums.len(), 2);
+    assert_eq!(nums.get(0), Some(&Value::Integer(0)));
+
+    // Direct /Kids leaf is promoted to an indirect object and persisted on non-overflow append.
+    let mut direct_base = MemoryBase::new(
+        [
+            (Name::from("Root"), Value::Reference(Reference::new(1, 0))),
+            (Name::from("Size"), Value::Integer(15)),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    direct_base.insert(
+        Reference::new(1, 0),
+        Bytes::new(&b"<</Type/Catalog/Pages 2 0 R/StructTreeRoot 4 0 R>>"[..]),
+    );
+    direct_base.insert(
+        Reference::new(2, 0),
+        Bytes::new(&b"<</Type/Pages/Kids[3 0 R]/Count 1>>"[..]),
+    );
+    direct_base.insert(
+        Reference::new(3, 0),
+        Bytes::new(&b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]>>"[..]),
+    );
+    direct_base.insert(
+        Reference::new(4, 0),
+        Bytes::new(&b"<</Type/StructTreeRoot/K[]/ParentTree 10 0 R>>"[..]),
+    );
+    direct_base.insert(
+        Reference::new(10, 0),
+        Bytes::new(&b"<</Kids[<</Nums[0 5 0 R]>>]>>"[..]),
+    );
+    direct_base.insert(Reference::new(5, 0), Bytes::new(&b"<</S/P>>"[..]));
+    direct_base.insert(Reference::new(6, 0), Bytes::new(&b"<</S/Span>>"[..]));
+    let direct_doc = Document::new(Arc::new(direct_base), None);
+    let mut tx = direct_doc.begin();
+    let assigned =
+        append_parent_tree_entry(&mut tx, Value::Reference(Reference::new(6, 0)), &budget).unwrap();
+    assert_eq!(assigned, 1);
+    let committed = tx.commit(&budget).unwrap();
+    let root_obj = committed.get(10, &budget).unwrap().unwrap();
+    let Value::Dict(root_dict) = root_obj.value().as_ref() else {
+        panic!("expected ParentTree dict");
+    };
+    let Value::Array(kids) = root_dict.get("Kids").expect("Kids must persist") else {
+        panic!("expected /Kids array");
+    };
+    let Some(Value::Reference(leaf_ref)) = kids.get(0) else {
+        panic!("direct /Kids leaf must be promoted and written back as an indirect ref");
+    };
+    let leaf_obj = committed.get(leaf_ref.number(), &budget).unwrap().unwrap();
+    let Value::Dict(leaf_dict) = leaf_obj.value().as_ref() else {
+        panic!("expected leaf dict");
+    };
+    let Some(Value::Array(nums)) = leaf_dict.get("Nums") else {
+        panic!("expected /Nums in persisted leaf: {leaf_dict:?}");
+    };
+    assert_eq!(nums.len(), 4);
+    assert_eq!(nums.get(0), Some(&Value::Integer(0)));
+    assert_eq!(nums.get(2), Some(&Value::Integer(1)));
+    assert_eq!(nums.get(3), Some(&Value::Reference(Reference::new(6, 0))));
 }

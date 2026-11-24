@@ -11,13 +11,14 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMappin
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, TypeAlias
 
-from pyropdf import _core
+from pyropdf import _core, _form_xfa
 from pyropdf._annotations import _BORDER_STYLE_NAMES, Border, _opaque_color, _rect
 from pyropdf._canvas import _cache
 from pyropdf._content import Color
-from pyropdf._errors import LimitError, PdfError, StaleObjectError
+from pyropdf._errors import LimitError, MalformedPdfError, PdfError, StaleObjectError
 from pyropdf._fonts import Font, add_glyphs, embedded_font
 from pyropdf._geometry import Rect
+from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, Stream, String
 from pyropdf._page import Page
 from pyropdf._widgets import Widget
@@ -557,6 +558,88 @@ class Field:
         ]
 
     @property
+    def rich_text(self) -> str | None:
+        """Read or replace the terminal text field's XHTML value (``/RV``).
+
+        Writing XHTML derives the plain ``/V`` and regenerates the widgets' appearances.
+        An existing stream remains a stream. Assigning ``None`` removes the XHTML and
+        leaves the plain value available. A plain value assignment also clears stale XHTML.
+        """
+        return self._rich_entry("RV")
+
+    @rich_text.setter
+    def rich_text(self, value: str | None) -> None:
+        self._set_rich_entry("RV", value)
+
+    @property
+    def default_style(self) -> str | None:
+        """Read or replace the field's default inline CSS (``/DS``); ``None`` removes it."""
+        return self._rich_entry("DS")
+
+    @default_style.setter
+    def default_style(self, value: str | None) -> None:
+        self._set_rich_entry("DS", value)
+
+    def _rich_entry(self, key: str) -> str | None:
+        if self.type != FieldType.TEXT:
+            msg = f"/{key} applies only to a text field"
+            raise TypeError(msg)
+        raw = self.obj.get(key)
+        if raw is None:
+            return None
+        if isinstance(raw, String):
+            if len(raw) > _MAX_FIELD_INPUT_SIZE:
+                code = "form_field_input_size"
+                msg = f"/{key} exceeds the field input limit"
+                raise LimitError(code, msg)
+            return raw.text
+        if key == "RV" and isinstance(raw, Stream):
+            data = raw.read(max_size=_MAX_FIELD_INPUT_SIZE)
+            if data.startswith((b"\xfe\xff", b"\xff\xfe")):
+                encoding = "utf-16"
+            elif data.startswith(b"<\0"):
+                encoding = "utf-16-le"
+            elif data.startswith(b"\0<"):
+                encoding = "utf-16-be"
+            else:
+                encoding = "utf-8-sig"
+            try:
+                return data.decode(encoding)
+            except UnicodeError as exc:
+                msg = "invalid rich text stream encoding"
+                raise MalformedPdfError(msg) from exc
+        msg = f"invalid rich text field /{key}"
+        raise MalformedPdfError(msg)
+
+    def _set_rich_entry(self, key: str, value: str | None) -> None:
+        if value is not None:
+            _field_text(value, key)
+        document = self._document
+        with document.transaction("edit rich text field"):
+            _, kind, flags, _ = self._read()
+            if kind != "text":
+                msg = f"/{key} applies only to a text field"
+                raise TypeError(msg)
+            obj = self.obj
+            old = obj.get(key)
+            if value is None:
+                if key not in obj:
+                    return
+                del obj[key]
+            else:
+                _require_version(document, document.catalog, (1, 5))
+                if key == "RV":
+                    flags |= int(FieldFlags.RICH_TEXT)
+                if key == "RV" and isinstance(old, Stream):
+                    attrs = {k: old[k] for k in old if k not in ("Length", "Filter", "DecodeParms")}
+                    obj[key] = document.objects[document.objects.add_stream(value.encode("utf-8"), attrs)]
+                else:
+                    obj[key] = value
+            self._edit(flags=flags)
+            if isinstance(old, Stream) and old.xref is not None:
+                _core.object_free_nominated(self._core(), [old.xref])
+
+    @property
     def value(self) -> str | None:
         """Return the field's value.
 
@@ -677,6 +760,34 @@ class Form(Mapping[str, Field]):
             if not names or names[-1] != name:
                 names.append(name)
         return names
+
+    @property
+    def xfa_packet_names(self) -> tuple[str, ...]:
+        """Return the names of existing XFA packets in document order, including repeated names.
+
+        An XDP stream exposes its direct child element names. A packet array exposes
+        its stored names, including the opening and closing XDP wrapper packets.
+        """
+        return _form_xfa.names(self._document)
+
+    def xfa_packet(self, index: int) -> bytes:
+        """Return the original decoded XML bytes of an existing XFA packet by index."""
+        return _form_xfa.read_packet(self._document, index)
+
+    def replace_xfa_packet(self, index: int, data: bytes) -> None:
+        """Replace an existing XFA packet with XML bytes in the resource's encoding."""
+        if not isinstance(data, bytes):
+            msg = "XFA packet data must be bytes"
+            raise TypeError(msg)
+        _form_xfa.edit_packet(self._document, index, data)
+
+    def remove_xfa_packet(self, index: int) -> None:
+        """Remove an existing packet if the remaining document is a well-formed XDP resource."""
+        _form_xfa.edit_packet(self._document, index, None)
+
+    def remove_xfa(self) -> bool:
+        """Remove the existing XFA resource, returning whether one was present."""
+        return _form_xfa.remove(self._document)
 
     def repair_radio_groups(self) -> int:
         """Gather top-level radio buttons that share a name under one field, and return how many groups it made.
@@ -972,13 +1083,16 @@ class TextField(_FieldSpecification):
     to ``/DA`` in the page's user space), in ``text_color``, aligned by
     ``align``. ``flags`` adds :class:`FieldFlags` such as ``MULTILINE``,
     ``PASSWORD``, ``COMB``, ``REQUIRED``, or ``READ_ONLY``; ``max_length``
-    bounds the text.
+    bounds the text. ``rich_text`` supplies XHTML and derives the plain value;
+    ``default_style`` supplies the default CSS declaration.
     """
 
     _kind: ClassVar[str] = "text"
     name: str
     rect: Rect
     value: str | None
+    rich_text: str | None
+    default_style: str | None
     default_value: str | None
     max_length: int | None
     font: Font | None
@@ -997,6 +1111,8 @@ class TextField(_FieldSpecification):
         rect: Sequence[float],
         *,
         value: str | None = None,
+        rich_text: str | None = None,
+        default_style: str | None = None,
         default_value: str | None = None,
         max_length: int | None = None,
         font: Font | None = None,
@@ -1012,7 +1128,15 @@ class TextField(_FieldSpecification):
         """Validate the specification."""
         self._common(name, rect, label, flags, border, border_color, background_color)
         self._text_style(font, font_size, text_color, align)
-        for text, field in ((value, "value"), (default_value, "default_value")):
+        if rich_text is not None and value is not None:
+            msg = "rich_text supplies its own plain field value"
+            raise ValueError(msg)
+        for text, field in (
+            (value, "value"),
+            (default_value, "default_value"),
+            (rich_text, "rich_text"),
+            (default_style, "default_style"),
+        ):
             if text is not None:
                 _field_text(text, field)
         if max_length is not None and (
@@ -1020,6 +1144,8 @@ class TextField(_FieldSpecification):
         ):
             msg = f"max_length is an int from 0 to {_MAX_FIELD_LENGTH}: {max_length!r}"
             raise ValueError(msg)
+        object.__setattr__(self, "rich_text", rich_text)
+        object.__setattr__(self, "default_style", default_style)
         object.__setattr__(self, "value", value)
         object.__setattr__(self, "default_value", default_value)
         object.__setattr__(self, "max_length", max_length)

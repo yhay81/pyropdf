@@ -46,7 +46,7 @@ content; a gradient has at most 1,048,576 stops, and repeats at most
 ends are one point or whose circles are one circle, raises `ValueError`
 when it is drawn.
 
-### `Canvas.__enter__`
+### `__enter__`
 
 ```python
 Canvas.__enter__() -> Self
@@ -54,7 +54,7 @@ Canvas.__enter__() -> Self
 
 Open the canvas's transaction and return the canvas; leaving the block writes it.
 
-### `Canvas.__exit__`
+### `__exit__`
 
 ```python
 Canvas.__exit__(
@@ -66,90 +66,90 @@ Canvas.__exit__(
 
 Write the drawing after a normal exit; discard it after an exception.
 
-### `Canvas.path`
+### `path`
 
 ```python
 Canvas.path(
     path: PathInput,
     *,
-    fill: Color | Gradient | ShadingPattern | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | ShadingPattern | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     fill_rule: FillRule = FillRule.NONZERO,
 )
 ```
 
 Draw a path: a `PathBuilder`, a `Path` item's geometry, or segments.
 
-### `Canvas.line`
+### `line`
 
 ```python
 Canvas.line(
     start: Sequence[float],
     end: Sequence[float],
     *,
-    stroke: Stroke | Color | Gradient | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
 Draw a straight line, with a 1-point black stroke by default.
 
-### `Canvas.rect`
+### `rect`
 
 ```python
 Canvas.rect(
     rect: Sequence[float],
     *,
     radius: float = 0,
-    fill: Color | Gradient | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
 Draw a rectangle, with corners rounded by `radius` points.
 
-### `Canvas.circle`
+### `circle`
 
 ```python
 Canvas.circle(
     center: Sequence[float],
     radius: float,
     *,
-    fill: Color | Gradient | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
 Draw a circle.
 
-### `Canvas.ellipse`
+### `ellipse`
 
 ```python
 Canvas.ellipse(
     rect: Sequence[float],
     *,
-    fill: Color | Gradient | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
 Draw the ellipse inside `rect`.
 
-### `Canvas.polygon`
+### `polygon`
 
 ```python
 Canvas.polygon(
     points: Iterable[Sequence[float]],
     *,
     close: bool = True,
-    fill: Color | Gradient | None = None,
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     fill_rule: FillRule = FillRule.NONZERO,
 )
 ```
 
 Draw straight segments through `points`, closed unless `close` is false.
 
-### `Canvas.bezier`
+### `bezier`
 
 ```python
 Canvas.bezier(
@@ -158,13 +158,13 @@ Canvas.bezier(
     control2: Sequence[float],
     end: Sequence[float],
     *,
-    stroke: Stroke | Color | Gradient | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
 )
 ```
 
 Draw a cubic Bézier curve, with a 1-point black stroke by default.
 
-### `Canvas.text`
+### `text`
 
 ```python
 Canvas.text(
@@ -173,8 +173,8 @@ Canvas.text(
     *,
     font: Font | None = None,
     size: float = 11,
-    fill: Color | Gradient | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     line_height: float | None = None,
     rotate: int = 0,
     max_text_size: int | None = 1048576,
@@ -202,7 +202,7 @@ in the text's colour, which takes the fill. Any other colour glyph with no
 outline in an OpenType face raises `PdfError`, naming the character,
 the glyph, and the paint; see `Font`.
 
-### `Canvas.textbox`
+### `textbox`
 
 ```python
 Canvas.textbox(
@@ -213,8 +213,8 @@ Canvas.textbox(
     size: float = 11,
     align: Literal['left', 'center', 'right', 'justify'] = 'left',
     line_height: float | None = None,
-    fill: Color | Gradient | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
-    stroke: Stroke | Color | Gradient | None = None,
+    fill: Color | Gradient | PatternPaint | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     rotate: int = 0,
     max_text_size: int | None = 1048576,
 ) -> TextFit
@@ -239,7 +239,7 @@ up and stack from the left edge. The font, paint, and size options
 follow `text`, and text that fits refuses as there: a colour
 glyph with no outline raises `PdfError`.
 
-### `Canvas.image`
+### `image`
 
 ```python
 Canvas.image(
@@ -263,12 +263,12 @@ and `keep_aspect` centres it in `rect` at its aspect ratio. The
 same encoded image drawn several times, by any canvas of the
 document, is stored once.
 
-### `Canvas.page`
+### `page`
 
 ```python
 Canvas.page(
     rect: Sequence[float],
-    source: Page,
+    source: Page | Content,
     *,
     clip: Sequence[float] | None = None,
     keep_aspect: bool = True,
@@ -291,9 +291,11 @@ degrees, and `keep_aspect` centres it in `rect` at its aspect
 ratio after the turn. A page placed several times, by any canvas of
 this document, is stored once while its content, its geometry and
 every object its resources reach are unchanged.
-Annotations and form fields of the source page are not drawn.
+A live page omits annotations and form fields. A complete `Content`
+uses the geometry, resources and annotation setting captured by
+`Page.content`. Visible captured appearances become vector content.
 
-### `Canvas.draw`
+### `draw`
 
 ```python
 Canvas.draw(item: Path | Image | TextRun)
@@ -325,7 +327,7 @@ other composite encodings, a singular glyph transform, replacement
 text, a soft mask, or a pattern paint raise `ValueError`. A closed source raises
 `DocumentClosedError`. These refusals draw nothing.
 
-### `Canvas.clip`
+### `clip`
 
 ```python
 Canvas.clip(
@@ -337,7 +339,7 @@ Canvas.clip(
 
 Clip what the block draws to a path.
 
-### `Canvas.transform`
+### `transform`
 
 ```python
 Canvas.transform(matrix: Matrix | Sequence[float]) -> AbstractContextManager[None]
@@ -345,15 +347,41 @@ Canvas.transform(matrix: Matrix | Sequence[float]) -> AbstractContextManager[Non
 
 Transform what the block draws by `matrix`, applied before the enclosing transforms.
 
-### `Canvas.opacity`
+### `opacity`
 
 ```python
-Canvas.opacity(alpha: float) -> AbstractContextManager[None]
+Canvas.opacity(
+    alpha: float,
+    *,
+    isolated: bool = False,
+    knockout: bool = False,
+    colorspace: Literal['gray', 'rgb', 'cmyk'] | None = None,
+) -> AbstractContextManager[None]
 ```
 
-Composite what the block draws as one group, then draw it at `alpha`.
+Composite the block as a transparency group and draw it at `alpha`.
 
-### `Canvas.blend`
+An isolated group starts with a transparent backdrop. In a knockout group
+each element replaces earlier elements in its shape. An isolated group
+may declare its device blending colour space. Other groups inherit it.
+
+### `soft_mask`
+
+```python
+Canvas.soft_mask(
+    group: Stream,
+    *,
+    subtype: SoftMaskType | str = SoftMaskType.ALPHA,
+) -> AbstractContextManager[None]
+```
+
+Mask the block with an existing transparency Form XObject from this document.
+
+Alpha uses the group's computed opacity. Luminosity uses its colour and
+requires an explicit group blending space. The mask applies inside the
+block and the enclosing graphics state resumes afterwards.
+
+### `blend`
 
 ```python
 Canvas.blend(mode: BlendMode | str) -> AbstractContextManager[None]
@@ -361,7 +389,7 @@ Canvas.blend(mode: BlendMode | str) -> AbstractContextManager[None]
 
 Blend what the block draws with the content below it.
 
-### `Canvas.layer`
+### `layer`
 
 ```python
 Canvas.layer(layer: Layer | LayerMembership) -> AbstractContextManager[None]
@@ -379,7 +407,7 @@ content group when the canvas commits raises
 document's `Document.layers`: a manually constructed or
 unpickled value has no document of origin and cannot be drawn.
 
-### `Canvas.tag`
+### `tag`
 
 ```python
 Canvas.tag(
@@ -436,7 +464,7 @@ The constructors (`rect`, `ellipse`, `circle`,
 `polygon`, `sector`, `zigzag`, and `wave`) each
 add complete subpaths.
 
-### `PathBuilder.segments`
+### `segments`
 
 ```python
 PathBuilder.segments: tuple[Segment, ...]
@@ -444,7 +472,7 @@ PathBuilder.segments: tuple[Segment, ...]
 
 The segments added so far.
 
-### `PathBuilder.current_point`
+### `current_point`
 
 ```python
 PathBuilder.current_point: Point | None
@@ -452,7 +480,7 @@ PathBuilder.current_point: Point | None
 
 The end of the last segment, or `None` before the first.
 
-### `PathBuilder.move_to`
+### `move_to`
 
 ```python
 PathBuilder.move_to(point: Sequence[float]) -> Self
@@ -460,7 +488,7 @@ PathBuilder.move_to(point: Sequence[float]) -> Self
 
 Start a subpath at `point`.
 
-### `PathBuilder.line_to`
+### `line_to`
 
 ```python
 PathBuilder.line_to(point: Sequence[float]) -> Self
@@ -468,7 +496,7 @@ PathBuilder.line_to(point: Sequence[float]) -> Self
 
 Add a line to `point`.
 
-### `PathBuilder.curve_to`
+### `curve_to`
 
 ```python
 PathBuilder.curve_to(
@@ -480,7 +508,7 @@ PathBuilder.curve_to(
 
 Add a cubic Bézier curve to `point`.
 
-### `PathBuilder.quad_to`
+### `quad_to`
 
 ```python
 PathBuilder.quad_to(control: Sequence[float], point: Sequence[float]) -> Self
@@ -488,7 +516,7 @@ PathBuilder.quad_to(control: Sequence[float], point: Sequence[float]) -> Self
 
 Add a quadratic Bézier curve to `point`, as the equal cubic curve.
 
-### `PathBuilder.close`
+### `close`
 
 ```python
 PathBuilder.close() -> Self
@@ -496,7 +524,7 @@ PathBuilder.close() -> Self
 
 Close the current subpath with a line to its start.
 
-### `PathBuilder.rect`
+### `rect`
 
 ```python
 PathBuilder.rect(rect: Sequence[float], *, radius: float = 0) -> Self
@@ -504,7 +532,7 @@ PathBuilder.rect(rect: Sequence[float], *, radius: float = 0) -> Self
 
 Add a rectangle, with corners rounded by `radius` points.
 
-### `PathBuilder.ellipse`
+### `ellipse`
 
 ```python
 PathBuilder.ellipse(rect: Sequence[float]) -> Self
@@ -512,7 +540,7 @@ PathBuilder.ellipse(rect: Sequence[float]) -> Self
 
 Add the ellipse inside `rect`.
 
-### `PathBuilder.circle`
+### `circle`
 
 ```python
 PathBuilder.circle(center: Sequence[float], radius: float) -> Self
@@ -520,7 +548,7 @@ PathBuilder.circle(center: Sequence[float], radius: float) -> Self
 
 Add a circle.
 
-### `PathBuilder.polygon`
+### `polygon`
 
 ```python
 PathBuilder.polygon(points: Iterable[Sequence[float]], *, close: bool = True) -> Self
@@ -528,7 +556,7 @@ PathBuilder.polygon(points: Iterable[Sequence[float]], *, close: bool = True) ->
 
 Add straight segments through `points`, closed unless `close` is false.
 
-### `PathBuilder.sector`
+### `sector`
 
 ```python
 PathBuilder.sector(
@@ -546,7 +574,7 @@ Add an arc of `sweep` degrees around `center`, from `start` degrees.
 Angles run clockwise on the page from the positive x axis. With
 `pie`, lines join the arc's ends to the centre, which closes it.
 
-### `PathBuilder.zigzag`
+### `zigzag`
 
 ```python
 PathBuilder.zigzag(
@@ -559,7 +587,7 @@ PathBuilder.zigzag(
 
 Add a zigzag line from `start` to `end` whose teeth are `breadth` points wide.
 
-### `PathBuilder.wave`
+### `wave`
 
 ```python
 PathBuilder.wave(
@@ -607,7 +635,7 @@ How text fits a `Canvas.textbox`: the height left below its last line.
 A negative `spare_height` is the shortfall of text that did not
 fit, and was not drawn.
 
-### `TextFit.fits`
+### `fits`
 
 ```python
 TextFit.fits: bool

@@ -83,7 +83,7 @@ pub fn open_revision(
             if complete && !locked {
                 check_every_object(&doc.current(), &budget).map_err(|e| store_error(&e))?;
             }
-            Ok(_Document::new(doc, limits))
+            Ok(_Document::new_checked(doc, limits, complete))
         })
     })?
 }

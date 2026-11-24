@@ -110,7 +110,11 @@ pub fn import(
         walk.numbers.insert(*page, new, 0)?;
         added.try_push(new)?;
     }
-    let mut graft = graft::Graft::plan(transaction, &mut walk, budget)?;
+    let mut graft = if pages.is_empty() {
+        None
+    } else {
+        graft::Graft::plan(transaction, &mut walk, budget)?
+    };
     for ((_, mut dict), &new) in pages.into_iter().zip(added.iter()) {
         walk.dict(transaction, &mut dict, 1)?;
         #[expect(
@@ -372,11 +376,12 @@ impl Walk<'_, '_> {
                 Value::Stream(stream) => Some(stream.dict()),
                 _ => None,
             };
-            if dict.is_some_and(crate::annotations::is_media_annotation)
-                && self.listed.binary_search(&reference).is_err()
+            if self.listed.binary_search(&reference).is_err()
+                && let Some(dict) = dict
+                && crate::annotations::is_linked_annotation(self.source, dict, self.budget)?
             {
                 return Err(Error::malformed(
-                    "the import selection omits a referenced multimedia annotation",
+                    "the import selection omits a referenced multimedia or print annotation",
                 ));
             }
             if let Some(Value::Name(kind)) = dict.and_then(|dict| dict.get("Type"))
@@ -405,6 +410,7 @@ impl Walk<'_, '_> {
                     if let Some(Value::Integer(value)) = dict.get_mut(key) {
                         *value = value
                             .checked_add(shift)
+                            .filter(|shifted| *shifted >= 0)
                             .ok_or_else(|| LimitExceeded::new(LimitCode::StructureTreeCount))?;
                     }
                 }
@@ -892,5 +898,190 @@ mod tests {
         assert_eq!(transaction.version().slots().count(), 0);
         drop(transaction);
         assert!(Arc::ptr_eq(&doc.current(), &original));
+    }
+
+    fn base_with_root(root: Reference, objects: &[(u32, u16, &[u8])]) -> Arc<MemoryBase> {
+        let mut trailer = Dict::new();
+        trailer.insert(Name::from("Root"), Value::Reference(root));
+        let mut base = MemoryBase::new(trailer);
+        for &(number, generation, bytes) in objects {
+            base.insert(
+                Reference::new(number, generation),
+                Bytes::new(bytes.to_vec()),
+            );
+        }
+        Arc::new(base)
+    }
+
+    #[test]
+    fn empty_page_import_does_not_graft_structure_or_fail_on_unlisted_media() {
+        let source_doc = Document::new(
+            base_with_root(
+                Reference::new(1, 0),
+                &[
+                    (1, 0, b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R >>"),
+                    (2, 0, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+                    (3, 0, b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [7 0 R] >>"),
+                    (4, 0, b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /Length 1 >>\nstream\nA\nendstream"),
+                    (5, 0, b"<< /Type /StructTreeRoot /K [6 0 R] /ParentTree << /Nums [0 6 0 R] >> /ParentTreeNextKey 1 >>"),
+                    (6, 0, b"<< /Type /StructElem /S /P /P 5 0 R /K << /Type /OBJR /Obj 7 0 R >> >>"),
+                    (7, 0, b"<< /Type /Annot /Subtype /Screen /Rect [0 0 10 10] >>"),
+                ],
+            ),
+            None,
+        );
+        let target_doc = Document::new(
+            base_with_root(
+                Reference::new(1, 0),
+                &[
+                    (1, 0, b"<< /Type /Catalog /Pages 2 0 R >>"),
+                    (2, 0, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+                    (
+                        3,
+                        0,
+                        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+                    ),
+                ],
+            ),
+            None,
+        );
+        let budget = Budget::default();
+        let mut transaction = target_doc.begin();
+        let source = source_doc.current();
+        let image = Reference::new(4, 0);
+        let copied = import(
+            &mut transaction,
+            &source,
+            Vec::new(),
+            &[],
+            Along {
+                objects: &[image],
+                ..Along::default()
+            },
+            Reference::new(2, 0),
+            &budget,
+        )
+        .unwrap();
+        assert_eq!(copied.objects.len(), 1);
+        assert!(matches!(copied.objects[0], Value::Reference(_)));
+        let committed = transaction.commit(&budget).unwrap();
+        let catalog = object(&committed, Reference::new(1, 0));
+        assert!(dict(&catalog).get("StructTreeRoot").is_none());
+    }
+
+    #[test]
+    fn graft_resolves_indirect_roles_isolates_class_refs_visits_direct_kids_and_keeps_keys_nonnegative()
+     {
+        // Source has:
+        // - indirect /RoleMap entry (/Custom 10 0 R -> /P)
+        // - conflicting indirect /RoleMap entry (/Conflict 11 0 R -> /H1)
+        // - /ClassMap /C1 pointing to 12 0 R (same number as receiving /ClassMap /C1, different dict)
+        // - direct structure element in /K with /S /Conflict and /C /C1, containing an indirect child with /S /Custom
+        // - sparse /ParentTree starting at 5 while imported page carries /StructParents 0
+        let source_doc = Document::new(
+            base_with_root(
+                Reference::new(1, 0),
+                &[
+                    (1, 0, b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R >>"),
+                    (2, 0, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+                    (3, 0, b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /StructParents 0 >>"),
+                    (5, 0, b"<< /Type /StructTreeRoot /K [<< /Type /StructElem /S /Conflict /C /C1 /K [6 0 R] >>] /ParentTree << /Nums [5 6 0 R] >> /ParentTreeNextKey 6 /RoleMap << /Custom 10 0 R /Conflict 11 0 R >> /ClassMap << /C1 12 0 R >> >>"),
+                    (6, 0, b"<< /Type /StructElem /S /Custom /C /C1 /P 5 0 R /Pg 3 0 R >>"),
+                    (10, 0, b"/P"),
+                    (11, 0, b"/H1"),
+                    (12, 0, b"<< /O /Layout /TextAlign /End >>"),
+                ],
+            ),
+            None,
+        );
+        // Receiving has /ParentTreeNextKey 2 (smaller than source smallest 5),
+        // /RoleMap /Conflict -> /Span (differs from source /H1),
+        // and /ClassMap /C1 12 0 R with DIFFERENT contents than source's 12 0 R.
+        let target_doc = Document::new(
+            base_with_root(
+                Reference::new(1, 0),
+                &[
+                    (1, 0, b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R >>"),
+                    (2, 0, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+                    (3, 0, b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /StructParents 0 >>"),
+                    (5, 0, b"<< /Type /StructTreeRoot /K [6 0 R] /ParentTree << /Nums [0 6 0 R 1 6 0 R] >> /ParentTreeNextKey 2 /RoleMap << /Conflict /Span >> /ClassMap << /C1 12 0 R >> >>"),
+                    (6, 0, b"<< /Type /StructElem /S /P /P 5 0 R /Pg 3 0 R >>"),
+                    (12, 0, b"<< /O /Layout /TextAlign /Start >>"),
+                ],
+            ),
+            None,
+        );
+        let budget = Budget::default();
+        let source = source_doc.current();
+        let Value::Dict(page_dict) = object(&source, Reference::new(3, 0)) else {
+            panic!("expected page dict");
+        };
+        let mut transaction = target_doc.begin();
+        let imported = import(
+            &mut transaction,
+            &source,
+            vec![(Reference::new(3, 0), page_dict)],
+            &[],
+            Along::default(),
+            Reference::new(2, 0),
+            &budget,
+        )
+        .unwrap();
+        let committed = transaction.commit(&budget).unwrap();
+
+        // Imported page's /StructParents must stay non-negative (shifted by +2, not -3).
+        let new_page = object(&committed, imported.pages[0]);
+        assert_eq!(
+            dict(&new_page).get("StructParents"),
+            Some(&Value::Integer(2))
+        );
+
+        let struct_root = object(&committed, Reference::new(5, 0));
+        let root_dict = dict(&struct_root);
+
+        // /RoleMap /Custom must be a direct Name(/P), never raw source ref 10 0 R.
+        let Some(Value::Dict(role_map)) = root_dict.get("RoleMap") else {
+            panic!("expected RoleMap");
+        };
+        assert_eq!(role_map.get("Custom"), Some(&Value::Name(Name::from("P"))));
+
+        // /ClassMap must keep receiving /C1 (12 0 R) untouched AND add renamed /C1_1 for source's class.
+        let Some(Value::Dict(class_map)) = root_dict.get("ClassMap") else {
+            panic!("expected ClassMap");
+        };
+        assert_eq!(
+            class_map.get("C1"),
+            Some(&Value::Reference(Reference::new(12, 0)))
+        );
+        let Some(Value::Reference(copied_class)) = class_map.get("C1_1") else {
+            panic!("expected renamed C1_1 in ClassMap, got {class_map:?}");
+        };
+        assert_ne!(copied_class.number(), 12);
+        let copied_class_val = object(&committed, *copied_class);
+        assert_eq!(
+            dict(&copied_class_val).get("TextAlign"),
+            Some(&Value::Name(Name::from("End")))
+        );
+
+        // Direct kid in /K had conflicting /S /Conflict resolved to /H1 and /C renamed to /C1_1.
+        let Some(Value::Array(kids)) = root_dict.get("K") else {
+            panic!("expected /K array");
+        };
+        let Some(Value::Dict(direct_kid)) = kids.as_slice().get(1) else {
+            panic!("expected grafted direct kid in /K: {kids:?}");
+        };
+        assert_eq!(direct_kid.get("S"), Some(&Value::Name(Name::from("H1"))));
+        assert_eq!(direct_kid.get("C"), Some(&Value::Name(Name::from("C1_1"))));
+
+        // Indirect child under direct kid also had /C renamed to /C1_1.
+        let Some(Value::Array(inner_kids)) = direct_kid.get("K") else {
+            panic!("expected inner /K array");
+        };
+        let child_ref = reference(&inner_kids.as_slice()[0]);
+        let child = object(&committed, child_ref);
+        assert_eq!(
+            dict(&child).get("C"),
+            Some(&Value::Name(Name::from("C1_1")))
+        );
     }
 }

@@ -9,7 +9,7 @@ description: What pyropdf is good at, what it does not do yet, and how it compar
 
 - **Edits you can trust.** Every edit is a version: transactions undo
   themselves when they fail, `doc.history` undoes and redoes, and
-  `doc.changes` says which signatures and PDF/A or PDF/UA claims a save
+  `doc.changes()` says which signatures and PDF/A or PDF/UA claims a save
   would break before you save.
 - **Saves that keep what you did not touch.** An incremental save appends
   only the changed objects, so signatures over the original bytes stay
@@ -39,19 +39,19 @@ description: What pyropdf is good at, what it does not do yet, and how it compar
 | Undo and atomic transactions | yes | journalling | no | no |
 
 PyMuPDF is the most complete of these and the one pyropdf measures itself
-against. On the 15-document real-world corpus on Apple Silicon macOS (with
-rendered pixels read via `bytes(pixmap)`), as the ratio of pyropdf's time to
-PyMuPDF's (lower is faster):
+against. On the 15-document real-world corpus on Apple Silicon macOS (pyropdf
+0.3.1 vs PyMuPDF 2.1, reading raw samples on render), as the ratio of
+pyropdf's time to PyMuPDF's (lower is faster):
 
 | Operation | pyropdf / PyMuPDF |
 | --- | ---: |
-| Open | 0.21 |
-| Text | 0.80 |
-| Words | 0.79 |
-| Search | 1.19 |
-| Render 72 dpi | 2.03 |
-| Render 144 dpi | 2.34 |
-| Full save | 0.15 |
+| Open | 0.13 |
+| Text | 0.50 |
+| Words | 0.41 |
+| Search | 0.37 |
+| Render 72 dpi | 1.77 |
+| Render 144 dpi | 1.82 |
+| Full save | 0.16 |
 
 The method, the raw timings, and the feature-by-feature comparison are in
 [evidence/pymupdf-comparison](https://github.com/yhay81/pyropdf/tree/main/evidence/pymupdf-comparison).

@@ -22,7 +22,7 @@ use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::tree::{append_parent_tree, number_tree_pairs};
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
-use pyropdf_store::version::{Object, Transaction};
+use pyropdf_store::version::{Object, Transaction, Version};
 use pyropdf_store::{Error, LimitExceeded, Result};
 
 /// Hash table keys, values, slack, and rehash space share the operation budget.
@@ -128,8 +128,9 @@ const MAX_ELEMENT_DEPTH: usize = 256;
 const MAX_TREE_NODES: usize = 1 << 20;
 /// The field entries that a merged field and widget dictionary moves to a
 /// new parent when the field gains a second widget.
-const FIELD_KEYS: [&str; 11] = [
-    "FT", "T", "TU", "TM", "Ff", "V", "DV", "Opt", "MaxLen", "TI", "I",
+const FIELD_KEYS: [&str; 17] = [
+    "FT", "T", "TU", "TM", "Ff", "V", "DV", "Opt", "MaxLen", "TI", "I", "DA", "Q", "RV", "DS",
+    "Lock", "SV",
 ];
 /// The triggers of `/AA` that belong to the field rather than its widget.
 const FIELD_TRIGGERS: [&str; 4] = ["K", "F", "V", "C"];
@@ -147,6 +148,7 @@ type Keys = (Option<i64>, Vec<(Reference, i64)>);
 pub struct Copies<'b> {
     budget: &'b Budget,
     structure: Option<Structure<'b>>,
+    split_fields: HashMap<Reference, Reference>,
 }
 
 impl<'b> Copies<'b> {
@@ -155,6 +157,7 @@ impl<'b> Copies<'b> {
         Ok(Self {
             budget,
             structure: Structure::read(transaction, budget)?,
+            split_fields: HashMap::new(),
         })
     }
 
@@ -181,12 +184,15 @@ impl<'b> Copies<'b> {
             )
             .into());
         }
+        // Snapshot before allocations so dangling /Annots references cannot resolve to
+        // objects allocated while copying earlier entries of the same page.
+        let before = transaction.snapshot();
         // Reserve all annotation identities before following links, including forward
         // references to widgets whose fields will gain a new child.
         let mut numbers: HashMap<Reference, Reference> = HashMap::new();
         for entry in entries.iter() {
             if let Value::Reference(reference) = entry
-                && let Some((old, object)) = locate_reference(transaction, *reference, budget)?
+                && let Some((old, object)) = locate_reference_in(&before, *reference, budget)?
                 && matches!(&**object.value(), Value::Dict(_))
                 && !numbers.contains_key(&old)
             {
@@ -199,8 +205,25 @@ impl<'b> Copies<'b> {
         annots.try_reserve_exact(entries.len())?;
         let mut copied: BudgetVec<'_, Copied> = BudgetVec::new(budget);
         for entry in entries.iter() {
-            let (mut annotation, old) = match located(transaction, Some(entry), budget)? {
-                Some((Value::Dict(annotation), old)) => (annotation, old),
+            let (mut annotation, old) = match entry {
+                Value::Reference(reference) => {
+                    let Some((old, object)) = locate_reference_in(&before, *reference, budget)?
+                    else {
+                        annots.try_push(copy_for_edit(entry, budget)?)?;
+                        continue;
+                    };
+                    let Value::Dict(annotation) = copy_for_edit(object.value(), budget)? else {
+                        annots.try_push(copy_for_edit(entry, budget)?)?;
+                        continue;
+                    };
+                    (annotation, Some(old))
+                }
+                Value::Dict(_) => {
+                    let Value::Dict(annotation) = copy_for_edit(entry, budget)? else {
+                        unreachable!("matched direct annotation dictionary")
+                    };
+                    (annotation, None)
+                }
                 _ => {
                     annots.try_push(copy_for_edit(entry, budget)?)?;
                     continue;
@@ -208,7 +231,10 @@ impl<'b> Copies<'b> {
             };
             let new = match old {
                 Some(old) => {
-                    let new = numbers[&old];
+                    let Some(&new) = numbers.get(&old) else {
+                        annots.try_push(copy_for_edit(entry, budget)?)?;
+                        continue;
+                    };
                     if !try_insert_set(&mut written, old, budget)? {
                         annots.try_push(Value::Reference(new))?;
                         continue;
@@ -233,6 +259,9 @@ impl<'b> Copies<'b> {
                 // becomes a field with both widgets.
                 let merged = annotation.get("T").is_some() || annotation.get("Parent").is_none();
                 let field = if merged {
+                    for key in FIELD_KEYS {
+                        annotation.remove(key);
+                    }
                     old.ok_or_else(|| {
                         Error::malformed("a merged field/widget is not an indirect object")
                     })?
@@ -242,9 +271,6 @@ impl<'b> Copies<'b> {
                         _ => return Err(Error::malformed("a widget's /Parent is not a reference")),
                     }
                 };
-                for key in FIELD_KEYS {
-                    annotation.remove(key);
-                }
                 if let Some(mut actions) = actions_to_split(transaction, &annotation, budget)? {
                     for trigger in FIELD_TRIGGERS {
                         actions.remove(trigger);
@@ -261,7 +287,9 @@ impl<'b> Copies<'b> {
                 }
                 annotation.remove("Parent");
                 links.annotation(transaction, &mut annotation, copy)?;
-                join(transaction, field, new, annotation, budget)?;
+                if let Some((old, parent)) = join(transaction, field, new, annotation, budget)? {
+                    map_put(&mut self.split_fields, old, parent, budget)?;
+                }
             } else {
                 links.annotation(transaction, &mut annotation, copy)?;
                 transaction.write(new.number(), &Value::Dict(annotation), budget)?;
@@ -311,8 +339,14 @@ impl<'b> Copies<'b> {
         Ok(copy)
     }
 
-    /// Writes the parent tree entries and the kids that the copies add.
+    /// Retargets the calculation order once for all newly split fields and
+    /// writes the parent tree entries and the kids that the copies add.
     pub fn finish(self, transaction: &mut Transaction) -> Result<()> {
+        if !self.split_fields.is_empty() {
+            edit_form(transaction, self.budget, |transaction, form| {
+                remap_calculations(transaction, form, &self.split_fields, self.budget)
+            })?;
+        }
         match self.structure {
             Some(structure) => structure.finish(transaction, self.budget),
             None => Ok(()),
@@ -701,7 +735,7 @@ fn join(
     new: Reference,
     mut widget: Dict,
     budget: &Budget,
-) -> Result<()> {
+) -> Result<Option<(Reference, Reference)>> {
     let Some((Value::Dict(old), Some(field))) =
         located(transaction, Some(&Value::Reference(field)), budget)?
     else {
@@ -722,7 +756,7 @@ fn join(
             if let Some(value) = old.get(key) {
                 #[expect(
                     clippy::disallowed_methods,
-                    reason = "the keys are FIELD_KEYS, so the parent gains 11 entries at most"
+                    reason = "the parent receives at most one entry per key in FIELD_KEYS"
                 )]
                 parent.insert(Name::from(key), copy_for_edit(value, budget)?);
             }
@@ -795,7 +829,7 @@ fn join(
     widget.insert(Name::from("Parent"), Value::Reference(parent));
     transaction.write(new.number(), &Value::Dict(widget), budget)?;
     let Some(mut dict) = dict_at(transaction, parent, budget)? else {
-        return Ok(());
+        return Ok(None);
     };
     editable(&dict)?;
     extend_entry(
@@ -807,7 +841,7 @@ fn join(
         budget,
     )?;
     transaction.write(parent.number(), &Value::Dict(dict), budget)?;
-    Ok(())
+    Ok((parent != field).then_some((field, parent)))
 }
 
 /// Puts field `new` where field `old` was: in the `/Kids` of `grand`, or
@@ -819,51 +853,82 @@ fn replace_node(
     new: Reference,
     budget: &Budget,
 ) -> Result<()> {
-    let (holder, key) = match grand {
-        Some(grand) => (grand, "Kids"),
-        None => {
-            let root = transaction.version().trailer().get("Root");
-            let Some((Value::Dict(mut catalog_dict), Some(catalog))) =
-                located(transaction, root, budget)?
-            else {
-                return Err(Error::malformed(
-                    "the catalog is not an indirect dictionary",
-                ));
-            };
-            let Some((Value::Dict(mut form), form_object)) =
-                located(transaction, catalog_dict.get("AcroForm"), budget)?
-            else {
-                return Err(Error::malformed("the form is not a dictionary"));
-            };
-            editable(&form)?;
-            if replaced(&mut form, "Fields", old, new, transaction, budget)? {
-                match form_object {
-                    Some(object) => {
-                        transaction.write(object.number(), &Value::Dict(form), budget)?;
-                    }
-                    None => {
-                        #[expect(
-                            clippy::disallowed_methods,
-                            reason = "the catalog already has an /AcroForm, which this replaces"
-                        )]
-                        catalog_dict.insert(Name::from("AcroForm"), Value::Dict(form));
-                        transaction.write(catalog.number(), &Value::Dict(catalog_dict), budget)?;
-                    }
-                }
-            }
-            return Ok(());
+    if let Some(grand) = grand {
+        let Some((Value::Dict(mut dict), Some(holder))) =
+            located(transaction, Some(&Value::Reference(grand)), budget)?
+        else {
+            return Err(Error::malformed("the parent field is not a dictionary"));
+        };
+        editable(&dict)?;
+        if replaced(&mut dict, "Kids", old, new, transaction, budget)? {
+            transaction.write(holder.number(), &Value::Dict(dict), budget)?;
         }
-    };
-    let Some((Value::Dict(mut dict), Some(holder))) =
-        located(transaction, Some(&Value::Reference(holder)), budget)?
-    else {
-        return Err(Error::malformed("the parent field is not a dictionary"));
-    };
-    editable(&dict)?;
-    if replaced(&mut dict, key, old, new, transaction, budget)? {
-        transaction.write(holder.number(), &Value::Dict(dict), budget)?;
+    } else if !edit_form(transaction, budget, |transaction, form| {
+        replaced(form, "Fields", old, new, transaction, budget)
+    })? {
+        return Err(Error::malformed("the form is not a dictionary"));
     }
     Ok(())
+}
+
+/// Returns whether the form exists. The edit reports whether a direct entry
+/// changed and its holder needs writing, as distinct from an indirect array.
+fn edit_form(
+    transaction: &mut Transaction,
+    budget: &Budget,
+    edit: impl FnOnce(&mut Transaction, &mut Dict) -> Result<bool>,
+) -> Result<bool> {
+    let root = transaction.version().trailer().get("Root");
+    let Some((Value::Dict(mut catalog_dict), Some(catalog))) = located(transaction, root, budget)?
+    else {
+        return Err(Error::malformed(
+            "the catalog is not an indirect dictionary",
+        ));
+    };
+    let Some((Value::Dict(mut form), form_object)) =
+        located(transaction, catalog_dict.get("AcroForm"), budget)?
+    else {
+        return Ok(false);
+    };
+    editable(&form)?;
+    if edit(transaction, &mut form)? {
+        if let Some(object) = form_object {
+            transaction.write(object.number(), &Value::Dict(form), budget)?;
+        } else {
+            *catalog_dict.get_mut("AcroForm").expect("the form exists") = Value::Dict(form);
+            transaction.write(catalog.number(), &Value::Dict(catalog_dict), budget)?;
+        }
+    }
+    Ok(true)
+}
+
+/// Only calculation slots for fields split by this copy change. The order
+/// may name the old field through a reference chain.
+fn remap_calculations(
+    transaction: &mut Transaction,
+    form: &mut Dict,
+    split: &HashMap<Reference, Reference>,
+    budget: &Budget,
+) -> Result<bool> {
+    let Some((Value::Array(mut order), object)) = located(transaction, form.get("CO"), budget)?
+    else {
+        return Ok(false);
+    };
+    let mut changed = false;
+    for entry in order.iter_mut() {
+        budget.poll()?;
+        if let Value::Reference(reference) = entry
+            && let Some((old, _)) = locate_reference(transaction, *reference, budget)?
+            && let Some(&new) = split.get(&old)
+        {
+            *entry = Value::Reference(new);
+            changed = true;
+        }
+    }
+    if !changed {
+        return Ok(false);
+    }
+    store_array(transaction, form, "CO", order, object, budget)
 }
 
 /// Replaces `old` with `new` in the array at `key` of `dict`, or appends
@@ -901,19 +966,24 @@ fn replaced(
         )));
     };
     swap(&mut array)?;
-    match object {
-        Some(object) => {
-            transaction.write(object.number(), &Value::Array(array), budget)?;
-            Ok(false)
-        }
-        None => {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "the dictionary already has the array at `key`, which this replaces"
-            )]
-            dict.insert(Name::from(key), Value::Array(array));
-            Ok(true)
-        }
+    store_array(transaction, dict, key, array, object, budget)
+}
+
+/// Returns true when the holder dictionary now contains the edited array.
+fn store_array(
+    transaction: &mut Transaction,
+    dict: &mut Dict,
+    key: &str,
+    array: Array,
+    object: Option<Reference>,
+    budget: &Budget,
+) -> Result<bool> {
+    if let Some(object) = object {
+        transaction.write(object.number(), &Value::Array(array), budget)?;
+        Ok(false)
+    } else {
+        *dict.get_mut(key).expect("the array entry exists") = Value::Array(array);
+        Ok(true)
     }
 }
 
@@ -986,13 +1056,20 @@ fn located(
 
 fn locate_reference(
     transaction: &Transaction,
+    reference: Reference,
+    budget: &Budget,
+) -> Result<Option<(Reference, Object)>> {
+    locate_reference_in(transaction.version(), reference, budget)
+}
+
+fn locate_reference_in(
+    version: &Version,
     mut reference: Reference,
     budget: &Budget,
 ) -> Result<Option<(Reference, Object)>> {
     for _ in 0..MAX_CHAIN {
         budget.poll()?;
-        let Some(object) = transaction
-            .version()
+        let Some(object) = version
             .get(reference.number(), budget)?
             .filter(|object| object.generation() == reference.generation())
         else {
@@ -1060,5 +1137,53 @@ mod tests {
         let budget = Budget::default();
         let value = Value::Reference(Reference::new(1, 0));
         assert!(resolve(&transaction, Some(&value), &budget).is_err());
+    }
+
+    #[test]
+    fn dangling_annotation_colliding_with_allocated_copy_does_not_panic() {
+        let mut trailer = Dict::new();
+        trailer.insert(Name::from("Root"), Value::Reference(Reference::new(1, 0)));
+        let mut base = MemoryBase::new(trailer);
+        // Next allocated numbers: 4 (page copy), 5 (copy of direct annotation).
+        // The dangling reference `5 0 R` in /Annots matches the newly allocated
+        // direct-annotation object number.
+        for (number, body) in [
+            (1, b"<< /Type /Catalog /Pages 2 0 R >>".as_slice()),
+            (2, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".as_slice()),
+            (
+                3,
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [<< /Type /Annot /Subtype /Text /Rect [0 0 10 10] >> 5 0 R] >>"
+                    .as_slice(),
+            ),
+        ] {
+            base.insert(Reference::new(number, 0), Bytes::new(body.to_vec()));
+        }
+        let document = Document::new(Arc::new(base), None);
+        let budget = Budget::default();
+        let mut transaction = document.begin();
+        let Value::Dict(page) = (**transaction
+            .version()
+            .get(3, &budget)
+            .unwrap()
+            .unwrap()
+            .value())
+        .clone() else {
+            panic!("expected page dict");
+        };
+        let mut copies = Copies::new(&transaction, &budget).unwrap();
+        let copied = copies
+            .copy(&mut transaction, Reference::new(3, 0), page)
+            .unwrap();
+        copies.finish(&mut transaction).unwrap();
+        let committed = transaction.commit(&budget).unwrap();
+        let copied_object = committed.get(copied.number(), &budget).unwrap().unwrap();
+        let Value::Dict(copied_dict) = copied_object.value().as_ref() else {
+            panic!("expected copied page dict");
+        };
+        let Some(Value::Array(annots)) = copied_dict.get("Annots") else {
+            panic!("expected /Annots array");
+        };
+        assert_eq!(annots.len(), 2);
+        assert_eq!(annots.as_slice()[1], Value::Reference(Reference::new(5, 0)));
     }
 }

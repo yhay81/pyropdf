@@ -313,3 +313,199 @@ fn floor_millis(duration: Duration) -> u64 {
 fn ceil_millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos().div_ceil(1_000_000)).unwrap_or(u64::MAX)
 }
+
+#[cfg(kani)]
+impl Budget {
+    /// Constant-initialized budget with no limits, avoiding the 90-entry
+    /// initialization loop of [`Budget::new`] inside bounded Kani harnesses.
+    pub(crate) fn kani_empty() -> Self {
+        Self {
+            limits: [None; CODES],
+            used: Arc::new([const { AtomicU64::new(0) }; CODES]),
+            deadline: None,
+            cancellation: Vec::new(),
+            tightened: [false; CODES],
+        }
+    }
+
+    /// Single-threaded stub for [`Budget::poll`] when no deadline,
+    /// cancellation token, or tightened view is active.
+    #[allow(dead_code, reason = "referenced by #[kani::stub] attributes")]
+    pub(crate) fn kani_stub_poll(&self) -> Result<(), LimitExceeded> {
+        Ok(())
+    }
+
+    /// Single-threaded stub for [`Budget::charge`] to avoid unwinding the
+    /// `compare_exchange_weak` CAS loop in harnesses verifying callers.
+    #[allow(dead_code, reason = "referenced by #[kani::stub] attributes")]
+    pub(crate) fn kani_stub_charge(
+        &self,
+        code: LimitCode,
+        amount: u64,
+    ) -> Result<(), LimitExceeded> {
+        self.kani_stub_add(code, amount)
+    }
+
+    /// Single-threaded stub for [`Budget::add`].
+    #[allow(dead_code, reason = "referenced by #[kani::stub] attributes")]
+    pub(crate) fn kani_stub_add(&self, code: LimitCode, amount: u64) -> Result<(), LimitExceeded> {
+        let meter = &self.used[code.index()];
+        let used = meter.load(Relaxed);
+        let Some(limit) = self.limit(code) else {
+            meter.store(used.saturating_add(amount), Relaxed);
+            return Ok(());
+        };
+        match used.checked_add(amount).filter(|&total| total <= limit) {
+            Some(total) => {
+                meter.store(total, Relaxed);
+                Ok(())
+            }
+            None => Err(LimitExceeded::over(
+                code,
+                limit,
+                used.saturating_add(amount),
+            )),
+        }
+    }
+
+    /// Single-threaded stub for [`Budget::release`].
+    #[allow(dead_code, reason = "referenced by #[kani::stub] attributes")]
+    pub(crate) fn kani_stub_release(&self, code: LimitCode, amount: u64) {
+        let meter = &self.used[code.index()];
+        let used = meter.load(Relaxed);
+        meter.store(used.saturating_sub(amount), Relaxed);
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verifies the real `AtomicU64::try_update`/`update` charge and release
+    /// arithmetic across all `u64` limits and amounts.
+    #[kani::proof]
+    #[kani::unwind(3)]
+    #[kani::stub(Budget::poll, Budget::kani_stub_poll)]
+    fn kani_budget_charge_never_exceeds_limit() {
+        let limit: u64 = kani::any();
+        let a: u64 = kani::any();
+        let b: u64 = kani::any();
+        let rel: u64 = kani::any();
+        let budget = Budget::kani_empty().with_limit(LimitCode::MemorySize, Some(limit));
+
+        let r1 = budget.charge(LimitCode::MemorySize, a);
+        assert_eq!(r1.is_ok(), a <= limit);
+        let after1 = budget.used(LimitCode::MemorySize);
+        assert!(after1 <= limit);
+        assert_eq!(after1, if r1.is_ok() { a } else { 0 });
+
+        budget.release(LimitCode::MemorySize, rel);
+        let after_rel = budget.used(LimitCode::MemorySize);
+        assert_eq!(after_rel, after1.saturating_sub(rel));
+
+        let r2 = budget.charge(LimitCode::MemorySize, b);
+        let fits = after_rel.checked_add(b).is_some_and(|t| t <= limit);
+        assert_eq!(r2.is_ok(), fits);
+        let after2 = budget.used(LimitCode::MemorySize);
+        assert!(after2 <= limit);
+        assert_eq!(after2, if fits { after_rel + b } else { after_rel });
+    }
+
+    /// Verifies `DecodeMeter::charge` obeys all three optional limits and
+    /// leaves state unchanged on refusal.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    #[kani::stub(Budget::poll, Budget::kani_stub_poll)]
+    #[kani::stub(Budget::add, Budget::kani_stub_add)]
+    fn kani_decode_meter_multi_limit() {
+        let stream_lim: Option<u64> = kani::any();
+        let page_lim: Option<u64> = kani::any();
+        let total_lim: Option<u64> = kani::any();
+        let is_page: bool = kani::any();
+        let c1: u64 = kani::any();
+        let c2: u64 = kani::any();
+
+        let budget = Budget::kani_empty()
+            .with_limit(LimitCode::DecompressedSize, stream_lim)
+            .with_limit(LimitCode::PageContentSize, page_lim)
+            .with_limit(LimitCode::TotalDecompressedSize, total_lim);
+        let kind = if is_page {
+            StreamKind::PageContent
+        } else {
+            StreamKind::Any
+        };
+        let mut meter = budget.decode(kind);
+
+        for chunk in [c1, c2] {
+            let prev_size = meter.size();
+            let prev_total = budget.used(LimitCode::TotalDecompressedSize);
+            let res = meter.charge(chunk);
+            if res.is_ok() {
+                if let Some(lim) = stream_lim {
+                    assert!(meter.size() <= lim);
+                }
+                if is_page && let Some(lim) = page_lim {
+                    assert!(meter.size() <= lim);
+                }
+                if let Some(lim) = total_lim {
+                    assert!(budget.used(LimitCode::TotalDecompressedSize) <= lim);
+                }
+            } else {
+                assert_eq!(meter.size(), prev_size);
+                assert_eq!(budget.used(LimitCode::TotalDecompressedSize), prev_total);
+            }
+        }
+    }
+
+    /// Verifies `BudgetVec::counting` obeys memory and element limits on all
+    /// operations and releases every charge when dropped.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    #[kani::stub(Budget::poll, Budget::kani_stub_poll)]
+    #[kani::stub(Budget::add, Budget::kani_stub_add)]
+    #[kani::stub(Budget::release, Budget::kani_stub_release)]
+    fn kani_budget_vec_charge_and_drop() {
+        let mem_limit: u64 = kani::any();
+        let count_limit: u64 = kani::any();
+        let budget = Budget::kani_empty()
+            .with_limit(LimitCode::MemorySize, Some(mem_limit))
+            .with_limit(LimitCode::ObjectCount, Some(count_limit));
+
+        {
+            let mut v: BudgetVec<'_, u32> = BudgetVec::counting(&budget, LimitCode::ObjectCount);
+            for _ in 0..3 {
+                let op: u8 = kani::any();
+                kani::assume(op < 5);
+                match op {
+                    0 => {
+                        let x: u32 = kani::any();
+                        let _ = v.try_push(x);
+                    }
+                    1 => {
+                        let add: usize = kani::any();
+                        kani::assume(add <= 4);
+                        let _ = v.try_reserve(add);
+                    }
+                    2 => {
+                        let add: usize = kani::any();
+                        kani::assume(add <= 4);
+                        let _ = v.try_reserve_exact(add);
+                    }
+                    3 => {
+                        let _ = v.pop();
+                    }
+                    _ => {
+                        let new_len: usize = kani::any();
+                        kani::assume(new_len <= 4);
+                        v.truncate(new_len);
+                    }
+                }
+                assert!(budget.used(LimitCode::MemorySize) <= mem_limit);
+                assert!(budget.used(LimitCode::ObjectCount) <= count_limit);
+                assert_eq!(budget.used(LimitCode::ObjectCount), v.len() as u64);
+            }
+        }
+        assert_eq!(budget.used(LimitCode::MemorySize), 0);
+        assert_eq!(budget.used(LimitCode::ObjectCount), 0);
+    }
+}

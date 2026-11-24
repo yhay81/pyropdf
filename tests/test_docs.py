@@ -112,6 +112,15 @@ def test_api_reference_examples_are_collected() -> None:
 def test_every_page_has_a_translation() -> None:
     names = {language: [page.name for page in pages] for language, pages in PAGES.items()}
     assert names["ja"] == names["en"]
+    for en_page, ja_page in zip(PAGES["en"], PAGES["ja"], strict=True):
+        en_no_code = FENCE.sub("", en_page.read_text(encoding="utf-8"))
+        ja_no_code = FENCE.sub("", ja_page.read_text(encoding="utf-8"))
+        en_h2 = len(re.findall(r"^## ", en_no_code, re.MULTILINE))
+        ja_h2 = len(re.findall(r"^## ", ja_no_code, re.MULTILINE))
+        assert ja_h2 == en_h2, f"{en_page.name}: H2 count en={en_h2} != ja={ja_h2}"
+        en_tables = len(re.findall(r"^\| ---", en_no_code, re.MULTILINE))
+        ja_tables = len(re.findall(r"^\| ---", ja_no_code, re.MULTILINE))
+        assert ja_tables == en_tables, f"{en_page.name}: table count en={en_tables} != ja={ja_tables}"
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="the worker example uses GNU timeout and util-linux prlimit")
@@ -243,7 +252,7 @@ def test_api_reference_formatting_invariants() -> None:
         or_set_entries.extend(
             f"{rel}:{lineno}: {line}"
             for lineno, line in enumerate(text.splitlines(), start=1)
-            if line.startswith("Or set ")
+            if line.startswith(("Or set ", "Or delete "))
         )
         enum_reprs.extend(
             f"{rel}: {match.group(1).strip()}"

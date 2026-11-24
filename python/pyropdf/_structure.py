@@ -2,20 +2,39 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import Generator, Iterable, Iterator, Mapping, MutableMapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias, cast, overload
 
 from pyropdf import _core
 from pyropdf._canvas._tags import TagRole
 from pyropdf._errors import LimitError, MalformedPdfError, StaleObjectError
+from pyropdf._interchange import (
+    AssociatedFile,
+    AssociatedFiles,
+    _af_object_xrefs,
+    _require_interchange_version,
+)
 from pyropdf._limits import _validate_optional_positive_int
-from pyropdf._metadata import _require_version, _validate_language_tag
+from pyropdf._metadata import _validate_language_tag
 from pyropdf._objects import Array, Dictionary, Name, Stream, String, _catalog, _Handle
 from pyropdf._page import Page
 
 if TYPE_CHECKING:
     from pyropdf._document import Document
+
+#: Standard structure namespace URI for PDF 1.7 tags (ISO 32000-2 §14.8.6.1, ISO/TS 32005).
+PDF_1_7_NAMESPACE: str = "http://iso.org/pdf/ssn"
+
+#: Standard structure namespace URI for PDF 2.0 tags (ISO 32000-2 §14.8.6.2, ISO/TS 32005).
+PDF_2_0_NAMESPACE: str = "http://iso.org/pdf2/ssn"
+
+#: Standard structure namespace URI for MathML 3.0 elements (ISO 32000-2 §14.8.6.3).
+MATHML_NAMESPACE: str = "http://www.w3.org/1998/Math/MathML"
+
+_MAX_NAMESPACES = 1024
+_MAX_ROLE_MAP_ENTRIES = 4096
 
 _CODE_STRUCTURE_TREE = "structure_tree_count"
 _CODE_TEXT_INPUT = "text_input_size"
@@ -127,7 +146,7 @@ def _ensure_root(document: Document) -> Dictionary:
     root = catalog.get("StructTreeRoot")
     if isinstance(root, Dictionary) and not isinstance(root, Stream) and root.is_indirect:
         return root
-    _require_version(document, catalog, (1, 4))
+    _require_interchange_version(document, catalog, (1, 4))
     objects = document.objects
     if isinstance(root, Dictionary) and not isinstance(root, Stream):
         xref = objects.add(root)
@@ -286,9 +305,10 @@ def _check_subtree_move(elem_dict: Dictionary, *, parent_level: int, forbid_xref
                 stack.append((child, height + 1))
 
 
-def _collect_subtree_xrefs(roots: Iterable[Dictionary]) -> set[int]:
-    """Collect the object numbers of ``roots`` and all reachable child ``StructElem`` dictionaries iteratively."""
+def _collect_subtree_xrefs(roots: Iterable[Dictionary]) -> tuple[set[int], list[int]]:
+    """Collect ``(struct_elem_xrefs, af_extra_xrefs)`` across ``roots`` and all child ``StructElem`` nodes."""
     collected: set[int] = set()
+    af_extras: list[int] = []
     stack = list(roots)
     while stack:
         node = stack.pop()
@@ -296,21 +316,32 @@ def _collect_subtree_xrefs(roots: Iterable[Dictionary]) -> set[int]:
         if xref is None or xref in collected:
             continue
         collected.add(xref)
+        af = node.get("AF")
+        if isinstance(af, Array):
+            if af.is_indirect and af.xref is not None:
+                af_extras.append(af.xref)
+            for af_item in af:
+                af_extras.extend(_af_object_xrefs(af_item))
         for item in _raw_kids(node):
             if _is_struct_elem_dict(item):
                 child = cast("Dictionary", item)
                 if child.xref is not None and child.xref not in collected:
                     stack.append(child)
-    return collected
+    return collected, af_extras
 
 
-def _discover_tree_nodes(tree_root: Dictionary, label: str) -> list[tuple[Dictionary, int | None]]:
+def _discover_tree_nodes(
+    tree_root: Dictionary, label: str, budget: _core._OperationBudget | None = None
+) -> list[tuple[Dictionary, int | None]]:
     """Discover number- or name-tree nodes iteratively in pre-order up to ``_MAX_TREE_DEPTH``."""
     order: list[tuple[Dictionary, int | None]] = []
     stack: list[tuple[Dictionary, int | None, int]] = [(tree_root, None, 1)]
     seen: set[int] = set()
     while stack:
         node, parent_idx, depth = stack.pop()
+        if budget is not None:
+            budget.poll()
+            budget.charge("memory_size", 256)
         if depth > _MAX_TREE_DEPTH:
             msg = f"{label} exceeds {_MAX_TREE_DEPTH} levels"
             raise LimitError(_CODE_STRUCTURE_TREE, msg)
@@ -322,6 +353,8 @@ def _discover_tree_nodes(tree_root: Dictionary, label: str) -> list[tuple[Dictio
         order.append((node, parent_idx))
         kids = node.get("Kids")
         if isinstance(kids, Array):
+            if budget is not None:
+                budget.charge("memory_size", 160 * len(kids))
             child_dicts = [item for item in kids if isinstance(item, Dictionary) and not isinstance(item, Stream)]
             stack.extend((kid, my_idx, depth + 1) for kid in reversed(child_dicts))
     return order
@@ -495,10 +528,10 @@ def _delete_children_at(
     slots = _element_slots(raw)
     drop_raw = {slots[pos] for pos in indices}
     removed_roots = [cast("Dictionary", raw[raw_idx]) for raw_idx in sorted(drop_raw)]
-    removed_xrefs = _collect_subtree_xrefs(removed_roots)
+    removed_xrefs, af_extras = _collect_subtree_xrefs(removed_roots)
     kept_raw = [item for raw_idx, item in enumerate(raw) if raw_idx not in drop_raw]
     root = _root_dict(document)
-    candidates = sorted(removed_xrefs)
+    candidates = sorted({*removed_xrefs, *af_extras})
     with document.transaction("structure"):
         _write_kids(holder, kept_raw, candidates, is_root=is_root)
         if root is not None and removed_xrefs:
@@ -507,7 +540,25 @@ def _delete_children_at(
             _clean_lookup_tree(root, "ParentTree", parent_state)
             _clean_lookup_tree(root, "IDTree", id_state)
         if candidates:
-            _core.object_free_unreferenced(document._core(), candidates)  # noqa: SLF001
+            _core.object_free_unreferenced(document._core(), sorted(set(candidates)))  # noqa: SLF001
+
+
+def _validate_element_namespace_arg(
+    document: Document,
+    namespace: StructureNamespace | str,
+    entries: dict[str, object],
+) -> None:
+    if isinstance(namespace, StructureNamespace):
+        if namespace.document is not document:
+            msg = "namespace belongs to a different document"
+            raise ValueError(msg)
+        entries["NS"] = namespace._dict()  # noqa: SLF001
+        return
+    if isinstance(namespace, str):
+        _validate_text_value(namespace, "namespace URI")
+        return
+    msg = f"namespace must be a StructureNamespace, str, or None: {type(namespace).__name__}"
+    raise TypeError(msg)
 
 
 def _validate_new_element_options(  # noqa: PLR0913 - keyword options of add().
@@ -521,6 +572,7 @@ def _validate_new_element_options(  # noqa: PLR0913 - keyword options of add().
     alt: str | None,
     actual_text: str | None,
     expanded: str | None,
+    namespace: StructureNamespace | str | None,
 ) -> tuple[str, Page | None, dict[str, object], tuple[int, int]]:
     """Validate arguments for ``add(...)`` and return ``(role_name, page, extra_entries, min_version)``."""
     checked_role = _validate_role_name(role, label="role")
@@ -543,6 +595,9 @@ def _validate_new_element_options(  # noqa: PLR0913 - keyword options of add().
     if expanded is not None:
         entries["E"] = _validate_text_value(expanded, "expanded")
         minimum = max(minimum, (1, 5))
+    if namespace is not None:
+        _validate_element_namespace_arg(document, namespace, entries)
+        minimum = max(minimum, (2, 0))
     return checked_role, resolved_page, entries, minimum
 
 
@@ -804,6 +859,726 @@ class RoleMap(MutableMapping[str, str]):
         return f"RoleMap({self._entries()!r})"
 
 
+def _is_namespace_dict(value: object) -> bool:
+    """Return whether ``value`` is an indirect ``Namespace`` dictionary."""
+    if not isinstance(value, Dictionary) or isinstance(value, Stream) or not value.is_indirect:
+        return False
+    if value.xref is None or value.generation is None:
+        return False
+    kind = value.get("Type")
+    if isinstance(kind, Name):
+        return str(kind) == "Namespace"
+    return isinstance(value.get("NS"), String)
+
+
+def _namespace_pair(value: object) -> tuple[int, int] | None:
+    if _is_namespace_dict(value):
+        d = cast("Dictionary", value)
+        assert d.xref is not None  # noqa: S101
+        assert d.generation is not None  # noqa: S101
+        return (d.xref, d.generation)
+    return None
+
+
+def _read_ns_role_map_raw(
+    document: Document,
+    ns_dict: Dictionary,
+) -> dict[str, str | tuple[str, StructureNamespace]]:
+    raw = ns_dict.get("RoleMapNS")
+    if not isinstance(raw, Dictionary) or isinstance(raw, Stream):
+        return {}
+    if len(raw) > _MAX_ROLE_MAP_ENTRIES:
+        msg = f"RoleMapNS exceeds {_MAX_ROLE_MAP_ENTRIES} entries"
+        raise LimitError(_CODE_STRUCTURE_TREE, msg)
+    entries: dict[str, str | tuple[str, StructureNamespace]] = {}
+    for key in raw:
+        val = raw.get(key)
+        if isinstance(val, Name):
+            entries[str(key)] = str(val)
+        elif isinstance(val, Array) and len(val) == 2:  # noqa: PLR2004
+            role_part, ns_part = val[0], val[1]
+            target_pair = _namespace_pair(ns_part)
+            if isinstance(role_part, Name) and target_pair is not None:
+                entries[str(key)] = (str(role_part), StructureNamespace(document, *target_pair))
+    return entries
+
+
+def _validate_ns_role_value(
+    document: Document,
+    value: object,
+) -> str | tuple[str, StructureNamespace]:
+    if isinstance(value, str):
+        return _validate_role_name(value, label="mapped role")
+    if isinstance(value, tuple) and len(value) == 2:  # noqa: PLR2004
+        role_part, ns_part = value
+        checked_role = _validate_role_name(role_part, label="mapped role")
+        if not isinstance(ns_part, StructureNamespace):
+            msg = f"RoleMapNS target namespace must be a StructureNamespace: {type(ns_part).__name__}"
+            raise TypeError(msg)
+        if ns_part.document is not document:
+            msg = "RoleMapNS target namespace belongs to a different document"
+            raise ValueError(msg)
+        _ = ns_part._dict()  # noqa: SLF001
+        return (checked_role, ns_part)
+    msg = (
+        f"RoleMapNS value must be a role name str/TagRole or a (role, StructureNamespace) tuple: {type(value).__name__}"
+    )
+    raise TypeError(msg)
+
+
+def _build_ns_role_maps(
+    document: Document,
+    override_ns_xref: int,
+    override_map: Mapping[str, str | tuple[str, StructureNamespace]],
+    override_ns_uri: str | None,
+) -> tuple[dict[int, dict[str, str | tuple[str, StructureNamespace]]], int | None]:
+    ns_maps: dict[int, dict[str, str | tuple[str, StructureNamespace]]] = {
+        override_ns_xref: dict(override_map),
+    }
+    ssn_xref: int | None = override_ns_xref if override_ns_uri == PDF_1_7_NAMESPACE else None
+    root = _root_dict(document)
+    if root is not None and isinstance(ns_arr := root.get("Namespaces"), Array):
+        for raw in ns_arr:
+            pair = _namespace_pair(raw)
+            if pair is not None and pair[0] != override_ns_xref:
+                d = cast("Dictionary", raw)
+                ns_maps[pair[0]] = _read_ns_role_map_raw(document, d)
+                raw_uri = d.get("NS")
+                if ssn_xref is None and isinstance(raw_uri, String) and raw_uri.text == PDF_1_7_NAMESPACE:
+                    ssn_xref = pair[0]
+    return ns_maps, ssn_xref
+
+
+def _lookup_ns_map_for_xref(
+    document: Document,
+    ns_maps: dict[int, dict[str, str | tuple[str, StructureNamespace]]],
+    xref: int,
+) -> dict[str, str | tuple[str, StructureNamespace]]:
+    existing = ns_maps.get(xref)
+    if existing is not None:
+        return existing
+    d_lookup = _core.object_lookup(document._core(), xref)  # noqa: SLF001
+    if d_lookup is not None and isinstance(d_lookup[1], tuple) and d_lookup[1][0] == "d":
+        loaded = _read_ns_role_map_raw(document, Dictionary(document, (xref, d_lookup[0])))
+    else:
+        loaded = {}
+    ns_maps[xref] = loaded
+    return loaded
+
+
+def _validate_cross_ns_role_graph(
+    document: Document,
+    override_ns_xref: int,
+    override_map: Mapping[str, str | tuple[str, StructureNamespace]],
+    *,
+    override_ns_uri: str | None = None,
+    check_keys: Iterable[str] | None = None,
+) -> None:
+    """Refuse cycles and >32-hop chains across ``RoleMapNS`` and ``RoleMap``."""
+    tree_map = _read_role_map_entries(document)
+    ns_maps, ssn_xref = _build_ns_role_maps(document, override_ns_xref, override_map, override_ns_uri)
+    starts = override_map.keys() if check_keys is None else check_keys
+    for start in starts:
+        state: tuple[str, int | None] = (start, override_ns_xref)
+        visited = {state}
+        hops = 0
+        while True:
+            cur_role, cur_xref = state
+            if cur_xref is not None:
+                target = _lookup_ns_map_for_xref(document, ns_maps, cur_xref).get(cur_role)
+                if target is None:
+                    break
+                next_state = (target[0], target[1]._id[0]) if isinstance(target, tuple) else (target, ssn_xref)  # noqa: SLF001
+            else:
+                nxt_std = tree_map.get(cur_role)
+                if nxt_std is None:
+                    break
+                next_state = (nxt_std, None)
+
+            hops += 1
+            if next_state in visited:
+                msg = f"RoleMapNS cannot contain a cycle involving {next_state[0]!r}"
+                raise ValueError(msg)
+            if hops > _MAX_TREE_DEPTH:
+                msg = f"RoleMapNS chain exceeds {_MAX_TREE_DEPTH} hops"
+                raise LimitError(_CODE_STRUCTURE_TREE, msg)
+            visited.add(next_state)
+            state = next_state
+
+
+def _encode_ns_role_value(value: str | tuple[str, StructureNamespace]) -> object:
+    if isinstance(value, tuple):
+        return [Name(value[0]), value[1]._dict()]  # noqa: SLF001
+    return Name(value)
+
+
+def _collect_ns_role_update_pairs(
+    other: object,
+    values: Mapping[str, object],
+) -> list[tuple[object, object]]:
+    merged: list[tuple[object, object]] = []
+    if isinstance(other, Mapping):
+        merged.extend(other.items())
+    elif not isinstance(other, (str, bytes)) and isinstance(other, Iterable):
+        for item in other:
+            if not isinstance(item, tuple) or len(item) != 2:  # noqa: PLR2004
+                msg = "NamespaceRoleMap.update iterable items must be (key, value) pairs"
+                raise TypeError(msg)
+            merged.append(item)
+    elif other != ():
+        msg = f"NamespaceRoleMap.update expects a mapping or iterable of pairs: {type(other).__name__}"
+        raise TypeError(msg)
+    merged.extend(values.items())
+    return merged
+
+
+class NamespaceRoleMap(MutableMapping[str, "str | tuple[str, StructureNamespace]"]):
+    """Live ``MutableMapping`` over a :class:`StructureNamespace`'s ``/RoleMapNS`` dictionary (Table 356).
+
+    Values are either a ``str`` role name in the default standard structure
+    namespace (written as ``Name(role)``) or ``(role, target_namespace)``
+    (written as ``[Name(role), target_namespace_ref]``). Removing the last entry
+    deletes ``/RoleMapNS``.
+    """
+
+    __slots__ = ("_namespace",)
+
+    def __init__(self, namespace: StructureNamespace) -> None:
+        """Wrap ``namespace``; use :attr:`StructureNamespace.role_map`."""
+        self._namespace = namespace
+
+    def _entries(self) -> dict[str, str | tuple[str, StructureNamespace]]:
+        d = self._namespace._dict()  # noqa: SLF001
+        return _read_ns_role_map_raw(self._namespace.document, d)
+
+    def __getitem__(self, key: str) -> str | tuple[str, StructureNamespace]:
+        """Return the mapped role or ``(role, StructureNamespace)`` for ``key``, or raise :class:`KeyError`."""
+        if not isinstance(key, str):
+            raise KeyError(key)
+        return self._entries()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over the custom role names in ``/RoleMapNS``."""
+        return iter(list(self._entries()))
+
+    def __len__(self) -> int:
+        """Return the number of entries in ``/RoleMapNS``."""
+        return len(self._entries())
+
+    def __bool__(self) -> bool:
+        """Return whether ``/RoleMapNS`` has at least one entry."""
+        return bool(self._entries())
+
+    def __setitem__(
+        self,
+        key: TagRole | str,
+        value: TagRole | str | tuple[TagRole | str, StructureNamespace],
+    ) -> None:
+        """Set one role mapping in one transaction."""
+        self.update([(key, value)])
+
+    def __delitem__(self, key: str) -> None:
+        """Delete ``key`` from ``/RoleMapNS``, removing ``/RoleMapNS`` when empty."""
+        if not isinstance(key, str):
+            raise KeyError(key)
+        ns_dict = self._namespace._dict()  # noqa: SLF001
+        raw = ns_dict.get("RoleMapNS")
+        if not isinstance(raw, Dictionary) or isinstance(raw, Stream) or key not in raw:
+            raise KeyError(key)
+        document = self._namespace.document
+        with document.transaction("namespace role map"):
+            ns_dict = self._namespace._dict()  # noqa: SLF001
+            raw = ns_dict.get("RoleMapNS")
+            if not isinstance(raw, Dictionary) or isinstance(raw, Stream) or key not in raw:
+                raise KeyError(key)
+            old_xref = raw.xref if raw.is_indirect else None
+            kept = {str(k): raw.get(k) for k in raw if k != key}
+            if kept:
+                ns_dict["RoleMapNS"] = kept
+            else:
+                del ns_dict["RoleMapNS"]
+            if old_xref is not None:
+                _core.object_free_unreferenced(document._core(), [old_xref])  # noqa: SLF001
+
+    def update(
+        self,
+        other: object = (),
+        /,
+        **values: TagRole | str | tuple[TagRole | str, StructureNamespace],
+    ) -> None:
+        """Update multiple ``/RoleMapNS`` entries in one transaction."""
+        ns_dict = self._namespace._dict()  # noqa: SLF001
+        document = self._namespace.document
+        merged = _collect_ns_role_update_pairs(other, values)
+        if not merged:
+            return
+
+        checked: dict[str, str | tuple[str, StructureNamespace]] = {}
+        for k, v in merged:
+            checked[_validate_role_name(k, label="custom role")] = _validate_ns_role_value(document, v)
+
+        combined = {**_read_ns_role_map_raw(document, ns_dict), **checked}
+        if len(combined) > _MAX_ROLE_MAP_ENTRIES:
+            msg = f"RoleMapNS exceeds {_MAX_ROLE_MAP_ENTRIES} entries"
+            raise LimitError(_CODE_STRUCTURE_TREE, msg)
+        _validate_cross_ns_role_graph(
+            document,
+            self._namespace.xref,
+            combined,
+            override_ns_uri=self._namespace.uri,
+            check_keys=checked.keys(),
+        )
+
+        with document.transaction("namespace role map"):
+            _require_interchange_version(document, _catalog(document), (2, 0))
+            ns_dict = self._namespace._dict()  # noqa: SLF001
+            existing = ns_dict.get("RoleMapNS")
+            if isinstance(existing, Dictionary) and not isinstance(existing, Stream) and not existing.is_indirect:
+                for k, v in checked.items():
+                    existing[k] = _encode_ns_role_value(v)
+            else:
+                old_xref = existing.xref if isinstance(existing, Dictionary) and existing.is_indirect else None
+                ns_dict["RoleMapNS"] = {k: _encode_ns_role_value(v) for k, v in combined.items()}
+                if old_xref is not None:
+                    _core.object_free_unreferenced(document._core(), [old_xref])  # noqa: SLF001
+
+    def clear(self) -> None:
+        """Remove ``/RoleMapNS`` from this namespace in one transaction."""
+        ns_dict = self._namespace._dict()  # noqa: SLF001
+        if "RoleMapNS" not in ns_dict:
+            return
+        document = self._namespace.document
+        with document.transaction("clear namespace role map"):
+            ns_dict = self._namespace._dict()  # noqa: SLF001
+            if "RoleMapNS" not in ns_dict:
+                return
+            raw = ns_dict.get("RoleMapNS")
+            old_xref = raw.xref if isinstance(raw, Dictionary) and raw.is_indirect else None
+            del ns_dict["RoleMapNS"]
+            if old_xref is not None:
+                _core.object_free_unreferenced(document._core(), [old_xref])  # noqa: SLF001
+
+    def __repr__(self) -> str:
+        """Return ``NamespaceRoleMap({...})``."""
+        return f"NamespaceRoleMap({self._entries()!r})"
+
+
+def _validate_namespace_uri(uri: object) -> str:
+    if not isinstance(uri, str):
+        msg = f"uri must be a str: {type(uri).__name__}"
+        raise TypeError(msg)
+    plain = str.__str__(uri)
+    if not plain:
+        msg = "uri must not be empty"
+        raise ValueError(msg)
+    return _validate_text_value(plain, "uri")
+
+
+def _validate_namespace_schema(
+    document: Document,
+    schema: AssociatedFile | str | None,
+) -> Dictionary | str | None:
+    if schema is None:
+        return None
+    if isinstance(schema, str):
+        plain = str.__str__(schema)
+        if not plain:
+            msg = "schema string must not be empty"
+            raise ValueError(msg)
+        return _validate_text_value(plain, "schema")
+    if isinstance(schema, AssociatedFile):
+        if schema._document is not document:  # noqa: SLF001
+            msg = "schema AssociatedFile belongs to a different document"
+            raise ValueError(msg)
+        return schema.obj
+    msg = f"schema must be an AssociatedFile, str, or None: {type(schema).__name__}"
+    raise TypeError(msg)
+
+
+def _delete_namespaces_by_xref(document: Document, dead_xrefs: set[int]) -> None:  # noqa: C901, PLR0912
+    """Remove ``dead_xrefs`` from ``StructTreeRoot['Namespaces']``, scrub references, and free objects."""
+    if not dead_xrefs:
+        return
+    root = _root_dict(document)
+    if root is None:
+        return
+    candidates: list[int] = list(dead_xrefs)
+
+    for dead_xref in dead_xrefs:
+        found = _core.object_lookup(document._core(), dead_xref)  # noqa: SLF001
+        if found is not None and isinstance(found[1], tuple) and found[1][0] == "d":
+            dead_dict = Dictionary(document, (dead_xref, found[0]))
+            candidates.extend(_af_object_xrefs(dead_dict.get("Schema")))
+            rm = dead_dict.get("RoleMapNS")
+            if isinstance(rm, Dictionary) and rm.is_indirect and rm.xref is not None:
+                candidates.append(rm.xref)
+
+    for elem in document.structure.walk(max_elements=None):
+        ed = elem._dict()  # noqa: SLF001
+        ns_pair = _namespace_pair(ed.get("NS"))
+        if ns_pair is not None and ns_pair[0] in dead_xrefs:
+            del ed["NS"]
+
+    ns_arr = root.get("Namespaces")
+    kept_ns: list[object] = []
+    if isinstance(ns_arr, Array):
+        if ns_arr.is_indirect and ns_arr.xref is not None:
+            candidates.append(ns_arr.xref)
+        for raw in ns_arr:
+            pair = _namespace_pair(raw)
+            if pair is None or pair[0] in dead_xrefs:
+                continue
+            surv_dict = cast("Dictionary", raw)
+            rm = surv_dict.get("RoleMapNS")
+            if isinstance(rm, Dictionary) and not isinstance(rm, Stream):
+                updated_rm: dict[str, object] = {}
+                changed_rm = False
+                for rk in rm:
+                    rv = rm.get(rk)
+                    if isinstance(rv, Array) and len(rv) == 2:  # noqa: PLR2004
+                        tp = _namespace_pair(rv[1])
+                        if tp is not None and tp[0] in dead_xrefs:
+                            changed_rm = True
+                            continue
+                    updated_rm[str(rk)] = rv
+                if changed_rm:
+                    if rm.is_indirect and rm.xref is not None:
+                        candidates.append(rm.xref)
+                    if updated_rm:
+                        surv_dict["RoleMapNS"] = updated_rm
+                    else:
+                        del surv_dict["RoleMapNS"]
+            kept_ns.append(surv_dict)
+
+    if kept_ns:
+        root["Namespaces"] = kept_ns
+    elif "Namespaces" in root:
+        del root["Namespaces"]
+
+    if candidates:
+        _core.object_free_unreferenced(document._core(), sorted(set(candidates)))  # noqa: SLF001
+
+
+class StructureNamespace:
+    """Live handle on an indirect ``/Type /Namespace`` dictionary (ISO 32000-2 §14.7.4, PDF 2.0).
+
+    Exposes :attr:`uri` (``/NS``), :attr:`schema` (``/Schema``), and
+    :attr:`role_map` (``/RoleMapNS``). A deleted handle raises
+    :class:`StaleObjectError` and works again if undo restores it.
+    """
+
+    __slots__ = ("_document", "_id")
+
+    def __init__(self, document: Document, xref: int, generation: int = 0) -> None:
+        """Bind indirect ``Namespace`` dictionary ``(xref, generation)``."""
+        self._document = document
+        self._id = (xref, generation)
+
+    def _dict(self) -> Dictionary:
+        core = self._document._core()  # noqa: SLF001
+        if _root_dict(self._document) is None:
+            msg = f"structure namespace {self._id[0]} {self._id[1]} R is no longer in the structure tree"
+            raise StaleObjectError(msg)
+        found = _core.object_lookup(core, self._id[0])
+        if found is None or found[0] != self._id[1] or not isinstance(found[1], tuple) or found[1][0] != "d":
+            msg = f"structure namespace {self._id[0]} {self._id[1]} R does not exist in this version"
+            raise StaleObjectError(msg)
+        d = Dictionary(self._document, self._id)
+        if not _is_namespace_dict(d):
+            msg = f"object {self._id[0]} {self._id[1]} R is not a structure namespace"
+            raise StaleObjectError(msg)
+        return d
+
+    @property
+    def document(self) -> Document:
+        """Return the owning :class:`Document`."""
+        return self._document
+
+    @property
+    def xref(self) -> int:
+        """Return the indirect object number of this ``Namespace`` dictionary."""
+        _ = self._dict()
+        return self._id[0]
+
+    @property
+    def obj(self) -> Dictionary:
+        """Return the ``Namespace`` dictionary in the low-level object model."""
+        return self._dict()
+
+    @property
+    def uri(self) -> str:
+        """Return or set the namespace URI text string (``/NS``)."""
+        raw = self._dict().get("NS")
+        return raw.text if isinstance(raw, String) else ""
+
+    @uri.setter
+    def uri(self, value: str) -> None:
+        checked = _validate_namespace_uri(value)
+        _ = self._dict()
+        with self._document.transaction("namespace uri"):
+            _require_interchange_version(self._document, _catalog(self._document), (2, 0))
+            self._dict()["NS"] = checked
+
+    @property
+    def schema(self) -> AssociatedFile | str | None:
+        """Return, set, or delete ``/Schema`` (:class:`AssociatedFile`, string, or ``None``)."""
+        d = self._dict()
+        raw = d.get("Schema")
+        if isinstance(raw, String):
+            return raw.text
+        if isinstance(raw, Dictionary) and not isinstance(raw, Stream):
+            pair = (
+                (raw.xref, raw.generation)
+                if raw.is_indirect and raw.xref is not None and raw.generation is not None
+                else (0, 0)
+            )
+            return AssociatedFile(
+                self._document,
+                self._dict,
+                pair,
+                0,
+                host_requires_2_0=True,
+                single_key="Schema",
+            )
+        return None
+
+    @schema.setter
+    def schema(self, value: AssociatedFile | str | None) -> None:
+        checked = _validate_namespace_schema(self._document, value)
+        _ = self._dict()
+        with self._document.transaction("namespace schema"):
+            d = self._dict()
+            retired = _af_object_xrefs(d.get("Schema")) if "Schema" in d else []
+            if checked is None:
+                if "Schema" in d:
+                    del d["Schema"]
+            else:
+                _require_interchange_version(self._document, _catalog(self._document), (2, 0))
+                d["Schema"] = checked
+            if retired:
+                _core.object_free_unreferenced(self._document._core(), sorted(set(retired)))  # noqa: SLF001
+
+    @schema.deleter
+    def schema(self) -> None:
+        self.schema = None
+
+    @property
+    def role_map(self) -> NamespaceRoleMap:
+        """Return, replace, or delete ``/RoleMapNS`` as a live :class:`NamespaceRoleMap`."""
+        _ = self._dict()
+        return NamespaceRoleMap(self)
+
+    @role_map.setter
+    def role_map(
+        self,
+        mapping: Mapping[str, TagRole | str | tuple[TagRole | str, StructureNamespace]],
+    ) -> None:
+        if not isinstance(mapping, Mapping):
+            msg = f"role_map must be a mapping: {type(mapping).__name__}"
+            raise TypeError(msg)
+        ns_dict = self._dict()
+        checked: dict[str, str | tuple[str, StructureNamespace]] = {
+            _validate_role_name(k, label="custom role"): _validate_ns_role_value(self._document, v)
+            for k, v in mapping.items()
+        }
+        if len(checked) > _MAX_ROLE_MAP_ENTRIES:
+            msg = f"RoleMapNS exceeds {_MAX_ROLE_MAP_ENTRIES} entries"
+            raise LimitError(_CODE_STRUCTURE_TREE, msg)
+        if checked:
+            _validate_cross_ns_role_graph(self._document, self.xref, checked, override_ns_uri=self.uri)
+
+        with self._document.transaction("replace namespace role map"):
+            ns_dict = self._dict()
+            raw = ns_dict.get("RoleMapNS")
+            old_xref = raw.xref if isinstance(raw, Dictionary) and raw.is_indirect else None
+            if not checked:
+                if "RoleMapNS" in ns_dict:
+                    del ns_dict["RoleMapNS"]
+            else:
+                _require_interchange_version(self._document, _catalog(self._document), (2, 0))
+                ns_dict["RoleMapNS"] = {k: _encode_ns_role_value(v) for k, v in checked.items()}
+            if old_xref is not None:
+                _core.object_free_unreferenced(self._document._core(), [old_xref])  # noqa: SLF001
+
+    @role_map.deleter
+    def role_map(self) -> None:
+        self.role_map.clear()
+
+    def delete(self) -> None:
+        """Delete this namespace, clearing element ``/NS`` and ``/RoleMapNS`` references to it."""
+        _ = self._dict()
+        with self._document.transaction("delete structure namespace"):
+            _delete_namespaces_by_xref(self._document, {self._id[0]})
+
+    def __eq__(self, other: object) -> bool:
+        """Compare handles by document and ``(xref, generation)``."""
+        if not isinstance(other, StructureNamespace):
+            return NotImplemented
+        return (self._document, self._id) == (other._document, other._id)
+
+    def __hash__(self) -> int:
+        """Hash consistently with equality."""
+        return hash((id(self._document), self._id))
+
+    def __repr__(self) -> str:
+        """Return ``StructureNamespace(xref=..., uri=...)``, or a stale marker."""
+        try:
+            return f"StructureNamespace(xref={self._id[0]}, uri={self.uri!r})"
+        except StaleObjectError:
+            return f"<stale StructureNamespace xref={self._id[0]}>"
+
+
+class StructureNamespaces(Sequence[StructureNamespace]):
+    """Live sequence of :class:`StructureNamespace` handles in ``StructTreeRoot['Namespaces']`` (PDF 2.0)."""
+
+    __slots__ = ("_document",)
+
+    def __init__(self, document: Document) -> None:
+        """Wrap ``document``; use :attr:`StructureTree.namespaces`."""
+        self._document = document
+
+    def _handles(self) -> list[StructureNamespace]:
+        self._document._ensure_open()  # noqa: SLF001
+        root = _root_dict(self._document)
+        if root is None:
+            return []
+        ns_arr = root.get("Namespaces")
+        if not isinstance(ns_arr, Array):
+            return []
+        if len(ns_arr) > _MAX_NAMESPACES:
+            msg = f"StructTreeRoot['Namespaces'] exceeds {_MAX_NAMESPACES} entries"
+            raise LimitError(_CODE_STRUCTURE_TREE, msg)
+        result: list[StructureNamespace] = []
+        for raw in ns_arr:
+            pair = _namespace_pair(raw)
+            if pair is not None:
+                result.append(StructureNamespace(self._document, *pair))
+        return result
+
+    @overload
+    def __getitem__(self, index: int) -> StructureNamespace: ...
+    @overload
+    def __getitem__(self, index: slice) -> list[StructureNamespace]: ...
+    def __getitem__(self, index: int | slice) -> StructureNamespace | list[StructureNamespace]:
+        """Return one :class:`StructureNamespace`, or a list for a slice."""
+        items = self._handles()
+        if isinstance(index, slice):
+            return items[index]
+        return items[_resolve_sequence_index(index, len(items), "namespace index")]
+
+    def __len__(self) -> int:
+        """Return the number of namespaces in ``StructTreeRoot['Namespaces']``."""
+        return len(self._handles())
+
+    def __iter__(self) -> Iterator[StructureNamespace]:
+        """Iterate over the :class:`StructureNamespace` handles."""
+        return iter(self._handles())
+
+    def __bool__(self) -> bool:
+        """Return whether at least one namespace is declared."""
+        return bool(self._handles())
+
+    def __contains__(self, item: object) -> bool:
+        """Return whether ``item`` (:class:`StructureNamespace` or URI ``str``) is declared."""
+        handles = self._handles()
+        if isinstance(item, str):
+            return any(ns.uri == item for ns in handles)
+        if isinstance(item, StructureNamespace):
+            return item in handles
+        return False
+
+    def find(self, uri: str) -> StructureNamespace | None:
+        """Return the first :class:`StructureNamespace` with ``ns.uri == uri``, or ``None``."""
+        if not isinstance(uri, str):
+            msg = f"uri must be a str: {type(uri).__name__}"
+            raise TypeError(msg)
+        for ns in self._handles():
+            if ns.uri == uri:
+                return ns
+        return None
+
+    def add(
+        self,
+        uri: str,
+        *,
+        schema: AssociatedFile | str | None = None,
+        role_map: Mapping[str, TagRole | str | tuple[TagRole | str, StructureNamespace]] | None = None,
+    ) -> StructureNamespace:
+        """Create and register an indirect :class:`StructureNamespace` in one transaction (promoting to PDF 2.0)."""
+        self._document._ensure_open()  # noqa: SLF001
+        checked_uri = _validate_namespace_uri(uri)
+        checked_schema = _validate_namespace_schema(self._document, schema)
+        checked_rm: dict[str, str | tuple[str, StructureNamespace]] = {}
+        if role_map is not None:
+            if not isinstance(role_map, Mapping):
+                msg = f"role_map must be a mapping or None: {type(role_map).__name__}"
+                raise TypeError(msg)
+            checked_rm = {
+                _validate_role_name(k, label="custom role"): _validate_ns_role_value(self._document, v)
+                for k, v in role_map.items()
+            }
+            if len(checked_rm) > _MAX_ROLE_MAP_ENTRIES:
+                msg = f"RoleMapNS exceeds {_MAX_ROLE_MAP_ENTRIES} entries"
+                raise LimitError(_CODE_STRUCTURE_TREE, msg)
+            _validate_cross_ns_role_graph(self._document, -1, checked_rm, override_ns_uri=checked_uri)
+
+        existing = self._handles()
+        if len(existing) >= _MAX_NAMESPACES:
+            msg = f"StructTreeRoot['Namespaces'] exceeds {_MAX_NAMESPACES} entries"
+            raise LimitError(_CODE_STRUCTURE_TREE, msg)
+
+        with self._document.transaction("add structure namespace"):
+            root = _ensure_root(self._document)
+            _require_interchange_version(self._document, _catalog(self._document), (2, 0))
+            entries: dict[str, object] = {"Type": Name("Namespace"), "NS": checked_uri}
+            if checked_schema is not None:
+                entries["Schema"] = checked_schema
+            if checked_rm:
+                entries["RoleMapNS"] = {k: _encode_ns_role_value(v) for k, v in checked_rm.items()}
+            objects = self._document.objects
+            ns_xref = objects.add(entries)
+            ns_obj = cast("Dictionary", objects[ns_xref])
+
+            ns_arr = root.get("Namespaces")
+            if isinstance(ns_arr, Array) and not ns_arr.is_indirect:
+                ns_arr.append(ns_obj)
+            elif isinstance(ns_arr, Array):
+                root["Namespaces"] = [*list(ns_arr), ns_obj]
+            else:
+                root["Namespaces"] = [ns_obj]
+
+        assert ns_obj.generation is not None  # noqa: S101
+        return StructureNamespace(self._document, ns_xref, ns_obj.generation)
+
+    def __delitem__(self, index: int | slice) -> None:
+        """Delete one or more namespaces, scrubbing ``/NS`` and ``/RoleMapNS`` references."""
+        handles = self._handles()
+        if isinstance(index, slice):
+            selected = handles[index]
+        else:
+            selected = [handles[_resolve_sequence_index(index, len(handles), "namespace index")]]
+        if not selected:
+            return
+        with self._document.transaction("delete structure namespace"):
+            _delete_namespaces_by_xref(self._document, {ns._id[0] for ns in selected})  # noqa: SLF001
+
+    def clear(self) -> None:
+        """Remove all structure namespaces and delete ``StructTreeRoot['Namespaces']``."""
+        handles = self._handles()
+        if not handles:
+            root = _root_dict(self._document)
+            if root is not None and "Namespaces" in root:
+                with self._document.transaction("clear structure namespaces"):
+                    del root["Namespaces"]
+            return
+        with self._document.transaction("clear structure namespaces"):
+            _delete_namespaces_by_xref(self._document, {ns._id[0] for ns in handles})  # noqa: SLF001
+
+    def __repr__(self) -> str:
+        """Return ``StructureNamespaces([...])``."""
+        return f"StructureNamespaces({self._handles()!r})"
+
+
 #: An item in a structure element's ``/K`` reading order.
 StructureItem: TypeAlias = "StructureElement | MarkedContentReference | ObjectReference"
 
@@ -867,8 +1642,9 @@ class StructureChildren(Sequence["StructureElement"]):
         alt: str | None = None,
         actual_text: str | None = None,
         expanded: str | None = None,
+        namespace: StructureNamespace | str | None = None,
     ) -> StructureElement:
-        """Create and insert a child :class:`StructureElement` in one transaction."""
+        """Insert a child in one transaction, registering its optional PDF 2.0 namespace URI."""
         document = self._parent.document
         holder = self._parent._dict()  # noqa: SLF001
         parent_level = _element_level(document, holder)
@@ -884,16 +1660,21 @@ class StructureChildren(Sequence["StructureElement"]):
             alt=alt,
             actual_text=actual_text,
             expanded=expanded,
+            namespace=namespace,
         )
         raw = _raw_kids(holder)
         slots = _element_slots(raw)
         catalog = _catalog(document)
         candidates: list[int] = []
         with document.transaction("structure"):
-            _require_version(document, catalog, minimum)
+            _require_interchange_version(document, catalog, minimum)
             value: dict[str, object] = {"Type": Name("StructElem"), "S": Name(checked_role), "P": holder}
             if resolved_page is not None:
                 value["Pg"] = resolved_page.obj
+            if isinstance(namespace, str):
+                from pyropdf._structure_authoring import namespace_object  # noqa: PLC0415
+
+                value["NS"] = namespace_object(document, namespace)
             value.update(entries)
             xref = document.objects.add(value)
             node = cast("Dictionary", document.objects[xref])
@@ -993,6 +1774,79 @@ class StructureElement:
         """Return ``role`` resolved iteratively through ``doc.structure.role_map``."""
         return self._document.structure.resolve_role(self.role)
 
+    @property
+    def namespace(self) -> StructureNamespace | None:
+        """Return, set, or delete the element's :class:`StructureNamespace` (``/NS``, PDF 2.0)."""
+        pair = _namespace_pair(self._dict().get("NS"))
+        return None if pair is None else StructureNamespace(self._document, *pair)
+
+    @namespace.setter
+    def namespace(self, value: StructureNamespace | None) -> None:
+        if value is None:
+            self._delete_key("NS", "structure namespace")
+            return
+        if not isinstance(value, StructureNamespace):
+            msg = f"namespace must be a StructureNamespace or None: {type(value).__name__}"
+            raise TypeError(msg)
+        if value.document is not self._document:
+            msg = "namespace belongs to a different document"
+            raise ValueError(msg)
+        ns_dict = value._dict()  # noqa: SLF001
+        d = self._dict()
+        with self._document.transaction("structure namespace"):
+            _require_interchange_version(self._document, _catalog(self._document), (2, 0))
+            d["NS"] = ns_dict
+
+    @namespace.deleter
+    def namespace(self) -> None:
+        self._delete_key("NS", "structure namespace")
+
+    @property
+    def resolved_role(self) -> tuple[str, str | None]:
+        """Resolve ``(role, namespace_uri)`` iteratively across ``/RoleMapNS`` and ``/RoleMap`` (up to 32 hops)."""
+        current_role = self.role
+        current_ns = self.namespace
+        if current_ns is None:
+            return (self._document.structure.resolve_role(current_role), None)
+
+        visited: set[tuple[str, int | None]] = {(current_role, current_ns.xref)}
+        for _ in range(_MAX_TREE_DEPTH):
+            ns_dict = current_ns._dict()  # noqa: SLF001
+            ns_map = _read_ns_role_map_raw(self._document, ns_dict)
+            target = ns_map.get(current_role)
+            if target is None:
+                return (current_role, current_ns.uri)
+            if isinstance(target, tuple):
+                next_role, next_ns = target
+                state: tuple[str, int | None] = (next_role, next_ns.xref)
+                if state in visited:
+                    return (current_role, current_ns.uri)
+                visited.add(state)
+                current_role = next_role
+                current_ns = next_ns
+            else:
+                ssn_ns = self._document.structure.namespaces.find(PDF_1_7_NAMESPACE)
+                if ssn_ns is None:
+                    return (self._document.structure.resolve_role(target), PDF_1_7_NAMESPACE)
+                state = (target, ssn_ns.xref)
+                if state in visited:
+                    return (target, PDF_1_7_NAMESPACE)
+                visited.add(state)
+                current_role = target
+                current_ns = ssn_ns
+
+        ns_map = _read_ns_role_map_raw(self._document, current_ns._dict())  # noqa: SLF001
+        if current_role in ns_map:
+            msg = f"RoleMapNS chain exceeds {_MAX_TREE_DEPTH} hops"
+            raise LimitError(_CODE_STRUCTURE_TREE, msg)
+        return (current_role, current_ns.uri)
+
+    @property
+    def associated_files(self) -> AssociatedFiles:
+        """Return the ``/AF`` associated files of this structure element."""
+        _ = self._dict()
+        return AssociatedFiles(self._document, self._dict)
+
     def _read_text(self, pdf_key: str) -> str | None:
         value = self._dict().get(pdf_key)
         return value.text if isinstance(value, String) else None
@@ -1003,7 +1857,7 @@ class StructureElement:
         d = self._dict()
         catalog = _catalog(self._document)
         with self._document.transaction(f"structure {attr_name}"):
-            _require_version(self._document, catalog, minimum)
+            _require_interchange_version(self._document, catalog, minimum)
             d[pdf_key] = checked
 
     def _delete_key(self, pdf_key: str, step_name: str) -> None:
@@ -1036,7 +1890,7 @@ class StructureElement:
         d = self._dict()
         catalog = _catalog(self._document)
         with self._document.transaction("structure language"):
-            _require_version(self._document, catalog, (1, 4))
+            _require_interchange_version(self._document, catalog, (1, 4))
             d["Lang"] = checked
 
     @language.deleter
@@ -1148,6 +2002,43 @@ class StructureElement:
             elif budget is not None:
                 msg = "invalid structure element child in /K"
                 raise MalformedPdfError(msg)
+
+    def set_attributes(self, owner: str, values: Mapping[str, object], *, namespace: str | None = None) -> None:
+        """Set standard or export-format attributes, or supply a registered namespace URI for the NSO owner."""
+        from pyropdf._structure_authoring import set_attributes  # noqa: PLC0415
+
+        with self._document.transaction("structure attributes"):
+            set_attributes(self._document, self.obj, "A", owner, values, namespace=namespace)
+
+    def add_class(self, name: str) -> None:
+        """Apply a defined attribute class without duplicating it or removing earlier class revisions."""
+        from pyropdf._structure_authoring import add_class  # noqa: PLC0415
+
+        with self._document.transaction("apply structure attribute class"):
+            add_class(self, name)
+
+    def set_user_property(
+        self, name: str, value: object, *, formatted: str | None = None, hidden: bool = False
+    ) -> None:
+        """Create or update a named user property and declare it in the catalog's mark information."""
+        from pyropdf._structure_authoring import user_property  # noqa: PLC0415
+
+        with self._document.transaction("structure user property"):
+            user_property(self, name, value, formatted, hidden=hidden)
+
+    def set_object_reference(
+        self, target: Dictionary, *, page: Page | int, replace: Dictionary | None = None
+    ) -> ObjectReference:
+        """Attach an annotation or a drawn XObject to the specified page and its structure parent.
+
+        A whole XObject drawn on several pages can have one reference per page in the same element.
+        To retarget a reference, supply an untagged replacement and the page where it is drawn.
+        When the old target has several references, this replaces the one on that page.
+        """
+        from pyropdf._structure_authoring import object_reference  # noqa: PLC0415
+
+        with self._document.transaction("structure object reference"):
+            return object_reference(self, target, page, replace)
 
     def _resolve_move_destination(
         self,
@@ -1324,6 +2215,17 @@ class StructureTree(Sequence[StructureElement]):
         self._document._ensure_open()  # noqa: SLF001
         _delete_role_map(self._document)
 
+    @property
+    def namespaces(self) -> StructureNamespaces:
+        """Return the structure tree's ``/Namespaces`` array as a live :class:`StructureNamespaces` sequence."""
+        self._document._ensure_open()  # noqa: SLF001
+        return StructureNamespaces(self._document)
+
+    @namespaces.deleter
+    def namespaces(self) -> None:
+        self._document._ensure_open()  # noqa: SLF001
+        StructureNamespaces(self._document).clear()
+
     def resolve_role(self, role: TagRole | str) -> str:
         """Resolve ``role`` iteratively through ``/RoleMap`` (up to 32 hops, stopping on cycles)."""
         self._document._ensure_open()  # noqa: SLF001
@@ -1404,6 +2306,7 @@ class StructureTree(Sequence[StructureElement]):
         alt: str | None = None,
         actual_text: str | None = None,
         expanded: str | None = None,
+        namespace: StructureNamespace | str | None = None,
     ) -> StructureElement:
         """Create and insert a top-level :class:`StructureElement` in one transaction.
 
@@ -1421,17 +2324,22 @@ class StructureTree(Sequence[StructureElement]):
             alt=alt,
             actual_text=actual_text,
             expanded=expanded,
+            namespace=namespace,
         )
         catalog = _catalog(self._document)
         candidates: list[int] = []
         with self._document.transaction("structure"):
             root = _ensure_root(self._document)
-            _require_version(self._document, catalog, minimum)
+            _require_interchange_version(self._document, catalog, minimum)
             raw = _raw_kids(root)
             slots = _element_slots(raw)
             value: dict[str, object] = {"Type": Name("StructElem"), "S": Name(checked_role), "P": root}
             if resolved_page is not None:
                 value["Pg"] = resolved_page.obj
+            if isinstance(namespace, str):
+                from pyropdf._structure_authoring import namespace_object  # noqa: PLC0415
+
+                value["NS"] = namespace_object(self._document, namespace)
             value.update(entries)
             xref = self._document.objects.add(value)
             node = cast("Dictionary", self._document.objects[xref])
@@ -1441,6 +2349,30 @@ class StructureTree(Sequence[StructureElement]):
                 _core.object_free_unreferenced(self._document._core(), candidates)  # noqa: SLF001
         assert node.generation is not None  # noqa: S101
         return StructureElement(self._document, xref, node.generation)
+
+    def set_class_attributes(
+        self, name: str, owner: str, values: Mapping[str, object], *, namespace: str | None = None
+    ) -> None:
+        """Define or update an attribute class, keeping existing owners and entries under other names."""
+        from pyropdf._structure_authoring import class_attributes  # noqa: PLC0415
+
+        with self._document.transaction("structure class attributes"):
+            class_attributes(self._document, name, owner, values, namespace)
+
+    @contextmanager
+    def edit(self) -> Generator[StructureTree]:
+        """Group edits and roll back newly invalid determinate PDF 2.0 Annex L relationships.
+
+        The final child order and multiplicities are checked together, allowing temporarily
+        incomplete groups such as Ruby. Conditional relationships remain available via child_rules().
+        """
+        with self._document.transaction("checked structure edit"):
+            failures = {row for row in self.child_rules() if row.allowed is False}
+            yield self
+            for row in self.child_rules():
+                if row.allowed is False and row not in failures:
+                    msg = f"{row.parent_role} with {row.count} {row.child_role} violates {row.rule}"
+                    raise ValueError(msg)
 
     def reading_order(self, *, expand_abbreviations: bool = False) -> tuple[StructureText, ...]:
         """Extract logical text in mixed structure-child order, including cross-page references.
@@ -1459,15 +2391,18 @@ class StructureTree(Sequence[StructureElement]):
             lambda budget: reading_order(self, budget, expand=expand_abbreviations),
         )
 
-    def child_rules(self) -> tuple[StructureChildRule, ...]:
+    def child_rules(self, *, grouping_usage: Mapping[int, bool] | None = None) -> tuple[StructureChildRule, ...]:
         """Read the observed parent/child multiplicities under the PDF 2.0 Annex L rules.
 
-        A conditional or cross-namespace relationship retains its own rule and an
-        indeterminate verdict where the namespace or role-specific specification is required.
+        Namespace mappings are followed to the standard role, and transparent
+        containers contribute to the enclosing role's counts. Supply a mapping
+        of element object numbers to intended grouping use when several uses
+        fit the stored children. An indeterminate result retains the condition
+        that requires more information. The rules apply to the PDF 2.0 namespace.
         """
         from pyropdf._structure_reading import child_rules  # noqa: PLC0415
 
-        return _core.read_operation(self._document._core(), lambda budget: child_rules(self, budget))  # noqa: SLF001
+        return _core.read_operation(self._document._core(), lambda budget: child_rules(self, budget, grouping_usage))  # noqa: SLF001
 
     def walk(self, *, max_elements: int | None = _DEFAULT_MAX_ELEMENTS) -> Iterator[StructureElement]:
         """Iterate over every :class:`StructureElement` in pre-order, bounded and without recursion.
@@ -1538,32 +2473,54 @@ def _delete_structure_tree(document: Document) -> None:
         if existing.is_indirect and existing.xref is not None:
             candidates.append(existing.xref)
         top_dicts = [cast("Dictionary", item) for item in _raw_kids(existing) if _is_struct_elem_dict(item)]
-        candidates.extend(sorted(_collect_subtree_xrefs(top_dicts)))
+        elem_xrefs, af_extras = _collect_subtree_xrefs(top_dicts)
+        candidates.extend(elem_xrefs)
+        candidates.extend(af_extras)
+        if isinstance(ns_arr := existing.get("Namespaces"), Array):
+            if ns_arr.is_indirect and ns_arr.xref is not None:
+                candidates.append(ns_arr.xref)
+            for raw_ns in ns_arr:
+                if (ns_pair := _namespace_pair(raw_ns)) is not None:
+                    candidates.append(ns_pair[0])
+                    ns_d = cast("Dictionary", raw_ns)
+                    candidates.extend(_af_object_xrefs(ns_d.get("Schema")))
+                    rm = ns_d.get("RoleMapNS")
+                    if isinstance(rm, Dictionary) and rm.is_indirect and rm.xref is not None:
+                        candidates.append(rm.xref)
     with document.transaction("structure"):
         del catalog["StructTreeRoot"]
         if candidates:
-            _core.object_free_unreferenced(document._core(), candidates)  # noqa: SLF001
+            _core.object_free_unreferenced(document._core(), sorted(set(candidates)))  # noqa: SLF001
 
 
 for _public in (
     MarkedContentReference,
+    NamespaceRoleMap,
     ObjectReference,
     RoleMap,
     StructureChildRule,
     StructureChildren,
     StructureElement,
+    StructureNamespace,
+    StructureNamespaces,
     StructureText,
     StructureTree,
 ):
     _public.__module__ = "pyropdf"
 
 __all__ = [
+    "MATHML_NAMESPACE",
+    "PDF_1_7_NAMESPACE",
+    "PDF_2_0_NAMESPACE",
     "MarkedContentReference",
+    "NamespaceRoleMap",
     "ObjectReference",
     "RoleMap",
     "StructureChildRule",
     "StructureChildren",
     "StructureElement",
+    "StructureNamespace",
+    "StructureNamespaces",
     "StructureText",
     "StructureTree",
 ]

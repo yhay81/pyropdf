@@ -619,14 +619,16 @@ pub(super) fn decode_gif(data: &[u8]) -> Result<Decoded, String> {
     let (left, top) = (usize::from(frame.left), usize::from(frame.top));
     let (frame_width, width_us) = (usize::from(frame.width), width as usize);
     let mut canvas = vec![0; width_us * height as usize * 4];
-    for (y, line) in frame.buffer.chunks_exact(frame_width * 4).enumerate() {
-        let y = top + y;
-        if y >= height as usize || left >= width_us {
-            continue;
+    if frame_width > 0 && frame.height > 0 {
+        for (y, line) in frame.buffer.chunks_exact(frame_width * 4).enumerate() {
+            let y = top + y;
+            if y >= height as usize || left >= width_us {
+                continue;
+            }
+            let length = frame_width.min(width_us - left) * 4;
+            let at = (y * width_us + left) * 4;
+            canvas[at..at + length].copy_from_slice(&line[..length]);
         }
-        let length = frame_width.min(width_us - left) * 4;
-        let at = (y * width_us + left) * 4;
-        canvas[at..at + length].copy_from_slice(&line[..length]);
     }
     let alpha = canvas
         .as_chunks::<4>()
@@ -1022,7 +1024,7 @@ pub(super) fn write_psd(
     out.write_all(b"8BIM\x03\xed\0\0")?;
     out.write_all(&16_u32.to_be_bytes())?;
     for dpi in [resolution.0, resolution.1] {
-        out.write_all(&(dpi << 16).to_be_bytes())?;
+        out.write_all(&(dpi.clamp(1, 65_535) << 16).to_be_bytes())?;
         out.write_all(&[0, 1, 0, 1])?;
     }
     // No layers, then raw planar samples.

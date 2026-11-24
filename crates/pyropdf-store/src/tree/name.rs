@@ -2,7 +2,7 @@
 //! 7.9.6).
 
 use crate::budget::{Budget, BudgetVec, LimitCode};
-use crate::refs::{self, copy_for_edit};
+use crate::refs::{self, copy_dict_for_edit, copy_for_edit};
 use crate::value::{Array, Dict, Name, PdfString, Reference, Value};
 use crate::version::table::Table;
 use crate::version::{Transaction, Version};
@@ -299,10 +299,7 @@ pub fn insert_name_tree(
     let mut visited: Table<()> = Table::default();
     let mut ancestors: BudgetVec<'_, NameAncestor<'_>> = BudgetVec::new(budget);
     let mut cur_object: Option<Reference> = None;
-    let mut cur_dict = copy_for_edit(&Value::Dict(root_dict.clone()), budget)?;
-    let Value::Dict(mut cur_node) = cur_dict else {
-        return Ok(false);
-    };
+    let mut cur_node = copy_dict_for_edit(root_dict, budget)?;
 
     let (leaf_ref, leaf_dict) = loop {
         budget.poll()?;
@@ -348,11 +345,7 @@ pub fn insert_name_tree(
             chosen,
         })?;
         cur_object = Some(child_ref);
-        cur_dict = Value::Dict(next_dict);
-        let Value::Dict(unpacked) = cur_dict else {
-            return Ok(false);
-        };
-        cur_node = unpacked;
+        cur_node = next_dict;
     };
 
     let Some(names) = canonical_leaf_names(&leaf_dict, true) else {
@@ -546,9 +539,7 @@ pub fn remove_name_tree<'b>(
     let mut visited: Table<()> = Table::default();
     let mut ancestors: BudgetVec<'_, NameAncestor<'_>> = BudgetVec::new(budget);
     let mut cur_object: Option<Reference> = None;
-    let Value::Dict(mut cur_node) = copy_for_edit(&Value::Dict(root_dict.clone()), budget)? else {
-        return Ok(None);
-    };
+    let mut cur_node = copy_dict_for_edit(root_dict, budget)?;
 
     let (leaf_ref, leaf_dict) = loop {
         budget.poll()?;

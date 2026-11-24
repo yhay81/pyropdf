@@ -39,12 +39,15 @@ from pyropdf._annotations import (
     Highlight,
     Ink,
     LineAnnotation,
+    LineDetails,
     LineEnding,
     MarkupRects,
     Note,
     NoteIcon,
     Polygon,
     PolyLine,
+    PopupInfo,
+    RedactionMark,
     Sound,
     SoundEncoding,
     Square,
@@ -99,6 +102,7 @@ from pyropdf._content import (
     Paint,
     Path,
     Paths,
+    PatternPaint,
     RadialGradient,
     Segment,
     ShadingPattern,
@@ -113,7 +117,14 @@ from pyropdf._content import (
 )
 from pyropdf._core import __version__
 from pyropdf._document import Document, Probe, open, probe  # noqa: A004 - pyropdf.open is the entry point.
-from pyropdf._encryption import Access, Encryption, Permissions, RecipientCredential, RecipientEncryption
+from pyropdf._encryption import (
+    Access,
+    Encryption,
+    IntegrityReport,
+    Permissions,
+    RecipientCredential,
+    RecipientEncryption,
+)
 from pyropdf._errors import (
     DocumentClosedError,
     EncryptedDocumentError,
@@ -148,9 +159,23 @@ from pyropdf._form import (
     SignatureFlags,
     TextField,
 )
+from pyropdf._fragments import FragmentParameter, PdfFragment
 from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
 from pyropdf._images import ImageRewriteReport, PageImage, StoredImage
+from pyropdf._interchange import (
+    ISO_EXTENSIONS,
+    AssociatedFile,
+    AssociatedFileRelationship,
+    AssociatedFiles,
+    DeveloperExtension,
+    DocumentPart,
+    DocumentPartAction,
+    DocumentParts,
+    Extensions,
+    PieceData,
+    PieceInfo,
+)
 from pyropdf._layers import Layer, LayerConfig, LayerMembership, Layers, VisibilityPolicy
 from pyropdf._limit_codes import LimitCode
 from pyropdf._limits import LIMIT_CODES, CancellationToken, DocumentLimits
@@ -171,13 +196,17 @@ from pyropdf._media import (
     MediaAsset,
     MediaKind,
     ModelFormat,
+    ModelMeasurement,
+    ModelMeasurementType,
     ModelView,
     ProjectionAnnotation,
     RichMedia,
+    RichMediaModel,
     Screen,
+    SlideShow,
     ThreeD,
 )
-from pyropdf._media_actions import GoTo3DView, RenditionAction, RenditionOperation, RichMediaExecute
+from pyropdf._media_actions import GoTo3DView, MovieAction, RenditionAction, RenditionOperation, RichMediaExecute
 from pyropdf._metadata import (
     METADATA_KEYS,
     Duplex,
@@ -192,6 +221,7 @@ from pyropdf._metadata import (
     parse_pdf_date,
     pdf_date,
 )
+from pyropdf._name_resources import NamedResources
 from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, String
 from pyropdf._ocr import OcrEngine, OcrRotation, OcrWord
 from pyropdf._operations import InlineImage, Operation, Operations
@@ -200,6 +230,7 @@ from pyropdf._page import Page
 from pyropdf._page_labels import PageLabelRange, PageLabelStyle
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
+from pyropdf._prepress import BoxStyle, FixedPrint, PrinterMark, SeparationPlate, Watermark
 from pyropdf._presentations import (
     NavigationStep,
     Transition,
@@ -225,12 +256,18 @@ from pyropdf._signature_structures import (
 )
 from pyropdf._signing import Signature, SignatureVerification, Signer, Timestamper
 from pyropdf._structure import (
+    MATHML_NAMESPACE,
+    PDF_1_7_NAMESPACE,
+    PDF_2_0_NAMESPACE,
     MarkedContentReference,
+    NamespaceRoleMap,
     ObjectReference,
     RoleMap,
     StructureChildren,
     StructureChildRule,
     StructureElement,
+    StructureNamespace,
+    StructureNamespaces,
     StructureText,
     StructureTree,
 )
@@ -238,20 +275,28 @@ from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
 from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
 from pyropdf._threads import Bead, Beads, BeadSpecification, Thread, ThreadAction, Threads
-from pyropdf._widgets import Widget, Widgets
+from pyropdf._viewer_actions import StructureDestination, UriAction, WindowsLaunch
+from pyropdf._web_capture import WebCapture
+from pyropdf._widgets import IconFit, Widget, Widgets
 
 _PUBLIC_MODULE_EXPORTS = (
+    WebCapture,
     GoTo3DView,
     MediaAsset,
     MediaKind,
     ModelFormat,
+    ModelMeasurement,
+    ModelMeasurementType,
     ModelView,
+    MovieAction,
     ProjectionAnnotation,
     RenditionAction,
     RenditionOperation,
     RichMedia,
+    RichMediaModel,
     RichMediaExecute,
     Screen,
+    SlideShow,
     ThreeD,
     Attachment,
     Attachments,
@@ -328,8 +373,12 @@ for _public in _PUBLIC_MODULE_EXPORTS:
 LimitCode.__doc__ = "A stable code that :attr:`LimitError.code` carries."
 
 __all__ = [
+    "ISO_EXTENSIONS",
     "LIMIT_CODES",
+    "MATHML_NAMESPACE",
     "METADATA_KEYS",
+    "PDF_1_7_NAMESPACE",
+    "PDF_2_0_NAMESPACE",
     "Access",
     "ActionTriggers",
     "Annotation",
@@ -340,6 +389,9 @@ __all__ = [
     "AnnotationType",
     "Annotations",
     "Array",
+    "AssociatedFile",
+    "AssociatedFileRelationship",
+    "AssociatedFiles",
     "Attachment",
     "AttachmentIcon",
     "Attachments",
@@ -350,6 +402,7 @@ __all__ = [
     "Block",
     "Border",
     "BorderStyle",
+    "BoxStyle",
     "CancellationToken",
     "Canvas",
     "Caret",
@@ -383,11 +436,15 @@ __all__ = [
     "DefectKind",
     "Destination",
     "Destinations",
+    "DeveloperExtension",
     "Dictionary",
     "DocMdpPermission",
     "Document",
     "DocumentClosedError",
     "DocumentLimits",
+    "DocumentPart",
+    "DocumentPartAction",
+    "DocumentParts",
     "DocumentRequirement",
     "DocumentScripts",
     "DocumentTrigger",
@@ -400,6 +457,7 @@ __all__ = [
     "EncryptedDocumentError",
     "EncryptedPayload",
     "Encryption",
+    "Extensions",
     "FallbackFont",
     "FallbackFonts",
     "FdfData",
@@ -412,11 +470,13 @@ __all__ = [
     "FieldType",
     "FileAttachment",
     "FillRule",
+    "FixedPrint",
     "Font",
     "FontInfo",
     "FontProgram",
     "FontRef",
     "Form",
+    "FragmentParameter",
     "FreeText",
     "GeospatialMeasure",
     "Glyph",
@@ -428,12 +488,14 @@ __all__ = [
     "Highlight",
     "History",
     "IRect",
+    "IconFit",
     "Image",
     "ImageMask",
     "ImageRewriteReport",
     "ImportDataAction",
     "Ink",
     "InlineImage",
+    "IntegrityReport",
     "InternalError",
     "JavaScriptAction",
     "Launch",
@@ -450,6 +512,7 @@ __all__ = [
     "Line",
     "LineAnnotation",
     "LineCap",
+    "LineDetails",
     "LineEnding",
     "LineJoin",
     "LineTo",
@@ -468,11 +531,16 @@ __all__ = [
     "MediaKind",
     "Metadata",
     "ModelFormat",
+    "ModelMeasurement",
+    "ModelMeasurementType",
     "ModelView",
     "MoveTo",
+    "MovieAction",
     "Name",
     "NamedAction",
     "NamedPages",
+    "NamedResources",
+    "NamespaceRoleMap",
     "NavigationStep",
     "Navigator",
     "Note",
@@ -507,14 +575,20 @@ __all__ = [
     "PathBuilder",
     "PathInput",
     "Paths",
+    "PatternPaint",
     "PdfError",
+    "PdfFragment",
     "Permissions",
+    "PieceData",
+    "PieceInfo",
     "Pixmap",
     "Point",
     "PointData",
     "PolyLine",
     "Polygon",
+    "PopupInfo",
     "PrintScaling",
+    "PrinterMark",
     "Probe",
     "Profiles",
     "ProjectionAnnotation",
@@ -531,6 +605,7 @@ __all__ = [
     "RecolorTarget",
     "Rect",
     "RectilinearMeasure",
+    "RedactionMark",
     "RelatedFile",
     "RemoteDestination",
     "RenditionAction",
@@ -541,6 +616,7 @@ __all__ = [
     "Revision",
     "RichMedia",
     "RichMediaExecute",
+    "RichMediaModel",
     "RoleMap",
     "SanitizeReport",
     "Screen",
@@ -548,6 +624,7 @@ __all__ = [
     "Scripts",
     "SecurityStore",
     "Segment",
+    "SeparationPlate",
     "SetLayerStateAction",
     "ShadingPattern",
     "ShadingType",
@@ -558,6 +635,7 @@ __all__ = [
     "SignaturePermission",
     "SignatureVerification",
     "Signer",
+    "SlideShow",
     "SoftMask",
     "SoftMaskType",
     "Sound",
@@ -579,7 +657,10 @@ __all__ = [
     "StructuralReport",
     "StructureChildRule",
     "StructureChildren",
+    "StructureDestination",
     "StructureElement",
+    "StructureNamespace",
+    "StructureNamespaces",
     "StructureText",
     "StructureTree",
     "SubmitFormAction",
@@ -610,12 +691,16 @@ __all__ = [
     "Unconverted",
     "Underline",
     "Unmapped",
+    "UriAction",
     "ValidationInfo",
     "ViewerPreferences",
     "Viewport",
     "VisibilityPolicy",
+    "Watermark",
+    "WebCapture",
     "Widget",
     "Widgets",
+    "WindowsLaunch",
     "Word",
     "__version__",
     "open",

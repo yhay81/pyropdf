@@ -16,7 +16,7 @@ class Array(MutableSequence[Any])
 
 A PDF array; elements resolve and write as `Dictionary` values do.
 
-### `Array.xref`
+### `xref`
 
 ```python
 Array.xref: int | None
@@ -24,7 +24,7 @@ Array.xref: int | None
 
 The object number of an indirect object, `None` for a direct value or the trailer.
 
-### `Array.generation`
+### `generation`
 
 ```python
 Array.generation: int | None
@@ -32,7 +32,7 @@ Array.generation: int | None
 
 The generation number of an indirect object, `None` for a direct value or the trailer.
 
-### `Array.is_indirect`
+### `is_indirect`
 
 ```python
 Array.is_indirect: bool
@@ -40,7 +40,7 @@ Array.is_indirect: bool
 
 Whether this is an indirect object rather than a direct value inside one.
 
-### `Array.__len__`
+### `__len__`
 
 ```python
 Array.__len__() -> int
@@ -48,7 +48,7 @@ Array.__len__() -> int
 
 Return the number of entries or elements.
 
-### `Array.__getitem__`
+### `__getitem__`
 
 ```python
 Array.__getitem__(index: int | slice) -> Any
@@ -56,7 +56,7 @@ Array.__getitem__(index: int | slice) -> Any
 
 Return the resolved element at `index`, or a list for a slice.
 
-### `Array.__setitem__`
+### `__setitem__`
 
 ```python
 Array.__setitem__(index: int | slice, value: object)
@@ -64,7 +64,7 @@ Array.__setitem__(index: int | slice, value: object)
 
 Write `value` at `index`; slices are not supported.
 
-### `Array.__delitem__`
+### `__delitem__`
 
 ```python
 Array.__delitem__(index: int | slice)
@@ -72,7 +72,7 @@ Array.__delitem__(index: int | slice)
 
 Remove the element at `index`; slices are not supported.
 
-### `Array.insert`
+### `insert`
 
 ```python
 Array.insert(index: int, value: object)
@@ -94,7 +94,7 @@ writes it at once, in one transaction. Plain values, lists, and mappings
 are written as direct objects; an indirect handle from the same document
 is written as a reference to it; and a direct handle is copied.
 
-### `Dictionary.xref`
+### `xref`
 
 ```python
 Dictionary.xref: int | None
@@ -102,7 +102,7 @@ Dictionary.xref: int | None
 
 The object number of an indirect object, `None` for a direct value or the trailer.
 
-### `Dictionary.generation`
+### `generation`
 
 ```python
 Dictionary.generation: int | None
@@ -110,7 +110,7 @@ Dictionary.generation: int | None
 
 The generation number of an indirect object, `None` for a direct value or the trailer.
 
-### `Dictionary.is_indirect`
+### `is_indirect`
 
 ```python
 Dictionary.is_indirect: bool
@@ -118,7 +118,7 @@ Dictionary.is_indirect: bool
 
 Whether this is an indirect object rather than a direct value inside one.
 
-### `Dictionary.__len__`
+### `__len__`
 
 ```python
 Dictionary.__len__() -> int
@@ -126,7 +126,7 @@ Dictionary.__len__() -> int
 
 Return the number of entries or elements.
 
-### `Dictionary.geospatial_measure`
+### `geospatial_measure`
 
 ```python
 Dictionary.geospatial_measure: GeospatialMeasure | None
@@ -136,7 +136,7 @@ Read the registration of this viewport, image, form or Geospatial3D annotation.
 
 Settable.
 
-### `Dictionary.geospatial_point`
+### `geospatial_point`
 
 ```python
 Dictionary.geospatial_point(
@@ -152,7 +152,7 @@ square, and a Geospatial3D annotation uses its view world coordinates.
 Geographic data returns latitude then longitude, projected data easting
 then northing. A three-dimensional registration also returns elevation.
 
-### `Dictionary.xmp`
+### `xmp`
 
 ```python
 Dictionary.xmp: str | None
@@ -168,7 +168,7 @@ to change this resource's association. Other owners keep their packet.
 
 Settable.
 
-### `Dictionary.__getitem__`
+### `__getitem__`
 
 ```python
 Dictionary.__getitem__(key: str) -> Any
@@ -176,7 +176,7 @@ Dictionary.__getitem__(key: str) -> Any
 
 Return the resolved value of `key`.
 
-### `Dictionary.__setitem__`
+### `__setitem__`
 
 ```python
 Dictionary.__setitem__(key: str, value: object)
@@ -184,7 +184,7 @@ Dictionary.__setitem__(key: str, value: object)
 
 Write `value` under `key`.
 
-### `Dictionary.__delitem__`
+### `__delitem__`
 
 ```python
 Dictionary.__delitem__(key: str)
@@ -192,7 +192,7 @@ Dictionary.__delitem__(key: str)
 
 Remove `key`.
 
-### `Dictionary.__iter__`
+### `__iter__`
 
 ```python
 Dictionary.__iter__() -> Iterator[str]
@@ -200,7 +200,7 @@ Dictionary.__iter__() -> Iterator[str]
 
 Iterate over the keys as `Name` values.
 
-### `Dictionary.__contains__`
+### `__contains__`
 
 ```python
 Dictionary.__contains__(key: object) -> bool
@@ -223,7 +223,7 @@ plain `str` value is written as a PDF text string, so write
 `Name("Page")` for a name. Bytes that are not UTF-8 are kept as
 surrogate escapes, so a name read from a file is written back unchanged.
 
-### `Name.developer_prefix`
+### `developer_prefix`
 
 ```python
 Name.developer_prefix: str | None
@@ -253,7 +253,7 @@ its value. Assigning a handle here copies what it addresses, so
 `doc.objects[target] = doc.objects[source]` copies an object, whereas
 assigning an indirect handle inside a container writes a reference.
 
-### `Objects.__getitem__`
+### `__getitem__`
 
 ```python
 Objects.__getitem__(xref: int) -> Any
@@ -261,7 +261,7 @@ Objects.__getitem__(xref: int) -> Any
 
 Return the object stored under `xref`.
 
-### `Objects.__setitem__`
+### `__setitem__`
 
 ```python
 Objects.__setitem__(xref: int, value: object)
@@ -269,7 +269,7 @@ Objects.__setitem__(xref: int, value: object)
 
 Replace the object stored under `xref`, which must exist, in one transaction.
 
-### `Objects.__iter__`
+### `__iter__`
 
 ```python
 Objects.__iter__() -> Iterator[int]
@@ -277,7 +277,7 @@ Objects.__iter__() -> Iterator[int]
 
 Iterate over object numbers in ascending order.
 
-### `Objects.__len__`
+### `__len__`
 
 ```python
 Objects.__len__() -> int
@@ -285,7 +285,7 @@ Objects.__len__() -> int
 
 Return the number of object numbers in use.
 
-### `Objects.__contains__`
+### `__contains__`
 
 ```python
 Objects.__contains__(xref: object) -> bool
@@ -293,7 +293,7 @@ Objects.__contains__(xref: object) -> bool
 
 Return whether an object is stored under `xref`.
 
-### `Objects.add`
+### `add`
 
 ```python
 Objects.add(value: object) -> int
@@ -301,7 +301,7 @@ Objects.add(value: object) -> int
 
 Add `value` as a new indirect object, in one transaction, and return its object number.
 
-### `Objects.add_stream`
+### `add_stream`
 
 ```python
 Objects.add_stream(
@@ -319,6 +319,8 @@ Add a stream of decoded `data`, in one transaction, and return its object number
 `dictionary` supplies further stream entries. The stream length and
 filter entries are derived from the data, `filter` and `decode_parms`
 as in `Stream.write`.
+A leading `/Crypt` in `dictionary` retains its security selector and
+parameters with every encoding.
 
 ## `Real`
 
@@ -339,7 +341,7 @@ documents, and `pickle`. `Real("35.68123456789012345")` and
 reads back as its `float`. Assigning a `Real` writes its lexeme, a
 `float` its shortest form, and a `Decimal` its exact digits.
 
-### `Real.lexeme`
+### `lexeme`
 
 ```python
 Real.lexeme: bytes | None
@@ -347,7 +349,7 @@ Real.lexeme: bytes | None
 
 The bytes that the real is written with, or `None` when only its `float` is known.
 
-### `Real.to_decimal`
+### `to_decimal`
 
 ```python
 Real.to_decimal() -> Decimal
@@ -363,7 +365,7 @@ class Stream(Dictionary)
 
 A PDF stream: its dictionary, plus `read` and `write`.
 
-### `Stream.xref`
+### `xref`
 
 ```python
 Stream.xref: int | None
@@ -371,7 +373,7 @@ Stream.xref: int | None
 
 The object number of an indirect object, `None` for a direct value or the trailer.
 
-### `Stream.generation`
+### `generation`
 
 ```python
 Stream.generation: int | None
@@ -379,7 +381,7 @@ Stream.generation: int | None
 
 The generation number of an indirect object, `None` for a direct value or the trailer.
 
-### `Stream.is_indirect`
+### `is_indirect`
 
 ```python
 Stream.is_indirect: bool
@@ -387,7 +389,7 @@ Stream.is_indirect: bool
 
 Whether this is an indirect object rather than a direct value inside one.
 
-### `Stream.__len__`
+### `__len__`
 
 ```python
 Stream.__len__() -> int
@@ -395,7 +397,7 @@ Stream.__len__() -> int
 
 Return the number of entries or elements.
 
-### `Stream.geospatial_measure`
+### `geospatial_measure`
 
 ```python
 Stream.geospatial_measure: GeospatialMeasure | None
@@ -405,7 +407,7 @@ Read the registration of this viewport, image, form or Geospatial3D annotation.
 
 Settable.
 
-### `Stream.geospatial_point`
+### `geospatial_point`
 
 ```python
 Stream.geospatial_point(
@@ -421,7 +423,7 @@ square, and a Geospatial3D annotation uses its view world coordinates.
 Geographic data returns latitude then longitude, projected data easting
 then northing. A three-dimensional registration also returns elevation.
 
-### `Stream.xmp`
+### `xmp`
 
 ```python
 Stream.xmp: str | None
@@ -437,7 +439,7 @@ to change this resource's association. Other owners keep their packet.
 
 Settable.
 
-### `Stream.__getitem__`
+### `__getitem__`
 
 ```python
 Stream.__getitem__(key: str) -> Any
@@ -445,7 +447,7 @@ Stream.__getitem__(key: str) -> Any
 
 Return the resolved value of `key`.
 
-### `Stream.__setitem__`
+### `__setitem__`
 
 ```python
 Stream.__setitem__(key: str, value: object)
@@ -453,7 +455,7 @@ Stream.__setitem__(key: str, value: object)
 
 Write `value` under `key`.
 
-### `Stream.__delitem__`
+### `__delitem__`
 
 ```python
 Stream.__delitem__(key: str)
@@ -461,7 +463,7 @@ Stream.__delitem__(key: str)
 
 Remove `key`.
 
-### `Stream.__iter__`
+### `__iter__`
 
 ```python
 Stream.__iter__() -> Iterator[str]
@@ -469,7 +471,7 @@ Stream.__iter__() -> Iterator[str]
 
 Iterate over the keys as `Name` values.
 
-### `Stream.__contains__`
+### `__contains__`
 
 ```python
 Stream.__contains__(key: object) -> bool
@@ -477,7 +479,19 @@ Stream.__contains__(key: object) -> bool
 
 Return whether `key` is present, without resolving its value.
 
-### `Stream.read`
+### `opi`
+
+```python
+Stream.opi: typed.OPIVersion13Dict | typed.OPIVersion20Dict | None
+```
+
+The existing OPI proxy description on an image or Form.
+
+The version selects the live Arlington view of the file specification
+and stored image parameters. OPI 2.0 requires a Form. Image masks
+ignore OPI. No source file is opened.
+
+### `read`
 
 ```python
 Stream.read(*, decode: bool = True, max_size: int | None = 67108864) -> bytes
@@ -485,6 +499,7 @@ Stream.read(*, decode: bool = True, max_size: int | None = 67108864) -> bytes
 
 Return the stream data, decoded through its filters unless `decode` is false.
 
+Indirect filter names and parameters are read from the current revision.
 hayro-syntax decodes the filters, and a filter that it does not
 decode, such as an image filter, raises `PdfError` instead of
 returning encoded bytes. `max_size` bounds the result with
@@ -492,7 +507,7 @@ returning encoded bytes. `max_size` bounds the result with
 limits bound the decoding; `None` lifts `max_size` for trusted
 input.
 
-### `Stream.write`
+### `write`
 
 ```python
 Stream.write(
@@ -513,6 +528,8 @@ for a name or one mapping or `None` per filter in a chain. LZW accepts
 `EarlyChange`; Flate and LZW accept TIFF and PNG predictor parameters.
 Predictors currently support up to 255 bits per pixel. TIFF predictor
 rows must fill whole bytes so every row can be read back.
+A leading `/Crypt` filter keeps the same recipients and shared security
+parameters. An unchanged filter chain keeps its indirect declarations.
 
 ## `String`
 
@@ -527,7 +544,7 @@ A PDF string: its bytes, with `text` decoding a text string.
 Write a `str` to store a text string (ASCII as is, anything else as
 UTF-16BE), or `bytes` or a `String` to store the bytes exactly.
 
-### `String.text`
+### `text`
 
 ```python
 String.text: str

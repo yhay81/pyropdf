@@ -145,3 +145,37 @@ uv run --locked --only-group wheel --python 3.14 python tools/repack_wheel.py de
 python3 evidence/wheel-size/recompression.py original/*.whl delivered/*.whl \
   --source https://github.com/yhay81/pyropdf/actions/runs/44783558184/artifacts/14654361426
 ```
+
+## Integrated object store release profile
+
+After #1101, the delivered Windows x86_64 wheel was 9,573,339 bytes and the
+Linux x86_64 wheel was 9,454,025 bytes. Both exceeded the 9,437,184-byte
+limit. The corresponding paired jobs measured the same overrun on their
+bases. [Windows build](https://github.com/yhay81/pyropdf/actions/runs/44976395403/job/137067205245)
+and [Linux build](https://github.com/yhay81/pyropdf/actions/runs/44976395403/job/137067205425).
+
+On the same integrated sources at `138fd449`, compiling `pyropdf-store` at
+level `s` reduced the delivered macOS arm64 wheel from 8,225,735 to
+8,037,684 bytes, a saving of 188,051 bytes. The installed wheel passed the
+release smoke test, including panic unwinding, rendering, extraction, editing,
+and reopening full and incremental saves. [Artifact hashes and timings](store-profile.json).
+
+To reproduce, build the base with the pinned release options, then build
+it again with the one package override. Use separate output directories.
+
+```sh
+uvx --from maturin==1.16.0 maturin build --release --locked --compression-level 9 --out baseline
+uvx --from maturin==1.16.0 maturin build --release --locked --compression-level 9 --out candidate \
+  --config 'profile.release.package.pyropdf-store.opt-level="s"'
+for directory in baseline candidate; do
+  uv run --locked --only-group wheel --python 3.14 python tools/repack_wheel.py "$directory"
+  python tools/smoke_artifact.py "$directory" --pattern '*.whl'
+done
+```
+
+Install each delivered wheel in a separate environment and run the two-document
+timing command above there. The benchmark takes the best of five freshly
+opened documents per operation. On this machine whole-document text extraction
+took 124.2 and 65.9 ms with the new profile, compared with 127.2 and 67.0 ms
+before. The four 72 and 144 dpi rendering comparisons ranged from 2.7% faster
+to 1.7% slower. The paired native-platform results are tracked in [#1108](https://github.com/yhay81/pyropdf/issues/1108).

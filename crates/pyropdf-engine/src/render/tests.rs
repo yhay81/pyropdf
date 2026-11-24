@@ -538,3 +538,55 @@ fn scaled_fit_renders_mixed_pages_as_per_page_matrices_and_refuses_zero_bounds()
         );
     }
 }
+
+#[test]
+fn with_cache_replaces_bridged_entry_and_drops_on_thread_exit() {
+    let bytes = pdf_of(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 2 2] >>",
+    ]);
+    let first = Arc::new(Bridged::of_bytes(bytes.clone()));
+    let second = Arc::new(Bridged::of_bytes(bytes));
+    let none = Fallback::default();
+    // Run on a child thread so both `*held = None` replacement and TLS drop of
+    // `Cached` (`RenderCache<'static>` before `Arc<Bridged>`) are checked.
+    std::thread::spawn(move || {
+        let pages_first = with_cache(&first, &none, |bridged, _cache| bridged.pdf().pages().len());
+        let pages_cached = with_cache(&first, &none, |bridged, _cache| bridged.pdf().pages().len());
+        let pages_second = with_cache(&second, &none, |bridged, _cache| {
+            bridged.pdf().pages().len()
+        });
+        assert_eq!((pages_first, pages_cached, pages_second), (1, 1, 1));
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn miri_smoke_render_with_cache_replacement_and_tls_drop() {
+    let bytes = pdf_of(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 2 2] >>",
+    ]);
+    let b1 = Arc::new(Bridged::of_bytes(bytes.clone()));
+    let b2 = Arc::new(Bridged::of_bytes(bytes));
+    let none = Fallback::default();
+    // Run on a child thread so both `*held = None` replacement and TLS drop of
+    // `Cached` (`RenderCache<'static>` before `Arc<Bridged>`) run under Miri.
+    std::thread::spawn(move || {
+        with_cache(&b1, &none, |bridged, cache| {
+            let _ = bridged.pdf().pages().len();
+            let _ = cache;
+        });
+        with_cache(&b1, &none, |bridged, _cache| {
+            assert_eq!(bridged.pdf().pages().len(), 1);
+        });
+        with_cache(&b2, &none, |bridged, _cache| {
+            assert_eq!(bridged.pdf().pages().len(), 1);
+        });
+    })
+    .join()
+    .unwrap();
+}

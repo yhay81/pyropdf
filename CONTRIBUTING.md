@@ -31,9 +31,12 @@ Rust source changes.
 python3 tools/check.py
 ```
 
-It runs the Python tests, ruff, ty, rustfmt, clippy, and the Rust tests, as
-CI does, and prints one line per check. `python3 tools/check.py python` runs
-only the Python checks. The documentation site builds with:
+It runs the Python tests, ruff, ty, rustfmt, clippy, and the Rust tests,
+and prints one line per check. The Python checks use a representative set
+of documents for the preservation and consistency tests. Run `uv run pytest`
+to exercise every edit on every document as Python 3.11 does in CI.
+`python3 tools/check.py python` runs only the Python checks. The
+documentation site builds with:
 
 ```bash
 uv run --group docs zensical build -f mkdocs.yml -s

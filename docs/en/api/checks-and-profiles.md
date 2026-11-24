@@ -64,7 +64,7 @@ Each claim is a name such as `"PDF/A-2B"`, `"PDF/UA-1"`,
 declare it. A claim is what the document says of itself; whether it
 holds is for a validator such as veraPDF to decide.
 
-### `Profiles.__bool__`
+### `__bool__`
 
 ```python
 Profiles.__bool__() -> bool
@@ -115,7 +115,7 @@ the indirect objects that the walk reached, and `unchecked` the
 predicates of the model that it met but cannot decide. `truncated` is
 whether defects past the report's limit were dropped.
 
-### `StructuralReport.__bool__`
+### `__bool__`
 
 ```python
 StructuralReport.__bool__() -> bool

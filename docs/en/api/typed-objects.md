@@ -71,7 +71,7 @@ class ArrayView(View)
 
 The base of the views of array types.
 
-### `typed.ArrayView.obj`
+### `obj`
 
 ```python
 typed.ArrayView.obj: pyropdf.Dictionary | pyropdf.Array
@@ -79,7 +79,7 @@ typed.ArrayView.obj: pyropdf.Dictionary | pyropdf.Array
 
 The viewed handle.
 
-### `typed.ArrayView.create`
+### `create`
 
 ```python
 typed.ArrayView.create(
@@ -101,7 +101,7 @@ undo step, including inside an existing transaction. An optional
 `attach(view)` callback can register the new object in its owner's
 collection and build reciprocal links before validation.
 
-### `typed.ArrayView.replace`
+### `replace`
 
 ```python
 typed.ArrayView.replace(value: object, /)
@@ -113,7 +113,7 @@ The replacement must satisfy this descriptor and every supported live
 incoming link. Coupled or unknown relationships require their owning
 operation. Accept PDF values, a container handle or a typed view.
 
-### `typed.ArrayView.remove`
+### `remove`
 
 ```python
 typed.ArrayView.remove()
@@ -121,7 +121,7 @@ typed.ArrayView.remove()
 
 Free this indirect object when it has no live incoming reference.
 
-### `typed.ArrayView.interpret`
+### `interpret`
 
 ```python
 typed.ArrayView.interpret(key: str | int, /) -> Any
@@ -134,7 +134,7 @@ absent optional value. A name or number tree returns a `LinkedTree`
 whose `lookup` resolves and interprets an individual leaf. An ambiguous link, an unresolved reference,
 or a value outside the admitted types and values raises PdfError.
 
-### `typed.ArrayView.__getitem__`
+### `__getitem__`
 
 ```python
 typed.ArrayView.__getitem__(key: str | int) -> Any
@@ -142,7 +142,7 @@ typed.ArrayView.__getitem__(key: str | int) -> Any
 
 Return the typed value of `key`; raise `KeyError` when it is absent.
 
-### `typed.ArrayView.__getattr__`
+### `__getattr__`
 
 ```python
 typed.ArrayView.__getattr__(name: str) -> Any
@@ -150,7 +150,7 @@ typed.ArrayView.__getattr__(name: str) -> Any
 
 Return the typed value of the key `name`, or `None` when it is absent.
 
-### `typed.ArrayView.__setitem__`
+### `__setitem__`
 
 ```python
 typed.ArrayView.__setitem__(key: str | int, value: object)
@@ -158,7 +158,7 @@ typed.ArrayView.__setitem__(key: str | int, value: object)
 
 Write `value` under `key` as one of its declared types.
 
-### `typed.ArrayView.__setattr__`
+### `__setattr__`
 
 ```python
 typed.ArrayView.__setattr__(name: str, value: object)
@@ -166,7 +166,7 @@ typed.ArrayView.__setattr__(name: str, value: object)
 
 Write the key `name`; `None` removes it unless it may be `null`.
 
-### `typed.ArrayView.__delitem__`
+### `__delitem__`
 
 ```python
 typed.ArrayView.__delitem__(key: str | int)
@@ -174,7 +174,7 @@ typed.ArrayView.__delitem__(key: str | int)
 
 Remove `key`; raise `KeyError` when it is absent.
 
-### `typed.ArrayView.__delattr__`
+### `__delattr__`
 
 ```python
 typed.ArrayView.__delattr__(name: str)
@@ -182,7 +182,7 @@ typed.ArrayView.__delattr__(name: str)
 
 Remove the key `name`.
 
-### `typed.ArrayView.__contains__`
+### `__contains__`
 
 ```python
 typed.ArrayView.__contains__(key: object) -> bool
@@ -198,7 +198,7 @@ class DictionaryView(View)
 
 The base of the views of dictionary types.
 
-### `typed.DictionaryView.obj`
+### `obj`
 
 ```python
 typed.DictionaryView.obj: pyropdf.Dictionary | pyropdf.Array
@@ -206,7 +206,7 @@ typed.DictionaryView.obj: pyropdf.Dictionary | pyropdf.Array
 
 The viewed handle.
 
-### `typed.DictionaryView.create`
+### `create`
 
 ```python
 typed.DictionaryView.create(
@@ -228,7 +228,7 @@ undo step, including inside an existing transaction. An optional
 `attach(view)` callback can register the new object in its owner's
 collection and build reciprocal links before validation.
 
-### `typed.DictionaryView.replace`
+### `replace`
 
 ```python
 typed.DictionaryView.replace(value: object, /)
@@ -240,7 +240,7 @@ The replacement must satisfy this descriptor and every supported live
 incoming link. Coupled or unknown relationships require their owning
 operation. Accept PDF values, a container handle or a typed view.
 
-### `typed.DictionaryView.remove`
+### `remove`
 
 ```python
 typed.DictionaryView.remove()
@@ -248,7 +248,7 @@ typed.DictionaryView.remove()
 
 Free this indirect object when it has no live incoming reference.
 
-### `typed.DictionaryView.interpret`
+### `interpret`
 
 ```python
 typed.DictionaryView.interpret(key: str | int, /) -> Any
@@ -261,7 +261,7 @@ absent optional value. A name or number tree returns a `LinkedTree`
 whose `lookup` resolves and interprets an individual leaf. An ambiguous link, an unresolved reference,
 or a value outside the admitted types and values raises PdfError.
 
-### `typed.DictionaryView.__getitem__`
+### `__getitem__`
 
 ```python
 typed.DictionaryView.__getitem__(key: str | int) -> Any
@@ -269,7 +269,7 @@ typed.DictionaryView.__getitem__(key: str | int) -> Any
 
 Return the typed value of `key`; raise `KeyError` when it is absent.
 
-### `typed.DictionaryView.__getattr__`
+### `__getattr__`
 
 ```python
 typed.DictionaryView.__getattr__(name: str) -> Any
@@ -277,7 +277,7 @@ typed.DictionaryView.__getattr__(name: str) -> Any
 
 Return the typed value of the key `name`, or `None` when it is absent.
 
-### `typed.DictionaryView.__setitem__`
+### `__setitem__`
 
 ```python
 typed.DictionaryView.__setitem__(key: str | int, value: object)
@@ -285,7 +285,7 @@ typed.DictionaryView.__setitem__(key: str | int, value: object)
 
 Write `value` under `key` as one of its declared types.
 
-### `typed.DictionaryView.__setattr__`
+### `__setattr__`
 
 ```python
 typed.DictionaryView.__setattr__(name: str, value: object)
@@ -293,7 +293,7 @@ typed.DictionaryView.__setattr__(name: str, value: object)
 
 Write the key `name`; `None` removes it unless it may be `null`.
 
-### `typed.DictionaryView.__delitem__`
+### `__delitem__`
 
 ```python
 typed.DictionaryView.__delitem__(key: str | int)
@@ -301,7 +301,7 @@ typed.DictionaryView.__delitem__(key: str | int)
 
 Remove `key`; raise `KeyError` when it is absent.
 
-### `typed.DictionaryView.__delattr__`
+### `__delattr__`
 
 ```python
 typed.DictionaryView.__delattr__(name: str)
@@ -309,7 +309,7 @@ typed.DictionaryView.__delattr__(name: str)
 
 Remove the key `name`.
 
-### `typed.DictionaryView.__contains__`
+### `__contains__`
 
 ```python
 typed.DictionaryView.__contains__(key: object) -> bool
@@ -325,7 +325,7 @@ typed.LinkedTree(tree: pyropdf.Dictionary, descriptor: str, key: str)
 
 A name or number tree with the Arlington types declared for its leaf values.
 
-### `typed.LinkedTree.xref`
+### `xref`
 
 ```python
 typed.LinkedTree.xref: int | None
@@ -333,7 +333,7 @@ typed.LinkedTree.xref: int | None
 
 The object number of an indirect object, `None` for a direct value or the trailer.
 
-### `typed.LinkedTree.generation`
+### `generation`
 
 ```python
 typed.LinkedTree.generation: int | None
@@ -341,7 +341,7 @@ typed.LinkedTree.generation: int | None
 
 The generation number of an indirect object, `None` for a direct value or the trailer.
 
-### `typed.LinkedTree.is_indirect`
+### `is_indirect`
 
 ```python
 typed.LinkedTree.is_indirect: bool
@@ -349,7 +349,7 @@ typed.LinkedTree.is_indirect: bool
 
 Whether this is an indirect object rather than a direct value inside one.
 
-### `typed.LinkedTree.__len__`
+### `__len__`
 
 ```python
 typed.LinkedTree.__len__() -> int
@@ -357,7 +357,7 @@ typed.LinkedTree.__len__() -> int
 
 Return the number of entries or elements.
 
-### `typed.LinkedTree.geospatial_measure`
+### `geospatial_measure`
 
 ```python
 typed.LinkedTree.geospatial_measure: GeospatialMeasure | None
@@ -367,7 +367,7 @@ Read the registration of this viewport, image, form or Geospatial3D annotation.
 
 Settable.
 
-### `typed.LinkedTree.geospatial_point`
+### `geospatial_point`
 
 ```python
 typed.LinkedTree.geospatial_point(
@@ -383,7 +383,7 @@ square, and a Geospatial3D annotation uses its view world coordinates.
 Geographic data returns latitude then longitude, projected data easting
 then northing. A three-dimensional registration also returns elevation.
 
-### `typed.LinkedTree.xmp`
+### `xmp`
 
 ```python
 typed.LinkedTree.xmp: str | None
@@ -399,7 +399,7 @@ to change this resource's association. Other owners keep their packet.
 
 Settable.
 
-### `typed.LinkedTree.__getitem__`
+### `__getitem__`
 
 ```python
 typed.LinkedTree.__getitem__(key: str) -> Any
@@ -407,7 +407,7 @@ typed.LinkedTree.__getitem__(key: str) -> Any
 
 Return the resolved value of `key`.
 
-### `typed.LinkedTree.__setitem__`
+### `__setitem__`
 
 ```python
 typed.LinkedTree.__setitem__(key: str, value: object)
@@ -415,7 +415,7 @@ typed.LinkedTree.__setitem__(key: str, value: object)
 
 Write `value` under `key`.
 
-### `typed.LinkedTree.__delitem__`
+### `__delitem__`
 
 ```python
 typed.LinkedTree.__delitem__(key: str)
@@ -423,7 +423,7 @@ typed.LinkedTree.__delitem__(key: str)
 
 Remove `key`.
 
-### `typed.LinkedTree.__iter__`
+### `__iter__`
 
 ```python
 typed.LinkedTree.__iter__() -> Iterator[str]
@@ -431,7 +431,7 @@ typed.LinkedTree.__iter__() -> Iterator[str]
 
 Iterate over the keys as `Name` values.
 
-### `typed.LinkedTree.__contains__`
+### `__contains__`
 
 ```python
 typed.LinkedTree.__contains__(key: object) -> bool
@@ -439,7 +439,7 @@ typed.LinkedTree.__contains__(key: object) -> bool
 
 Return whether `key` is present, without resolving its value.
 
-### `typed.LinkedTree.lookup`
+### `lookup`
 
 ```python
 typed.LinkedTree.lookup(key: bytes | int, /) -> Any
@@ -455,7 +455,7 @@ class StreamView(DictionaryView)
 
 The base of the views of stream types.
 
-### `typed.StreamView.obj`
+### `obj`
 
 ```python
 typed.StreamView.obj: pyropdf.Dictionary | pyropdf.Array
@@ -463,7 +463,7 @@ typed.StreamView.obj: pyropdf.Dictionary | pyropdf.Array
 
 The viewed handle.
 
-### `typed.StreamView.create`
+### `create`
 
 ```python
 typed.StreamView.create(
@@ -485,7 +485,7 @@ undo step, including inside an existing transaction. An optional
 `attach(view)` callback can register the new object in its owner's
 collection and build reciprocal links before validation.
 
-### `typed.StreamView.replace`
+### `replace`
 
 ```python
 typed.StreamView.replace(value: object, /)
@@ -497,7 +497,7 @@ The replacement must satisfy this descriptor and every supported live
 incoming link. Coupled or unknown relationships require their owning
 operation. Accept PDF values, a container handle or a typed view.
 
-### `typed.StreamView.remove`
+### `remove`
 
 ```python
 typed.StreamView.remove()
@@ -505,7 +505,7 @@ typed.StreamView.remove()
 
 Free this indirect object when it has no live incoming reference.
 
-### `typed.StreamView.interpret`
+### `interpret`
 
 ```python
 typed.StreamView.interpret(key: str | int, /) -> Any
@@ -518,7 +518,7 @@ absent optional value. A name or number tree returns a `LinkedTree`
 whose `lookup` resolves and interprets an individual leaf. An ambiguous link, an unresolved reference,
 or a value outside the admitted types and values raises PdfError.
 
-### `typed.StreamView.__getitem__`
+### `__getitem__`
 
 ```python
 typed.StreamView.__getitem__(key: str | int) -> Any
@@ -526,7 +526,7 @@ typed.StreamView.__getitem__(key: str | int) -> Any
 
 Return the typed value of `key`; raise `KeyError` when it is absent.
 
-### `typed.StreamView.__getattr__`
+### `__getattr__`
 
 ```python
 typed.StreamView.__getattr__(name: str) -> Any
@@ -534,7 +534,7 @@ typed.StreamView.__getattr__(name: str) -> Any
 
 Return the typed value of the key `name`, or `None` when it is absent.
 
-### `typed.StreamView.__setitem__`
+### `__setitem__`
 
 ```python
 typed.StreamView.__setitem__(key: str | int, value: object)
@@ -542,7 +542,7 @@ typed.StreamView.__setitem__(key: str | int, value: object)
 
 Write `value` under `key` as one of its declared types.
 
-### `typed.StreamView.__setattr__`
+### `__setattr__`
 
 ```python
 typed.StreamView.__setattr__(name: str, value: object)
@@ -550,7 +550,7 @@ typed.StreamView.__setattr__(name: str, value: object)
 
 Write the key `name`; `None` removes it unless it may be `null`.
 
-### `typed.StreamView.__delitem__`
+### `__delitem__`
 
 ```python
 typed.StreamView.__delitem__(key: str | int)
@@ -558,7 +558,7 @@ typed.StreamView.__delitem__(key: str | int)
 
 Remove `key`; raise `KeyError` when it is absent.
 
-### `typed.StreamView.__delattr__`
+### `__delattr__`
 
 ```python
 typed.StreamView.__delattr__(name: str)
@@ -566,7 +566,7 @@ typed.StreamView.__delattr__(name: str)
 
 Remove the key `name`.
 
-### `typed.StreamView.__contains__`
+### `__contains__`
 
 ```python
 typed.StreamView.__contains__(key: object) -> bool
@@ -590,7 +590,7 @@ typed.View(obj: pyropdf.Dictionary | pyropdf.Array, /)
 
 A typed view of one object: the base of the views of every object type.
 
-### `typed.View.obj`
+### `obj`
 
 ```python
 typed.View.obj: pyropdf.Dictionary | pyropdf.Array
@@ -598,7 +598,7 @@ typed.View.obj: pyropdf.Dictionary | pyropdf.Array
 
 The viewed handle.
 
-### `typed.View.create`
+### `create`
 
 ```python
 typed.View.create(
@@ -620,7 +620,7 @@ undo step, including inside an existing transaction. An optional
 `attach(view)` callback can register the new object in its owner's
 collection and build reciprocal links before validation.
 
-### `typed.View.replace`
+### `replace`
 
 ```python
 typed.View.replace(value: object, /)
@@ -632,7 +632,7 @@ The replacement must satisfy this descriptor and every supported live
 incoming link. Coupled or unknown relationships require their owning
 operation. Accept PDF values, a container handle or a typed view.
 
-### `typed.View.remove`
+### `remove`
 
 ```python
 typed.View.remove()
@@ -640,7 +640,7 @@ typed.View.remove()
 
 Free this indirect object when it has no live incoming reference.
 
-### `typed.View.interpret`
+### `interpret`
 
 ```python
 typed.View.interpret(key: str | int, /) -> Any
@@ -653,7 +653,7 @@ absent optional value. A name or number tree returns a `LinkedTree`
 whose `lookup` resolves and interprets an individual leaf. An ambiguous link, an unresolved reference,
 or a value outside the admitted types and values raises PdfError.
 
-### `typed.View.__getitem__`
+### `__getitem__`
 
 ```python
 typed.View.__getitem__(key: str | int) -> Any
@@ -661,7 +661,7 @@ typed.View.__getitem__(key: str | int) -> Any
 
 Return the typed value of `key`; raise `KeyError` when it is absent.
 
-### `typed.View.__getattr__`
+### `__getattr__`
 
 ```python
 typed.View.__getattr__(name: str) -> Any
@@ -669,7 +669,7 @@ typed.View.__getattr__(name: str) -> Any
 
 Return the typed value of the key `name`, or `None` when it is absent.
 
-### `typed.View.__setitem__`
+### `__setitem__`
 
 ```python
 typed.View.__setitem__(key: str | int, value: object)
@@ -677,7 +677,7 @@ typed.View.__setitem__(key: str | int, value: object)
 
 Write `value` under `key` as one of its declared types.
 
-### `typed.View.__setattr__`
+### `__setattr__`
 
 ```python
 typed.View.__setattr__(name: str, value: object)
@@ -685,7 +685,7 @@ typed.View.__setattr__(name: str, value: object)
 
 Write the key `name`; `None` removes it unless it may be `null`.
 
-### `typed.View.__delitem__`
+### `__delitem__`
 
 ```python
 typed.View.__delitem__(key: str | int)
@@ -693,7 +693,7 @@ typed.View.__delitem__(key: str | int)
 
 Remove `key`; raise `KeyError` when it is absent.
 
-### `typed.View.__delattr__`
+### `__delattr__`
 
 ```python
 typed.View.__delattr__(name: str)
@@ -701,7 +701,7 @@ typed.View.__delattr__(name: str)
 
 Remove the key `name`.
 
-### `typed.View.__contains__`
+### `__contains__`
 
 ```python
 typed.View.__contains__(key: object) -> bool

@@ -1,0 +1,32 @@
+{% extends "main.html" %}
+
+{% block htmltitle %}
+  {% if config.extra.current_language == "ja" %}
+    <title>ページが見つかりません - {{ config.site_name }}</title>
+  {% else %}
+    <title>Page not found - {{ config.site_name }}</title>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  <div class="pp-not-found">
+    <p class="pp-eyebrow">404</p>
+    {% if config.extra.current_language == "ja" %}
+      <h1>ページが見つかりません</h1>
+      <p>お探しのページは移動または削除された可能性があります。ホーム、ガイド、または API リファレンスから探してください。</p>
+      <p class="pp-actions">
+        <a class="pp-button pp-button--primary" href="/ja/">ホームへ戻る</a>
+        <a class="pp-button" href="/ja/getting-started/">はじめに</a>
+        <a class="pp-button" href="/api/" hreflang="en">API リファレンス</a>
+      </p>
+    {% else %}
+      <h1>Page not found</h1>
+      <p>The page you requested may have moved or been removed. Continue from the home page, guide, or API reference.</p>
+      <p class="pp-actions">
+        <a class="pp-button pp-button--primary" href="/">Go home</a>
+        <a class="pp-button" href="/getting-started/">Getting started</a>
+        <a class="pp-button" href="/api/">API reference</a>
+      </p>
+    {% endif %}
+  </div>
+{% endblock %}

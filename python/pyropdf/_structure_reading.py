@@ -8,11 +8,12 @@ from typing import TYPE_CHECKING
 
 from pyropdf import _core
 from pyropdf._errors import LimitError, MalformedPdfError
-from pyropdf._objects import Dictionary, Name, Stream, String
+from pyropdf._objects import Array, Dictionary, Name, Stream, String
 from pyropdf._operations import InlineImage, Operation, Operations, _from_core
 from pyropdf._structure import (
     _DEFAULT_MAX_ELEMENTS,
     _MAX_STRUCTURE_DEPTH,
+    _MAX_TREE_DEPTH,
     MarkedContentReference,
     ObjectReference,
     StructureChildRule,
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 
 _PDF2 = "http://iso.org/pdf2/ssn"
 _CODE_OBJECT_COUNT = "object_count"
+_CODE_STRUCTURE_TREE = "structure_tree_count"
 
 
 def _root_items(tree: StructureTree, budget: _core._OperationBudget) -> Iterator[StructureItem]:
@@ -284,81 +286,271 @@ def reading_order(tree: StructureTree, budget: _core._OperationBudget, *, expand
     return tuple(result)
 
 
-def _pdf2(element: StructureElement) -> bool:
+_PATH_PAINT = {"S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "sh", "BI"}
+_TEXT_SHOW = {"Tj", "TJ", "'", '"'}
+
+
+def _paint(op: object, resources: Dictionary | None) -> str | None:
+    if not isinstance(op, Operation):
+        return "graphic"  # InlineImage
+    if op.operator in _PATH_PAINT:
+        return "graphic"
+    if op.operator in _TEXT_SHOW:
+        if op.operands:
+            value = op.operands[-1]
+            strings = value if op.operator == "TJ" and isinstance(value, (tuple, list)) else (value,)
+            if any(isinstance(item, bytes) and item for item in strings):
+                return "text"
+        return None
+    if op.operator == "Do" and op.operands:
+        xobjects = resources.get("XObject") if resources is not None else None
+        obj = xobjects.get(str(op.operands[0])) if isinstance(xobjects, Dictionary) else None
+        return "graphic" if isinstance(obj, Dictionary) and obj.get("Subtype") == "Image" else "unknown"
+    return None
+
+
+def _page_paint(page: Page, budget: _core._OperationBudget) -> dict[int, str]:
+    resources = _resources(page)
+    properties = resources.get("Properties") if resources is not None else None
+    result: dict[int, str] = {}
+    marks = [_Mark()]
+    pieces: dict[int, list[str]] = {}
+    for op in page.operations:
+        budget.poll()
+        current = marks[-1]
+        if isinstance(op, Operation) and op.operator in {"BMC", "BDC"}:
+            if len(marks) >= _MAX_STRUCTURE_DEPTH:
+                raise _depth_limit_error()
+            budget.charge("memory_size", 128)
+            child = _open_mark(current, op, properties, pieces, budget, expand=False)
+            marks.append(child)
+            if child.mcid is not None and child.replaced and not child.artifact:
+                result.setdefault(child.mcid, "text")
+        elif op.operator == "EMC":
+            if len(marks) == 1:
+                msg = "unmatched EMC in tagged page content"
+                raise MalformedPdfError(msg)
+            marks.pop()
+            budget.release("memory_size", 128)
+        elif current.mcid is not None and not current.replaced and not current.artifact:
+            kind = _paint(op, resources)
+            previous = result.get(current.mcid)
+            if kind is not None and (
+                previous is None or kind == "graphic" or (kind == "unknown" and previous == "text")
+            ):
+                result[current.mcid] = kind
+    if len(marks) != 1:
+        msg = "unclosed marked-content sequence on tagged page"
+        raise MalformedPdfError(msg)
+    return result
+
+
+def _text_content(
+    tree: StructureTree,
+    item: MarkedContentReference | ObjectReference,
+    pages: dict[int, dict[int, str]],
+    budget: _core._OperationBudget,
+) -> bool | None:
+    if isinstance(item, ObjectReference):
+        obj = tree._document.objects[item.xref]  # noqa: SLF001
+        return False if isinstance(obj, Dictionary) and obj.get("Subtype") == "Image" else None
+    if item.stream_xref is not None or item.page is None:
+        return None
+    if item.page not in pages:
+        budget.charge("memory_size", 192)
+        pages[item.page] = _page_paint(tree._document.pages[item.page], budget)  # noqa: SLF001
+    return {"text": True, "graphic": False}.get(pages[item.page].get(item.mcid, "unknown"))
+
+
+_PDF1 = "http://iso.org/pdf/ssn"
+_STANDARD = "PDF 2.0"
+_TRANSPARENT = {"Part", "Div", "NonStruct"}
+_TEXT_ROLES = {"RB", "RT", "RP", "WT", "WP"}
+_INLINE = {"Em", "Strong", "Span", "Sub", "Ruby", "RB", "RT", "RP", "Warichu", "WT", "WP", "Lbl"}
+_GROUPING = {"Document", "DocumentFragment", "Part", "Sect", "Aside"}
+_OTHER = "other namespace"
+
+
+def _namespace_mapping(namespace: Dictionary, role: str) -> tuple[object, str]:
+    uri = namespace.get("NS")
+    if not isinstance(uri, String) or not uri:
+        return None, "missing namespace identifier"
+    mapping = namespace.get("RoleMapNS")
+    target = mapping.get(role) if isinstance(mapping, Dictionary) else None
+    # The two standard identifiers fit even in UTF-16 with a byte-order mark.
+    uri_text = uri.text if len(uri) <= 4 * len(_PDF2) else None
+    return target, {_PDF2: _STANDARD, _PDF1: _OTHER}.get(uri_text, "unmapped namespace role")
+
+
+def _role(element: StructureElement, budget: _core._OperationBudget) -> tuple[str, str]:
+    role = element.role
     ns = element.obj.get("NS")
-    name = ns.get("NS") if isinstance(ns, Dictionary) else None
-    return isinstance(name, String) and name.text == _PDF2
+    if ns is None:
+        # The global role map ends in PDF 1.7. Keep the authored name for this
+        # out-of-scope relationship, as in the original Annex L reports.
+        return role, _OTHER
+    visited = set()
+    for hops in range(_MAX_TREE_DEPTH + 1):
+        budget.poll()
+        if not isinstance(ns, Dictionary) or ns.xref is None:
+            return role, "invalid namespace reference"
+        key = ns.xref, role
+        if key in visited:
+            return role, "cyclic namespace role map"
+        target, space = _namespace_mapping(ns, role)
+        if target is None:
+            return role, space
+        if hops == _MAX_TREE_DEPTH:
+            break
+        budget.charge("memory_size", 128)
+        visited.add(key)
+        if isinstance(target, Name):
+            return element.document.structure.resolve_role(str(target)), _OTHER
+        if isinstance(target, Array) and len(target) == 2:  # noqa: PLR2004 - role and namespace
+            next_role, ns = target
+            if isinstance(next_role, Name):
+                role = str(next_role)
+                continue
+        return role, "unmapped namespace role"
+    msg = f"structure interpretation exceeds {_MAX_TREE_DEPTH} namespace role-map hops"
+    raise LimitError(_CODE_STRUCTURE_TREE, msg)
+
+
+@dataclass(slots=True)
+class _Children:
+    counts: dict[tuple[str, str], int] = field(default_factory=dict)
+    first: str | None = None
+    last: str | None = None
+    order: list[str] = field(default_factory=list)
+    inline: bool = False
+    grouping: bool = False
+    mixed: bool = False
+    text: bool | None = True
+
+    def add(self, role: str, space: str, content: bool | None, budget: _core._OperationBudget) -> None:  # noqa: FBT001 - three-valued text-content verdict
+        key = role, space
+        if key not in self.counts:
+            budget.charge("memory_size", 192)
+        self.counts[key] = self.counts.get(key, 0) + 1
+        self.mixed |= space != _STANDARD
+        self.inline |= role == "content item" or (space == _STANDARD and role in _INLINE)
+        self.grouping |= space == _STANDARD and role in _GROUPING
+        if self.first is None:
+            self.first = role
+        self.last = role
+        if role == "content item":
+            if content is False or (self.text is True and content is None):
+                self.text = content
+        elif len(self.order) < 5:  # noqa: PLR2004 - one more than the longest Ruby/Warichu assembly.
+            self.order.append(role)
 
 
 @dataclass(slots=True)
 class _Siblings:
     role: str
-    pdf2: bool
-    effective: str | None
-    counts: dict[tuple[str, bool], int] = field(default_factory=dict)
-    first: str | None = None
-    last: str | None = None
-    ruby: list[str] = field(default_factory=list)
-    mixed: bool = False
-    inline_content: bool = False
+    space: str
+    usage: bool | None
+    owner: _Siblings | None = None
+    direct: _Children = field(default_factory=_Children)
+    flat: _Children = field(default_factory=_Children)
 
-    def add(self, role: str, *, standard: bool, is_element: bool, budget: _core._OperationBudget) -> None:
-        key = role, standard
-        if key not in self.counts:
-            budget.charge("memory_size", 192)
-        self.counts[key] = self.counts.get(key, 0) + 1
-        # A mixed-use parent with direct content or a definite inline child
-        # cannot also be serving as a grouping element (14.8.4.2).
-        self.inline_content |= not is_element or (standard and role in {"Em", "Strong", "Span", "Sub"})
-        if is_element:
-            if self.first is None:
-                self.first = role
-            self.last = role
-            self.mixed |= not standard
-            # Five entries suffice to distinguish every Ruby sequence from an overlong one.
-            if self.role == "Ruby" and len(self.ruby) < 5:  # noqa: PLR2004
-                self.ruby.append(role)
+    def add(self, role: str, space: str, content: bool | None, budget: _core._OperationBudget) -> None:  # noqa: FBT001
+        self.direct.add(role, space, content, budget)
+        if not (space == _STANDARD and role in _TRANSPARENT):
+            (self.owner or self).flat.add(role, space, content, budget)
 
-    def records(self, number: int | None) -> Iterator[StructureChildRule]:
-        if self.pdf2 and self.role == "Ruby" and not self.mixed:
+    def records(self, number: int | None, budget: _core._OperationBudget) -> Iterator[StructureChildRule]:
+        budget.charge("memory_size", 320 * (len(self.direct.counts) + len(self.flat.counts)) + 128)
+        observations = self.direct.counts.copy()
+        if self.owner is None:
+            observations.update(self.flat.counts)
+        if self.space == _STANDARD and self.role == "Ruby" and not self.flat.mixed:
             for required in ("RB", "RT"):
-                self.counts.setdefault((required, True), 0)
-        for (child, known), count in self.counts.items():
-            rule, allowed = self.judge(child, count) if self.pdf2 and known else ("other namespace", None)
+                observations.setdefault((required, _STANDARD), 0)
+        for (child, space), count in observations.items():
+            if self.space != _STANDARD or space != _STANDARD:
+                rule, allowed = (self.space if self.space != _STANDARD else space), None
+            else:
+                rule, allowed = self.judge(child, count)
             yield StructureChildRule(
                 parent_xref=number, parent_role=self.role, child_role=child, count=count, rule=rule, allowed=allowed
             )
 
     def judge(self, child: str, count: int) -> tuple[str, bool | None]:
         rule, allowed = occurrence(self.role, child, count)
-        if rule == "role-specific" and self.effective != self.role and self.effective is not None:
-            rule, allowed = occurrence(self.effective, child, count)
-        if rule == "grouping only" and self.inline_content:
-            allowed = False
-        if rule == "ruby sequence" and not self.mixed and "NonStruct" not in self.ruby:
-            allowed = self.ruby in (["RB", "RT"], ["RB", "RP", "RT", "RP"])
-        if child == "Caption" and (count > 1 or child not in (self.first, self.last)):
+        context = self
+        if rule == "role-specific" and self.owner is not None:
+            context = self.owner
+            if context.space != _STANDARD:
+                return context.space, None
+            count = context.flat.counts.get((child, _STANDARD), count)
+            rule, allowed = occurrence(context.role, child, count)
+        seen = context.flat
+        if rule == "grouping only":
+            # Section 14.8.4.2 excludes inline children and direct content. The author
+            # can identify the intended use when the visible children fit several uses.
+            if seen.inline or context.usage is False:
+                allowed = False
+            elif context.usage is True or (seen.grouping and not seen.mixed):
+                allowed = True
+        elif rule == "role-specific" and context.role in _TEXT_ROLES and child == "content item":
+            return "text content of " + context.role, seen.text
+        elif rule == "ruby sequence" and not seen.mixed:
+            allowed = seen.order in (["RB", "RT"], ["RB", "RP", "RT", "RP"])
+        elif rule == "warichu sequence" and not seen.mixed:
+            # The base standard permits an unstructured assembly. If its punctuation
+            # and text are tagged as a group, their order is WP, WT, WP.
+            allowed = seen.order == ["WP", "WT", "WP"]
+        if child == "Caption" and (count > 1 or child not in (seen.first, seen.last)):
             return "single first or last caption", False
         return rule, allowed
 
 
-def child_rules(tree: StructureTree, budget: _core._OperationBudget) -> tuple[StructureChildRule, ...]:
-    root = _Siblings("StructTreeRoot", pdf2=True, effective="StructTreeRoot")
+def _usage(usage: Mapping[int, bool] | None, budget: _core._OperationBudget) -> dict[int, bool]:
+    if usage is None:
+        return {}
+    if not isinstance(usage, Mapping):
+        msg = "grouping_usage must map structure element object numbers to bool"
+        raise TypeError(msg)
+    result = {}
+    for number, grouping in usage.items():
+        budget.poll()
+        if len(result) >= _DEFAULT_MAX_ELEMENTS:
+            msg = "too many grouping usage declarations"
+            raise LimitError(_CODE_OBJECT_COUNT, msg)
+        if type(number) is not int or number <= 0 or type(grouping) is not bool:
+            msg = "grouping_usage requires positive object numbers and bool values"
+            raise ValueError(msg)
+        budget.charge("memory_size", 128)
+        result[number] = grouping
+    return result
+
+
+def child_rules(
+    tree: StructureTree, budget: _core._OperationBudget, usage: Mapping[int, bool] | None = None
+) -> tuple[StructureChildRule, ...]:
+    declared = _usage(usage, budget)
+    root = _Siblings("StructTreeRoot", _STANDARD, None)
     groups: dict[int | None, _Siblings] = {None: root}
+    pages: dict[int, dict[int, str]] = {}
     uses_pdf2 = False
     for _, parent, child in _walk(tree, budget):
         siblings = groups[parent.xref if parent is not None else None]
         if isinstance(child, StructureElement):
-            role, standard = child.role, _pdf2(child)
-            uses_pdf2 |= standard
-            # Only role-specific entries can inherit containment. An explicit
-            # prohibition in the immediate parent's column always takes precedence.
-            effective = siblings.effective if role in {"Part", "Div", "NonStruct"} else role
-            budget.charge("memory_size", 512)
-            groups[child.xref] = _Siblings(role, standard, effective if standard else None)
-            siblings.add(role, standard=standard, is_element=True, budget=budget)
+            role, space = _role(child, budget)
+            uses_pdf2 |= space == _STANDARD
+            owner = (siblings.owner or siblings) if space == _STANDARD and role in _TRANSPARENT else None
+            budget.charge("memory_size", 1024)
+            groups[child.xref] = _Siblings(role, space, declared.pop(child.xref, None), owner)
+            siblings.add(role, space, None, budget)
         else:
-            siblings.add("content item", standard=True, is_element=False, budget=budget)
+            text = None
+            if (siblings.owner or siblings).role in _TEXT_ROLES:
+                text = _text_content(tree, child, pages, budget)
+            siblings.add("content item", _STANDARD, text, budget)
+    if declared:
+        msg = "grouping_usage contains an object outside the structure tree"
+        raise ValueError(msg)
     if uses_pdf2:
-        root.counts.setdefault(("Document", True), 0)
-    return tuple(record for number, siblings in groups.items() for record in siblings.records(number))
+        root.direct.counts.setdefault(("Document", _STANDARD), 0)
+    return tuple(record for number, siblings in groups.items() for record in siblings.records(number, budget))

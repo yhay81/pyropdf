@@ -50,6 +50,7 @@ fn name<'a>(dict: &'a Dict, field: &str) -> Result<&'a [u8]> {
 
 #[derive(Clone)]
 pub(super) struct RecipientAccess {
+    pub(super) authenticated_permissions: bool,
     profile_id: Option<[u8; 32]>,
     pub(super) subfilter: &'static str,
     owner: Arc<AtomicBool>,
@@ -57,7 +58,7 @@ pub(super) struct RecipientAccess {
 
 impl RecipientAccess {
     pub(super) fn owner(&self) -> bool {
-        self.owner.load(Ordering::Relaxed)
+        self.owner.load(Ordering::Acquire)
     }
 }
 
@@ -72,20 +73,21 @@ struct Profile {
 }
 
 impl Profile {
-    fn aes(aes256: bool, metadata: bool) -> Self {
-        let (version, length, method) = if aes256 {
-            (5, 32, Method::Aes256)
-        } else {
-            (4, 16, Method::Aes128)
+    fn aes(method: Method, metadata: bool) -> Result<Self> {
+        let (version, length) = match method {
+            Method::Aes128 => (4, 16),
+            Method::Aes256 => (5, 32),
+            Method::AesGcm => (6, 32),
+            _ => return Err(Error::malformed("new recipient encryption requires AES")),
         };
-        Self {
+        Ok(Self {
             subfilter: "adbe.pkcs7.s5",
             version,
             length,
             strings: method,
             streams: method,
             metadata,
-        }
+        })
     }
 
     fn read<'a>(encrypt: &'a Dict, budget: &Budget) -> Result<(Self, &'a Array)> {
@@ -132,7 +134,7 @@ impl Profile {
             }
             _ => {
                 return Err(Error::malformed(
-                    "invalid public-key SubFilter and V combination; adbe.pkcs7.s5 needs V4 or V5",
+                    "invalid public-key SubFilter and V combination; adbe.pkcs7.s5 needs V4, V5 or V6",
                 ));
             }
         };
@@ -152,6 +154,7 @@ impl Profile {
 
     fn crypt_filter(encrypt: &Dict, cf: &Dict, version: u8) -> Result<Self> {
         let (cipher, bits) = match (version, name(cf, "CFM")?) {
+            (6, b"AESV4") => (Method::AesGcm, 256),
             (5, b"AESV3") => (Method::Aes256, 256),
             (4, b"AESV2") => (Method::Aes128, 128),
             (4, b"V2") => {
@@ -165,7 +168,7 @@ impl Profile {
             }
             _ => {
                 return Err(Error::malformed(
-                    "public-key crypt filters require V4 V2/AESV2 or V5 AESV3",
+                    "public-key crypt filters require V4 V2/AESV2, V5 AESV3 or V6 AESV4",
                 ));
             }
         };
@@ -203,7 +206,7 @@ impl Profile {
         budget: &Budget,
     ) -> Result<Handler> {
         let clear_metadata = !self.metadata && self.streams != Method::Identity;
-        let key = if self.version == 5 {
+        let key = if self.version >= 5 {
             derive_key::<Sha256>(seed, envelopes, clear_metadata, self.length, budget)?
         } else {
             derive_key::<Sha1>(seed, envelopes, clear_metadata, self.length, budget)?
@@ -212,11 +215,13 @@ impl Profile {
             filters: super::filters::Filters::default(),
             key,
             recipient: Some(RecipientAccess {
+                authenticated_permissions: true,
                 profile_id: None,
                 subfilter: self.subfilter,
                 owner: Arc::new(AtomicBool::new(permissions & 2 != 0)),
             }),
             password: Box::default(),
+            legacy_reader: None,
             version: self.version,
             revision: 0,
             strings: self.strings,
@@ -252,7 +257,7 @@ impl Handler {
         {
             self.filters.retain_keys(&verified.filters);
             if verified.access() == Access::Owner {
-                recipient.owner.store(true, Ordering::Relaxed);
+                recipient.owner.store(true, Ordering::Release);
             }
         }
     }
@@ -268,7 +273,7 @@ impl Handler {
             return Err(Password::Recipient.into());
         }
         if name(encrypt, "SubFilter")? == b"adbe.pkcs7.s5"
-            && let Some(version @ (4 | 5)) = integer(encrypt, "V")
+            && let Some(version @ (4..=6)) = integer(encrypt, "V")
         {
             return open_filters(encrypt, version as u8, &mut decrypt, budget);
         }
@@ -321,7 +326,7 @@ impl Handler {
             user: password.as_bytes().into(),
             owner: password.as_bytes().into(),
             permissions: self.permissions,
-            aes256: true,
+            method: Method::Aes256,
             random,
         };
         let (mut dict, _, _) = password_encryption.build(None, budget)?;
@@ -433,8 +438,8 @@ pub struct RecipientEncryption {
     pub envelopes: Vec<Vec<u8>>,
     /// Whether the default stream filter encrypts metadata.
     pub encrypt_metadata: bool,
-    /// Select V5 AESV3; otherwise use V4 AESV2.
-    pub aes256: bool,
+    /// The AES content encryption method for the recipient group.
+    pub method: Method,
 }
 
 impl RecipientEncryption {
@@ -462,9 +467,13 @@ impl RecipientEncryption {
             )))?;
         }
         let envelopes = Array::from(items.into_vec());
-        let profile = Profile::aes(self.aes256, self.encrypt_metadata);
+        let profile = Profile::aes(self.method, self.encrypt_metadata)?;
         let bits = (profile.length * 8) as i64;
-        let cfm = if self.aes256 { "AESV3" } else { "AESV2" };
+        let cfm = match profile.version {
+            4 => "AESV2",
+            5 => "AESV3",
+            _ => "AESV4",
+        };
         let mut handler = profile.handler(&self.seed, envelopes.as_slice(), u32::MAX, budget)?;
         let mut cf = Dict::new();
         put_name(&mut cf, "CFM", cfm);
@@ -541,6 +550,7 @@ fn open_filters(
     let mut entries = BudgetVec::new(budget);
     let mut primary: Option<(bool, Handler)> = None;
     let document_public = strings == IDENTITY && streams == IDENTITY;
+    let mut authenticated_permissions = false;
     let mut doc_permissions = if document_public { 0 } else { u32::MAX };
     let mut total = 0usize;
     for (name, filter) in filters.iter() {
@@ -588,13 +598,7 @@ fn open_filters(
                     RecipientPayload::Stream(bytes) => bytes,
                 };
                 let flags = if with_permissions {
-                    let flags = permissions(payload)?;
-                    if flags & (1 << 12) == 0 && version == 5 {
-                        return Err(Error::malformed(
-                            "public-key encryption requires unsupported PDF MAC validation",
-                        ));
-                    }
-                    flags
+                    permissions(payload)?
                 } else if payload.len() == 20 {
                     0
                 } else {
@@ -602,6 +606,8 @@ fn open_filters(
                         "a stream-specific CMS recipient payload must contain only a 20-byte seed",
                     ));
                 };
+                authenticated_permissions |=
+                    with_permissions && (required || name_bytes == embedded);
                 if required {
                     doc_permissions &= flags;
                 } else if document_public && name_bytes == embedded {
@@ -639,7 +645,9 @@ fn open_filters(
         None if document_public => Handler {
             key: Box::default(),
             password: Box::default(),
+            legacy_reader: None,
             recipient: Some(RecipientAccess {
+                authenticated_permissions: true,
                 profile_id: None,
                 subfilter: "adbe.pkcs7.s5",
                 owner: Arc::new(AtomicBool::new(false)),
@@ -668,13 +676,14 @@ fn open_filters(
         Access::User
     };
     if let Some(access) = &mut handler.recipient {
+        access.authenticated_permissions = authenticated_permissions;
         // Subsequent credentials share only keys verified against this same encryption dictionary.
         access.profile_id = encrypt
             .lexeme()
             .map(|bytes| crypto::sha256(&[bytes.as_slice()]));
         access
             .owner
-            .store(handler.access == Access::Owner, Ordering::Relaxed);
+            .store(handler.access == Access::Owner, Ordering::Release);
     }
     handler.strings = selection.method(strings)?;
     handler.streams = selection.method(streams)?;

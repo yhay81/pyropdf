@@ -91,7 +91,7 @@ For an existing file, use `pyropdf.open("input.pdf")`.
 - **One document for reading, rendering, and editing.** All engines read
   the same versioned object store. Preview an edit before saving it.
 - **Incremental saves.** Append changed objects while keeping the original
-  file's bytes intact. Inspect `doc.changes` before saving.
+  file's bytes intact. Inspect `doc.changes()` before saving.
 - **MIT licensed.** Use it in open-source or commercial applications.
 
 [Choosing pyropdf](https://pyropdf.haya.works/choosing/) compares capabilities
@@ -100,7 +100,7 @@ and limitations with PyMuPDF, pypdf, and pikepdf.
 
 ## Status and limits
 
-**0.3 series, alpha.** The API may change between minor versions.
+**0.4 series, alpha.** The API may change between minor versions.
 [Release notes](https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md)
 describe each release. See [status and safety](https://pyropdf.haya.works/status/)
 for current coverage and limitations.

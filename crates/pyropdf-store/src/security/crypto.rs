@@ -4,11 +4,59 @@
 
 use aes::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit};
 use aes::{Aes128, Aes256, Block};
+use aes_gcm::aead::AeadInOut;
+use aes_gcm::{Aes256Gcm, Nonce, Tag};
 use md5::{Digest, Md5};
 use sha2::{Sha256, Sha384, Sha512};
 
 use crate::budget::{Budget, BudgetVec};
 use crate::{Error, Result};
+
+/// ISO/TS 32003 section 5.2: 12-byte nonce, unpadded ciphertext, 16-byte tag, no AAD.
+pub(super) fn gcm_encrypt(key: &[u8], input: &[u8], budget: &Budget) -> Result<Vec<u8>> {
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|_| Error::malformed("invalid AES-GCM file key"))?;
+    let mut nonce = [0u8; 12];
+    getrandom::fill(&mut nonce)
+        .map_err(|_| Error::malformed("cannot generate an AES-GCM initialization vector"))?;
+    let mut result = BudgetVec::new(budget);
+    result.try_reserve_exact(
+        input
+            .len()
+            .checked_add(28)
+            .ok_or_else(|| Error::malformed("AES-GCM object is too large"))?,
+    )?;
+    result.try_extend_from_slice(&nonce)?;
+    result.try_extend_from_slice(input)?;
+    let tag = cipher
+        .encrypt_inout_detached(
+            &Nonce::from(nonce),
+            &[],
+            (&mut result.as_mut_slice()[12..]).into(),
+        )
+        .map_err(|_| Error::malformed("AES-GCM object is too large"))?;
+    result.try_extend_from_slice(&tag)?;
+    Ok(result.into_vec())
+}
+
+pub(super) fn gcm_decrypt(key: &[u8], input: &[u8], budget: &Budget) -> Result<Vec<u8>> {
+    let auth_error = || Error::malformed("AES-GCM authentication failed");
+    let (nonce, rest) = input.split_first_chunk::<12>().ok_or_else(auth_error)?;
+    let (ciphertext, tag) = rest.split_last_chunk::<16>().ok_or_else(auth_error)?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|_| Error::malformed("invalid AES-GCM file key"))?;
+    let mut result = BudgetVec::new(budget);
+    result.try_extend_from_slice(ciphertext)?;
+    cipher
+        .decrypt_inout_detached(
+            &Nonce::from(*nonce),
+            &[],
+            result.as_mut_slice().into(),
+            &Tag::from(*tag),
+        )
+        .map_err(|_| auth_error())?;
+    Ok(result.into_vec())
+}
 
 /// RC4 (ISO 32000-2 section 7.6.3.2), which is its own inverse. RC4 is
 /// read but never written.
@@ -22,7 +70,10 @@ pub(super) fn rc4(key: &[u8], data: &[u8], budget: &Budget) -> Result<Vec<u8>> {
     let mut out = BudgetVec::new(budget);
     out.try_reserve_exact(data.len())?;
     let (mut i, mut j) = (0u8, 0u8);
-    for &byte in data {
+    for (index, &byte) in data.iter().enumerate() {
+        if index % 4096 == 0 {
+            budget.poll()?;
+        }
         i = i.wrapping_add(1);
         j = j.wrapping_add(state[usize::from(i)]);
         state.swap(usize::from(i), usize::from(j));
@@ -82,26 +133,31 @@ impl Aes {
     }
 }
 
-/// Encrypts `data` with AES in CBC mode from `iv`, without padding when
-/// `pad` is false; `data` must then be whole blocks.
-pub(super) fn aes_cbc_encrypt(
+/// Encrypts `data` with AES in CBC mode from `iv`, appending the ciphertext
+/// to `out`, without padding when `pad` is false (`data` must then be whole blocks).
+pub(super) fn aes_cbc_encrypt_into(
     key: &[u8],
     iv: &[u8; 16],
     data: &[u8],
     pad: bool,
+    out: &mut BudgetVec<'_, u8>,
     budget: &Budget,
-) -> Result<Vec<u8>> {
+) -> Result<()> {
     let cipher = Aes::new(key)?;
     let padding = if pad { 16 - data.len() % 16 } else { 0 };
     if !pad && !data.len().is_multiple_of(16) {
         return Err(Error::malformed("unpadded AES data is not whole blocks"));
     }
-    let mut out = BudgetVec::new(budget);
     out.try_reserve_exact(data.len() + padding)?;
     let mut previous = *iv;
-    let mut chunks = data.chunks(16).peekable();
+    let mut chunks = data.chunks(16);
     let mut pending: Option<[u8; 16]> = None;
+    let mut blocks = 0_usize;
     loop {
+        if blocks.is_multiple_of(256) {
+            budget.poll()?;
+        }
+        blocks += 1;
         let block: [u8; 16] = match chunks.next() {
             Some(chunk) if chunk.len() == 16 => chunk.try_into().expect("16 bytes"),
             Some(chunk) => {
@@ -124,6 +180,20 @@ pub(super) fn aes_cbc_encrypt(
         previous = encrypt_block(&cipher, &previous, &block);
         out.try_extend_from_slice(&previous)?;
     }
+    Ok(())
+}
+
+/// Encrypts `data` with AES in CBC mode from `iv`, without padding when
+/// `pad` is false; `data` must then be whole blocks.
+pub(super) fn aes_cbc_encrypt(
+    key: &[u8],
+    iv: &[u8; 16],
+    data: &[u8],
+    pad: bool,
+    budget: &Budget,
+) -> Result<Vec<u8>> {
+    let mut out = BudgetVec::new(budget);
+    aes_cbc_encrypt_into(key, iv, data, pad, &mut out, budget)?;
     Ok(out.into_vec())
 }
 
@@ -149,7 +219,10 @@ pub(super) fn aes_cbc_decrypt(
     let mut out = BudgetVec::new(budget);
     out.try_reserve_exact(data.len())?;
     let mut previous = *iv;
-    for chunk in data.as_chunks::<16>().0 {
+    for (index, chunk) in data.as_chunks::<16>().0.iter().enumerate() {
+        if index.is_multiple_of(256) {
+            budget.poll()?;
+        }
         let current: [u8; 16] = *chunk;
         let mut block = Block::from(current);
         cipher.decrypt(&mut block);
@@ -200,22 +273,26 @@ pub(super) fn hash(
     if !r6 {
         return Ok(k.try_into().expect("32 bytes"));
     }
+    let mut k1 = BudgetVec::new(budget);
+    let mut e = BudgetVec::new(budget);
     let mut round: usize = 0;
     loop {
+        budget.poll()?;
         // K1: the password, K, and the user data, 64 times.
-        let mut k1 = BudgetVec::new(budget);
+        k1.clear();
         for _ in 0..64 {
             k1.try_extend_from_slice(password)?;
             k1.try_extend_from_slice(&k)?;
             k1.try_extend_from_slice(user)?;
         }
         let iv: [u8; 16] = k[16..32].try_into().expect("16 bytes");
-        let e = aes_cbc_encrypt(&k[..16], &iv, &k1, false, budget)?;
+        e.clear();
+        aes_cbc_encrypt_into(&k[..16], &iv, &k1, false, &mut e, budget)?;
         let selector = e[..16].iter().map(|&b| u32::from(b)).sum::<u32>() % 3;
         k = match selector {
-            0 => Sha256::digest(&e).to_vec(),
-            1 => Sha384::digest(&e).to_vec(),
-            _ => Sha512::digest(&e).to_vec(),
+            0 => Sha256::digest(e.as_slice()).to_vec(),
+            1 => Sha384::digest(e.as_slice()).to_vec(),
+            _ => Sha512::digest(e.as_slice()).to_vec(),
         };
         round += 1;
         let last = usize::from(*e.last().expect("E is not empty"));

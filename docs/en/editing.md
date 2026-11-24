@@ -469,6 +469,27 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.attachments["data.csv"].read(), doc.collection.navigator.layout)
 ```
 
+## Web Capture
+
+`doc.web_capture.by_url(url)` and `by_id(source_digest)` return the page and image
+sets recorded for a source. Each is a writable Arlington view. A page set's
+`O` entries identify pages, an image set's `O` entries identify image streams,
+and `SI` contains source information, including URL aliases and stored commands.
+Reading these records works offline.
+
+To change source locations, call `doc.web_capture.set_sources(content, source)`
+with a `typed.SourceInformation` view or a tuple of views. This updates the URL
+index and preserves other sets sharing the old or new URL. `remove(content)`
+unlinks the set from its indexes and clears its members' parent identifiers.
+Remove the relevant set before deleting or copying one of its pages, or a page
+that uses one of its images. Reordering pages preserves set membership.
+
+To register an indirectly stored `typed.WebCapturePageSet` or
+`typed.WebCaptureImageSet` in PDF 1.3–1.7, call `doc.web_capture.add(content)`.
+Supply the 16-byte source digest, member references, source dictionaries and,
+for images, their page reference counts. PDF 2.0 deprecates new Web Capture
+records. Existing records may still be read, edited and removed.
+
 ## Page labels and named pages
 
 `doc.page_labels` lists the `PageLabelRange` records of the document, and
@@ -672,7 +693,8 @@ store 2D geographic controls without changing editions. If PDF 2.0 is required,
 an upgrade that would introduce structural defects is refused in one transaction.
 Malformed registrations remain inspectable through the raw PDF dictionary.
 Decimal inputs retain their exact digits on save. For numeric tokens read from a
-PDF, precision currently follows the underlying reader. [Parser tracking issue](https://github.com/yhay81/pyropdf/issues/16)
+PDF, precision currently follows the underlying reader (see
+[parser tracking issue #16](https://github.com/yhay81/pyropdf/issues/16)).
 
 ```python
 from decimal import Decimal
@@ -741,6 +763,57 @@ with pyropdf.open(saved) as reopened:
     assert reopened.requirements[0].type is RequirementType.GEOSPATIAL_2D
 ```
 
+## Interchange and structure namespaces
+
+`doc.extensions` manages direct developer and ISO extensions (`DeveloperExtension`,
+`ISO_EXTENSIONS`), `associated_files` attaches files with an
+`AssociatedFileRelationship` to the document, pages, structure elements,
+annotations, and document parts, `piece_info` stores `/PieceInfo` application
+dictionaries on the catalog and pages, `doc.parts` builds `/DPartRoot` page-range
+trees that `DocumentPartAction` targets, and `doc.structure.namespaces` mixes
+PDF 1.7 (`PDF_1_7_NAMESPACE`), PDF 2.0 (`PDF_2_0_NAMESPACE`), and custom
+namespaces in one structure tree.
+
+```python
+import pyropdf
+from pyropdf import (
+    PDF_1_7_NAMESPACE,
+    PDF_2_0_NAMESPACE,
+    AssociatedFileRelationship,
+    DeveloperExtension,
+    DocumentPartAction,
+    OutlineEntry,
+)
+
+with pyropdf.Document() as doc:
+    first = doc.pages.new()
+    second = doc.pages.new()
+    doc.extensions.add(DeveloperExtension("ISO_", "2.0", 32001))
+    doc.associated_files.add(
+        "source.xml",
+        b"<invoice><total>42</total></invoice>",
+        media_type="application/xml",
+        relationship=AssociatedFileRelationship.SOURCE,
+    )
+    first.piece_info.set("ACME", {"stage": "approved"})
+    part = doc.parts.add_part(first, second, dpm={"Record": "INV-1"})
+    doc.outline = [OutlineEntry(1, "Invoice part", DocumentPartAction(part))]
+
+    ns20 = doc.structure.namespaces.add(PDF_2_0_NAMESPACE)
+    ns17 = doc.structure.namespaces.add(PDF_1_7_NAMESPACE)
+    custom = doc.structure.namespaces.add("https://example.com/ns", role_map={"Callout": ("Aside", ns20)})
+    root_elem = doc.structure.add("Document", namespace=ns20)
+    root_elem.children.add("TOC", namespace=ns17)
+    note = root_elem.children.add("Callout", namespace=custom)
+    assert note.resolved_role == ("Aside", PDF_2_0_NAMESPACE)
+    saved = doc.to_bytes()
+
+with pyropdf.open(saved) as reopened:
+    assert not reopened.check()
+    assert reopened.associated_files[0].filename == "source.xml"
+    assert isinstance(reopened.outline[0].destination, DocumentPartAction)
+```
+
 ## Sanitizing
 
 `doc.sanitize(path)` removes JavaScript, actions, attachments, metadata,
@@ -790,3 +863,42 @@ with pyropdf.open("input.pdf") as doc:
     print(catalog["Type"], doc.pages[0].obj["MediaBox"])
     print(doc.check().defects)
 ```
+
+## Print production data
+
+`page.box_styles` describes stored guides for the crop, bleed, trim and art
+boxes. An omitted guide uses the reader's settings. The page box itself
+controls whether the guide applies. `page.separations` lists the actual
+page handles for a pre-separated sheet, in plate order.
+
+```python
+import pyropdf
+
+with pyropdf.Document() as doc:
+    cyan, black = doc.pages.new(), doc.pages.new()
+    cyan.separations = {
+        cyan: pyropdf.SeparationPlate(colorant=pyropdf.Name("Cyan")),
+        black: pyropdf.SeparationPlate(colorant=pyropdf.Name("Black")),
+    }
+    assert list(black.separations) == [cyan, black]
+```
+
+Assign the group again to change its members or order. Deleting
+`cyan.separations` clears the group on both pages. Moving a plate keeps its
+identity. Removing or importing part of a group and duplicating an individual
+plate require detaching it first.
+
+`PrinterMark` and `Watermark` take an existing Form XObject from the same
+document. The annotation's `print_appearance` resolves the selected normal
+appearance and its resources. On a watermark, `fixed_print` stores the matrix
+and translation fractions relative to the print medium. On legacy trap
+networks, the selected Form exposes the process colour model, separation
+names, and trap regions. The annotation dictionary retains the original
+trapping snapshot. An image or Form's `opi` exposes the existing proxy
+file specification and version-specific parameters. Use these views to edit
+existing legacy data.
+
+The stored parameters describe the intended output. Device separation,
+trap generation, OPI substitution and physical press placement belong to
+the rendering engine. [Rendering work](https://github.com/yhay81/pyropdf/issues/248)
+and [engine tracker](https://github.com/yhay81/pyropdf/issues/7).

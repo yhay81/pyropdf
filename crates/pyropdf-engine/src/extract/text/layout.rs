@@ -673,7 +673,7 @@ fn merge_joined_words(lines: &[Vec<GlyphRecord>], blocks: &mut [BlockTuple]) -> 
             try_push_text(&mut tuples, line, "joined words")?;
         }
     }
-    for index in 1..lines.len().min(tuples.len()) {
+    for index in (1..lines.len().min(tuples.len())).rev() {
         if !lines[index][0].joins_previous {
             continue;
         }
@@ -682,10 +682,10 @@ fn merge_joined_words(lines: &[Vec<GlyphRecord>], blocks: &mut [BlockTuple]) -> 
         if next_words.is_empty() {
             continue;
         }
-        let (tail_box, tail) = next_words.remove(0);
         let Some((head_box, head)) = before[index - 1].2.last_mut() else {
             continue;
         };
+        let (tail_box, tail) = next_words.remove(0);
         try_push_str_text(head, &tail, "joined words")?;
         *head_box = (
             head_box.0.min(tail_box.0),
