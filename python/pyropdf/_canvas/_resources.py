@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING, cast
 
 from pyropdf import _core
 from pyropdf._canvas._text import _font_value
+from pyropdf._errors import LimitError
 from pyropdf._objects import Name, Stream
 
 if TYPE_CHECKING:
@@ -33,7 +35,7 @@ class _Images:
         self.shadings = _core._Shadings()  # noqa: SLF001
         # The faces of the Type0 fonts that free text was drawn in, by font object.
         self.faces: dict[int, Font] = {}
-        self.images: dict[bytes, int] = {}
+        self.images: dict[bytes, tuple[int, tuple[object, ...]]] = {}
         # The Forms of placed pages, with the source objects each depends on.
         self.forms = _core._PageForms()  # noqa: SLF001
 
@@ -96,14 +98,42 @@ def _cache(document: Document) -> _Images:
     return cache
 
 
-def _still_image(document: Document, xref: int, size: int) -> bool:
-    """Return whether ``xref`` is still the image object that a canvas stored from ``size`` bytes."""
+def _image_signature(stream: Stream) -> tuple[object, ...]:
+    """Return a content signature for an image XObject stream and any soft mask."""
+    raw = stream.read(decode=False)
+    smask = stream.get("SMask")
+    mask_sig: tuple[object, ...] | None = None
+    if isinstance(smask, Stream):
+        mask_raw = smask.read(decode=False)
+        mask_sig = (
+            smask.xref,
+            smask.get("Width"),
+            smask.get("Height"),
+            smask.get("BitsPerComponent"),
+            str(smask.get("Filter")),
+            len(mask_raw),
+            hashlib.sha256(mask_raw).digest(),
+        )
+    color = stream.get("ColorSpace")
+    color_key: object = str(color) if isinstance(color, Name) else repr(color)
+    return (
+        stream.get("Width"),
+        stream.get("Height"),
+        stream.get("BitsPerComponent"),
+        color_key,
+        str(stream.get("Filter")),
+        len(raw),
+        hashlib.sha256(raw).digest(),
+        mask_sig,
+    )
+
+
+def _still_image(document: Document, xref: int, expected: tuple[object, ...]) -> bool:
+    """Return whether ``xref`` still holds the exact image stream that a canvas cached."""
     stream = document.objects.get(xref) if xref in document.objects else None
     if not isinstance(stream, Stream) or stream.get("Subtype") != "Image":
         return False
-    if stream.get("Filter") in ("DCTDecode", "JPXDecode"):
-        return len(stream.read(decode=False)) == size
-    return True
+    return _image_signature(stream) == expected
 
 
 def _contents(page: Page) -> list[Stream]:
@@ -120,6 +150,8 @@ def _isolated(page: Page) -> bool:
     """Return whether the page's content leaves the graphics state as it found it."""
     try:
         operations = page.operations
+    except LimitError:
+        raise
     except Exception:  # noqa: BLE001 - content that cannot be read is wrapped.
         return False
     depth = 0

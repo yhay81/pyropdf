@@ -154,6 +154,7 @@ pub fn unlock(
     recipient: Option<Py<PyAny>>,
 ) -> PyResult<&'static str> {
     crate::errors::boundary(|| {
+        crate::history::outside_transaction(document, "unlock")?;
         if password.is_some() == recipient.is_some() {
             return Err(PyTypeError::new_err(
                 "unlock requires one password or recipient credential",
@@ -176,7 +177,14 @@ pub fn unlock(
                 previous.retain_recipient_access(verified);
             }
         } else {
-            document.replace(Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT)));
+            let unlocked = Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT));
+            if document.check_at_open() {
+                py.detach(|| crate::document::check_every_object(&unlocked.current(), &budget))
+                    .map_err(|e| store_error(&e))?;
+            }
+            let _write = py.detach(|| document.history.write_lock());
+            document.document()?;
+            document.replace(unlocked);
         }
         Ok(access_name(access))
     })?

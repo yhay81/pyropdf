@@ -9,7 +9,7 @@ use pyo3::buffer::PyBuffer;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyMemoryView};
 use pyropdf_store::LimitExceeded;
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::value::Bytes;
 
 use crate::errors::limit_error;
@@ -48,15 +48,25 @@ pub fn file(path: &Path, budget: &Budget) -> Result<Bytes, Error> {
     let mut file = File::open(path)?;
     let size = file.metadata()?.len();
     budget.check(LimitCode::FileSize, size)?;
-    let mut data = Vec::new();
+    let mut data = BudgetVec::new(budget);
+    let mut chunk = [0_u8; 64 * 1024];
     // Read one byte past the size checked, so that a file that grows
     // meanwhile still meets the limit.
     let cap = budget
         .limit(LimitCode::FileSize)
-        .map_or(u64::MAX, |l| l + 1);
-    file.by_ref().take(cap).read_to_end(&mut data)?;
-    budget.check(LimitCode::FileSize, data.len() as u64)?;
-    Ok(Bytes::new(data))
+        .map_or(u64::MAX, |l| l.saturating_add(1));
+    let mut reader = file.by_ref().take(cap);
+    loop {
+        budget.poll()?;
+        let read = reader.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        let next = (data.len() as u64).saturating_add(read as u64);
+        budget.check(LimitCode::FileSize, next)?;
+        data.try_extend_from_slice(&chunk[..read])?;
+    }
+    Ok(Bytes::new(data.into_vec()))
 }
 
 /// Why reading a file failed.

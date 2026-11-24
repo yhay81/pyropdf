@@ -30,7 +30,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from pyropdf import _core
-from pyropdf._errors import PdfError
+from pyropdf._errors import LimitError, PdfError
 from pyropdf._objects import Array, Dictionary, Name, Real, Stream
 from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._xobjects import (
@@ -714,6 +714,17 @@ class _Recoloring:
         self.converted[number, black] = (converted, tuple(notes))
         return converted
 
+    @staticmethod
+    def _decode_pixmap(image: PageImage | None) -> Any:  # noqa: ANN401 - Pixmap or None.
+        if image is None:
+            return None
+        try:
+            return image.pixmap()
+        except LimitError:
+            raise
+        except PdfError:
+            return None
+
     def _convert_image(self, stream: Stream, number: int, name: str, black: _Black) -> int | None:
         if stream.get("ImageMask") is True:
             return None
@@ -729,10 +740,7 @@ class _Recoloring:
             images = self.current.images(annotations=True)
             self.page_images = {image.item.xref: image for image in images if image.item.xref}
         image = self.page_images.get(number)
-        try:
-            pixmap = image.pixmap() if image is not None else None
-        except PdfError:
-            pixmap = None
+        pixmap = self._decode_pixmap(image)
         if image is None or pixmap is None or (pixmap.width, pixmap.height) != (image.item.width, image.item.height):
             self.report("image", f"{detail}: not decoded")
             return None

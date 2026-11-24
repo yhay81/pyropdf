@@ -213,14 +213,16 @@ def _walk(root: object) -> list[_Entry]:
             continue
         if depth > _MAX_TREE_DEPTH:
             msg = f"the EmbeddedFiles name tree exceeds the {_MAX_TREE_DEPTH}-level safety limit"
-            raise PdfError(msg)
+            code = "object_depth"
+            raise LimitError(code, msg)
         if node.is_indirect:
             seen.add(node.xref)
         for entry in _pairs(node.get("Names")):
             entries.append(entry)
             if len(entries) > _MAX_TREE_ENTRIES:
                 msg = f"the EmbeddedFiles name tree exceeds the {_MAX_TREE_ENTRIES}-entry safety limit"
-                raise PdfError(msg)
+                code = "object_count"
+                raise LimitError(code, msg)
         kids = node.get("Kids")
         if isinstance(kids, Array):
             stack.extend((kid, depth + 1) for kid in reversed(list(kids)))
@@ -236,7 +238,8 @@ def _check_inline(value: object) -> None:
         budget -= 1
         if budget < 0:
             msg = f"an inline file specification exceeds the {_MAX_INLINE_OBJECTS}-object safety limit"
-            raise PdfError(msg)
+            code = "object_count"
+            raise LimitError(code, msg)
         if isinstance(item, Dictionary) and not item.is_indirect:
             pending.extend(item.values())
         elif isinstance(item, Array) and not item.is_indirect:
@@ -989,7 +992,8 @@ class Attachments(Mapping[str, Attachment]):
                 raise PdfError(msg)
             if len(entries) >= _MAX_TREE_ENTRIES:
                 msg = f"the EmbeddedFiles name tree's {_MAX_TREE_ENTRIES}-entry safety limit is reached"
-                raise PdfError(msg)
+                code = "object_count"
+                raise LimitError(code, msg)
             objects = self._document.objects
             associated = _associated(self._document)
             dictionary = {"Type": Name("EmbeddedFile"), "Params": {"Size": len(payload)}}

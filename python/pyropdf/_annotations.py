@@ -1003,9 +1003,14 @@ class Annotation(_AppearanceOwner):
             self._changed(_core.annotation_edit(*self._location(), edit))
             return
         editable = self.type == AnnotationType.LINE
-        with self._page._document.transaction():  # noqa: SLF001
-            self._changed(_core.annotation_edit(*self._location(), edit, face=True))
-            _draw_face(self._page, self._index, self._id, font, editable=editable)
+        previous_id = self._id
+        try:
+            with self._page._document.transaction():  # noqa: SLF001
+                self._changed(_core.annotation_edit(*self._location(), edit, face=True))
+                _draw_face(self._page, self._index, self._id, font, editable=editable)
+        except BaseException:
+            self._id = previous_id
+            raise
 
     def _face(self) -> Font | None:
         """Recover the font referenced by a caption appearance, including after reopening."""
@@ -1415,6 +1420,8 @@ class Annotation(_AppearanceOwner):
                 rich_text=_line_markup(obj.get("RC")),
                 font=self._face(),
             )
+        except LimitError:
+            raise
         except (TypeError, ValueError, PdfError) as exc:
             raise MalformedPdfError(str(exc)) from exc
 

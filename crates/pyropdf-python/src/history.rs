@@ -18,7 +18,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
 
@@ -38,9 +38,36 @@ pub(crate) mod testing;
 /// section 4.1).
 pub const DEFAULT_HISTORY_LIMIT: u64 = 256 * 1024 * 1024;
 
+/// Serializes store writes and their matching `steps` updates across threads.
+///
+/// The store's own writer lock drops as soon as `Transaction::commit`, `undo`,
+/// or `redo` returns, before Python's step names can be updated, and
+/// `history_clear` toggles the store's history limit in two calls. Holding a
+/// [`WriteGuard`] across the store operation and the `steps` update keeps
+/// `steps` in lockstep with the store and prevents concurrent limit toggles.
+#[derive(Default)]
+struct WriteGate {
+    held: Mutex<bool>,
+    changed: Condvar,
+}
+
+/// Exclusive access to mutate a document's store and history step names.
+pub(crate) struct WriteGuard {
+    history: Arc<State>,
+}
+
+impl Drop for WriteGuard {
+    fn drop(&mut self) {
+        let mut held = lock(&self.history.gate.held);
+        *held = false;
+        self.history.gate.changed.notify_all();
+    }
+}
+
 /// The transaction state and the step names of one document.
 #[derive(Default)]
 pub struct State {
+    gate: WriteGate,
     open: Mutex<Option<Open>>,
     steps: Mutex<Steps>,
     /// Catalog reads on a foreign import's private source view charge the
@@ -61,6 +88,10 @@ struct Open {
     name: String,
     /// What the transaction wrote, as reads see it, until the next write.
     snapshot: Option<Arc<Version>>,
+    /// Held for the whole transaction so the store's writer lock and
+    /// `history.steps` stay serialized across commit and abort.
+    /// Declared last so `transaction` drops before the gate opens.
+    _write: WriteGuard,
 }
 
 impl Open {
@@ -223,10 +254,51 @@ impl State {
         }
     }
 
+    /// Acquires exclusive write access to this document's store and history.
+    pub(crate) fn write_lock(self: &Arc<Self>) -> WriteGuard {
+        let mut held = lock(&self.gate.held);
+        while *held {
+            held = self
+                .gate
+                .changed
+                .wait(held)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        *held = true;
+        WriteGuard {
+            history: Arc::clone(self),
+        }
+    }
+
+    /// Acquires exclusive write access while polling `operation` for deadline
+    /// or cancellation.
+    fn write_lock_poll(
+        self: &Arc<Self>,
+        operation: &Budget,
+    ) -> Result<WriteGuard, pyropdf_store::LimitExceeded> {
+        let mut held = lock(&self.gate.held);
+        loop {
+            operation.poll()?;
+            if !*held {
+                *held = true;
+                return Ok(WriteGuard {
+                    history: Arc::clone(self),
+                });
+            }
+            let (next, _) = self
+                .gate
+                .changed
+                .wait_timeout(held, Duration::from_millis(1))
+                .unwrap_or_else(PoisonError::into_inner);
+            held = next;
+        }
+    }
+
     /// Forgets the open transaction and the step names.
     pub fn clear(&self) {
-        lock(&self.open).take();
+        let open = lock(&self.open).take();
         *lock(&self.steps) = Steps::default();
+        drop(open);
     }
 
     /// Returns the innermost operation on this document for the current thread.
@@ -415,6 +487,7 @@ impl _Document {
             }
         }
         let budget = self.budget();
+        let _write = py.detach(|| self.history.write_lock());
         let (store, mut transaction) = self.on_current(py, Document::begin)?;
         let value = write(&mut transaction, &budget)?;
         self.commit(&store, transaction, String::new(), &budget)?;
@@ -443,6 +516,7 @@ impl _Document {
             }
         }
         let budget = self.budget();
+        let _write = py.detach(|| self.history.write_lock());
         let (_, mut transaction) = self.on_current(py, Document::begin)?;
         write(&mut transaction, &budget)
     }
@@ -532,9 +606,10 @@ pub fn begin_transaction(py: Python<'_>, document: &_Document, name: String) -> 
             return Ok(());
         }
         drop(open);
+        let _write = py.detach(|| document.history.write_lock());
         let (_, transaction) = document.on_current(py, Document::begin)?;
-        // Holding the writer lock, this thread is the only one with an open
-        // transaction: another thread's ended before its lock was released.
+        // Holding the write gate and writer lock, this thread is the only one
+        // with an open transaction: another thread's ended before its lock was released.
         *lock(&document.history.open) = Some(Open {
             owner: thread::current().id(),
             transaction,
@@ -542,6 +617,7 @@ pub fn begin_transaction(py: Python<'_>, document: &_Document, name: String) -> 
             operation: None,
             name,
             snapshot: None,
+            _write,
         });
         Ok(())
     })?
@@ -623,6 +699,9 @@ fn begin_with(
             .map_err(|error| limit_error(&error))?,
         None => limits().share(),
     };
+    let _write = py
+        .detach(|| document.history.write_lock_poll(&operation))
+        .map_err(|error| limit_error(&error))?;
     let (_, transaction) = document.on_current(py, |store| {
         loop {
             operation.poll()?;
@@ -640,6 +719,7 @@ fn begin_with(
         operation: Some(operation.clone()),
         name: name.into(),
         snapshot: None,
+        _write,
     });
     Ok(handle(operation))
 }
@@ -678,7 +758,14 @@ pub fn end_transaction(document: &_Document, commit: bool) -> PyResult<()> {
         }
         if commit {
             let budget = open.budget(document);
-            document.commit(&store, open.transaction, open.name, &budget)?;
+            let Open {
+                transaction,
+                name,
+                _write,
+                ..
+            } = open;
+            document.commit(&store, transaction, name, &budget)?;
+            drop(_write);
         }
         Ok(())
     })?
@@ -708,7 +795,9 @@ pub fn abort_canvas(document: &_Document, operation: &OperationBudget) -> PyResu
         let Some(boundary) = open.savepoints.iter().rposition(|(_, outer)| !ours(outer)) else {
             // The canvas is the outermost transaction: dropping it discards its
             // writes and releases the writer lock.
-            guard.take();
+            let discarded = guard.take();
+            drop(guard);
+            drop(discarded);
             return;
         };
         open.savepoints.truncate(boundary + 1);
@@ -751,6 +840,7 @@ pub(crate) fn outside_transaction(document: &_Document, what: &str) -> PyResult<
 pub fn history_undo(py: Python<'_>, document: &_Document) -> PyResult<()> {
     crate::errors::boundary(|| {
         outside_transaction(document, "undo")?;
+        let _write = py.detach(|| document.history.write_lock());
         let (store, step) = document.on_current(py, Document::undo)?;
         if step.is_none() {
             return Err(PdfError::new_err("nothing to undo"));
@@ -767,6 +857,7 @@ pub fn history_undo(py: Python<'_>, document: &_Document) -> PyResult<()> {
 pub fn history_redo(py: Python<'_>, document: &_Document) -> PyResult<()> {
     crate::errors::boundary(|| {
         outside_transaction(document, "redo")?;
+        let _write = py.detach(|| document.history.write_lock());
         let (store, step) = document.on_current(py, Document::redo)?;
         if step.is_none() {
             return Err(PdfError::new_err("nothing to redo"));
@@ -784,22 +875,25 @@ pub fn history_redo(py: Python<'_>, document: &_Document) -> PyResult<()> {
 pub fn set_history_limit(document: &_Document, limit: Option<u64>) -> PyResult<()> {
     crate::errors::boundary(|| {
         let store = document.document()?;
+        let mut steps = lock(&document.history.steps);
         store.set_history_limit(limit);
-        sync(&mut lock(&document.history.steps), &store);
+        sync(&mut steps, &store);
         Ok(())
     })?
 }
 
 /// Forgets every step, keeping the current version and the budget.
 #[pyfunction]
-pub fn history_clear(document: &_Document) -> PyResult<()> {
+pub fn history_clear(py: Python<'_>, document: &_Document) -> PyResult<()> {
     crate::errors::boundary(|| {
         outside_transaction(document, "clear the history")?;
+        let _write = py.detach(|| document.history.write_lock());
         let store = document.document()?;
+        let mut steps = lock(&document.history.steps);
         let limit = store.history().limit;
         store.set_history_limit(Some(0));
         store.set_history_limit(limit);
-        sync(&mut lock(&document.history.steps), &store);
+        sync(&mut steps, &store);
         Ok(())
     })?
 }
@@ -810,6 +904,7 @@ pub fn history_clear(document: &_Document) -> PyResult<()> {
 pub fn history_save<'py>(py: Python<'py>, document: &_Document) -> PyResult<Bound<'py, PyBytes>> {
     crate::errors::boundary(|| {
         outside_transaction(document, "save the history")?;
+        let _write = py.detach(|| document.history.write_lock());
         let store = document.document()?;
         let (names, position) = {
             let mut steps = lock(&document.history.steps);
@@ -830,6 +925,7 @@ pub fn history_save<'py>(py: Python<'py>, document: &_Document) -> PyResult<Boun
 pub fn history_restore(py: Python<'_>, document: &_Document, data: &[u8]) -> PyResult<()> {
     crate::errors::boundary(|| {
         outside_transaction(document, "restore a history")?;
+        let _write = py.detach(|| document.history.write_lock());
         let store = document.document()?;
         let budget = document.budget();
         match py

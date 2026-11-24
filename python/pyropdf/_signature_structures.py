@@ -493,6 +493,8 @@ def _complete_pdf20_standard_fonts(doc: Document, page_obj: Dictionary) -> None:
         ch = bytes([code]).decode("cp1252", errors="ignore")
         try:
             widths.append(round(helvetica.text_width(ch, 1000)) if ch else 278)
+        except LimitError:
+            raise
         except PdfError:
             widths.append(278)
     for key in list(fonts):
@@ -1321,6 +1323,8 @@ def _record_dss_stream(item: object, xrefs: list[int], seen_xrefs: set[int], str
     seen_xrefs.add(item.xref)
     try:
         data = item.read(max_size=_DEFAULT_MAX_STREAM_DATA_SIZE)
+    except LimitError:
+        raise
     except PdfError:
         return
     streams.setdefault(data, item)

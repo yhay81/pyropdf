@@ -674,7 +674,12 @@ impl _Font {
                 }
                 Kind::Embedded(face) => {
                     let measure = Measure::new(face);
-                    let character = char::from_u32(codepoint).unwrap_or('\u{FFFD}');
+                    let Some(character) = char::from_u32(codepoint) else {
+                        return Err(PdfError::new_err(format!(
+                            "{} does not contain all glyphs of the text: no glyph for U+{codepoint:04X}",
+                            face.full_name
+                        )));
+                    };
                     let glyph = measure
                         .glyph(character)
                         .ok_or_else(|| embedded_missing(face, character))?;
@@ -1060,7 +1065,8 @@ impl _Font {
                         for line in text.lines() {
                             shaped(face, line, &budget)?;
                         }
-                        standard::layout(
+                        let mut shape_failure: Option<PyErr> = None;
+                        let result = standard::layout(
                             text,
                             (width, height),
                             size,
@@ -1068,10 +1074,22 @@ impl _Font {
                             justify,
                             &budget,
                             |line| {
-                                shaped(face, line, &budget)
-                                    .map_or(f64::INFINITY, |glyphs| advance(&glyphs, size, em))
+                                if shape_failure.is_some() {
+                                    return f64::INFINITY;
+                                }
+                                match shaped(face, line, &budget) {
+                                    Ok(glyphs) => advance(&glyphs, size, em),
+                                    Err(error) => {
+                                        shape_failure = Some(error);
+                                        f64::INFINITY
+                                    }
+                                }
                             },
-                        )
+                        );
+                        if let Some(error) = shape_failure {
+                            return Err(error);
+                        }
+                        result
                     }
                 }
                 .map_err(|error| layout_error(&error, max_lines))?;
@@ -1137,7 +1155,13 @@ impl _Font {
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        crate::errors::boundary(|| format!("_Font({:?})", self.full_name()))
+        crate::errors::boundary(|| {
+            let name = match &self.kind {
+                Kind::Standard(font) => font.pdf_base_name(),
+                Kind::Embedded(face) => &face.full_name,
+            };
+            format!("_Font({name:?})")
+        })
     }
 }
 
