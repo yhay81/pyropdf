@@ -7,12 +7,15 @@
   <meta property="og:site_name" content="{{ config.site_name }}">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f3ec">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#15120f">
-  <style>{% include "partials/pyropdf.css" %}</style>
-  {% if page.meta and page.meta.home %}
+  <link rel="stylesheet" href="/assets/pyropdf.css">
+  {% if page and page.meta and page.meta.home %}
     {# The home page has no source to edit or copy. #}
     <style>.md-content__button { display: none; }
       .md-main__inner { margin-top: 0; }
       .md-content__inner { padding-top: 0; }</style>
+  {% elif page and page.url and page.url[:4] == "api/" %}
+    {# API pages are generated from docstrings; hide the edit-source link. #}
+    <style>a.md-content__button[href*="/edit/"] { display: none; }</style>
   {% endif %}
 {% endblock %}
 
@@ -29,9 +32,17 @@
         button.closest(".pp-install")?.querySelector("code")?.focus();
         return;
       }
-      const previous = label.textContent;
+      if (button.dataset.copyOriginal === undefined) {
+        button.dataset.copyOriginal = label.textContent;
+      }
+      if (button.dataset.copyTimer) {
+        window.clearTimeout(Number(button.dataset.copyTimer));
+      }
       label.textContent = button.dataset.copiedLabel;
-      window.setTimeout(() => { label.textContent = previous; }, 1600);
+      button.dataset.copyTimer = String(window.setTimeout(() => {
+        label.textContent = button.dataset.copyOriginal;
+        delete button.dataset.copyTimer;
+      }, 1600));
     });
 
     // The home page's demo plays its steps in turn while it is on screen,
@@ -44,11 +55,19 @@
         const steps = [...reel.querySelectorAll('input[name="pp-step"]')];
         const toggle = reel.querySelector("[data-reel-toggle]");
         const period = parseFloat(getComputedStyle(reel).getPropertyValue("--pp-step")) * 1000 || 5000;
-        let visible = false;
+        let visible = true;
         let timer = null;
         let playing = false;
 
-        new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; }).observe(reel);
+        const syncAnimation = () => {
+          reel.classList.toggle("pp-reel--playing", playing && visible && !document.hidden);
+        };
+
+        const observer = new IntersectionObserver(([entry]) => {
+          visible = entry.isIntersecting;
+          syncAnimation();
+        });
+        observer.observe(reel);
 
         const syncToggle = () => {
           if (!toggle) return;
@@ -64,14 +83,18 @@
             timer = null;
           }
           playing = false;
-          reel.classList.remove("pp-reel--playing");
+          syncAnimation();
           syncToggle();
+          if (!document.contains(reel)) {
+            observer.disconnect();
+            document.removeEventListener("visibilitychange", syncAnimation);
+          }
         };
 
         const start = () => {
           if (playing) return;
           playing = true;
-          reel.classList.add("pp-reel--playing");
+          syncAnimation();
           syncToggle();
           timer = window.setInterval(() => {
             if (!document.contains(reel)) return stop();
@@ -80,6 +103,8 @@
             steps[next].checked = true;
           }, period);
         };
+
+        document.addEventListener("visibilitychange", syncAnimation);
 
         if (toggle) {
           toggle.addEventListener("click", (event) => {

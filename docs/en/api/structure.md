@@ -43,7 +43,7 @@ namespace (written as `Name(role)`) or `(role, target_namespace)`
 (written as `[Name(role), target_namespace_ref]`). Removing the last entry
 deletes `/RoleMapNS`.
 
-### `NamespaceRoleMap.__getitem__`
+### `__getitem__`
 
 ```python
 NamespaceRoleMap.__getitem__(key: str) -> str | tuple[str, StructureNamespace]
@@ -51,7 +51,7 @@ NamespaceRoleMap.__getitem__(key: str) -> str | tuple[str, StructureNamespace]
 
 Return the mapped role or `(role, StructureNamespace)` for `key`, or raise `KeyError`.
 
-### `NamespaceRoleMap.__iter__`
+### `__iter__`
 
 ```python
 NamespaceRoleMap.__iter__() -> Iterator[str]
@@ -59,7 +59,7 @@ NamespaceRoleMap.__iter__() -> Iterator[str]
 
 Iterate over the custom role names in `/RoleMapNS`.
 
-### `NamespaceRoleMap.__len__`
+### `__len__`
 
 ```python
 NamespaceRoleMap.__len__() -> int
@@ -67,7 +67,7 @@ NamespaceRoleMap.__len__() -> int
 
 Return the number of entries in `/RoleMapNS`.
 
-### `NamespaceRoleMap.__bool__`
+### `__bool__`
 
 ```python
 NamespaceRoleMap.__bool__() -> bool
@@ -75,7 +75,7 @@ NamespaceRoleMap.__bool__() -> bool
 
 Return whether `/RoleMapNS` has at least one entry.
 
-### `NamespaceRoleMap.__setitem__`
+### `__setitem__`
 
 ```python
 NamespaceRoleMap.__setitem__(
@@ -86,7 +86,7 @@ NamespaceRoleMap.__setitem__(
 
 Set one role mapping in one transaction.
 
-### `NamespaceRoleMap.__delitem__`
+### `__delitem__`
 
 ```python
 NamespaceRoleMap.__delitem__(key: str)
@@ -94,7 +94,7 @@ NamespaceRoleMap.__delitem__(key: str)
 
 Delete `key` from `/RoleMapNS`, removing `/RoleMapNS` when empty.
 
-### `NamespaceRoleMap.update`
+### `update`
 
 ```python
 NamespaceRoleMap.update(
@@ -106,7 +106,7 @@ NamespaceRoleMap.update(
 
 Update multiple `/RoleMapNS` entries in one transaction.
 
-### `NamespaceRoleMap.clear`
+### `clear`
 
 ```python
 NamespaceRoleMap.clear()
@@ -152,7 +152,7 @@ Keys are custom role names and values are the role names they map to
 `/StructTreeRoot` and `/RoleMap` when absent, removing `/RoleMap`
 when the last entry is deleted, and refusing role cycles.
 
-### `RoleMap.__getitem__`
+### `__getitem__`
 
 ```python
 RoleMap.__getitem__(key: str) -> str
@@ -160,7 +160,7 @@ RoleMap.__getitem__(key: str) -> str
 
 Return the mapped role name for `key`, or raise `KeyError`.
 
-### `RoleMap.__iter__`
+### `__iter__`
 
 ```python
 RoleMap.__iter__() -> Iterator[str]
@@ -168,7 +168,7 @@ RoleMap.__iter__() -> Iterator[str]
 
 Iterate over the custom role names in `/RoleMap`.
 
-### `RoleMap.__len__`
+### `__len__`
 
 ```python
 RoleMap.__len__() -> int
@@ -176,7 +176,7 @@ RoleMap.__len__() -> int
 
 Return the number of valid role mappings.
 
-### `RoleMap.__setitem__`
+### `__setitem__`
 
 ```python
 RoleMap.__setitem__(key: TagRole | str, value: TagRole | str)
@@ -184,7 +184,7 @@ RoleMap.__setitem__(key: TagRole | str, value: TagRole | str)
 
 Map custom role `key` to `value` in one transaction.
 
-### `RoleMap.__delitem__`
+### `__delitem__`
 
 ```python
 RoleMap.__delitem__(key: str)
@@ -192,7 +192,7 @@ RoleMap.__delitem__(key: str)
 
 Remove `key` from `/RoleMap`, deleting `/RoleMap` if it becomes empty.
 
-### `RoleMap.update`
+### `update`
 
 ```python
 RoleMap.update(other: object = (), /, **values: TagRole | str)
@@ -200,7 +200,7 @@ RoleMap.update(other: object = (), /, **values: TagRole | str)
 
 Apply every mapping of `other` and `values` in one transaction, or none on error.
 
-### `RoleMap.clear`
+### `clear`
 
 ```python
 RoleMap.clear()
@@ -221,7 +221,7 @@ Supports indexing, slicing, `del`, `add`, and `move`. Non-element
 content items in `/K` (marked-content IDs, `/MCR`, and `/OBJR` dictionaries)
 remain in place when child elements are added, reordered, or deleted.
 
-### `StructureChildren.__getitem__`
+### `__getitem__`
 
 ```python
 StructureChildren.__getitem__(
@@ -231,7 +231,7 @@ StructureChildren.__getitem__(
 
 Return a child element, or a list of child elements for a slice.
 
-### `StructureChildren.__len__`
+### `__len__`
 
 ```python
 StructureChildren.__len__() -> int
@@ -239,7 +239,7 @@ StructureChildren.__len__() -> int
 
 Return the number of child structure elements.
 
-### `StructureChildren.__iter__`
+### `__iter__`
 
 ```python
 StructureChildren.__iter__() -> Iterator[StructureElement]
@@ -247,7 +247,7 @@ StructureChildren.__iter__() -> Iterator[StructureElement]
 
 Iterate over the child structure elements in `/K` order.
 
-### `StructureChildren.__delitem__`
+### `__delitem__`
 
 ```python
 StructureChildren.__delitem__(index: int | slice)
@@ -255,7 +255,7 @@ StructureChildren.__delitem__(index: int | slice)
 
 Remove one or more child elements, cleaning `/ParentTree`, `/IDTree`, and orphaned objects.
 
-### `StructureChildren.add`
+### `add`
 
 ```python
 StructureChildren.add(
@@ -274,7 +274,7 @@ StructureChildren.add(
 
 Insert a child in one transaction, registering its optional PDF 2.0 namespace URI.
 
-### `StructureChildren.move`
+### `move`
 
 ```python
 StructureChildren.move(index: int, to: int)
@@ -313,7 +313,7 @@ Properties read the current version of the document, and assigning or deleting
 `page` updates the element in one transaction. A handle whose element was
 deleted raises `StaleObjectError`, and works again if undo restores it.
 
-### `StructureElement.document`
+### `document`
 
 ```python
 StructureElement.document: Document
@@ -321,7 +321,7 @@ StructureElement.document: Document
 
 The document that owns this structure element.
 
-### `StructureElement.xref`
+### `xref`
 
 ```python
 StructureElement.xref: int
@@ -329,7 +329,7 @@ StructureElement.xref: int
 
 The element's indirect object number.
 
-### `StructureElement.obj`
+### `obj`
 
 ```python
 StructureElement.obj: Dictionary
@@ -337,7 +337,7 @@ StructureElement.obj: Dictionary
 
 The element's dictionary in the low-level object model.
 
-### `StructureElement.role`
+### `role`
 
 ```python
 StructureElement.role: str
@@ -347,7 +347,7 @@ The element's structure type name (`/S`).
 
 Settable.
 
-### `StructureElement.standard_role`
+### `standard_role`
 
 ```python
 StructureElement.standard_role: str
@@ -355,7 +355,7 @@ StructureElement.standard_role: str
 
 `role` resolved iteratively through `doc.structure.role_map`.
 
-### `StructureElement.namespace`
+### `namespace`
 
 ```python
 StructureElement.namespace: StructureNamespace | None
@@ -365,7 +365,7 @@ Return, set, or delete the element's `StructureNamespace` (`/NS`, PDF 2.0).
 
 Settable.
 
-### `StructureElement.resolved_role`
+### `resolved_role`
 
 ```python
 StructureElement.resolved_role: tuple[str, str | None]
@@ -373,7 +373,7 @@ StructureElement.resolved_role: tuple[str, str | None]
 
 Resolve `(role, namespace_uri)` iteratively across `/RoleMapNS` and `/RoleMap` (up to 32 hops).
 
-### `StructureElement.associated_files`
+### `associated_files`
 
 ```python
 StructureElement.associated_files: AssociatedFiles
@@ -381,7 +381,7 @@ StructureElement.associated_files: AssociatedFiles
 
 The `/AF` associated files of this structure element.
 
-### `StructureElement.title`
+### `title`
 
 ```python
 StructureElement.title: str | None
@@ -391,7 +391,7 @@ The element's title (`/T`), or `None` when absent; `del` removes `/T`.
 
 Settable.
 
-### `StructureElement.language`
+### `language`
 
 ```python
 StructureElement.language: str | None
@@ -401,7 +401,7 @@ The element's BCP 47 language tag (`/Lang`), or `None`; `del` removes `/Lang`.
 
 Settable.
 
-### `StructureElement.alt`
+### `alt`
 
 ```python
 StructureElement.alt: str | None
@@ -411,7 +411,7 @@ The alternate description (`/Alt`), or `None`; `del` removes `/Alt`.
 
 Settable.
 
-### `StructureElement.actual_text`
+### `actual_text`
 
 ```python
 StructureElement.actual_text: str | None
@@ -421,7 +421,7 @@ The replacement text (`/ActualText`), or `None`; `del` removes `/ActualText`.
 
 Settable.
 
-### `StructureElement.expanded`
+### `expanded`
 
 ```python
 StructureElement.expanded: str | None
@@ -431,7 +431,7 @@ The abbreviation expansion (`/E`, ISO 32000-2 §14.9.5), or `None`; `del` remove
 
 Settable.
 
-### `StructureElement.page`
+### `page`
 
 ```python
 StructureElement.page: Page | None
@@ -441,7 +441,7 @@ The element's page (`/Pg`), or `None`; `del` removes `/Pg`.
 
 Settable.
 
-### `StructureElement.parent`
+### `parent`
 
 ```python
 StructureElement.parent: StructureElement | None
@@ -449,7 +449,7 @@ StructureElement.parent: StructureElement | None
 
 The parent `StructureElement`, or `None` for a top-level element.
 
-### `StructureElement.children`
+### `children`
 
 ```python
 StructureElement.children: StructureChildren
@@ -457,7 +457,7 @@ StructureElement.children: StructureChildren
 
 A live sequence of the element's child `StructureElement` handles.
 
-### `StructureElement.items`
+### `items`
 
 ```python
 StructureElement.items: tuple[StructureElement | MarkedContentReference | ObjectReference, ...]
@@ -465,7 +465,7 @@ StructureElement.items: tuple[StructureElement | MarkedContentReference | Object
 
 The child elements, marked-content items, and object references in `/K` reading order.
 
-### `StructureElement.set_attributes`
+### `set_attributes`
 
 ```python
 StructureElement.set_attributes(
@@ -478,7 +478,7 @@ StructureElement.set_attributes(
 
 Set standard or export-format attributes, or supply a registered namespace URI for the NSO owner.
 
-### `StructureElement.add_class`
+### `add_class`
 
 ```python
 StructureElement.add_class(name: str)
@@ -486,7 +486,7 @@ StructureElement.add_class(name: str)
 
 Apply a defined attribute class without duplicating it or removing earlier class revisions.
 
-### `StructureElement.set_user_property`
+### `set_user_property`
 
 ```python
 StructureElement.set_user_property(
@@ -500,7 +500,7 @@ StructureElement.set_user_property(
 
 Create or update a named user property and declare it in the catalog's mark information.
 
-### `StructureElement.set_object_reference`
+### `set_object_reference`
 
 ```python
 StructureElement.set_object_reference(
@@ -517,7 +517,7 @@ A whole XObject drawn on several pages can have one reference per page in the sa
 To retarget a reference, supply an untagged replacement and the page where it is drawn.
 When the old target has several references, this replaces the one on that page.
 
-### `StructureElement.move`
+### `move`
 
 ```python
 StructureElement.move(
@@ -545,7 +545,7 @@ Exposes `uri` (`/NS`), `schema` (`/Schema`), and
 `role_map` (`/RoleMapNS`). A deleted handle raises
 `StaleObjectError` and works again if undo restores it.
 
-### `StructureNamespace.document`
+### `document`
 
 ```python
 StructureNamespace.document: Document
@@ -553,7 +553,7 @@ StructureNamespace.document: Document
 
 The owning `Document`.
 
-### `StructureNamespace.xref`
+### `xref`
 
 ```python
 StructureNamespace.xref: int
@@ -561,7 +561,7 @@ StructureNamespace.xref: int
 
 The indirect object number of this `Namespace` dictionary.
 
-### `StructureNamespace.obj`
+### `obj`
 
 ```python
 StructureNamespace.obj: Dictionary
@@ -569,7 +569,7 @@ StructureNamespace.obj: Dictionary
 
 The `Namespace` dictionary in the low-level object model.
 
-### `StructureNamespace.uri`
+### `uri`
 
 ```python
 StructureNamespace.uri: str
@@ -579,7 +579,7 @@ The namespace URI text string (`/NS`).
 
 Settable.
 
-### `StructureNamespace.schema`
+### `schema`
 
 ```python
 StructureNamespace.schema: AssociatedFile | str | None
@@ -589,17 +589,17 @@ Return, set, or delete `/Schema` (`AssociatedFile`, string, or `None`).
 
 Settable.
 
-### `StructureNamespace.role_map`
+### `role_map`
 
 ```python
 StructureNamespace.role_map: NamespaceRoleMap
 ```
 
-Return, replace, or delete `/RoleMapNS` as a live `NamespaceRoleMap`.
+`/RoleMapNS` as a live `NamespaceRoleMap`.
 
 Settable.
 
-### `StructureNamespace.delete`
+### `delete`
 
 ```python
 StructureNamespace.delete()
@@ -616,7 +616,7 @@ StructureNamespaces(document: Document)
 
 Live sequence of `StructureNamespace` handles in `StructTreeRoot['Namespaces']` (PDF 2.0).
 
-### `StructureNamespaces.__getitem__`
+### `__getitem__`
 
 ```python
 StructureNamespaces.__getitem__(
@@ -626,7 +626,7 @@ StructureNamespaces.__getitem__(
 
 Return one `StructureNamespace`, or a list for a slice.
 
-### `StructureNamespaces.__len__`
+### `__len__`
 
 ```python
 StructureNamespaces.__len__() -> int
@@ -634,7 +634,7 @@ StructureNamespaces.__len__() -> int
 
 Return the number of namespaces in `StructTreeRoot['Namespaces']`.
 
-### `StructureNamespaces.__iter__`
+### `__iter__`
 
 ```python
 StructureNamespaces.__iter__() -> Iterator[StructureNamespace]
@@ -642,7 +642,7 @@ StructureNamespaces.__iter__() -> Iterator[StructureNamespace]
 
 Iterate over the `StructureNamespace` handles.
 
-### `StructureNamespaces.__bool__`
+### `__bool__`
 
 ```python
 StructureNamespaces.__bool__() -> bool
@@ -650,7 +650,7 @@ StructureNamespaces.__bool__() -> bool
 
 Return whether at least one namespace is declared.
 
-### `StructureNamespaces.__contains__`
+### `__contains__`
 
 ```python
 StructureNamespaces.__contains__(item: object) -> bool
@@ -658,7 +658,7 @@ StructureNamespaces.__contains__(item: object) -> bool
 
 Return whether `item` (`StructureNamespace` or URI `str`) is declared.
 
-### `StructureNamespaces.find`
+### `find`
 
 ```python
 StructureNamespaces.find(uri: str) -> StructureNamespace | None
@@ -666,7 +666,7 @@ StructureNamespaces.find(uri: str) -> StructureNamespace | None
 
 Return the first `StructureNamespace` with `ns.uri == uri`, or `None`.
 
-### `StructureNamespaces.add`
+### `add`
 
 ```python
 StructureNamespaces.add(
@@ -679,7 +679,7 @@ StructureNamespaces.add(
 
 Create and register an indirect `StructureNamespace` in one transaction (promoting to PDF 2.0).
 
-### `StructureNamespaces.__delitem__`
+### `__delitem__`
 
 ```python
 StructureNamespaces.__delitem__(index: int | slice)
@@ -687,7 +687,7 @@ StructureNamespaces.__delitem__(index: int | slice)
 
 Delete one or more namespaces, scrubbing `/NS` and `/RoleMapNS` references.
 
-### `StructureNamespaces.clear`
+### `clear`
 
 ```python
 StructureNamespaces.clear()
@@ -724,7 +724,7 @@ expose the hierarchy and marked-content items, `walk` visits every element
 in pre-order, and `role_map` reads and edits `/RoleMap`. `del doc.structure`
 removes `/StructTreeRoot` and frees unreferenced structure objects.
 
-### `StructureTree.obj`
+### `obj`
 
 ```python
 StructureTree.obj: Dictionary | None
@@ -732,7 +732,7 @@ StructureTree.obj: Dictionary | None
 
 The `/StructTreeRoot` dictionary, or `None` when the document is untagged.
 
-### `StructureTree.role_map`
+### `role_map`
 
 ```python
 StructureTree.role_map: RoleMap
@@ -742,7 +742,7 @@ Or replace `/RoleMap` as a live `RoleMap`; `del` removes `/RoleMap`.
 
 Settable.
 
-### `StructureTree.namespaces`
+### `namespaces`
 
 ```python
 StructureTree.namespaces: StructureNamespaces
@@ -750,7 +750,7 @@ StructureTree.namespaces: StructureNamespaces
 
 The structure tree's `/Namespaces` array as a live `StructureNamespaces` sequence.
 
-### `StructureTree.resolve_role`
+### `resolve_role`
 
 ```python
 StructureTree.resolve_role(role: TagRole | str) -> str
@@ -758,7 +758,7 @@ StructureTree.resolve_role(role: TagRole | str) -> str
 
 Resolve `role` iteratively through `/RoleMap` (up to 32 hops, stopping on cycles).
 
-### `StructureTree.__getitem__`
+### `__getitem__`
 
 ```python
 StructureTree.__getitem__(
@@ -768,7 +768,7 @@ StructureTree.__getitem__(
 
 Return a top-level element, or a list of top-level elements for a slice.
 
-### `StructureTree.__len__`
+### `__len__`
 
 ```python
 StructureTree.__len__() -> int
@@ -776,7 +776,7 @@ StructureTree.__len__() -> int
 
 Return the number of top-level structure elements.
 
-### `StructureTree.__iter__`
+### `__iter__`
 
 ```python
 StructureTree.__iter__() -> Iterator[StructureElement]
@@ -784,7 +784,7 @@ StructureTree.__iter__() -> Iterator[StructureElement]
 
 Iterate over the top-level structure elements in `/K` order.
 
-### `StructureTree.__delitem__`
+### `__delitem__`
 
 ```python
 StructureTree.__delitem__(index: int | slice)
@@ -792,7 +792,7 @@ StructureTree.__delitem__(index: int | slice)
 
 Remove one or more top-level elements, cleaning `/ParentTree`, `/IDTree`, and orphaned objects.
 
-### `StructureTree.move`
+### `move`
 
 ```python
 StructureTree.move(index: int, to: int)
@@ -800,7 +800,7 @@ StructureTree.move(index: int, to: int)
 
 Move top-level element `index` to position `to` in one transaction.
 
-### `StructureTree.add`
+### `add`
 
 ```python
 StructureTree.add(
@@ -822,7 +822,7 @@ Create and insert a top-level `StructureElement` in one transaction.
 Creates `/StructTreeRoot` and sets `MarkInfo/Marked` to `True` when
 the document has no structure tree yet.
 
-### `StructureTree.set_class_attributes`
+### `set_class_attributes`
 
 ```python
 StructureTree.set_class_attributes(
@@ -836,7 +836,7 @@ StructureTree.set_class_attributes(
 
 Define or update an attribute class, keeping existing owners and entries under other names.
 
-### `StructureTree.edit`
+### `edit`
 
 ```python
 StructureTree.edit() -> Generator[StructureTree]
@@ -847,7 +847,7 @@ Group edits and roll back newly invalid determinate PDF 2.0 Annex L relationship
 The final child order and multiplicities are checked together, allowing temporarily
 incomplete groups such as Ruby. Conditional relationships remain available via child_rules().
 
-### `StructureTree.reading_order`
+### `reading_order`
 
 ```python
 StructureTree.reading_order(
@@ -864,7 +864,7 @@ a replacement, has a missing text value. Untagged documents return an empty
 tuple. Both structure readers visit at most 65,536 child entries and
 256 levels, and reject cycles and malformed children.
 
-### `StructureTree.child_rules`
+### `child_rules`
 
 ```python
 StructureTree.child_rules(
@@ -881,7 +881,7 @@ of element object numbers to intended grouping use when several uses
 fit the stored children. An indeterminate result retains the condition
 that requires more information. The rules apply to the PDF 2.0 namespace.
 
-### `StructureTree.walk`
+### `walk`
 
 ```python
 StructureTree.walk(*, max_elements: int | None = 65536) -> Iterator[StructureElement]

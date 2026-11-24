@@ -130,7 +130,7 @@ A signature of the opened file: its field, its signature dictionary, and the rev
 `revision` counts the file's revisions from 0, the oldest, and is
 `None` when the byte ranges end where no revision does.
 
-### `Signature.is_timestamp`
+### `is_timestamp`
 
 ```python
 Signature.is_timestamp: bool
@@ -138,7 +138,7 @@ Signature.is_timestamp: bool
 
 Whether this signature is an RFC 3161 document timestamp (`/DocTimeStamp`).
 
-### `Signature.doc_mdp`
+### `doc_mdp`
 
 ```python
 Signature.doc_mdp: DocMdpPermission | None
@@ -146,7 +146,7 @@ Signature.doc_mdp: DocMdpPermission | None
 
 The `DocMDP` permission declared in this signature's `/Reference`, or `None`.
 
-### `Signature.field_locks`
+### `field_locks`
 
 ```python
 Signature.field_locks: tuple[FieldLock, ...]
@@ -154,7 +154,7 @@ Signature.field_locks: tuple[FieldLock, ...]
 
 The `FieldMDP` `FieldLock` entries signed by this signature's `/Reference`.
 
-### `Signature.verify`
+### `verify`
 
 ```python
 Signature.verify(trust: Sequence[bytes] | None = None) -> SignatureVerification
@@ -200,7 +200,7 @@ default diff policy does: `"none"`, `"form filling"`, or `"other"`,
 which an added or changed annotation other than a widget is.
 `problems` explains each check that failed or could not be made.
 
-### `SignatureVerification.__bool__`
+### `__bool__`
 
 ```python
 SignatureVerification.__bool__() -> bool
@@ -219,7 +219,7 @@ key that stays outside pyropdf, including P-521, Brainpool P256r1,
 P384r1 and P512r1, Ed25519, Ed448, RSA, or an HSM. Use the optional
 `cryptography` package to verify signatures on those additional curves.
 
-### `Signer.from_pem`
+### `from_pem`
 
 ```python
 Signer.from_pem(
@@ -240,7 +240,7 @@ then any intermediate certificates to embed. A key that pyropdf does
 not sign with, a wrong password, or a certificate of another key
 raises `ValueError`. Choose the curve's digest with `digest_algorithm` as in `callback`.
 
-### `Signer.from_pkcs12`
+### `from_pkcs12`
 
 ```python
 Signer.from_pkcs12(
@@ -259,7 +259,7 @@ Python's `cryptography` write it; `None` is the empty password.
 Legacy encryption, a wrong password, or a file without exactly one
 key and its certificate raises `ValueError`.
 
-### `Signer.callback`
+### `callback`
 
 ```python
 Signer.callback(
@@ -282,7 +282,7 @@ SHA-2 digest. Ed25519 and Ed448 sign the attributes directly and use
 RSA uses PKCS#1 v1.5 with a SHA-2 or SHA-3 digest (SHA-256 by default). Callback exceptions propagate from
 `Document.sign`.
 
-### `Signer.certificates`
+### `certificates`
 
 ```python
 Signer.certificates: tuple[bytes, ...]
@@ -290,7 +290,7 @@ Signer.certificates: tuple[bytes, ...]
 
 The DER certificates that the signature embeds, the signer's first.
 
-### `Signer.digest_algorithm`
+### `digest_algorithm`
 
 ```python
 Signer.digest_algorithm: str

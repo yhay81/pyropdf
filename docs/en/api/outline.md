@@ -23,7 +23,7 @@ visits every item in document order. Assigning a list of
 and `del doc.outline` removes it. The view reads the document on every
 access.
 
-### `Outline.__getitem__`
+### `__getitem__`
 
 ```python
 Outline.__getitem__(index: int | slice) -> OutlineItem | list[OutlineItem]
@@ -31,7 +31,7 @@ Outline.__getitem__(index: int | slice) -> OutlineItem | list[OutlineItem]
 
 Return a top-level item, or a list of them for a slice.
 
-### `Outline.__len__`
+### `__len__`
 
 ```python
 Outline.__len__() -> int
@@ -39,7 +39,7 @@ Outline.__len__() -> int
 
 Return the number of top-level items.
 
-### `Outline.__iter__`
+### `__iter__`
 
 ```python
 Outline.__iter__() -> Iterator[OutlineItem]
@@ -47,7 +47,7 @@ Outline.__iter__() -> Iterator[OutlineItem]
 
 Iterate over the top-level items.
 
-### `Outline.walk`
+### `walk`
 
 ```python
 Outline.walk() -> Iterator[OutlineItem]
@@ -58,7 +58,7 @@ Iterate over every item in document order, each before its children.
 Items stored as direct dictionaries, which no handle can name, are
 left out; `entries` lists them.
 
-### `Outline.entries`
+### `entries`
 
 ```python
 Outline.entries() -> list[OutlineEntry]
@@ -92,7 +92,7 @@ Levels start at 1 and grow by at most one from one entry to the next; an
 entry's children are the entries of the next level that follow it.
 `is_open` shows the children when the document opens.
 
-### `OutlineEntry.page`
+### `page`
 
 ```python
 OutlineEntry.page: int | None
@@ -114,7 +114,7 @@ item at once. A handle raises `StaleObjectError` while its item no
 longer exists, as after the outline is replaced; it works again if undo
 restores it.
 
-### `OutlineItem.xref`
+### `xref`
 
 ```python
 OutlineItem.xref: int
@@ -122,7 +122,7 @@ OutlineItem.xref: int
 
 The item's object number.
 
-### `OutlineItem.obj`
+### `obj`
 
 ```python
 OutlineItem.obj: Dictionary
@@ -130,7 +130,7 @@ OutlineItem.obj: Dictionary
 
 The item's dictionary in the low-level object model.
 
-### `OutlineItem.level`
+### `level`
 
 ```python
 OutlineItem.level: int
@@ -138,7 +138,7 @@ OutlineItem.level: int
 
 The item's depth: 1 for a top-level item.
 
-### `OutlineItem.title`
+### `title`
 
 ```python
 OutlineItem.title: str
@@ -148,7 +148,7 @@ The title shown in the viewer's outline.
 
 Settable.
 
-### `OutlineItem.destination`
+### `destination`
 
 ```python
 OutlineItem.destination: Target | None
@@ -162,7 +162,7 @@ reads as `None`, and a named destination reads as the
 
 Settable.
 
-### `OutlineItem.page`
+### `page`
 
 ```python
 OutlineItem.page: int | None
@@ -170,7 +170,7 @@ OutlineItem.page: int | None
 
 The zero-based page of a `Destination`, else `None`.
 
-### `OutlineItem.color`
+### `color`
 
 ```python
 OutlineItem.color: Color | None
@@ -180,7 +180,7 @@ The title's color, or `None` for the viewer's default.
 
 Settable.
 
-### `OutlineItem.bold`
+### `bold`
 
 ```python
 OutlineItem.bold: bool
@@ -190,7 +190,7 @@ Whether the title shows in bold.
 
 Settable.
 
-### `OutlineItem.italic`
+### `italic`
 
 ```python
 OutlineItem.italic: bool
@@ -200,7 +200,7 @@ Whether the title shows in italic.
 
 Settable.
 
-### `OutlineItem.is_open`
+### `is_open`
 
 ```python
 OutlineItem.is_open: bool
@@ -213,7 +213,7 @@ children has no open state and refuses it.
 
 Settable.
 
-### `OutlineItem.children`
+### `children`
 
 ```python
 OutlineItem.children: tuple[OutlineItem, ...]
@@ -221,7 +221,7 @@ OutlineItem.children: tuple[OutlineItem, ...]
 
 The item's children in order.
 
-### `OutlineItem.to_entry`
+### `to_entry`
 
 ```python
 OutlineItem.to_entry() -> OutlineEntry

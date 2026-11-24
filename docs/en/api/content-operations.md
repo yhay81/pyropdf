@@ -22,7 +22,7 @@ holds the bytes between `ID` and `EI`, still encoded with the
 dictionary's filters, without the white-space byte before `EI`, which
 writing adds back.
 
-### `InlineImage.operator`
+### `operator`
 
 ```python
 InlineImage.operator: str
@@ -30,7 +30,7 @@ InlineImage.operator: str
 
 `"BI"`, so that every item of `Operations` has an operator.
 
-### `InlineImage.operands`
+### `operands`
 
 ```python
 InlineImage.operands: tuple[Any, ...]
@@ -71,7 +71,7 @@ written from their values. Bytes after the last operation that hayro
 reads, such as content after an operation that it cannot read, stay in
 `tail` and are written last.
 
-### `Operations.parse`
+### `parse`
 
 ```python
 Operations.parse(
@@ -90,7 +90,7 @@ Read a decoded content stream, such as a Form XObject's `Stream.read()`.
 (`content_operation_count`); `None` lifts either for trusted
 input. The GIL is released while the content is read.
 
-### `Operations.tail`
+### `tail`
 
 ```python
 Operations.tail: bytes
@@ -98,7 +98,7 @@ Operations.tail: bytes
 
 The bytes after the last operation.
 
-### `Operations.to_bytes`
+### `to_bytes`
 
 ```python
 Operations.to_bytes() -> bytes
@@ -106,7 +106,7 @@ Operations.to_bytes() -> bytes
 
 Write the operations as content-stream bytes.
 
-### `Operations.__getitem__`
+### `__getitem__`
 
 ```python
 Operations.__getitem__(index: int | slice) -> Operation | InlineImage | Operations
@@ -114,7 +114,7 @@ Operations.__getitem__(index: int | slice) -> Operation | InlineImage | Operatio
 
 Return one operation, or the operations of a slice without the tail.
 
-### `Operations.__len__`
+### `__len__`
 
 ```python
 Operations.__len__() -> int
@@ -122,7 +122,7 @@ Operations.__len__() -> int
 
 Return the number of operations.
 
-### `Operations.__iter__`
+### `__iter__`
 
 ```python
 Operations.__iter__() -> Iterator[Operation | InlineImage]

@@ -189,6 +189,33 @@ for number, page in enumerate(doc.pages, start=1):
 `LimitError` で拒否します。信頼できる入力には `max_text_size=None` を渡します。
 [制限とエラー](limits.md)を参照してください。
 
+PDF にすでに描かれているテキストを複製するには、抽出したテキストランをキャンバスに渡します。
+`draw` を呼んでいる間は元の文書を開いたままにしておいてください。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as source, pyropdf.Document() as target:
+    page = source.pages[0]
+    copy = target.pages.new((page.rect.width, page.rect.height))
+    with copy.draw() as canvas:
+        for run in page.content(paths=False, images=False).text_runs:
+            canvas.draw(run)
+    target.save("copied-text.pdf")
+```
+
+各グリフは元の PDF 文字コード・テキスト行列・フォント辞書を保持します。キャンバスはランを抽出した版から
+対象フォントを複製するため、その後に元の符号化やフォントプログラムを変更しても描画結果は変わりません。
+同じ `content()` の結果から得たフォントは複製した資源を共有します。埋め込み単純フォント、標準 14 フォント、
+埋め込み Identity-H / Identity-V フォント、独自資源を持つ Type 3 フォントを複製できます。利用できない書体、
+直接埋め込まれたフォント辞書、コード幅が不明な複合符号化、特異なグリフ変換、置換テキスト内包、パターン塗り、
+またはソフトマスクを持つランは `ValueError` になります。元の文書が閉じている場合は `DocumentClosedError`、
+キャンバスが制限を超えた場合は描画全体をロールバックします。
+
+15 文書の往復コーパスでは 17,246 件のテキストランを再描画します。`mhlw-doc.pdf` の 8 ランは未埋め込みの
+非標準フォントを使っており、コーパステストは残りのページ画素を 72 dpi で RGB 各チャネル 16 階調以内に収まるか検証し、
+除外件数と理由が変わらないことも確認します。
+
 ## 注釈
 
 `page.annotations.add` は仕様を受け取り、`Annotation` ハンドルを返します。注釈は
@@ -209,7 +236,7 @@ with pyropdf.open("input.pdf") as doc:
 テキストマークアップ（ハイライト、下線、波線、取り消し線）、メモ、フリーテキスト（`FreeText`）、
 スタンプ（`Stamp`）、キャレット（`Caret`）、線、四角、円、多角形、折れ線、手書き、
 音声（`Sound`）、添付ファイルを使えます。オプションは
-[API リファレンス](https://pyropdf.haya.works/api/annotations/)にあります。
+[API リファレンス](/api/annotations/)にあります。
 
 ## リンク
 
@@ -420,6 +447,24 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.attachments["data.csv"].read(), doc.collection.navigator.layout)
 ```
 
+## Web Capture {#web-capture}
+
+`doc.web_capture.by_url(url)` と `by_id(source_digest)` は、ソースごとに記録されたページセットと
+画像セットを書き込み可能な Arlington ビューとして返します。ページセットの `O` はページを、画像セットの `O` は
+画像ストリームを指し、`SI` には URL エイリアスや保存コマンドなどのソース情報が入ります。これらの読み取りは
+オフラインで動作します。
+
+ソース位置を変更するには、`typed.SourceInformation` ビューまたはそのタプルを渡して
+`doc.web_capture.set_sources(content, source)` を呼びます。URL インデックスが更新され、旧 URL や新 URL を
+共有する他のセットも保たれます。`remove(content)` はセットをインデックスから外し、メンバーの親識別子を消去します。
+セットに含まれるページや、その画像を使うページを削除・複製する前に該当セットを取り除いてください。ページの並べ替えでは
+セットの所属は保たれます。
+
+PDF 1.3–1.7 で間接格納された `typed.WebCapturePageSet` や `typed.WebCaptureImageSet` を登録するには
+`doc.web_capture.add(content)` を呼びます。16 バイトのソースダイジェスト、メンバー参照、ソース辞書、
+画像の場合はページ参照数を指定します。PDF 2.0 では新規 Web Capture レコードは非推奨ですが、既存レコードの
+読み取り・編集・削除は引き続き行えます。
+
 ## ページラベルと名前付きページ {#page-labels}
 
 `doc.page_labels` は文書の `PageLabelRange` の列を、`page.label` は 1 ページのラベルを返します。
@@ -610,7 +655,7 @@ with pyropdf.Document() as doc:
 2D の地理座標をその版のまま書けます。PDF 2.0 への昇格で既存オブジェクトに構造上の問題が
 生じる場合は、編集前の状態を保ちます。形式の合わない登録も PDF 辞書から直接確認できます。
 指定した Decimal 値は全桁を保存します。既存 PDF の数値を読むときの精度は
-パーサーに依存します。[パーサーの対応状況](https://github.com/yhay81/pyropdf/issues/16)
+パーサーに依存します（[パーサーの対応状況 #16](https://github.com/yhay81/pyropdf/issues/16)）。
 
 ```python
 from decimal import Decimal
@@ -774,3 +819,35 @@ with pyropdf.open("input.pdf") as doc:
     print(catalog["Type"], doc.pages[0].obj["MediaBox"])
     print(doc.check().defects)
 ```
+
+## 印刷製版データ {#print-production-data}
+
+`page.box_styles` は CropBox・BleedBox・TrimBox・ArtBox に保存されたガイド線の設定を表します。
+省略されたガイドはビューア側の設定に従い、実際の適用有無はページボックス自体で決まります。
+`page.separations` は分版済みシートのページハンドルを版の順に並べます。
+
+```python
+import pyropdf
+
+with pyropdf.Document() as doc:
+    cyan, black = doc.pages.new(), doc.pages.new()
+    cyan.separations = {
+        cyan: pyropdf.SeparationPlate(colorant=pyropdf.Name("Cyan")),
+        black: pyropdf.SeparationPlate(colorant=pyropdf.Name("Black")),
+    }
+    assert list(black.separations) == [cyan, black]
+```
+
+構成要素や順序を変えるにはグループを代入し直します。`del cyan.separations` で両ページからグループが
+消去されます。版の移動では同一性が保たれますが、グループの一部だけを削除・取り込みしたり、個別の版を複製したりする
+前にグループから切り離す必要があります。
+
+`PrinterMark` と `Watermark` は同じ文書内の既存 Form XObject を受け取ります。注釈の `print_appearance` は
+選択された通常外観とその資源を解決します。`Watermark` の `fixed_print` には印刷媒体に対する行列と平行移動の比率を
+保存します。レガシーのトラップネットワークでは、選択した Form からプロセスカラーモデル・版名・トラップ領域を参照でき、
+注釈辞書には元のトラッピング時点のスナップショットが残ります。画像や Form の `opi` は既存プロキシファイル仕様と
+バージョン固有のパラメータを公開しており、レガシーデータの編集に使えます。
+
+これらの保存パラメータは意図された出力仕様を記述するものです。デバイス分版、トラップ生成、OPI 置換、物理的な
+面付け配置はレンダリングエンジン側の担当です（[描画タスク #248](https://github.com/yhay81/pyropdf/issues/248)・
+[エンジントラッカー #7](https://github.com/yhay81/pyropdf/issues/7)）。

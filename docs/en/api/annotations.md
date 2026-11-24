@@ -23,7 +23,7 @@ its position. A handle raises `StaleObjectError` while the
 annotation is not on its page, and `StalePageError` while the
 page is gone; it works again if undo restores them.
 
-### `Annotation.obj`
+### `obj`
 
 ```python
 Annotation.obj: Dictionary
@@ -31,7 +31,7 @@ Annotation.obj: Dictionary
 
 The annotation dictionary as a live low-level handle.
 
-### `Annotation.appearance_stream`
+### `appearance_stream`
 
 ```python
 Annotation.appearance_stream(
@@ -46,7 +46,7 @@ Return the displayed Form for a normal, rollover or down appearance.
 A missing interaction appearance falls back to normal. An appearance
 dictionary selects the named state or the annotation's current /AS.
 
-### `Annotation.set_appearance`
+### `set_appearance`
 
 ```python
 Annotation.set_appearance(
@@ -65,7 +65,7 @@ Byte sources use the owner's rectangle size when bbox is omitted. A named
 state updates one member of a state dictionary. Other interaction modes,
 state names and shared appearance objects retain their values.
 
-### `Annotation.page`
+### `page`
 
 ```python
 Annotation.page: Page
@@ -73,7 +73,7 @@ Annotation.page: Page
 
 The page that holds the annotation.
 
-### `Annotation.xref`
+### `xref`
 
 ```python
 Annotation.xref: int
@@ -81,7 +81,7 @@ Annotation.xref: int
 
 The annotation's object number, or 0 for a dictionary stored in `/Annots` itself.
 
-### `Annotation.type`
+### `type`
 
 ```python
 Annotation.type: AnnotationType
@@ -89,7 +89,7 @@ Annotation.type: AnnotationType
 
 The annotation type, `AnnotationType.UNKNOWN` for a subtype pyropdf does not know.
 
-### `Annotation.rect`
+### `rect`
 
 ```python
 Annotation.rect: Rect
@@ -99,7 +99,7 @@ The annotation rectangle in display coordinates.
 
 Settable.
 
-### `Annotation.contents`
+### `contents`
 
 ```python
 Annotation.contents: str | None
@@ -109,7 +109,7 @@ The text that the annotation shows or describes, `/Contents`.
 
 Settable.
 
-### `Annotation.author`
+### `author`
 
 ```python
 Annotation.author: str | None
@@ -119,7 +119,7 @@ The author, `/T`.
 
 Settable.
 
-### `Annotation.subject`
+### `subject`
 
 ```python
 Annotation.subject: str | None
@@ -129,7 +129,7 @@ The subject, `/Subj`.
 
 Settable.
 
-### `Annotation.created`
+### `created`
 
 ```python
 Annotation.created: str | None
@@ -137,7 +137,7 @@ Annotation.created: str | None
 
 The creation date as the PDF date string stored, `/CreationDate`.
 
-### `Annotation.modified`
+### `modified`
 
 ```python
 Annotation.modified: str | None
@@ -145,7 +145,7 @@ Annotation.modified: str | None
 
 The modification date as the PDF date string stored, `/M`.
 
-### `Annotation.name`
+### `name`
 
 ```python
 Annotation.name: str | None
@@ -155,7 +155,7 @@ The annotation's unique name on its page, `/NM`.
 
 Settable.
 
-### `Annotation.icon`
+### `icon`
 
 ```python
 Annotation.icon: str | None
@@ -165,7 +165,7 @@ The icon name of a note, stamp, or file attachment, `/Name`.
 
 Settable.
 
-### `Annotation.intent`
+### `intent`
 
 ```python
 Annotation.intent: str | None
@@ -173,7 +173,7 @@ Annotation.intent: str | None
 
 The intent, `/IT`, such as `"FreeTextCallout"`.
 
-### `Annotation.color`
+### `color`
 
 ```python
 Annotation.color: Color | None
@@ -183,7 +183,7 @@ The color of the border, title bar, or text markup, `/C`; CMYK converts to RGB.
 
 Settable.
 
-### `Annotation.interior_color`
+### `interior_color`
 
 ```python
 Annotation.interior_color: Color | None
@@ -193,7 +193,7 @@ The fill color of a shape or line ending, `/IC`; CMYK converts to RGB.
 
 Settable.
 
-### `Annotation.opacity`
+### `opacity`
 
 ```python
 Annotation.opacity: float
@@ -203,7 +203,7 @@ The constant opacity, `/CA`, 1.0 when absent.
 
 Settable.
 
-### `Annotation.flags`
+### `flags`
 
 ```python
 Annotation.flags: AnnotationFlags
@@ -213,7 +213,7 @@ The `/F` flags.
 
 Settable.
 
-### `Annotation.border`
+### `border`
 
 ```python
 Annotation.border: Border | None
@@ -223,7 +223,7 @@ The border that `/BS`, else `/Border`, describes, in points, or `None` without e
 
 Settable.
 
-### `Annotation.clouds`
+### `clouds`
 
 ```python
 Annotation.clouds: float
@@ -235,7 +235,7 @@ Squares, circles, and polygons take one; `del` and 0 remove it.
 
 Settable.
 
-### `Annotation.blend_mode`
+### `blend_mode`
 
 ```python
 Annotation.blend_mode: BlendMode | None
@@ -245,7 +245,7 @@ The blend mode that the appearance is drawn with, `/BM`, or `None` without one.
 
 Settable.
 
-### `Annotation.vertices`
+### `vertices`
 
 ```python
 Annotation.vertices: tuple[Point, ...] | None
@@ -258,7 +258,7 @@ refuse more than 65,536 points (`annotation_point_count`).
 
 Settable.
 
-### `Annotation.strokes`
+### `strokes`
 
 ```python
 Annotation.strokes: tuple[tuple[Point, ...], ...] | None
@@ -268,7 +268,7 @@ The display points of each stroke of an ink annotation, `None` for another type.
 
 Settable.
 
-### `Annotation.line_endings`
+### `line_endings`
 
 ```python
 Annotation.line_endings: tuple[LineEnding, LineEnding] | None
@@ -278,7 +278,7 @@ The start and end shapes of a line or polyline, `None` for another type.
 
 Settable.
 
-### `Annotation.rotation`
+### `rotation`
 
 ```python
 Annotation.rotation: int
@@ -292,7 +292,7 @@ stamps, carets, and file attachments take a multiple of 90.
 
 Settable.
 
-### `Annotation.language`
+### `language`
 
 ```python
 Annotation.language: str | None
@@ -302,7 +302,7 @@ The BCP 47 language of the annotation's text, `/Lang`; `del` removes it.
 
 Settable.
 
-### `Annotation.action`
+### `action`
 
 ```python
 Annotation.action: Target | None
@@ -315,7 +315,7 @@ Non-`Screen` annotations return `None` and refuse mutations with
 
 Settable.
 
-### `Annotation.triggers`
+### `triggers`
 
 ```python
 Annotation.triggers: ActionTriggers
@@ -328,7 +328,7 @@ with `ValueError`. `del annotation.triggers` removes `/AA`.
 
 Settable.
 
-### `Annotation.line_details`
+### `line_details`
 
 ```python
 Annotation.line_details: LineDetails | None
@@ -338,7 +338,7 @@ Or replace a line's leader lengths and caption placement.
 
 Settable.
 
-### `Annotation.redaction`
+### `redaction`
 
 ```python
 Annotation.redaction: RedactionMark | None
@@ -348,7 +348,7 @@ Or replace the regions and replacement instructions of a redaction mark.
 
 Settable.
 
-### `Annotation.popup_info`
+### `popup_info`
 
 ```python
 Annotation.popup_info: PopupInfo | None
@@ -359,7 +359,7 @@ Read a popup's window and effective Contents, T, M and C (ISO 32000-2 §12.5.6.1
 A reciprocal Parent supplies the markup entries. A popup without a
 Parent uses its own entries. A conflicting Parent is malformed.
 
-### `Annotation.associated_files`
+### `associated_files`
 
 ```python
 Annotation.associated_files: AssociatedFiles
@@ -367,7 +367,7 @@ Annotation.associated_files: AssociatedFiles
 
 The annotation's `/AF` associated files as a live `AssociatedFiles` sequence.
 
-### `Annotation.popup_rect`
+### `popup_rect`
 
 ```python
 Annotation.popup_rect: Rect | None
@@ -380,7 +380,7 @@ lists after the annotation; `del` removes it.
 
 Settable.
 
-### `Annotation.is_open`
+### `is_open`
 
 ```python
 Annotation.is_open: bool
@@ -392,7 +392,7 @@ Assigning needs a popup or a note.
 
 Settable.
 
-### `Annotation.in_reply_to`
+### `in_reply_to`
 
 ```python
 Annotation.in_reply_to: Annotation | None
@@ -406,7 +406,7 @@ link, raises `StaleObjectError` on use.
 
 Settable.
 
-### `Annotation.replies`
+### `replies`
 
 ```python
 Annotation.replies: list[Annotation]
@@ -414,7 +414,7 @@ Annotation.replies: list[Annotation]
 
 The annotations of the page that reply to this one, in `/Annots` order.
 
-### `Annotation.pixmap`
+### `pixmap`
 
 ```python
 Annotation.pixmap(
@@ -438,7 +438,7 @@ are its size limits; a rectangle that leaves no pixel of the page
 raises `PdfError`, and an empty one `ValueError`. The GIL
 is released while hayro renders.
 
-### `Annotation.text`
+### `text`
 
 ```python
 Annotation.text(
@@ -461,7 +461,7 @@ options; an appearance that draws no text, or a hidden annotation,
 gives `""`. `/Contents` is not read; `contents` returns
 it.
 
-### `Annotation.print_appearance`
+### `print_appearance`
 
 ```python
 Annotation.print_appearance: typed.XObjectFormPrinterMark | typed.XObjectFormTrapNet | typed.XObjectFormType1 | None
@@ -472,7 +472,7 @@ The active normal printer's mark, trap network or watermark Form.
 For a state dictionary this selects /AS. The Form view exposes
 resources, mark style and colorants or trapping process and regions.
 
-### `Annotation.fixed_print`
+### `fixed_print`
 
 ```python
 Annotation.fixed_print: FixedPrint | None
@@ -482,7 +482,7 @@ The watermark placement matrix and translation fractions on the target print med
 
 Settable.
 
-### `Annotation.media`
+### `media`
 
 ```python
 Annotation.media: MediaAnnotation | None
@@ -503,7 +503,7 @@ Existing Sound and Movie annotations use the same Arlington views.
 Legacy movie and sound actions and embedded slide shows can be edited
 through `typed.ActionMovie`, `typed.ActionSound` and `typed.SlideShow`.
 
-### `Annotation.rich_media_assets`
+### `rich_media_assets`
 
 ```python
 Annotation.rich_media_assets: Mapping[str, typed.FileSpecification]
@@ -511,7 +511,7 @@ Annotation.rich_media_assets: Mapping[str, typed.FileSpecification]
 
 A snapshot of the named file specifications in this RichMedia annotation.
 
-### `Annotation.rich_media_models`
+### `rich_media_models`
 
 ```python
 Annotation.rich_media_models: tuple[RichMediaModel, ...]
@@ -523,7 +523,7 @@ Read the shared file, external resources and selected glTF scene. Inconsistent
 declarations or asset references raise TypeError or ValueError. To replace a payload
 while retaining all references, write its stream inside `edit_rich_media()`.
 
-### `Annotation.rich_media_configuration`
+### `rich_media_configuration`
 
 ```python
 Annotation.rich_media_configuration: typed.RichMediaConfiguration
@@ -531,7 +531,7 @@ Annotation.rich_media_configuration: typed.RichMediaConfiguration
 
 The initial configuration selected by Activation, defaulting to the first configuration.
 
-### `Annotation.rich_media_view`
+### `rich_media_view`
 
 ```python
 Annotation.rich_media_view: typed.ThreeDViewAddEntries | None
@@ -539,7 +539,7 @@ Annotation.rich_media_view: typed.ThreeDViewAddEntries | None
 
 The selected initial 3D view, or the first content view when Activation omits it.
 
-### `Annotation.set_rich_media_asset`
+### `set_rich_media_asset`
 
 ```python
 Annotation.set_rich_media_asset(
@@ -553,7 +553,7 @@ Insert or replace a named asset, or remove its name with `None`.
 A MediaAsset embeds a new file. Pass an existing file specification to share it.
 Removing its final name is refused if an activation script still needs the file.
 
-### `Annotation.add_rich_media_configuration`
+### `add_rich_media_configuration`
 
 ```python
 Annotation.add_rich_media_configuration(
@@ -569,7 +569,7 @@ Append a named configuration with one instance per file, in the supplied order.
 Select the returned configuration through `RichMediaSettings.Activation.Configuration`
 inside `edit_rich_media()`. Each instance references the original file specification.
 
-### `Annotation.edit_rich_media`
+### `edit_rich_media`
 
 ```python
 Annotation.edit_rich_media() -> AbstractContextManager[typed.AnnotRichMedia]
@@ -583,7 +583,7 @@ If settings are absent, create a dictionary with `doc.objects.add({})`, wrap
 its object in `typed.RichMediaSettings`, and assign it to `media.RichMediaSettings`.
 File streams, scripts and Flash instance parameters remain stored data.
 
-### `Annotation.file`
+### `file`
 
 ```python
 Annotation.file: AnnotationFile | None
@@ -594,7 +594,7 @@ The file that a file attachment embeds, or `None` for another annotation.
 A file attachment whose `/FS` is not a file specification
 dictionary embeds no file either.
 
-### `Annotation.sound`
+### `sound`
 
 ```python
 Annotation.sound(
@@ -626,7 +626,7 @@ assigning `filename`, `description`, `created`, or `modified`
 edits the file specification at once. A handle raises
 `StaleObjectError` once its annotation no longer embeds a file.
 
-### `AnnotationFile.related_files`
+### `related_files`
 
 ```python
 AnnotationFile.related_files: Mapping[str, tuple[RelatedFile, ...]]
@@ -636,7 +636,7 @@ Read, assign or delete the related-file pairs of the annotation's file specifica
 
 Settable.
 
-### `AnnotationFile.filename`
+### `filename`
 
 ```python
 AnnotationFile.filename: str
@@ -646,7 +646,7 @@ The viewer-facing file name (`/UF`, else `/F`), or `""`; assignable.
 
 Settable.
 
-### `AnnotationFile.description`
+### `description`
 
 ```python
 AnnotationFile.description: str | None
@@ -656,7 +656,7 @@ The description (`/Desc`), or `None`; assignable, and `del` removes it.
 
 Settable.
 
-### `AnnotationFile.size`
+### `size`
 
 ```python
 AnnotationFile.size: int
@@ -664,7 +664,7 @@ AnnotationFile.size: int
 
 The uncompressed size that the file declares (`/Params /Size`), or -1 when absent.
 
-### `AnnotationFile.created`
+### `created`
 
 ```python
 AnnotationFile.created: str | None
@@ -676,7 +676,7 @@ Dates are PDF date strings such as `D:20260101120000Z`.
 
 Settable.
 
-### `AnnotationFile.modified`
+### `modified`
 
 ```python
 AnnotationFile.modified: str | None
@@ -688,7 +688,7 @@ The modification date (`/Params /ModDate`) as stored, or `None`; assignable and 
 
 Settable.
 
-### `AnnotationFile.read`
+### `read`
 
 ```python
 AnnotationFile.read(*, max_size: int | None = 67108864) -> bytes
@@ -699,7 +699,7 @@ Return the file's contents; `max_size` bounds the decoded data (`embedded_file_s
 The document's limits bound the decoding; `None` lifts `max_size`
 for trusted input.
 
-### `AnnotationFile.write`
+### `write`
 
 ```python
 AnnotationFile.write(
@@ -741,7 +741,7 @@ it. Remove the external action or measurement link first.
 Reads reject more than 4,096 annotations or 1 MiB of annotation text per
 page.
 
-### `Annotations.__getitem__`
+### `__getitem__`
 
 ```python
 Annotations.__getitem__(index: int | slice) -> Annotation | list[Annotation]
@@ -749,7 +749,7 @@ Annotations.__getitem__(index: int | slice) -> Annotation | list[Annotation]
 
 Return one annotation, or a list of them for a slice.
 
-### `Annotations.__len__`
+### `__len__`
 
 ```python
 Annotations.__len__() -> int
@@ -757,7 +757,7 @@ Annotations.__len__() -> int
 
 Return the number of annotations on the page.
 
-### `Annotations.__iter__`
+### `__iter__`
 
 ```python
 Annotations.__iter__() -> Iterator[Annotation]
@@ -765,7 +765,7 @@ Annotations.__iter__() -> Iterator[Annotation]
 
 Iterate over the annotations that the page lists now.
 
-### `Annotations.__delitem__`
+### `__delitem__`
 
 ```python
 Annotations.__delitem__(index: int | slice)
@@ -773,7 +773,7 @@ Annotations.__delitem__(index: int | slice)
 
 Remove annotations and their popups from the page, in one transaction.
 
-### `Annotations.add`
+### `add`
 
 ```python
 Annotations.add(specification: AnnotationSpecification) -> Annotation
@@ -1115,7 +1115,7 @@ Pass the specification in `ModelView.measurements` to allocate it in
 the model's document. Use `apply_to` on a live measurement to change
 its geometry while keeping its projection and other references.
 
-### `ModelMeasurement.from_view`
+### `from_view`
 
 ```python
 ModelMeasurement.from_view(measurement: Measure) -> ModelMeasurement
@@ -1123,7 +1123,7 @@ ModelMeasurement.from_view(measurement: Measure) -> ModelMeasurement
 
 Read a stored 3D measurement as immutable geometry in model coordinates.
 
-### `ModelMeasurement.apply_to`
+### `apply_to`
 
 ```python
 ModelMeasurement.apply_to(measurement: Measure)
@@ -1350,7 +1350,7 @@ SlideShow(show: typed.SlideShow)
 
 An existing embedded slideshow and the UTF-8 resource names in its virtual file system.
 
-### `SlideShow.resources`
+### `resources`
 
 ```python
 SlideShow.resources: dict[str, Dictionary]
@@ -1358,7 +1358,7 @@ SlideShow.resources: dict[str, Dictionary]
 
 Map UTF-8 resource names to their live image streams or file specifications.
 
-### `SlideShow.start_resource`
+### `start_resource`
 
 ```python
 SlideShow.start_resource: str
@@ -1368,7 +1368,7 @@ The name selected by StartResource. Assign the name of an existing resource to s
 
 Settable.
 
-### `SlideShow.rename_resource`
+### `rename_resource`
 
 ```python
 SlideShow.rename_resource(old: str, new: str, *, keep_alias: bool = False)
@@ -1403,7 +1403,7 @@ or the stream's bytes before them when read with `decode=False`; the
 samples stay in `encoding` and, for a compressed sound, in the format
 that `compression` names.
 
-### `Sound.from_stream`
+### `from_stream`
 
 ```python
 Sound.from_stream(

@@ -45,7 +45,7 @@ of its values in one. When the document has an XMP packet, its matching
 properties are written in the same transaction, so that the two stay
 equivalent as PDF/A requires.
 
-### `Metadata.__getitem__`
+### `__getitem__`
 
 ```python
 Metadata.__getitem__(key: str) -> str
@@ -53,7 +53,7 @@ Metadata.__getitem__(key: str) -> str
 
 Return the entry `key`; an absent or unknown key raises `KeyError`.
 
-### `Metadata.__iter__`
+### `__iter__`
 
 ```python
 Metadata.__iter__() -> Iterator[str]
@@ -61,7 +61,7 @@ Metadata.__iter__() -> Iterator[str]
 
 Iterate over the keys present, in the order of `METADATA_KEYS`.
 
-### `Metadata.__len__`
+### `__len__`
 
 ```python
 Metadata.__len__() -> int
@@ -69,7 +69,7 @@ Metadata.__len__() -> int
 
 Return the number of entries present.
 
-### `Metadata.__setitem__`
+### `__setitem__`
 
 ```python
 Metadata.__setitem__(key: str, value: str | datetime)
@@ -77,7 +77,7 @@ Metadata.__setitem__(key: str, value: str | datetime)
 
 Store `value` under `key`.
 
-### `Metadata.__delitem__`
+### `__delitem__`
 
 ```python
 Metadata.__delitem__(key: str)
@@ -85,7 +85,7 @@ Metadata.__delitem__(key: str)
 
 Remove `key`; an absent key raises `KeyError`.
 
-### `Metadata.update`
+### `update`
 
 ```python
 Metadata.update(other: object = (), /, **values: str | datetime)
@@ -96,7 +96,7 @@ Store every value of `other` and `values` in one transaction, or none of them.
 `other` is a mapping or an iterable of key and value pairs, as for
 `dict.update`.
 
-### `Metadata.clear`
+### `clear`
 
 ```python
 Metadata.clear()

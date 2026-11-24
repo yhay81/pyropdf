@@ -11,16 +11,25 @@
   --pp-step: 5s;
 }
 
+/* Keep viewport-level scrollbars and browser chrome synced to the active toggle. */
+:root:has(body[data-md-color-scheme="default"]) {
+  color-scheme: light;
+  scrollbar-color: #8f8574 #efe8dc;
+}
+:root:has(body[data-md-color-scheme="slate"]) {
+  color-scheme: dark;
+  scrollbar-color: #6e6457 #1b1713;
+}
+
 [data-md-color-scheme="default"] {
   color-scheme: light;
   --pp-paper: #f7f3ec;
   --pp-paper-translucent: rgb(247 243 236 / 86%);
   --pp-surface: #fffdf9;
   --pp-sunken: #efe8dc;
-  --pp-sunken-deep: #e6ddd0;
   --pp-ink: #1d1a16;
   --pp-ink-soft: #544d3e;
-  --pp-ink-faint: #756d5e;
+  --pp-ink-faint: #6e6658;
   --pp-rule: #e2d9c9;
   --pp-rule-strong: #cfc3af;
   --pp-ember: #c9431a;
@@ -29,7 +38,8 @@
   --pp-ember-border: rgb(201 67 26 / 30%);
   --pp-mint: #167a4b;
   --pp-mint-tint: rgb(22 122 75 / 10%);
-  --pp-scroll-thumb: #bfb4a2;
+  --pp-mint-border: rgb(22 122 75 / 32%);
+  --pp-scroll-thumb: #8f8574;
   --pp-scroll-track: #efe8dc;
 
   --md-default-bg-color: var(--pp-paper);
@@ -61,10 +71,9 @@
   --pp-paper-translucent: rgb(20 17 14 / 84%);
   --pp-surface: #1d1915;
   --pp-sunken: #26211b;
-  --pp-sunken-deep: #2f2922;
   --pp-ink: #f3ede2;
   --pp-ink-soft: #c4baa8;
-  --pp-ink-faint: #988e7c;
+  --pp-ink-faint: #a89e8c;
   --pp-rule: #373027;
   --pp-rule-strong: #4c4337;
   --pp-ember: #ff7a45;
@@ -73,7 +82,8 @@
   --pp-ember-border: rgb(255 122 69 / 38%);
   --pp-mint: #4ad991;
   --pp-mint-tint: rgb(74 217 145 / 12%);
-  --pp-scroll-thumb: #4b4237;
+  --pp-mint-border: rgb(74 217 145 / 36%);
+  --pp-scroll-thumb: #6e6457;
   --pp-scroll-track: #1b1713;
   --pp-lift: 0 1px 2px rgb(0 0 0 / 42%), 0 28px 56px -24px rgb(0 0 0 / 84%);
   --pp-lift-soft: 0 1px 2px rgb(0 0 0 / 35%), 0 16px 36px -20px rgb(0 0 0 / 72%);
@@ -122,6 +132,11 @@
 ::selection {
   background: var(--pp-ember-tint);
   color: var(--pp-ink);
+}
+
+/* Clip decorative hero overflow without breaking position: sticky descendants. */
+.md-main {
+  overflow-x: clip;
 }
 
 /* ---------- Header, tabs, and navigation ---------- */
@@ -191,6 +206,14 @@
   width: 2px;
   border-radius: 2px;
   background: var(--pp-ember);
+}
+/* Keep monospace identifiers in the TOC compact and legible without pill chrome. */
+.md-nav--secondary code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 0.92em;
+  color: inherit;
 }
 
 /* ---------- Reading & API pages ---------- */
@@ -312,6 +335,30 @@
 .md-typeset td:first-child > code {
   white-space: nowrap;
 }
+/* Keep the lead label column legible in 3-column prose tables (especially CJK). */
+.md-typeset table:not([class]):has(thead th:nth-child(3):last-child) th:first-child,
+.md-typeset table:not([class]):has(thead th:nth-child(3):last-child) td:first-child {
+  min-width: 10.5rem;
+  word-break: auto-phrase;
+}
+
+/* ---------- 404 recovery page ---------- */
+.pp-not-found {
+  max-width: 34rem;
+  margin: clamp(2rem, 8vh, 5rem) auto;
+  padding: clamp(1.5rem, 3vw, 2.25rem);
+  border: 1px solid var(--pp-rule);
+  border-radius: 16px;
+  background: var(--pp-surface);
+  box-shadow: var(--pp-lift-soft);
+}
+.md-typeset .pp-not-found h1 {
+  margin: 0 0 0.65rem;
+}
+.md-typeset .pp-not-found p:not(.pp-eyebrow) {
+  margin: 0 0 1.25rem;
+  color: var(--pp-ink-soft);
+}
 
 /* ---------- Home ----------
    Warm editorial paper & obsidian atmosphere with ember focal cues. */
@@ -326,6 +373,9 @@
   margin: 0;
   padding: 0;
   border: 0;
+}
+.md-typeset .pp-hero h1 .headerlink {
+  display: none;
 }
 
 /* Shared editorial section eyebrow. */
@@ -521,14 +571,14 @@
 }
 .md-typeset ul.pp-facts li + li::before {
   content: "·";
+  content: "·" / "";
   margin: 0 0.6em;
 }
 
-/* Code panels: the demo's snippets and the versions example. */
+/* Code panel for the versions example. */
 .md-typeset .pp-split__code pre {
   margin: 0;
 }
-.md-typeset .pp-reel__code pre > code,
 .md-typeset .pp-split__code pre > code {
   padding: 1.05rem 1.2rem;
   border-radius: 14px;
@@ -673,6 +723,8 @@
 }
 .md-typeset .pp-reel__code pre > code {
   padding: 0.75rem 1.1rem;
+  border-radius: 14px;
+  background: var(--pp-surface);
   font-size: 0.62rem;
   line-height: 1.5;
 }
@@ -712,14 +764,6 @@
 .md-typeset .pp-reel__code .highlight {
   border-radius: 14px;
   box-shadow: var(--pp-lift);
-}
-.md-typeset .pp-reel__label {
-  margin: 0.6rem 0 0.3rem;
-  color: var(--pp-ink-faint);
-  font-size: 0.62rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 /* Hero PDF Viewer */
@@ -854,35 +898,10 @@
   padding-bottom: var(--pp-gap);
 }
 .pp-showcase__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 0.75rem 2rem;
   margin-bottom: 1.5rem;
 }
 .pp-showcase__head .pp-section__head {
   margin-bottom: 0;
-}
-.pp-showcase__meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0;
-  padding: 0.34rem 0.78rem;
-  border: 1px solid var(--pp-rule);
-  border-radius: 99px;
-  background: var(--pp-surface);
-  color: var(--pp-ink-soft);
-  font-family: var(--md-code-font-family);
-  font-size: 0.6rem;
-  white-space: nowrap;
-}
-.pp-showcase__dot {
-  width: 0.42rem;
-  height: 0.42rem;
-  border-radius: 50%;
-  background: var(--pp-ember);
 }
 .pp-showcase__stage {
   display: grid;
@@ -1165,6 +1184,7 @@
 }
 .md-typeset .pp-card h3::after {
   content: "→";
+  content: "→" / "";
   color: var(--pp-ink-faint);
   font-weight: 500;
   opacity: 0.55;
@@ -1266,7 +1286,7 @@
   color: var(--pp-ember-strong);
 }
 .pp-vnode--undo {
-  border-color: rgb(22 122 75 / 32%);
+  border-color: var(--pp-mint-border);
   background: var(--pp-mint-tint);
   color: var(--pp-mint);
 }
@@ -1346,6 +1366,7 @@
 }
 .md-typeset .pp-more a::after {
   content: " →";
+  content: " →" / "";
 }
 
 /* ---------- Closing editorial card ---------- */
@@ -1482,6 +1503,13 @@
     width: 100%;
     min-width: 0;
   }
+  .md-typeset .pp-actions {
+    width: 100%;
+  }
+  .md-typeset .pp-actions .pp-button {
+    padding: 0.35rem 0.72rem;
+    font-size: 0.69rem;
+  }
   .pp-chapters {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1489,11 +1517,11 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .pp-reel__steps {
-    overflow-x: auto;
+    flex-wrap: wrap;
+    gap: 0.3rem;
   }
   .pp-reel__steps label {
-    flex: none;
-    padding-right: 0.9rem;
+    padding: 0.32rem 0.6rem 0.34rem 0.36rem;
   }
   .pp-reel__toggle {
     flex: none;
@@ -1517,9 +1545,5 @@
   .md-typeset a.pp-card:hover {
     border-color: Highlight;
     outline: 2px solid Highlight;
-  }
-  .pp-showcase__dot {
-    background: Highlight;
-    forced-color-adjust: none;
   }
 }

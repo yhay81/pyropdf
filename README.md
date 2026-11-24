@@ -91,7 +91,7 @@ For an existing file, use `pyropdf.open("input.pdf")`.
 - **One document for reading, rendering, and editing.** All engines read
   the same versioned object store. Preview an edit before saving it.
 - **Incremental saves.** Append changed objects while keeping the original
-  file's bytes intact. Inspect `doc.changes` before saving.
+  file's bytes intact. Inspect `doc.changes()` before saving.
 - **MIT licensed.** Use it in open-source or commercial applications.
 
 [Choosing pyropdf](https://pyropdf.haya.works/choosing/) compares capabilities

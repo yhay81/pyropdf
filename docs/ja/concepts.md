@@ -5,7 +5,90 @@ description: pyropdf の API の背後にあるモデル：表示座標、版、
 
 # 概念
 
-## 目的別の API
+pyropdf はすべての編集を一つの版付きオブジェクトストアに保持し、どのページも表示座標で扱います。以下の 6 つの仕組みが API の土台です。作業ごとの入口を探すときは末尾の[目的別の API](#choosing-the-operation-for-a-task)を参照してください。
+
+## 表示座標 {#display-coordinates}
+
+API に出てくる矩形と点は、単語や検索結果の箱、注釈の矩形、`clip`、ページボックスのいずれも**表示座標**です。単位は 1/72 インチのポイントで、原点は見えているページの左上、`y` は下向きに増えます。見えているページとは MediaBox で切り取った CropBox にページの回転を適用したもので、`page.rect` はビューアが表示するとおりの `(0, 0, width, height)` です。
+
+ページの `/UserUnit`（PDF 1.6）は、そのページのユーザー空間の単位が 1/72 インチの何倍かを決め、200 インチより大きいページを表せるようにします。pyropdf は座標を変換するすべての場所でこれを適用します。MediaBox が `[0 0 400 300]` で `/UserUnit 2` のページは、`page.rect`、ページボックス、テキスト、パス、注釈、キャンバスのいずれでも 800 × 600 ポイントになり、72 dpi では 800 × 600 ピクセルで描画されます。`/UserUnit` がない場合や正の数でない場合は 1 として扱います。
+
+PDF 本来の座標は MediaBox の左下が原点で、回転しません。pyropdf が変換するので、`search` で見つけた矩形をそのまま注釈に渡せます。描画結果の画素に対応させるには `dpi / 72` を掛けます。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    dpi = 144
+    pixmap = page.pixmap(dpi=dpi)
+    x0, y0, x1, y1 = (value * dpi / 72 for value in page.words()[0].bbox)
+    print(pixmap.width, round(x0), round(y0), round(x1), round(y1))
+```
+
+## 版
+
+文書は、開いたファイル（ベース）と、その上に積まれた版の連なりです。編集は変えたオブジェクトだけを新しい版に書き、残りは下の版と共有します。読み取り・描画・保存はどれも現在の版を相手にするので、編集は保存しなくても次の `text()` や `pixmap()` に反映され、版だけで決まる結果は版ごとに一度だけ計算されます。
+
+```mermaid
+flowchart LR
+  base["input.pdf<br><small>ベース</small>"]
+  v1["版 1<br><small>回転 (1件)</small>"]
+  v2["版 2<br><small>注釈 (2件)</small>"]
+  readers["text() · pixmap() · save()"]
+  base --> v1 --> v2
+  v2 -. "doc.history.undo()" .-> v1
+  readers -- "現在の版を読む" --> v2
+```
+
+`doc.history` は undo と redo がたどる手順を保持します。各手順は置き換えたオブジェクトを持ち、`doc.history.size` がそのバイト数を数えます。`doc.history.max_size` で上限を決められ、`doc.history.clear()` は文書をそのままにして手順を忘れます。
+
+## ハンドル
+
+`Page`・`Annotation`・`Field`・オブジェクトのハンドルは、位置ではなくものを指します。ページのハンドルはページが移動しても追いかけ、undo の後も含めて、現在の版がそのページについて言うことを読みます。ページがなくなった後に使うと `StalePageError` になり、オブジェクトも同じように `StaleObjectError` になります。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    first = doc.pages[0]
+    doc.pages.move(0, 1)
+    print(first.index)           # 1: ハンドルはページを追いかけた
+    del doc.pages[1]
+    try:
+        first.text()
+    except pyropdf.StalePageError:
+        print("the page is gone")
+```
+
+## トランザクション
+
+`doc.transaction(name)` はブロック内の編集を一つの手順にします。ブロックが例外を出すと文書はその前の版に戻り、そのための複製はしません。トランザクションの外の編集は一つずつが手順です。両方の例は[版と保存](versions.md)にあります。
+
+## スレッド
+
+複数のスレッドが一つの文書を同時に読めます。読み取りがロックを持つのは現在の版を取る間だけで、その後はロックなしで進みます。書き込みは直列化され、完成した版を公開するので、長い描画は別のスレッドが編集している間も、始めたときの版を読み続けます。描画やテキストなどの重い読み取りは GIL を手放し、CPython の free-threaded ビルド用の wheel もあります。
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc, ThreadPoolExecutor() as pool:
+    texts = list(pool.map(lambda page: page.text(), doc.pages))
+    print(len(texts))
+```
+
+`doc.render` はもともと複数のスレッドでページを描画します。
+
+## コスト
+
+- 開くときは相互参照データを読み、すべてのオブジェクトは読みません。`probe` はさらに少なく読みます。
+- 編集のコストは触れた分だけです。ページの回転は一つのオブジェクトを書きます。
+- 増分保存は編集が書いたオブジェクトだけを追記し、全体保存はファイルを書き直します。
+- `DocumentLimits` が各操作の仕事量を抑えます。[制限とエラー](limits.md)を参照してください。
+
+## 目的別の API {#choosing-the-operation-for-a-task}
 
 | 目的 | Python の操作 | 対象と使い分け |
 | --- | --- | --- |
@@ -29,110 +112,4 @@ description: pyropdf の API の背後にあるモデル：表示座標、版、
 | アクセスと処理量を制御する | `open(source, password=..., limits=...)`、`doc.unlock(password)`、`doc.save(path, encryption=...)` | 開くときに資格情報を渡すか、開いた文書を後から解除できます。保存時に暗号化を指定します。`DocumentLimits` は文書操作、キーワード引数の `max_*` は個々の結果に上限を設けます。 |
 | 編集内容を確認し、署名・保存する | `doc.history`、`doc.revisions`、`doc.changes(incremental=True)`、`doc.signatures`、`doc.save(path)`、`doc.to_bytes()` | history は編集中の取り消し履歴、revisions はファイルに残る増分保存の世代です。changes は適合宣言と署名対象への影響を報告します。署名そのものも検証できます。保存先はファイルかバイト列を選びます。 |
 
-`pages`、`form`、`metadata` などのビューには後から行った編集も反映されます。
-シーケンスでは各 API に記載の範囲で負のインデックスやスライスを使えます。
-マッピングにないキーを参照すると `KeyError` になります。`Profiles` などの結果は
-フィールド名を持つ変更不能なレコードです。自分で組み立てるときはキーワード引数を使います。
-描画や作成の指定には `TextField("address", rect)` のように各シグネチャに従って引数を渡します。
-
-## 表示座標 {#display-coordinates}
-
-API に出てくる矩形と点は、単語や検索結果の箱、注釈の矩形、`clip`、ページボックスのいずれも
-**表示座標**です。単位は 1/72 インチのポイントで、原点は見えているページの左上、`y` は下向きに
-増えます。見えているページとは MediaBox で切り取った CropBox にページの回転を適用したもので、
-`page.rect` はビューアが表示するとおりの `(0, 0, width, height)` です。
-
-ページの `/UserUnit`（PDF 1.6）は、そのページのユーザー空間の単位が 1/72 インチの何倍かを決め、
-200 インチより大きいページを表せるようにします。pyropdf は座標を変換するすべての場所でこれを適用します。
-MediaBox が `[0 0 400 300]` で `/UserUnit 2` のページは、`page.rect`、ページボックス、テキスト、パス、
-注釈、キャンバスのいずれでも 800 × 600 ポイントになり、72 dpi では 800 × 600 ピクセルで描画されます。
-`/UserUnit` がない場合や正の数でない場合は 1 として扱います。
-
-PDF 本来の座標は MediaBox の左下が原点で、回転しません。pyropdf が変換するので、`search` で
-見つけた矩形をそのまま注釈に渡せます。描画結果の画素に対応させるには `dpi / 72` を掛けます。
-
-```python
-import pyropdf
-
-with pyropdf.open("input.pdf") as doc:
-    page = doc.pages[0]
-    dpi = 144
-    pixmap = page.pixmap(dpi=dpi)
-    x0, y0, x1, y1 = (value * dpi / 72 for value in page.words()[0].bbox)
-    print(pixmap.width, round(x0), round(y0), round(x1), round(y1))
-```
-
-## 版
-
-文書は、開いたファイル（ベース）と、その上に積まれた版の連なりです。編集は変えたオブジェクトだけを
-新しい版に書き、残りは下の版と共有します。読み取り・描画・保存はどれも現在の版を相手にするので、
-編集は保存しなくても次の `text()` や `pixmap()` に反映され、版だけで決まる結果は版ごとに一度だけ
-計算されます。
-
-```mermaid
-flowchart LR
-  base["input.pdf<br><small>ベース</small>"]
-  v1["版 1<br><small>回転：1 オブジェクト</small>"]
-  v2["版 2<br><small>注釈：2 オブジェクト</small>"]
-  readers["text() · pixmap() · save()"]
-  base --> v1 --> v2
-  v2 -. "doc.history.undo()" .-> v1
-  readers -- "現在の版を読む" --> v2
-```
-
-`doc.history` は undo と redo がたどる手順を保持します。各手順は置き換えたオブジェクトを持ち、
-`doc.history.size` がそのバイト数を数えます。`doc.history.max_size` で上限を決められ、
-`doc.history.clear()` は文書をそのままにして手順を忘れます。
-
-## ハンドル
-
-`Page`・`Annotation`・`Field`・オブジェクトのハンドルは、位置ではなくものを指します。ページの
-ハンドルはページが移動しても追いかけ、undo の後も含めて、現在の版がそのページについて言うことを
-読みます。ページがなくなった後に使うと `StalePageError` になり、オブジェクトも同じように
-`StaleObjectError` になります。
-
-```python
-import pyropdf
-
-with pyropdf.open("input.pdf") as doc:
-    first = doc.pages[0]
-    doc.pages.move(0, 1)
-    print(first.index)           # 1: ハンドルはページを追いかけた
-    del doc.pages[1]
-    try:
-        first.text()
-    except pyropdf.StalePageError:
-        print("the page is gone")
-```
-
-## トランザクション
-
-`doc.transaction(name)` はブロック内の編集を一つの手順にします。ブロックが例外を出すと文書は
-その前の版に戻り、そのための複製はしません。トランザクションの外の編集は一つずつが手順です。
-両方の例は[版と保存](versions.md)にあります。
-
-## スレッド
-
-複数のスレッドが一つの文書を同時に読めます。読み取りがロックを持つのは現在の版を取る間だけで、
-その後はロックなしで進みます。書き込みは直列化され、完成した版を公開するので、長い描画は別の
-スレッドが編集している間も、始めたときの版を読み続けます。描画やテキストなどの重い読み取りは
-GIL を手放し、CPython の free-threaded ビルド用の wheel もあります。
-
-```python
-from concurrent.futures import ThreadPoolExecutor
-
-import pyropdf
-
-with pyropdf.open("input.pdf") as doc, ThreadPoolExecutor() as pool:
-    texts = list(pool.map(lambda page: page.text(), doc.pages))
-    print(len(texts))
-```
-
-`doc.render` はもともと複数のスレッドでページを描画します。
-
-## コスト
-
-- 開くときは相互参照データを読み、すべてのオブジェクトは読みません。`probe` はさらに少なく読みます。
-- 編集のコストは触れた分だけです。ページの回転は一つのオブジェクトを書きます。
-- 増分保存は編集が書いたオブジェクトだけを追記し、全体保存はファイルを書き直します。
-- `DocumentLimits` が各操作の仕事量を抑えます。[制限とエラー](limits.md)を参照してください。
+`pages`、`form`、`metadata` などのビューには後から行った編集も反映されます。シーケンスでは各 API に記載の範囲で負のインデックスやスライスを使えます。マッピングにないキーを参照すると `KeyError` になります。`Profiles` などの結果はフィールド名を持つ変更不能なレコードです。自分で組み立てるときはキーワード引数を使います。描画や作成の指定には `TextField("address", rect)` のように各シグネチャに従って引数を渡します。

@@ -693,7 +693,8 @@ store 2D geographic controls without changing editions. If PDF 2.0 is required,
 an upgrade that would introduce structural defects is refused in one transaction.
 Malformed registrations remain inspectable through the raw PDF dictionary.
 Decimal inputs retain their exact digits on save. For numeric tokens read from a
-PDF, precision currently follows the underlying reader. [Parser tracking issue](https://github.com/yhay81/pyropdf/issues/16)
+PDF, precision currently follows the underlying reader (see
+[parser tracking issue #16](https://github.com/yhay81/pyropdf/issues/16)).
 
 ```python
 from decimal import Decimal

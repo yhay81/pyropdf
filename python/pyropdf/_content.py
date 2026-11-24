@@ -168,6 +168,7 @@ class ClosePath:
     """Close the current subpath with a line to its start."""
 
 
+#: One path construction segment of a `Path` or `PathBuilder`.
 Segment: TypeAlias = MoveTo | LineTo | CurveTo | ClosePath
 
 
@@ -281,11 +282,12 @@ class RadialGradient:
     extend: GradientExtend = GradientExtend.PAD
 
 
+#: A linear or radial gradient paint for a `Canvas`.
 Gradient: TypeAlias = LinearGradient | RadialGradient
 _ReadGradient: TypeAlias = tuple[
     Gradient, tuple[float, float, float, float] | None, tuple[float, float, float, float] | None
 ]
-# A canvas also repaints an axial/radial ShadingPattern retained by extraction.
+#: A solid color, pattern, shading, or gradient paint; a canvas also repaints axial/radial `ShadingPattern` values.
 Paint: TypeAlias = Color | PatternPaint | ShadingPattern | TilingPattern | Gradient
 
 
@@ -591,6 +593,7 @@ class Image:
     _source: _Source | None = field(default=None, init=False, repr=False, compare=False)
 
 
+#: One painted item yielded by `Page.content`: a `TextRun`, `Path`, or `Image`.
 ContentItem: TypeAlias = TextRun | Path | Image
 
 

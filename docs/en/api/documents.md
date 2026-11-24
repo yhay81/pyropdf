@@ -27,7 +27,7 @@ A PDF document.
 `open` opens an existing document, and `Document()` creates an
 empty one. Documents are context managers that close on exit.
 
-### `Document.limits`
+### `limits`
 
 ```python
 Document.limits: DocumentLimits
@@ -35,7 +35,7 @@ Document.limits: DocumentLimits
 
 The limits that the document's operations start from.
 
-### `Document.pages`
+### `pages`
 
 ```python
 Document.pages: Pages
@@ -43,7 +43,7 @@ Document.pages: Pages
 
 The pages, a sequence of `Page` handles that edits keep valid.
 
-### `Document.alternate_presentations`
+### `alternate_presentations`
 
 ```python
 Document.alternate_presentations: dict[bytes, SlideShow]
@@ -51,7 +51,7 @@ Document.alternate_presentations: dict[bytes, SlideShow]
 
 Read the catalog's multi-level AlternatePresentations name tree as existing slideshows.
 
-### `Document.attachments`
+### `attachments`
 
 ```python
 Document.attachments: Attachments
@@ -59,7 +59,7 @@ Document.attachments: Attachments
 
 The embedded files, a mapping of `Attachment` handles by name.
 
-### `Document.collection`
+### `collection`
 
 ```python
 Document.collection: Collection | None
@@ -76,7 +76,7 @@ retired objects.
 
 Settable.
 
-### `Document.named_pages`
+### `named_pages`
 
 ```python
 Document.named_pages: NamedPages
@@ -92,7 +92,7 @@ transaction.
 
 Settable.
 
-### `Document.open_action`
+### `open_action`
 
 ```python
 Document.open_action: Target | None
@@ -105,7 +105,7 @@ transaction, and `del doc.open_action` removes `/OpenAction`.
 
 Settable.
 
-### `Document.scripts`
+### `scripts`
 
 ```python
 Document.scripts: DocumentScripts
@@ -119,7 +119,7 @@ nodes. pyropdf never runs the scripts.
 
 Settable.
 
-### `Document.triggers`
+### `triggers`
 
 ```python
 Document.triggers: DocumentTriggers
@@ -132,17 +132,17 @@ Assigning a mapping replaces `Catalog['AA']` in one transaction, and
 
 Settable.
 
-### `Document.extensions`
+### `extensions`
 
 ```python
 Document.extensions: Extensions
 ```
 
-Return, replace, or delete `Catalog['Extensions']` as a live `Extensions` container.
+`Catalog['Extensions']` as a live `Extensions` container.
 
 Settable.
 
-### `Document.associated_files`
+### `associated_files`
 
 ```python
 Document.associated_files: AssociatedFiles
@@ -150,25 +150,25 @@ Document.associated_files: AssociatedFiles
 
 The document catalog's `/AF` associated files as a live `AssociatedFiles` sequence.
 
-### `Document.piece_info`
+### `piece_info`
 
 ```python
 Document.piece_info: PieceInfo
 ```
 
-Return, replace, or delete `Catalog['PieceInfo']` as a live `PieceInfo` mutable mapping.
+`Catalog['PieceInfo']` as a live `PieceInfo` mutable mapping.
 
 Settable.
 
-### `Document.parts`
+### `parts`
 
 ```python
 Document.parts: DocumentParts
 ```
 
-Or delete the document part hierarchy (`Catalog['DPartRoot']`) as `DocumentParts`.
+The document part hierarchy (`Catalog['DPartRoot']`) as `DocumentParts`.
 
-### `Document.objects`
+### `objects`
 
 ```python
 Document.objects: Objects
@@ -178,7 +178,7 @@ The indirect objects, a mapping by object number.
 
 A locked encrypted document raises `EncryptedDocumentError`.
 
-### `Document.base_uri`
+### `base_uri`
 
 ```python
 Document.base_uri: str | None
@@ -188,7 +188,7 @@ The base URI for relative URI actions in this document.
 
 Settable.
 
-### `Document.named_resources`
+### `named_resources`
 
 ```python
 Document.named_resources(kind: str) -> NamedResources
@@ -196,7 +196,7 @@ Document.named_resources(kind: str) -> NamedResources
 
 Return the resource objects of a catalog name tree indexed by PDF byte-string keys.
 
-### `Document.destinations`
+### `destinations`
 
 ```python
 Document.destinations: Destinations
@@ -204,7 +204,7 @@ Document.destinations: Destinations
 
 The named destinations, a read-only mapping from name to `Destination`.
 
-### `Document.form`
+### `form`
 
 ```python
 Document.form: Form
@@ -212,7 +212,7 @@ Document.form: Form
 
 The interactive form, a mapping from full field names to `Field` handles.
 
-### `Document.outline`
+### `outline`
 
 ```python
 Document.outline: Outline
@@ -226,7 +226,7 @@ before that nothing else refers to.
 
 Settable.
 
-### `Document.structure`
+### `structure`
 
 ```python
 Document.structure: StructureTree
@@ -239,7 +239,7 @@ accessibility attributes, and `doc.structure.role_map` reads and
 edits `/RoleMap`. `del doc.structure` removes `/StructTreeRoot`
 and frees unreferenced structure objects in one transaction.
 
-### `Document.web_capture`
+### `web_capture`
 
 ```python
 Document.web_capture: WebCapture
@@ -247,7 +247,7 @@ Document.web_capture: WebCapture
 
 The stored Web Capture database and its URL and identifier indexes.
 
-### `Document.threads`
+### `threads`
 
 ```python
 Document.threads: Threads
@@ -260,7 +260,7 @@ information dictionary entries. `del doc.threads` removes
 `/Threads` from the catalog, clears pages' `/B` bead arrays, and
 frees unreferenced thread and bead objects in one transaction.
 
-### `Document.fallback_fonts`
+### `fallback_fonts`
 
 ```python
 Document.fallback_fonts: FallbackFonts
@@ -290,7 +290,7 @@ not.
 
 Settable.
 
-### `Document.trailer`
+### `trailer`
 
 ```python
 Document.trailer: Dictionary
@@ -298,7 +298,7 @@ Document.trailer: Dictionary
 
 The trailer dictionary, which names the catalog as `/Root`.
 
-### `Document.catalog`
+### `catalog`
 
 ```python
 Document.catalog: Dictionary
@@ -306,7 +306,7 @@ Document.catalog: Dictionary
 
 The catalog, the indirect dictionary that the trailer's `/Root` names.
 
-### `Document.transaction`
+### `transaction`
 
 ```python
 Document.transaction(name: str = '') -> Transaction
@@ -314,7 +314,7 @@ Document.transaction(name: str = '') -> Transaction
 
 Return a context manager that groups the edits of its block into one step named `name`.
 
-### `Document.changes`
+### `changes`
 
 ```python
 Document.changes(*, incremental: bool) -> ChangeReport
@@ -326,7 +326,7 @@ The report identifies affected signature byte ranges and PDF/A or PDF/UA
 claims. For an incremental save, `permissions` reports the signed
 DocMDP and FieldMDP transforms' verdicts for the proposed edits.
 
-### `Document.check`
+### `check`
 
 ```python
 Document.check() -> StructuralReport
@@ -344,7 +344,7 @@ appearance states, and the `profile` defects of a claimed PDF/A,
 PDF/UA, PDF/X-4, or PDF/VT-1 profile that need no rendering. Each defect names its object
 and its clause. The walk runs under the document's limits.
 
-### `Document.profiles`
+### `profiles`
 
 ```python
 Document.profiles: Profiles
@@ -358,7 +358,7 @@ The claims are what the document declares, not a validation. The
 metadata read is capped at 16 MiB, beyond which `LimitError`
 is raised with code `stream_data_size`.
 
-### `Document.image_for_output`
+### `image_for_output`
 
 ```python
 Document.image_for_output(xref: int, /, *, printing: bool = False) -> Stream | None
@@ -371,7 +371,7 @@ entries using the corrected ISO 32000-2 §8.9.5.4 selection rules. The
 returned stream can be inspected or edited through its Arlington view.
 Page rendering currently uses the base image for alternate-only visibility.
 
-### `Document.replace_image`
+### `replace_image`
 
 ```python
 Document.replace_image(xref: int, data: bytes)
@@ -384,7 +384,7 @@ paints the new image. JPEG and JPEG 2000 data is stored as it is;
 PNG is decoded, its alpha written as a soft mask. The image's other
 entries, such as `/Interpolate`, stay.
 
-### `Document.remove_image`
+### `remove_image`
 
 ```python
 Document.remove_image(xref: int)
@@ -392,7 +392,7 @@ Document.remove_image(xref: int)
 
 Make image object `xref` one transparent pixel, so that no placement shows it, in one transaction.
 
-### `Document.rewrite_images`
+### `rewrite_images`
 
 ```python
 Document.rewrite_images(
@@ -478,7 +478,7 @@ JPEG again. With none of `dpi_threshold`, `quality`, and
 counts. A decoding failure raises and leaves the document as it
 was; `history` can undo the step.
 
-### `Document.recolor`
+### `recolor`
 
 ```python
 Document.recolor(
@@ -510,7 +510,7 @@ deeper than 16 or past 4,096 drawings are left as they are and
 listed in `RecolorReport.unconverted`. `pages` holds page
 indexes, negative ones from the end; it defaults to every page.
 
-### `Document.layers`
+### `layers`
 
 ```python
 Document.layers: Layers
@@ -522,7 +522,7 @@ The optional content groups and configurations as a live `Layers` sequence.
 `doc.layers.use(index)` applies a configuration of
 `doc.layers.configs`; rendering and text extraction follow both.
 
-### `Document.page_labels`
+### `page_labels`
 
 ```python
 Document.page_labels: list[PageLabelRange]
@@ -541,7 +541,7 @@ kids, 32 levels, or 1 MiB of text; writes stop at 4,096 ranges and
 
 Settable.
 
-### `Document.metadata`
+### `metadata`
 
 ```python
 Document.metadata: Metadata
@@ -555,7 +555,7 @@ existing XMP packet too, so that the two stay equivalent.
 
 Settable.
 
-### `Document.xmp`
+### `xmp`
 
 ```python
 Document.xmp: str | None
@@ -572,7 +572,7 @@ not change `metadata`.
 
 Settable.
 
-### `Document.pdfa_claim`
+### `pdfa_claim`
 
 ```python
 Document.pdfa_claim: tuple[int, str] | None
@@ -583,7 +583,7 @@ The PDF/A part and the conformance spelling in XMP, such as `(2, "b")`, or `None
 A declared part with no conformance gives an empty string. For the normalized
 profile name, the other declarations, and the output intents, read `profiles`.
 
-### `Document.page_mode`
+### `page_mode`
 
 ```python
 Document.page_mode: PageMode
@@ -597,7 +597,7 @@ Assign a `PageMode` or its PDF name string (ISO 32000-2 Table
 
 Settable.
 
-### `Document.page_layout`
+### `page_layout`
 
 ```python
 Document.page_layout: PageLayout
@@ -611,7 +611,7 @@ Assign a `PageLayout` or its PDF name string (ISO 32000-2 Table
 
 Settable.
 
-### `Document.language`
+### `language`
 
 ```python
 Document.language: str | None
@@ -628,7 +628,7 @@ non-string raises `TypeError` and a malformed tag raises
 
 Settable.
 
-### `Document.mark_info`
+### `mark_info`
 
 ```python
 Document.mark_info: MarkInfo | None
@@ -642,7 +642,7 @@ transaction, and `del doc.mark_info` removes `/MarkInfo`.
 
 Settable.
 
-### `Document.viewer_preferences`
+### `viewer_preferences`
 
 ```python
 Document.viewer_preferences: ViewerPreferences | None
@@ -658,7 +658,7 @@ indirect dictionary's object number when it already has one, and
 
 Settable.
 
-### `Document.requirements`
+### `requirements`
 
 ```python
 Document.requirements: tuple[DocumentRequirement, ...]
@@ -676,7 +676,7 @@ removes `/Requirements` and frees unreferenced objects.
 
 Settable.
 
-### `Document.history`
+### `history`
 
 ```python
 Document.history: History
@@ -684,7 +684,7 @@ Document.history: History
 
 The steps that undo and redo walk.
 
-### `Document.revisions`
+### `revisions`
 
 ```python
 Document.revisions: tuple[Revision, ...]
@@ -700,7 +700,7 @@ object numbers that it `added`, `updated`, or `freed`, and
 document or one whose cross-reference index was repaired returns
 `()`, and unsaved edits in memory do not change the revisions.
 
-### `Document.is_closed`
+### `is_closed`
 
 ```python
 Document.is_closed: bool
@@ -708,7 +708,7 @@ Document.is_closed: bool
 
 Whether `close` was called.
 
-### `Document.is_repaired`
+### `is_repaired`
 
 ```python
 Document.is_repaired: bool
@@ -716,7 +716,7 @@ Document.is_repaired: bool
 
 Whether opening recovered damaged cross-reference data.
 
-### `Document.is_linearized`
+### `is_linearized`
 
 ```python
 Document.is_linearized: bool
@@ -730,7 +730,7 @@ a linearized file changes its length, so such a file reads as not
 linearized. Edits in memory do not change the answer; a document
 without a file is not linearized.
 
-### `Document.needs_password`
+### `needs_password`
 
 ```python
 Document.needs_password: bool
@@ -738,7 +738,7 @@ Document.needs_password: bool
 
 Whether the document is locked until `unlock` receives its password.
 
-### `Document.access`
+### `access`
 
 ```python
 Document.access: Access | None
@@ -748,7 +748,7 @@ What opened an unlocked encrypted document, or `None` for a locked one.
 
 An unencrypted document grants `Access.OWNER`.
 
-### `Document.encryption_method`
+### `encryption_method`
 
 ```python
 Document.encryption_method: str | None
@@ -758,7 +758,7 @@ The security handler of an unlocked encrypted document, such as `"Standard V5 R6
 
 `None` for an unencrypted or locked document.
 
-### `Document.verify_integrity`
+### `verify_integrity`
 
 ```python
 Document.verify_integrity() -> IntegrityReport
@@ -769,7 +769,7 @@ Verify the document MAC over the selected revision's original bytes.
 The result reports ISO/TS 32004:2024 integrity independently of password
 access and signature trust. Unsaved edits receive their MAC when saved.
 
-### `Document.permissions`
+### `permissions`
 
 ```python
 Document.permissions: Permissions
@@ -781,7 +781,7 @@ A locked document permits nothing. An unencrypted document, or one
 unlocked with its owner password, permits everything. Otherwise the
 flags are those that the encryption grants the user password.
 
-### `Document.unlock`
+### `unlock`
 
 ```python
 Document.unlock(password: str | RecipientCredential) -> Access
@@ -797,7 +797,7 @@ reads it again, which starts its history over; unlocking an unlocked
 one only checks the password, and keeps the history. Passwords are
 capped at 127 UTF-8 bytes.
 
-### `Document.save`
+### `save`
 
 ```python
 Document.save(
@@ -911,7 +911,7 @@ pages. It writes a cross-reference table, so it refuses
 and an incremental save refuses it. `is_linearized` reads
 whether an opened file is linearized.
 
-### `Document.to_bytes`
+### `to_bytes`
 
 ```python
 Document.to_bytes(
@@ -938,7 +938,7 @@ Return the document as PDF bytes, as `save` writes them with the same options.
 write that would pass it with `LimitError` code
 `pdf_output_size`; `None` leaves it unbounded for trusted input.
 
-### `Document.signatures`
+### `signatures`
 
 ```python
 Document.signatures: list[Signature]
@@ -949,7 +949,7 @@ The signed signature fields of the opened file, in field order.
 Each `Signature` verifies against the bytes that the document
 was opened from: edits since then are not part of any revision.
 
-### `Document.certification`
+### `certification`
 
 ```python
 Document.certification: DocMdpPermission | None
@@ -957,7 +957,7 @@ Document.certification: DocMdpPermission | None
 
 The author certification permission from `Catalog['Perms']['DocMDP']`, or `None`.
 
-### `Document.security_store`
+### `security_store`
 
 ```python
 Document.security_store: SecurityStore | None
@@ -972,7 +972,7 @@ intact across `save(incremental=True)`.
 
 Settable.
 
-### `Document.legal_attestation`
+### `legal_attestation`
 
 ```python
 Document.legal_attestation: LegalAttestation | None
@@ -982,7 +982,7 @@ Document.legal_attestation: LegalAttestation | None
 
 Settable.
 
-### `Document.encrypted_payload`
+### `encrypted_payload`
 
 ```python
 Document.encrypted_payload: EncryptedPayload | None
@@ -995,7 +995,7 @@ association do not identify the same encrypted payload. Malformed filter
 metadata or a missing stream on an identified payload raises
 `MalformedPdfError`.
 
-### `Document.prepare_signature`
+### `prepare_signature`
 
 ```python
 Document.prepare_signature(
@@ -1023,7 +1023,7 @@ adds or updates entries of the ISO seed dictionary. Use
 `Name` for PDF names and lists for PDF arrays. Other entries
 and other fields sharing the old seed dictionary retain their values.
 
-### `Document.sign`
+### `sign`
 
 ```python
 Document.sign(
@@ -1078,7 +1078,7 @@ for. Signing inside a transaction raises `PdfError`, as does
 a callback that edits the document. An encrypted document requires a valid
 document MAC, which the new signature renews as an unsigned attribute.
 
-### `Document.timestamp`
+### `timestamp`
 
 ```python
 Document.timestamp(
@@ -1099,7 +1099,7 @@ stamping that digest; pyropdf makes no network access. Afterwards the
 document reads the timestamped revision and earlier signatures remain
 intact.
 
-### `Document.render`
+### `render`
 
 ```python
 Document.render(
@@ -1146,7 +1146,7 @@ call returns. `max_size` bounds the encoded bytes of all the
 images together, 512 MiB by default, with `LimitError` code
 `render_output_size`; `None` leaves it unbounded.
 
-### `Document.text`
+### `text`
 
 ```python
 Document.text(
@@ -1174,7 +1174,7 @@ read from one version even while other threads edit the document.
 `max_glyphs` bounds each page and `max_size` the whole text. The
 GIL is released while hayro interprets the pages.
 
-### `Document.markdown`
+### `markdown`
 
 ```python
 Document.markdown(
@@ -1205,7 +1205,7 @@ of UTF-8 in all raise `LimitError` with code
 `markdown_output_size` without a partial result;
 `max_size=None` lifts the limit.
 
-### `Document.to_json`
+### `to_json`
 
 ```python
 Document.to_json(
@@ -1230,7 +1230,7 @@ are as for it. More than `max_size` bytes of UTF-8 element text
 raise `LimitError` with code `export_output_size` without a
 partial result; `max_size=None` lifts the limit.
 
-### `Document.to_chunks`
+### `to_chunks`
 
 ```python
 Document.to_chunks(
@@ -1256,7 +1256,7 @@ split, and a chunk of one that is longer is
 and `Chunk.to_dict` gives JSON-safe values. `pages`,
 `table_strategy`, and `max_size` are as for `to_json`.
 
-### `Document.flatten`
+### `flatten`
 
 ```python
 Document.flatten(*, annotations: bool = True, widgets: bool = True)
@@ -1272,7 +1272,7 @@ appearance that rendering draws for one stored without, and hidden
 ones leave undrawn. A widget without an appearance draws nothing;
 fill fields first, which draws them. The edit is one step.
 
-### `Document.sanitize`
+### `sanitize`
 
 ```python
 Document.sanitize(
@@ -1314,7 +1314,7 @@ no longer makes, as removing the XMP metadata drops them. The
 document in memory
 keeps the edits, which `history` can undo.
 
-### `Document.subset_fonts`
+### `subset_fonts`
 
 ```python
 Document.subset_fonts() -> tuple[SubsetFont, ...]
@@ -1333,7 +1333,7 @@ hints, subroutines, and glyph order and update the encrypted segment
 length. Unrecognized CMap or font layouts stay whole. The result
 lists programs that shrank. `history` can undo the step.
 
-### `Document.write_cmap`
+### `write_cmap`
 
 ```python
 Document.write_cmap(
@@ -1359,7 +1359,7 @@ name and writing mode. Assign the result to the font's `/Encoding`.
 Passing an existing CMap stream updates it in one undo step, retaining
 its object number and clearing its previous base CMap.
 
-### `Document.font_program`
+### `font_program`
 
 ```python
 Document.font_program(font: int | FontInfo) -> FontProgram | None
@@ -1374,7 +1374,7 @@ fonts and the standard 14 fonts do. A value that is not a font
 dictionary, or a `FontInfo` of another document, raises
 `ValueError`.
 
-### `Document.close`
+### `close`
 
 ```python
 Document.close()
@@ -1382,7 +1382,7 @@ Document.close()
 
 Close the document and release its data; later operations raise `DocumentClosedError`.
 
-### `Document.__enter__`
+### `__enter__`
 
 ```python
 Document.__enter__() -> Self
@@ -1390,7 +1390,7 @@ Document.__enter__() -> Self
 
 Enter a context manager and return this document.
 
-### `Document.__exit__`
+### `__exit__`
 
 ```python
 Document.__exit__(

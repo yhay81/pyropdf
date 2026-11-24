@@ -31,7 +31,7 @@ specification or embedded stream in one transaction. Once removed from its
 host, the handle raises `StaleObjectError`, and works again if undo
 restores it.
 
-### `AssociatedFile.xref`
+### `xref`
 
 ```python
 AssociatedFile.xref: int
@@ -39,7 +39,7 @@ AssociatedFile.xref: int
 
 The indirect object number of the file specification, or `0` when direct.
 
-### `AssociatedFile.obj`
+### `obj`
 
 ```python
 AssociatedFile.obj: Dictionary
@@ -47,7 +47,7 @@ AssociatedFile.obj: Dictionary
 
 The `AFFileSpecification` dictionary as a low-level handle.
 
-### `AssociatedFile.filename`
+### `filename`
 
 ```python
 AssociatedFile.filename: str
@@ -57,7 +57,7 @@ The file name (`/UF`, falling back to `/F`); never empty.
 
 Settable.
 
-### `AssociatedFile.data`
+### `data`
 
 ```python
 AssociatedFile.data: bytes
@@ -67,7 +67,7 @@ Or replace the decoded bytes of the embedded file stream (bounded at 64 MiB).
 
 Settable.
 
-### `AssociatedFile.media_type`
+### `media_type`
 
 ```python
 AssociatedFile.media_type: str
@@ -77,7 +77,7 @@ The MIME media type stored on the stream's `/Subtype`.
 
 Settable.
 
-### `AssociatedFile.relationship`
+### `relationship`
 
 ```python
 AssociatedFile.relationship: AssociatedFileRelationship | str
@@ -87,7 +87,7 @@ AssociatedFile.relationship: AssociatedFileRelationship | str
 
 Settable.
 
-### `AssociatedFile.description`
+### `description`
 
 ```python
 AssociatedFile.description: str | None
@@ -97,7 +97,7 @@ Return, set, or delete the optional file description (`/Desc`).
 
 Settable.
 
-### `AssociatedFile.created`
+### `created`
 
 ```python
 AssociatedFile.created: str | None
@@ -107,7 +107,7 @@ Return, set, or delete `/Params /CreationDate` as a PDF date string.
 
 Settable.
 
-### `AssociatedFile.modified`
+### `modified`
 
 ```python
 AssociatedFile.modified: str | None
@@ -117,7 +117,7 @@ AssociatedFile.modified: str | None
 
 Settable.
 
-### `AssociatedFile.size`
+### `size`
 
 ```python
 AssociatedFile.size: int
@@ -151,7 +151,7 @@ Exposed on `Document.associated_files`, `Page.associated_files`,
 and `DocumentPart.associated_files`. Deleting the last entry removes
 `/AF` from the host dictionary so `ArrayOfAFFileSpecifications` is never empty.
 
-### `AssociatedFiles.__getitem__`
+### `__getitem__`
 
 ```python
 AssociatedFiles.__getitem__(index: int | slice) -> AssociatedFile | list[AssociatedFile]
@@ -159,7 +159,7 @@ AssociatedFiles.__getitem__(index: int | slice) -> AssociatedFile | list[Associa
 
 Return one `AssociatedFile`, or a list for a slice.
 
-### `AssociatedFiles.__len__`
+### `__len__`
 
 ```python
 AssociatedFiles.__len__() -> int
@@ -167,7 +167,7 @@ AssociatedFiles.__len__() -> int
 
 Return the number of associated files on this host.
 
-### `AssociatedFiles.__iter__`
+### `__iter__`
 
 ```python
 AssociatedFiles.__iter__() -> Iterator[AssociatedFile]
@@ -175,7 +175,7 @@ AssociatedFiles.__iter__() -> Iterator[AssociatedFile]
 
 Iterate over the host's `AssociatedFile` handles.
 
-### `AssociatedFiles.__bool__`
+### `__bool__`
 
 ```python
 AssociatedFiles.__bool__() -> bool
@@ -183,7 +183,7 @@ AssociatedFiles.__bool__() -> bool
 
 Return whether the host has at least one associated file.
 
-### `AssociatedFiles.__delitem__`
+### `__delitem__`
 
 ```python
 AssociatedFiles.__delitem__(index: int | slice)
@@ -191,7 +191,7 @@ AssociatedFiles.__delitem__(index: int | slice)
 
 Delete one associated file or a slice, removing `/AF` when empty.
 
-### `AssociatedFiles.clear`
+### `clear`
 
 ```python
 AssociatedFiles.clear()
@@ -199,7 +199,7 @@ AssociatedFiles.clear()
 
 Remove all associated files from this host and delete `/AF`.
 
-### `AssociatedFiles.add`
+### `add`
 
 ```python
 AssociatedFiles.add(
@@ -251,7 +251,7 @@ Leaf parts span a contiguous range of pages (`start_page` through
 in `associated_files`. A deleted handle raises `StaleObjectError`
 and recovers on undo.
 
-### `DocumentPart.document`
+### `document`
 
 ```python
 DocumentPart.document: Document
@@ -259,7 +259,7 @@ DocumentPart.document: Document
 
 The owning `Document`.
 
-### `DocumentPart.xref`
+### `xref`
 
 ```python
 DocumentPart.xref: int
@@ -267,7 +267,7 @@ DocumentPart.xref: int
 
 The indirect object number of this `DPart` dictionary.
 
-### `DocumentPart.obj`
+### `obj`
 
 ```python
 DocumentPart.obj: Dictionary
@@ -275,7 +275,7 @@ DocumentPart.obj: Dictionary
 
 The `DPart` dictionary in the low-level object model.
 
-### `DocumentPart.parent`
+### `parent`
 
 ```python
 DocumentPart.parent: DocumentPart | None
@@ -283,7 +283,7 @@ DocumentPart.parent: DocumentPart | None
 
 The parent `DocumentPart`, or `None` for the root `DPart`.
 
-### `DocumentPart.children`
+### `children`
 
 ```python
 DocumentPart.children: tuple[DocumentPart, ...]
@@ -291,7 +291,7 @@ DocumentPart.children: tuple[DocumentPart, ...]
 
 The direct child `DocumentPart` handles in `/DParts` order.
 
-### `DocumentPart.start_page`
+### `start_page`
 
 ```python
 DocumentPart.start_page: Page | None
@@ -301,7 +301,7 @@ The starting `Page` of a leaf part, or `None` on a branch.
 
 Settable.
 
-### `DocumentPart.end_page`
+### `end_page`
 
 ```python
 DocumentPart.end_page: Page | None
@@ -311,7 +311,7 @@ The ending `Page` of a leaf part (defaults to `start_page`), or `None`.
 
 Settable.
 
-### `DocumentPart.pages`
+### `pages`
 
 ```python
 DocumentPart.pages: tuple[Page, ...]
@@ -319,17 +319,17 @@ DocumentPart.pages: tuple[Page, ...]
 
 All `Page` handles spanned by this leaf or branch subtree in document order.
 
-### `DocumentPart.dpm`
+### `dpm`
 
 ```python
 DocumentPart.dpm: dict[str, Any] | None
 ```
 
-Return, replace, or delete the document part metadata dictionary (`/DPM`).
+The document part metadata dictionary (`/DPM`).
 
 Settable.
 
-### `DocumentPart.associated_files`
+### `associated_files`
 
 ```python
 DocumentPart.associated_files: AssociatedFiles
@@ -337,7 +337,7 @@ DocumentPart.associated_files: AssociatedFiles
 
 The `/AF` associated files of this document part (PDF 2.0).
 
-### `DocumentPart.add_child`
+### `add_child`
 
 ```python
 DocumentPart.add_child(
@@ -354,7 +354,7 @@ If this node was previously a leaf placeholder, `/Start` and `/End`
 are cleared when `/DParts` receives the new child so Arlington's
 branch/leaf invariant holds throughout.
 
-### `DocumentPart.delete`
+### `delete`
 
 ```python
 DocumentPart.delete()
@@ -379,7 +379,7 @@ DocumentParts(document: Document)
 
 Live view over `Catalog['DPartRoot']` and its top-level `DocumentPart` nodes (ISO 32000-2 §14.12).
 
-### `DocumentParts.root`
+### `root`
 
 ```python
 DocumentParts.root: DocumentPart | None
@@ -387,7 +387,7 @@ DocumentParts.root: DocumentPart | None
 
 The root `DocumentPart` (`DPartRootNode`), or `None` when absent.
 
-### `DocumentParts.__getitem__`
+### `__getitem__`
 
 ```python
 DocumentParts.__getitem__(index: int | slice) -> DocumentPart | list[DocumentPart]
@@ -395,7 +395,7 @@ DocumentParts.__getitem__(index: int | slice) -> DocumentPart | list[DocumentPar
 
 Return a top-level `DocumentPart`, or a list for a slice.
 
-### `DocumentParts.__len__`
+### `__len__`
 
 ```python
 DocumentParts.__len__() -> int
@@ -403,7 +403,7 @@ DocumentParts.__len__() -> int
 
 Return the number of top-level document parts (`0` when `DPartRoot` is absent).
 
-### `DocumentParts.__iter__`
+### `__iter__`
 
 ```python
 DocumentParts.__iter__() -> Iterator[DocumentPart]
@@ -411,7 +411,7 @@ DocumentParts.__iter__() -> Iterator[DocumentPart]
 
 Iterate over the top-level `DocumentPart` handles.
 
-### `DocumentParts.__bool__`
+### `__bool__`
 
 ```python
 DocumentParts.__bool__() -> bool
@@ -419,7 +419,7 @@ DocumentParts.__bool__() -> bool
 
 Return whether `Catalog['DPartRoot']` is present with a valid root node.
 
-### `DocumentParts.record_level`
+### `record_level`
 
 ```python
 DocumentParts.record_level: int | None
@@ -429,7 +429,7 @@ Return, set, or delete `DPartRoot['RecordLevel']`.
 
 Settable.
 
-### `DocumentParts.node_names`
+### `node_names`
 
 ```python
 DocumentParts.node_names: tuple[str, ...] | None
@@ -439,7 +439,7 @@ Return, set, or delete `DPartRoot['NodeNameList']`.
 
 Settable.
 
-### `DocumentParts.ensure_root`
+### `ensure_root`
 
 ```python
 DocumentParts.ensure_root(
@@ -454,7 +454,7 @@ DocumentParts.ensure_root(
 
 Return the root `DocumentPart`, creating `DPartRoot` when absent.
 
-### `DocumentParts.add_part`
+### `add_part`
 
 ```python
 DocumentParts.add_part(
@@ -469,7 +469,7 @@ DocumentParts.add_part(
 
 Create and return a leaf `DocumentPart` under `DPartRoot` in one transaction.
 
-### `DocumentParts.clear`
+### `clear`
 
 ```python
 DocumentParts.clear()
@@ -492,7 +492,7 @@ returns a tuple of `DeveloperExtension` records, `all` returns
 every declared extension in order, and removing the last entry deletes
 `Catalog['Extensions']`.
 
-### `Extensions.__getitem__`
+### `__getitem__`
 
 ```python
 Extensions.__getitem__(prefix: str) -> tuple[DeveloperExtension, ...]
@@ -500,7 +500,7 @@ Extensions.__getitem__(prefix: str) -> tuple[DeveloperExtension, ...]
 
 Return the extensions registered under `prefix`, or raise `KeyError`.
 
-### `Extensions.__iter__`
+### `__iter__`
 
 ```python
 Extensions.__iter__() -> Iterator[str]
@@ -508,7 +508,7 @@ Extensions.__iter__() -> Iterator[str]
 
 Iterate over the declared developer prefixes in dictionary order.
 
-### `Extensions.__len__`
+### `__len__`
 
 ```python
 Extensions.__len__() -> int
@@ -516,7 +516,7 @@ Extensions.__len__() -> int
 
 Return the number of declared developer prefixes.
 
-### `Extensions.__contains__`
+### `__contains__`
 
 ```python
 Extensions.__contains__(item: object) -> bool
@@ -524,7 +524,7 @@ Extensions.__contains__(item: object) -> bool
 
 Return whether `item` is a declared prefix string or `DeveloperExtension`.
 
-### `Extensions.__bool__`
+### `__bool__`
 
 ```python
 Extensions.__bool__() -> bool
@@ -532,7 +532,7 @@ Extensions.__bool__() -> bool
 
 Return whether the document declares at least one developer extension.
 
-### `Extensions.all`
+### `all`
 
 ```python
 Extensions.all() -> tuple[DeveloperExtension, ...]
@@ -540,7 +540,7 @@ Extensions.all() -> tuple[DeveloperExtension, ...]
 
 Return all declared `DeveloperExtension` entries across every prefix.
 
-### `Extensions.add`
+### `add`
 
 ```python
 Extensions.add(extension: DeveloperExtension)
@@ -548,7 +548,7 @@ Extensions.add(extension: DeveloperExtension)
 
 Add `extension` under its prefix in one transaction.
 
-### `Extensions.remove`
+### `remove`
 
 ```python
 Extensions.remove(extension: DeveloperExtension)
@@ -556,7 +556,7 @@ Extensions.remove(extension: DeveloperExtension)
 
 Remove `extension` in one transaction, or raise `ValueError` when absent.
 
-### `Extensions.__delitem__`
+### `__delitem__`
 
 ```python
 Extensions.__delitem__(prefix: str)
@@ -564,7 +564,7 @@ Extensions.__delitem__(prefix: str)
 
 Remove all extensions under `prefix` in one transaction, or raise `KeyError`.
 
-### `Extensions.clear`
+### `clear`
 
 ```python
 Extensions.clear()
@@ -612,7 +612,7 @@ Writing promotes the document to PDF 1.4 on the catalog (ensuring trailer
 `PageObject['LastModified']`). Removing the last entry deletes
 `/PieceInfo` from the host dictionary.
 
-### `PieceInfo.__getitem__`
+### `__getitem__`
 
 ```python
 PieceInfo.__getitem__(name: str) -> PieceData
@@ -620,7 +620,7 @@ PieceInfo.__getitem__(name: str) -> PieceData
 
 Return the `PieceData` for application `name`, or raise `KeyError`.
 
-### `PieceInfo.__setitem__`
+### `__setitem__`
 
 ```python
 PieceInfo.__setitem__(name: str, value: PieceData)
@@ -628,7 +628,7 @@ PieceInfo.__setitem__(name: str, value: PieceData)
 
 Store `value` under `name` in one transaction.
 
-### `PieceInfo.set`
+### `set`
 
 ```python
 PieceInfo.set(
@@ -641,7 +641,7 @@ PieceInfo.set(
 
 Create, store, and return a `PieceData` under `name` (defaulting `last_modified` to UTC now).
 
-### `PieceInfo.__delitem__`
+### `__delitem__`
 
 ```python
 PieceInfo.__delitem__(name: str)
@@ -649,7 +649,7 @@ PieceInfo.__delitem__(name: str)
 
 Remove application `name` from `/PieceInfo`, deleting `/PieceInfo` when empty.
 
-### `PieceInfo.clear`
+### `clear`
 
 ```python
 PieceInfo.clear()
@@ -657,7 +657,7 @@ PieceInfo.clear()
 
 Remove `/PieceInfo` and all of its entries in one transaction.
 
-### `PieceInfo.__iter__`
+### `__iter__`
 
 ```python
 PieceInfo.__iter__() -> Iterator[str]
@@ -665,7 +665,7 @@ PieceInfo.__iter__() -> Iterator[str]
 
 Iterate over the application names stored in `/PieceInfo`.
 
-### `PieceInfo.__len__`
+### `__len__`
 
 ```python
 PieceInfo.__len__() -> int
@@ -673,7 +673,7 @@ PieceInfo.__len__() -> int
 
 Return the number of valid application entries in `/PieceInfo`.
 
-### `PieceInfo.__bool__`
+### `__bool__`
 
 ```python
 PieceInfo.__bool__() -> bool

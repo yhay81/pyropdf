@@ -1,5 +1,4 @@
 ---
-title: pyropdf
 description: PDF を、Python の書き心地と Rust の芯で。Python から PDF を読み、描画し、編集し、署名します。すべての編集は取り消せる版になり、失敗した編集は文書を元のまま残します。
 home: true
 hide:
@@ -22,7 +21,7 @@ hide:
     <p class="pp-actions">
     <a class="pp-button pp-button--primary" href="getting-started/">はじめる</a>
     <a class="pp-button pp-button--video" href="#pp-overview" data-jump-video><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.25 12.5 8 5 12.75z" fill="currentColor"/></svg>30秒動画</a>
-    <a class="pp-button" href="https://pyropdf.haya.works/api/" hreflang="en">API リファレンス</a>
+    <a class="pp-button" href="/api/" hreflang="en">API リファレンス</a>
   </p>
   </div>
 </div>
@@ -139,14 +138,13 @@ with pyropdf.open("input.pdf") as doc:
       <h2 id="pp-overview">30 秒でわかる pyropdf</h2>
       <p>テキスト・表の読み取り、注釈、フォーム入力、スタンプ、即座の undo/redo、増分保存まで — 一つの版付きストアの上で動く様子を英語ナレーションで紹介しています。</p>
     </header>
-    <p class="pp-showcase__meta"><span class="pp-showcase__dot" aria-hidden="true"></span>720p · 30 fps · 英語音声・英語字幕</p>
   </div>
   <div class="pp-showcase__stage">
     <figure class="pp-video-figure">
       <div class="pp-video-frame">
         <div class="pp-video-frame__bar">
           <span class="pp-video-frame__title"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.5 0.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"/></svg>pyropdf 紹介動画</span>
-          <span class="pp-video-frame__spec">1280×720 · 30 fps · 0:34</span>
+          <span class="pp-video-frame__spec">0:33 · 英語音声・英語字幕</span>
         </div>
         <video
           controls

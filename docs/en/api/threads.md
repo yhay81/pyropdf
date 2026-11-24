@@ -23,7 +23,7 @@ and assigning `page` or `rect` updates the bead (and pages'
 bead or thread was removed raises `StaleObjectError`, and works
 again if undo restores it.
 
-### `Bead.document`
+### `document`
 
 ```python
 Bead.document: Document
@@ -31,7 +31,7 @@ Bead.document: Document
 
 The document that holds this bead.
 
-### `Bead.xref`
+### `xref`
 
 ```python
 Bead.xref: int
@@ -39,7 +39,7 @@ Bead.xref: int
 
 The bead's indirect object number.
 
-### `Bead.obj`
+### `obj`
 
 ```python
 Bead.obj: Dictionary
@@ -47,7 +47,7 @@ Bead.obj: Dictionary
 
 The bead's dictionary in the low-level object model.
 
-### `Bead.thread`
+### `thread`
 
 ```python
 Bead.thread: Thread
@@ -55,7 +55,7 @@ Bead.thread: Thread
 
 The `Thread` that owns this bead.
 
-### `Bead.page`
+### `page`
 
 ```python
 Bead.page: Page
@@ -65,7 +65,7 @@ The `Page` on which this bead appears (`/P`).
 
 Settable.
 
-### `Bead.rect`
+### `rect`
 
 ```python
 Bead.rect: Rect
@@ -94,7 +94,7 @@ other threads keep their relative order.
 Deleting every bead of a thread raises `ValueError`;
 remove the thread from `doc.threads` instead.
 
-### `Beads.__getitem__`
+### `__getitem__`
 
 ```python
 Beads.__getitem__(index: int | slice) -> Bead | list[Bead]
@@ -102,7 +102,7 @@ Beads.__getitem__(index: int | slice) -> Bead | list[Bead]
 
 Return one bead, or a list of beads for a slice.
 
-### `Beads.__len__`
+### `__len__`
 
 ```python
 Beads.__len__() -> int
@@ -110,7 +110,7 @@ Beads.__len__() -> int
 
 Return the number of beads in the thread.
 
-### `Beads.__iter__`
+### `__iter__`
 
 ```python
 Beads.__iter__() -> Iterator[Bead]
@@ -118,7 +118,7 @@ Beads.__iter__() -> Iterator[Bead]
 
 Iterate over the thread's beads in reading order.
 
-### `Beads.add`
+### `add`
 
 ```python
 Beads.add(page: Page | int, rect: Sequence[float], *, index: int | None = None) -> Bead
@@ -131,7 +131,7 @@ Updates the circular `/N`/`/V` ring, `Thread["F"]` and
 `BeadFirst["T"]` when inserted first, and `page["B"]` in one
 transaction.
 
-### `Beads.move`
+### `move`
 
 ```python
 Beads.move(index: int, to: int)
@@ -139,7 +139,7 @@ Beads.move(index: int, to: int)
 
 Move bead `index` so that it ends at `to`, in one transaction.
 
-### `Beads.__delitem__`
+### `__delitem__`
 
 ```python
 Beads.__delitem__(index: int | slice)
@@ -175,7 +175,7 @@ dictionary `/I` in one transaction each. A handle whose thread was
 removed raises `StaleObjectError`, and works again if undo restores
 it.
 
-### `Thread.document`
+### `document`
 
 ```python
 Thread.document: Document
@@ -183,7 +183,7 @@ Thread.document: Document
 
 The document that holds this thread.
 
-### `Thread.xref`
+### `xref`
 
 ```python
 Thread.xref: int
@@ -191,7 +191,7 @@ Thread.xref: int
 
 The thread's indirect object number.
 
-### `Thread.obj`
+### `obj`
 
 ```python
 Thread.obj: Dictionary
@@ -199,7 +199,7 @@ Thread.obj: Dictionary
 
 The thread's dictionary in the low-level object model.
 
-### `Thread.beads`
+### `beads`
 
 ```python
 Thread.beads: Beads
@@ -207,7 +207,7 @@ Thread.beads: Beads
 
 The thread's ordered `Beads` sequence.
 
-### `Thread.title`
+### `title`
 
 ```python
 Thread.title: str | None
@@ -217,7 +217,7 @@ The thread's title (`/I /Title`), or `None`; `del` removes it.
 
 Settable.
 
-### `Thread.author`
+### `author`
 
 ```python
 Thread.author: str | None
@@ -227,7 +227,7 @@ The thread's author (`/I /Author`), or `None`; `del` removes it.
 
 Settable.
 
-### `Thread.subject`
+### `subject`
 
 ```python
 Thread.subject: str | None
@@ -237,7 +237,7 @@ The thread's subject (`/I /Subject`), or `None`; `del` removes it.
 
 Settable.
 
-### `Thread.keywords`
+### `keywords`
 
 ```python
 Thread.keywords: str | None
@@ -247,7 +247,7 @@ The thread's keywords (`/I /Keywords`), or `None`; `del` removes it.
 
 Settable.
 
-### `Thread.created`
+### `created`
 
 ```python
 Thread.created: str | None
@@ -257,7 +257,7 @@ The thread's creation date (`/I /CreationDate`), or `None`; `del` removes it.
 
 Settable.
 
-### `Thread.modified`
+### `modified`
 
 ```python
 Thread.modified: str | None
@@ -295,7 +295,7 @@ Backed by an indirect `Catalog["Threads"]` array. `add`,
 the catalog, bead rings, and pages' `/B` arrays in one transaction and
 free unreferenced thread and bead objects.
 
-### `Threads.__getitem__`
+### `__getitem__`
 
 ```python
 Threads.__getitem__(index: int | slice) -> Thread | list[Thread]
@@ -303,7 +303,7 @@ Threads.__getitem__(index: int | slice) -> Thread | list[Thread]
 
 Return one thread, or a list of threads for a slice.
 
-### `Threads.__len__`
+### `__len__`
 
 ```python
 Threads.__len__() -> int
@@ -311,7 +311,7 @@ Threads.__len__() -> int
 
 Return the number of article threads in the document.
 
-### `Threads.__iter__`
+### `__iter__`
 
 ```python
 Threads.__iter__() -> Iterator[Thread]
@@ -319,7 +319,7 @@ Threads.__iter__() -> Iterator[Thread]
 
 Iterate over the document's article threads.
 
-### `Threads.add`
+### `add`
 
 ```python
 Threads.add(
@@ -342,7 +342,7 @@ Each item of `beads` is a `BeadSpecification` or a
 populate the thread's `/I` dictionary; `created` and `modified`
 accept either a PDF date string or a `datetime`.
 
-### `Threads.move`
+### `move`
 
 ```python
 Threads.move(index: int, to: int)
@@ -350,7 +350,7 @@ Threads.move(index: int, to: int)
 
 Move thread `index` so that it ends at `to`, in one transaction.
 
-### `Threads.__delitem__`
+### `__delitem__`
 
 ```python
 Threads.__delitem__(index: int | slice)

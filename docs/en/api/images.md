@@ -26,7 +26,7 @@ What `Document.rewrite_images` did.
 The byte counts compare the stored data of the rewritten images before
 and after, not the size of the saved document.
 
-### `ImageRewriteReport.skipped`
+### `skipped`
 
 ```python
 ImageRewriteReport.skipped: int
@@ -34,7 +34,7 @@ ImageRewriteReport.skipped: int
 
 The image objects left as they were: `considered - rewritten`.
 
-### `ImageRewriteReport.bytes_saved`
+### `bytes_saved`
 
 ```python
 ImageRewriteReport.bytes_saved: int
@@ -50,7 +50,7 @@ PageImage(*, page: Page, index: int, item: Image, annotations: bool)
 
 One image that a page paints: its content item and its place among the page's images.
 
-### `PageImage.pixmap`
+### `pixmap`
 
 ```python
 PageImage.pixmap() -> Pixmap
@@ -63,7 +63,7 @@ bytes count against the document's `total_decompressed_size`
 limit; `PdfError` is raised for an image that hayro cannot
 decode.
 
-### `PageImage.stored`
+### `stored`
 
 ```python
 PageImage.stored() -> StoredImage | None
@@ -79,7 +79,7 @@ StoredImage(*, filter: str, data: bytes, parameters: Dictionary | None)
 
 An image's data as the document stores it, for an image filter that a file format holds.
 
-### `StoredImage.extension`
+### `extension`
 
 ```python
 StoredImage.extension: str
