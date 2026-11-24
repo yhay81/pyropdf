@@ -279,15 +279,6 @@ pub fn has_normal_stream(reader: &Reader<'_>, widget: &Dict) -> Result<bool> {
     }
 }
 
-/// Returns whether the normal appearance of the state that a check box or
-/// radio button widget's `/AS` names is a stream with content.
-pub fn has_state_stream(reader: &Reader<'_>, widget: &Dict) -> Result<bool> {
-    let Some(Value::Name(state)) = widget.get("AS") else {
-        return Ok(false);
-    };
-    has_state(reader, widget, state.as_bytes())
-}
-
 /// Returns whether the normal appearance of `state` of a check box or radio
 /// button widget is a stream with content.
 pub fn has_state(reader: &Reader<'_>, widget: &Dict, state: &[u8]) -> Result<bool> {

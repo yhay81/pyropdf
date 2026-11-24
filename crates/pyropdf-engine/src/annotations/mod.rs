@@ -194,9 +194,7 @@ pub use geometry::{
     NOTE_ICONS, RECT_SUBTYPES, Rect, STAMP_ICONS, TEXT_KEYS, annotation_geometry, border_style,
     rgb,
 };
-pub use missing::{
-    MAX_SYNTHESIZED_APPEARANCES, MAX_SYNTHESIZED_POINTS, synthesized, synthesized_for,
-};
+pub use missing::{synthesized, synthesized_for};
 pub use popup::{annotation_open, annotation_popup, annotation_reply};
 pub use read::{
     AnnotationRecord, IsolatedAnnotation, PageAnnots, RecordTuple, annotation_face,

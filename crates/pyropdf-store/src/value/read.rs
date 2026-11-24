@@ -193,7 +193,7 @@ impl Stream {
             Some(_) => {}
         }
         let mut source = BudgetVec::new(budget);
-        crate::write::value(&mut source, &Value::Stream(Box::new(self.clone())))?;
+        crate::write::stream(&mut source, self)?;
         let data = panic::catch_unwind(AssertUnwindSafe(|| {
             match Object::from_bytes(source.as_slice())? {
                 Object::Stream(stream) => stream.decoded().ok().map(|data| data.into_owned()),

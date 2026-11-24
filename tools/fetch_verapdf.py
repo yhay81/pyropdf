@@ -68,7 +68,7 @@ def fetch_jar(destination: Path, urls: tuple[str, ...], expected: str) -> None:
 
 def main() -> None:
     """Fetch the two jars used by the subsequent validator step."""
-    directory = Path("target/verapdf")
+    directory = Path(__file__).resolve().parent.parent / "target" / "verapdf"
     directory.mkdir(parents=True, exist_ok=True)
     for artifact, digest in JARS.items():
         path = f"org/verapdf/apps/{artifact}/{VERSION}/{artifact}-{VERSION}.jar"

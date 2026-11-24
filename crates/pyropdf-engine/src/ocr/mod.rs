@@ -21,7 +21,7 @@ use rten::{Model, RunOptions, ThreadPool};
 use rten_tensor::Layout as _;
 use rten_tensor::NdTensor;
 
-pub use self::layer::{Layer, LayerWord, MAX_LAYER_TEXT_BYTES, MAX_LAYER_WORDS, layer};
+pub use self::layer::{Layer, LayerWord, layer};
 
 const DETECTOR_THRESHOLD: f32 = 0.3;
 const DETECTOR_BOX_THRESHOLD: f32 = 0.5;

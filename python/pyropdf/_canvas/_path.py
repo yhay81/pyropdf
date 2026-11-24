@@ -194,11 +194,6 @@ def _stroke(value: Stroke | Color | Gradient | PatternPaint | None) -> Stroke | 
     return stroke
 
 
-def _stroke_ops(stroke: Stroke) -> list[bytes]:
-    """Return the operators that set a checked stroke's color and line style."""
-    return [_numbers(*cast("Color", stroke.paint).rgb) + b" RG", *_line_style(stroke)]
-
-
 def _line_style(stroke: Stroke) -> list[bytes]:
     """Return the operators that set a checked stroke's line style."""
     return [

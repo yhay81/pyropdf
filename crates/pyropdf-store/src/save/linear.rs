@@ -894,12 +894,10 @@ impl<'a> Plan<'a> {
         Ok(())
     }
 
-    /// Returns a copy of `value` with its references renumbered, read again
-    /// from its bytes so that the copy grows through the budget.
+    /// Returns a copy of `value` with its references renumbered, copied
+    /// through the budget.
     fn copy(&self, value: &Value) -> Result<Value> {
-        let mut bytes = BudgetVec::new(self.budget);
-        write::value(&mut bytes, value)?;
-        let mut value = Value::parse(&Bytes::new(bytes.into_vec()), self.budget)?;
+        let mut value = crate::value::copy_for_edit(value, self.budget)?;
         self.rewrite(&mut value)?;
         Ok(value)
     }

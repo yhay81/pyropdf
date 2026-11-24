@@ -37,12 +37,6 @@ pub use self::pkcs12::{
 /// it, followed by `/Contents`, as [`placeholder`] spells them.
 pub const BYTE_RANGE_PLACEHOLDER: [i64; 4] = [0, 9_999_999_999, 9_999_999_999, 9_999_999_999];
 
-/// The bytes that the CMS signature may take by default: twice as many hex
-/// digits fill the `/Contents` string.
-pub const DEFAULT_RESERVE: usize = 16_384;
-/// The most bytes that a caller may reserve for the signature.
-pub const MAX_RESERVE: usize = 1 << 20;
-
 const RSA_ENCRYPTION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
 const EC_PUBLIC_KEY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
 const PRIME256V1: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");

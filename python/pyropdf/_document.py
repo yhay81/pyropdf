@@ -420,7 +420,7 @@ class Document:
     @property
     def base_uri(self) -> str | None:
         """Return the base URI for relative URI actions in this document."""
-        from pyropdf._objects import Dictionary, String, _catalog  # noqa: PLC0415
+        from pyropdf._objects import String  # noqa: PLC0415
 
         uri = _catalog(self).get("URI")
         value = uri.get("Base") if isinstance(uri, Dictionary) else None
@@ -430,7 +430,6 @@ class Document:
     def base_uri(self, value: str) -> None:
         from pyropdf._actions import _check_text_budget, _non_empty_str  # noqa: PLC0415
         from pyropdf._metadata import _require_version  # noqa: PLC0415
-        from pyropdf._objects import Dictionary, _catalog  # noqa: PLC0415
 
         _check_text_budget((_non_empty_str(value, "base_uri"),), "base URI")
         with self.transaction("set catalog base URI"):
@@ -444,8 +443,6 @@ class Document:
 
     @base_uri.deleter
     def base_uri(self) -> None:
-        from pyropdf._objects import Dictionary, _catalog  # noqa: PLC0415
-
         with self.transaction("remove catalog base URI"):
             catalog = _catalog(self)
             uri = catalog.get("URI")

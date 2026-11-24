@@ -517,17 +517,6 @@ fn first_declaration(
 }
 
 impl crate::value::Stream {
-    /// Replace a payload encoded with Flate or without a data filter. The
-    /// leading crypt filter selects an audience regardless of the encoding.
-    pub fn replace_encoded_data(
-        &mut self,
-        data: crate::value::Bytes,
-        flate: bool,
-        budget: &Budget,
-    ) -> Result<()> {
-        self.replace_encoded_data_with(data, flate, &|_, _| Ok(None), budget)
-    }
-
     /// Replace a decoded payload while preserving its revision's security declaration.
     #[expect(clippy::disallowed_methods, reason = "one fixed filter entry")]
     pub fn replace_encoded_data_with(

@@ -56,6 +56,11 @@ pub fn value(out: &mut BudgetVec<'_, u8>, value: &Value) -> Result<()> {
     Writer::new(out, true).write(value)
 }
 
+/// Appends `stream` to `out` in PDF syntax without cloning or boxing it.
+pub(crate) fn stream(out: &mut BudgetVec<'_, u8>, stream: &Stream) -> Result<()> {
+    Writer::new(out, true).write_stream(stream)
+}
+
 /// Appends `value` to `out` in canonical syntax, ignoring every lexeme.
 ///
 /// Refuses as [`value`] does, counting the depth of every array and
@@ -109,10 +114,24 @@ impl<'o, 'b> Writer<'o, 'b> {
         Ok(())
     }
 
+    /// Writes `stream` at depth 1 without wrapping it in a boxed `Value`.
+    fn write_stream(&mut self, stream: &Stream) -> Result<()> {
+        self.out.budget().poll()?;
+        if let Some(frame) = self.start_stream(stream, 1)? {
+            self.write_frames(frame)?;
+        }
+        self.out.budget().poll()?;
+        Ok(())
+    }
+
     fn write_inner(&mut self, root: &Value) -> Result<()> {
-        let Some(mut current) = self.start(root, 1)? else {
+        let Some(current) = self.start(root, 1)? else {
             return Ok(());
         };
+        self.write_frames(current)
+    }
+
+    fn write_frames<'v>(&mut self, mut current: Frame<'v>) -> Result<()> {
         // The containers that hold the current one, outermost first.
         let mut parents = BudgetVec::new(self.out.budget());
         loop {
@@ -172,34 +191,36 @@ impl<'o, 'b> Writer<'o, 'b> {
                     length: false,
                 }));
             }
-            Value::Stream(stream) => {
-                if depth > 1 {
-                    return Err(Error::malformed(
-                        "a stream is inside an array or a dictionary, where PDF allows only a reference to it",
-                    ));
-                }
-                self.check_depth(depth)?;
-                let dict = stream.dict();
-                // A stream's lexeme is its dictionary's, when that gives the
-                // length of the data.
-                if self.lexemes
-                    && let Some(lexeme) = dict.lexeme()
-                    && dict.get(LENGTH) == Some(&length_value(stream.data().len()))
-                {
-                    self.push(lexeme)?;
-                    self.stream_data(stream)?;
-                    return Ok(None);
-                }
-                self.push(b"<<")?;
-                return Ok(Some(Frame::Dict {
-                    entries: dict.entries().iter(),
-                    first: true,
-                    stream: Some(stream),
-                    length: false,
-                }));
-            }
+            Value::Stream(stream) => return self.start_stream(stream, depth),
         }
         Ok(None)
+    }
+
+    fn start_stream<'v>(&mut self, stream: &'v Stream, depth: usize) -> Result<Option<Frame<'v>>> {
+        if depth > 1 {
+            return Err(Error::malformed(
+                "a stream is inside an array or a dictionary, where PDF allows only a reference to it",
+            ));
+        }
+        self.check_depth(depth)?;
+        let dict = stream.dict();
+        // A stream's lexeme is its dictionary's, when that gives the
+        // length of the data.
+        if self.lexemes
+            && let Some(lexeme) = dict.lexeme()
+            && dict.get(LENGTH) == Some(&length_value(stream.data().len()))
+        {
+            self.push(lexeme)?;
+            self.stream_data(stream)?;
+            return Ok(None);
+        }
+        self.push(b"<<")?;
+        Ok(Some(Frame::Dict {
+            entries: dict.entries().iter(),
+            first: true,
+            stream: Some(stream),
+            length: false,
+        }))
     }
 
     /// Writes what comes before the next value of `frame` and returns that

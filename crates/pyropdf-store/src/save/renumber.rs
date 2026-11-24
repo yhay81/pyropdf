@@ -205,12 +205,10 @@ impl<'a> Renumbering<'a> {
         Ok(())
     }
 
-    /// Returns a copy of `value` with its references renumbered, read again
-    /// from its bytes so that the copy grows through `budget`.
+    /// Returns a copy of `value` with its references renumbered, copied
+    /// through `budget`.
     pub(super) fn copy(&self, value: &Value, budget: &Budget) -> Result<Value> {
-        let mut bytes = BudgetVec::new(budget);
-        write::value(&mut bytes, value)?;
-        let mut value = Value::parse(&Bytes::new(bytes.into_vec()), budget)?;
+        let mut value = crate::value::copy_for_edit(value, budget)?;
         self.rewrite(&mut value, budget)?;
         Ok(value)
     }

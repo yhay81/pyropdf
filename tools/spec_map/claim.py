@@ -414,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
         evidence = read_evidence(args.evidence, args.root / MAP)
         if args.release:
             path = args.root / "evidence/releases" / args.release / "decisions.toml"
-            decisions = tomllib.loads(path.read_text()) if path.is_file() else {}
+            decisions = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
             blockers, report = release_gate(spec_map, args.release, args.revision, evidence, decisions)
             candidate = Candidate(
                 args.root,

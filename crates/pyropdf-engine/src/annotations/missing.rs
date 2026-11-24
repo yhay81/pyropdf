@@ -19,11 +19,6 @@ use pyropdf_store::{Error, Result};
 
 use super::{PageUnits, Reader, appearance_for_render, draws, numbers_array};
 
-/// The default maximum synthesized appearances of one render.
-pub const MAX_SYNTHESIZED_APPEARANCES: usize = 4_096;
-/// The default maximum generated path points of one render.
-pub const MAX_SYNTHESIZED_POINTS: usize = 262_144;
-
 /// Returns sorted virtual annotation dictionaries and forms. Annotations
 /// stored directly in a page remain outside this object-number substitution.
 /// Store errors propagate; missing or unsupported values need no appearance.

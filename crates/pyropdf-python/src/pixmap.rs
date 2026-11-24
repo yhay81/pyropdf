@@ -4,7 +4,7 @@
 //! `doc.render` through the hayro bridge, with the GIL released while
 //! rendering.
 
-use std::ffi::{CString, c_int, c_void};
+use std::ffi::{c_int, c_void};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -808,7 +808,7 @@ impl Pixmap {
             if out.exceeded() {
                 let limit = max_size.unwrap_or_default();
                 return Err(LimitError::new_err((
-                    "pixmap_output_size",
+                    LimitCode::PixmapOutputSize.as_str(),
                     format!(
                         "the encoded {} exceeds the {limit}-byte output limit",
                         encoding.name()
@@ -934,9 +934,7 @@ impl Pixmap {
                 (*view).readonly = 1;
                 (*view).itemsize = 1;
                 (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
-                    CString::new("B")
-                        .expect("the format has no null byte")
-                        .into_raw()
+                    c"B".as_ptr().cast_mut()
                 } else {
                     ptr::null_mut()
                 };
@@ -960,14 +958,9 @@ impl Pixmap {
             if view.is_null() {
                 return;
             }
-            // SAFETY: `__getbuffer__` made every non-null format with
-            // `CString::into_raw` and stored a boxed `[isize; 6]` in
-            // `internal`, once for this view.
+            // SAFETY: `__getbuffer__` stored a boxed `[isize; 6]` in
+            // `internal`, once for this view; `format` is a static C string.
             unsafe {
-                let format = (*view).format;
-                if !format.is_null() {
-                    drop(CString::from_raw(format));
-                }
                 let internal = (*view).internal;
                 if !internal.is_null() {
                     drop(Box::from_raw(internal.cast::<[isize; 6]>()));
@@ -1453,7 +1446,7 @@ pub fn render_pages(
                 if out.exceeded() {
                     let limit = max_size.unwrap_or_default();
                     return Err(Failed(LimitError::new_err((
-                        "render_output_size",
+                        LimitCode::RenderOutputSize.as_str(),
                         format!("the rendered batch exceeds the {limit}-byte encoded-output limit"),
                     ))));
                 }
@@ -1473,9 +1466,10 @@ pub fn render_pages(
 pub fn bridge_error(error: &BridgeError) -> PyErr {
     match error {
         BridgeError::Store(error) => store_error(error),
-        BridgeError::EncryptionChanged | BridgeError::PasswordNotUtf8 | BridgeError::AesGcm => {
-            EncryptedDocumentError::new_err(error.to_string())
-        }
+        BridgeError::EncryptionChanged
+        | BridgeError::PasswordNotUtf8
+        | BridgeError::AesGcm
+        | BridgeError::LegacyRecipientKey => EncryptedDocumentError::new_err(error.to_string()),
         _ => PdfError::new_err(error.to_string()),
     }
 }

@@ -380,18 +380,6 @@ def _read_transition(obj: object) -> Transition | None:
     )
 
 
-def _read_transition_action(holder: Dictionary) -> TransitionAction | None:
-    """Return ``TransitionAction`` when ``holder['A']`` is a ``/S /Trans`` action, else ``None``."""
-    action = holder.get("A")
-    if not _is_dict(action):
-        return None
-    action_dict = cast("Dictionary", action)
-    if action_dict.get("S") != "Trans":
-        return None
-    trans = _read_transition(action_dict.get("Trans"))
-    return None if trans is None else TransitionAction(trans)
-
-
 def _to_display(
     crop: tuple[float, float, float, float],
     rotation: int,
