@@ -1514,3 +1514,25 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verifies `bits(value)` computes the exact minimum bit width for all `u64`.
+    #[kani::proof]
+    fn kani_linear_bits_exact() {
+        let value: u64 = kani::any();
+        let count = bits(value);
+        assert!(count <= 64);
+        if value == 0 {
+            assert_eq!(count, 0);
+        } else {
+            assert!(count >= 1);
+            assert!(value >= (1u64 << (count - 1)));
+            if count < 64 {
+                assert!(value < (1u64 << count));
+            }
+        }
+    }
+}
