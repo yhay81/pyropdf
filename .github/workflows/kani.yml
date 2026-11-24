@@ -1,16 +1,19 @@
 # Kani bit-precise bounded model checking for pyropdf-store's unsafe memory
-# routines, budget accounting, and indexing invariants (DESIGN.md F6 and F9).
+# routines, budget accounting, and indexing invariants, plus pyropdf-engine's
+# CFF and SFNT binary codecs (DESIGN.md F6 and F9).
 name: Kani
 
 on:
   pull_request:
     paths:
       - "crates/pyropdf-store/**"
+      - "crates/pyropdf-engine/**"
       - ".github/workflows/kani.yml"
   push:
     branches: [main]
     paths:
       - "crates/pyropdf-store/**"
+      - "crates/pyropdf-engine/**"
       - ".github/workflows/kani.yml"
   schedule:
     # Mondays at 04:47 UTC.
@@ -50,3 +53,7 @@ jobs:
         run: >-
           cargo kani -p pyropdf-store --lib -j 2 --output-format=terse
           -Z stubbing -Z unstable-options --harness-timeout 120s
+      - name: Verify pyropdf-engine proof harnesses
+        run: >-
+          cargo kani -p pyropdf-engine --lib -j 2 --output-format=terse
+          -Z unstable-options --harness-timeout 120s

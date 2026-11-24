@@ -70,3 +70,6 @@ tiff = { version = "0.11.3", default-features = false, features = ["deflate", "j
 [dev-dependencies]
 # Property tests of the bridge (DESIGN.md F9).
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
