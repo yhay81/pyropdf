@@ -100,7 +100,7 @@ and limitations with PyMuPDF, pypdf, and pikepdf.
 
 ## Status and limits
 
-**0.3 series, alpha.** The API may change between minor versions.
+**0.4 series, alpha.** The API may change between minor versions.
 [Release notes](https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md)
 describe each release. See [status and safety](https://pyropdf.haya.works/status/)
 for current coverage and limitations.
