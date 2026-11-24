@@ -27,7 +27,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyropdf_store::budget::{Budget, LimitCode, SharedBudget, try_insert_map};
 use pyropdf_store::settle::Scope;
-use pyropdf_store::version::{Document, RestoredHistory, Savepoint, Transaction, Version};
+use pyropdf_store::version::{
+    Document, HistoryStatus, RestoredHistory, Savepoint, Transaction, Version,
+};
 
 use crate::document::_Document;
 use crate::errors::{PdfError, limit_error, store_error};
@@ -490,7 +492,7 @@ impl _Document {
         let _write = py.detach(|| self.history.write_lock());
         let (store, mut transaction) = self.on_current(py, Document::begin)?;
         let value = write(&mut transaction, &budget)?;
-        self.commit(&store, transaction, String::new(), &budget)?;
+        self.commit(py, &store, transaction, String::new(), &budget)?;
         Ok(value)
     }
 
@@ -552,6 +554,7 @@ impl _Document {
     )]
     fn commit(
         &self,
+        py: Python<'_>,
         store: &Document,
         transaction: Transaction,
         name: String,
@@ -559,7 +562,20 @@ impl _Document {
     ) -> PyResult<()> {
         let parent = Arc::clone(transaction.parent());
         let anchor = transaction.derived_anchor().cloned();
-        let committed = transaction.commit(budget).map_err(|e| store_error(&e))?;
+        let committed = py
+            .detach(|| {
+                let mut steps = lock(&self.history.steps);
+                let committed = transaction.commit(budget)?;
+                if !Arc::ptr_eq(&parent, &committed) {
+                    let position = steps.position;
+                    steps.names.truncate(position);
+                    steps.names.push(name);
+                    steps.position += 1;
+                }
+                sync(&mut steps, store);
+                Ok::<_, pyropdf_store::Error>(committed)
+            })
+            .map_err(|e| store_error(&e))?;
         self.outline_counts.carry_to(&committed, budget);
         if let Some(anchor) = anchor {
             self.fill_index
@@ -569,21 +585,13 @@ impl _Document {
         }
         self.fill_index
             .carry_from(&self.fill_index, &parent, &committed, budget);
-        let mut steps = lock(&self.history.steps);
-        if !Arc::ptr_eq(&parent, &committed) {
-            let position = steps.position;
-            steps.names.truncate(position);
-            steps.names.push(name);
-            steps.position += 1;
-        }
-        sync(&mut steps, store);
         Ok(())
     }
 }
 
 /// Keeps the names of the steps that the store's history still holds: the
 /// newest undo steps and the nearest redo steps.
-fn sync(steps: &mut Steps, store: &Document) {
+fn sync(steps: &mut Steps, store: &Document) -> HistoryStatus {
     let status = store.history();
     let position = steps.position;
     let undo = position.min(status.undo);
@@ -591,6 +599,7 @@ fn sync(steps: &mut Steps, store: &Document) {
     steps.names.truncate(position + redo);
     steps.names.drain(..position - undo);
     steps.position = undo;
+    status
 }
 
 /// Opens a transaction named `name`, or nests one in this thread's open
@@ -728,7 +737,7 @@ fn begin_with(
 /// its writes stay, and the outermost one commits them as one step;
 /// otherwise its writes are discarded.
 #[pyfunction]
-pub fn end_transaction(document: &_Document, commit: bool) -> PyResult<()> {
+pub fn end_transaction(py: Python<'_>, document: &_Document, commit: bool) -> PyResult<()> {
     crate::errors::boundary(|| {
         let store = document.document()?;
         let mut guard = lock(&document.history.open);
@@ -764,7 +773,7 @@ pub fn end_transaction(document: &_Document, commit: bool) -> PyResult<()> {
                 _write,
                 ..
             } = open;
-            document.commit(&store, transaction, name, &budget)?;
+            document.commit(py, &store, transaction, name, &budget)?;
             drop(_write);
         }
         Ok(())
@@ -811,18 +820,18 @@ pub fn abort_canvas(document: &_Document, operation: &OperationBudget) -> PyResu
 /// Returns the step names, how many undo can take, and the history's
 /// limit and size in bytes.
 #[pyfunction]
-pub fn history_state(document: &_Document) -> PyResult<(Vec<String>, usize, Option<u64>, u64)> {
+pub fn history_state(
+    py: Python<'_>,
+    document: &_Document,
+) -> PyResult<(Vec<String>, usize, Option<u64>, u64)> {
     crate::errors::boundary(|| {
         let store = document.document()?;
-        let mut steps = lock(&document.history.steps);
-        sync(&mut steps, &store);
-        let status = store.history();
-        Ok((
-            steps.names.clone(),
-            steps.position,
-            status.limit,
-            status.size,
-        ))
+        let (names, position, status) = py.detach(|| {
+            let mut steps = lock(&document.history.steps);
+            let status = sync(&mut steps, &store);
+            (steps.names.clone(), steps.position, status)
+        });
+        Ok((names, position, status.limit, status.size))
     })?
 }
 
@@ -841,13 +850,19 @@ pub fn history_undo(py: Python<'_>, document: &_Document) -> PyResult<()> {
     crate::errors::boundary(|| {
         outside_transaction(document, "undo")?;
         let _write = py.detach(|| document.history.write_lock());
-        let (store, step) = document.on_current(py, Document::undo)?;
-        if step.is_none() {
+        let store = document.document()?;
+        let undone = py.detach(|| {
+            let mut steps = lock(&document.history.steps);
+            if store.undo().is_none() {
+                return false;
+            }
+            steps.position = steps.position.saturating_sub(1);
+            sync(&mut steps, &store);
+            true
+        });
+        if !undone {
             return Err(PdfError::new_err("nothing to undo"));
         }
-        let mut steps = lock(&document.history.steps);
-        steps.position = steps.position.saturating_sub(1);
-        sync(&mut steps, &store);
         Ok(())
     })?
 }
@@ -858,13 +873,19 @@ pub fn history_redo(py: Python<'_>, document: &_Document) -> PyResult<()> {
     crate::errors::boundary(|| {
         outside_transaction(document, "redo")?;
         let _write = py.detach(|| document.history.write_lock());
-        let (store, step) = document.on_current(py, Document::redo)?;
-        if step.is_none() {
+        let store = document.document()?;
+        let redone = py.detach(|| {
+            let mut steps = lock(&document.history.steps);
+            if store.redo().is_none() {
+                return false;
+            }
+            steps.position = (steps.position + 1).min(steps.names.len());
+            sync(&mut steps, &store);
+            true
+        });
+        if !redone {
             return Err(PdfError::new_err("nothing to redo"));
         }
-        let mut steps = lock(&document.history.steps);
-        steps.position = (steps.position + 1).min(steps.names.len());
-        sync(&mut steps, &store);
         Ok(())
     })?
 }
@@ -872,12 +893,14 @@ pub fn history_redo(py: Python<'_>, document: &_Document) -> PyResult<()> {
 /// Sets the history budget in bytes; `None` removes it, and 0 keeps no
 /// step.
 #[pyfunction]
-pub fn set_history_limit(document: &_Document, limit: Option<u64>) -> PyResult<()> {
+pub fn set_history_limit(py: Python<'_>, document: &_Document, limit: Option<u64>) -> PyResult<()> {
     crate::errors::boundary(|| {
         let store = document.document()?;
-        let mut steps = lock(&document.history.steps);
-        store.set_history_limit(limit);
-        sync(&mut steps, &store);
+        py.detach(|| {
+            let mut steps = lock(&document.history.steps);
+            store.set_history_limit(limit);
+            sync(&mut steps, &store);
+        });
         Ok(())
     })?
 }
@@ -889,11 +912,13 @@ pub fn history_clear(py: Python<'_>, document: &_Document) -> PyResult<()> {
         outside_transaction(document, "clear the history")?;
         let _write = py.detach(|| document.history.write_lock());
         let store = document.document()?;
-        let mut steps = lock(&document.history.steps);
-        let limit = store.history().limit;
-        store.set_history_limit(Some(0));
-        store.set_history_limit(limit);
-        sync(&mut steps, &store);
+        py.detach(|| {
+            let mut steps = lock(&document.history.steps);
+            let limit = store.history().limit;
+            store.set_history_limit(Some(0));
+            store.set_history_limit(limit);
+            sync(&mut steps, &store);
+        });
         Ok(())
     })?
 }
@@ -906,14 +931,13 @@ pub fn history_save<'py>(py: Python<'py>, document: &_Document) -> PyResult<Boun
         outside_transaction(document, "save the history")?;
         let _write = py.detach(|| document.history.write_lock());
         let store = document.document()?;
-        let (names, position) = {
-            let mut steps = lock(&document.history.steps);
-            sync(&mut steps, &store);
-            (steps.names.clone(), steps.position)
-        };
         let budget = document.budget();
         let data = py
-            .detach(|| store.save_history(&names, position, &budget))
+            .detach(|| {
+                let mut steps = lock(&document.history.steps);
+                sync(&mut steps, &store);
+                store.save_history(&steps.names, steps.position, &budget)
+            })
             .map_err(|e| store_error(&e))?;
         Ok(PyBytes::new(py, &data))
     })?
@@ -928,25 +952,30 @@ pub fn history_restore(py: Python<'_>, document: &_Document, data: &[u8]) -> PyR
         let _write = py.detach(|| document.history.write_lock());
         let store = document.document()?;
         let budget = document.budget();
-        match py
-            .detach(|| store.restore_history(data, &budget))
-            .map_err(|e| store_error(&e))?
-        {
-            RestoredHistory::Restored { labels, position } => {
+        let outcome = py
+            .detach(|| {
                 let mut steps = lock(&document.history.steps);
-                *steps = Steps {
-                    names: labels,
-                    position,
-                };
-                sync(&mut steps, &store);
-                Ok(())
-            }
-            RestoredHistory::OtherDocument => Err(PyValueError::new_err(
+                let restored = store.restore_history(data, &budget)?;
+                if let RestoredHistory::Restored { labels, position } = restored {
+                    *steps = Steps {
+                        names: labels,
+                        position,
+                    };
+                    sync(&mut steps, &store);
+                    return Ok(None);
+                }
+                Ok::<_, pyropdf_store::Error>(Some(restored))
+            })
+            .map_err(|e| store_error(&e))?;
+        match outcome {
+            None => Ok(()),
+            Some(RestoredHistory::OtherDocument) => Err(PyValueError::new_err(
                 "the history was saved from another document",
             )),
-            RestoredHistory::Changed => Err(PdfError::new_err(
+            Some(RestoredHistory::Changed) => Err(PdfError::new_err(
                 "a history is restored only into a document as opened, before any edit",
             )),
+            Some(RestoredHistory::Restored { .. }) => unreachable!(),
         }
     })?
 }

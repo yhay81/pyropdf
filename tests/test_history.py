@@ -15,6 +15,7 @@ differences, as DESIGN.md section 4.1 and #12 decided:
 from __future__ import annotations
 
 import sys
+import threading
 
 import pytest
 from test_pages import numbered
@@ -329,3 +330,90 @@ def test_a_failing_transaction_copies_nothing_of_a_large_document() -> None:
     assert grown_bytes < 8 * 1024 * 1024, grown_bytes
     assert doc.history.steps == ()
     assert doc.to_bytes(incremental=True) == before
+
+
+def _spawn_loop(
+    stop: threading.Event,
+    errors: list[BaseException],
+    action: object,
+) -> threading.Thread:
+    def worker() -> None:
+        try:
+            while not stop.is_set():
+                action()  # ty: ignore[not-callable]
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+            stop.set()
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    return thread
+
+
+def test_concurrent_history_reads_during_undo_redo_and_commits_keep_step_names() -> None:
+    doc = pyropdf.open(numbered(1))
+    expected = tuple(f"step-{i}" for i in range(5))
+    for i, name in enumerate(expected):
+        with doc.transaction(name):
+            doc.pages[0].rotation = 90 * ((i % 3) + 1)
+
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def check() -> None:
+        steps = doc.history.steps
+        position = doc.history.position
+        assert steps == expected, (steps, position)
+        assert 0 <= position <= len(expected), (steps, position)
+
+    threads = [_spawn_loop(stop, errors, check) for _ in range(4)]
+    try:
+        for _ in range(300):
+            if stop.is_set():
+                break
+            doc.history.undo()
+            doc.history.redo()
+    finally:
+        stop.set()
+        for thread in threads:
+            thread.join()
+
+    assert not errors, errors
+    assert doc.history.steps == expected
+    assert doc.history.position == len(expected)
+
+
+def test_concurrent_history_limit_and_commits_stay_consistent() -> None:
+    doc = pyropdf.open(numbered(1))
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def check() -> None:
+        steps = doc.history.steps
+        assert doc.history.position >= 0
+        assert doc.history.size >= 0
+        assert all(step.startswith("tx-") for step in steps), steps
+
+    def toggle_limit() -> None:
+        doc.history.max_size = 0
+        doc.history.max_size = None
+
+    threads = [_spawn_loop(stop, errors, check), _spawn_loop(stop, errors, toggle_limit)]
+    try:
+        for i in range(100):
+            if stop.is_set():
+                break
+            with doc.transaction(f"tx-{i}"):
+                doc.pages[0].rotation = 90 * ((i % 3) + 1)
+    finally:
+        stop.set()
+        for thread in threads:
+            thread.join()
+
+    assert not errors, errors
+    final_steps = doc.history.steps
+    final_pos = doc.history.position
+    assert final_pos == len(final_steps)
+    for _ in range(final_pos):
+        doc.history.undo()
+    assert not doc.history.can_undo
