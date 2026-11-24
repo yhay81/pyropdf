@@ -915,12 +915,29 @@ impl Pixmap {
             let data = &pixmap.data;
             let length = isize::try_from(data.len())
                 .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
-            let channels = pixmap.channels() as isize;
-            let width = pixmap.width as isize;
-            let height = pixmap.height as isize;
+            let channels = isize::try_from(pixmap.channels())
+                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let width = isize::try_from(pixmap.width)
+                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let height = isize::try_from(pixmap.height)
+                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let row_stride = width
+                .checked_mul(channels)
+                .ok_or_else(|| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let f_contiguous = length == 0
+                || [height, width, channels]
+                    .into_iter()
+                    .filter(|&dim| dim > 1)
+                    .count()
+                    <= 1;
+            if (flags & ffi::PyBUF_F_CONTIGUOUS) == ffi::PyBUF_F_CONTIGUOUS && !f_contiguous {
+                return Err(PyBufferError::new_err(
+                    "Pixmap buffer is not Fortran-contiguous",
+                ));
+            }
             // Shape and strides live in one allocation that `internal` owns
             // until `__releasebuffer__`.
-            let mut dimensions = Box::new([height, width, channels, width * channels, channels, 1]);
+            let mut dimensions = Box::new([height, width, channels, row_stride, channels, 1]);
             let dimensions_ptr = dimensions.as_mut_ptr();
             let nd = (flags & ffi::PyBUF_ND) == ffi::PyBUF_ND;
             let strides = (flags & ffi::PyBUF_STRIDES) == ffi::PyBUF_STRIDES;
@@ -963,6 +980,7 @@ impl Pixmap {
             unsafe {
                 let internal = (*view).internal;
                 if !internal.is_null() {
+                    (*view).internal = ptr::null_mut();
                     drop(Box::from_raw(internal.cast::<[isize; 6]>()));
                 }
             }
