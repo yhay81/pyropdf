@@ -30,10 +30,23 @@ trait Columns: Send + Sync {
     fn column(&self, name: &str, start: usize, stop: usize) -> Option<(&[u8], &'static CStr)>;
 }
 
+/// Plain numeric column element types with no padding bytes.
+///
+/// # Safety
+/// Every byte of a valid value of an implementing type must be initialized.
+unsafe trait PlainNumber: Copy {}
+
+unsafe impl PlainNumber for u8 {}
+unsafe impl PlainNumber for i8 {}
+unsafe impl PlainNumber for i32 {}
+unsafe impl PlainNumber for u32 {}
+unsafe impl PlainNumber for f32 {}
+unsafe impl PlainNumber for f64 {}
+
 /// Returns the bytes of a column of plain numbers.
-fn bytes<T>(items: &[T]) -> &[u8] {
-    // SAFETY: the column types are plain numbers without padding, so every
-    // byte of the slice is initialized.
+fn bytes<T: PlainNumber>(items: &[T]) -> &[u8] {
+    // SAFETY: `PlainNumber` is implemented only for plain numeric types without
+    // padding, so every byte of the slice is initialized.
     unsafe { std::slice::from_raw_parts(items.as_ptr().cast(), size_of_val(items)) }
 }
 
@@ -716,6 +729,7 @@ impl Column {
             unsafe {
                 let internal = (*view).internal;
                 if !internal.is_null() {
+                    (*view).internal = ptr::null_mut();
                     drop(Box::from_raw(internal.cast::<[isize; 2]>()));
                 }
             }
@@ -755,11 +769,15 @@ struct ArrowArray {
 /// An Arrow structure that a capsule owns until a consumer moves it out.
 struct Exported<T>(T);
 
-// SAFETY: the structure's pointers lead only to allocations that its own
-// release frees and to the immutable columns of the table that it keeps
-// alive, so any thread may hold and release it, as the Arrow C data
-// interface requires.
-unsafe impl<T> Send for Exported<T> {}
+// SAFETY: the schema's pointers lead only to static strings and allocations
+// that `release_schema` frees, so any thread may hold and release it, as the
+// Arrow C data interface requires.
+unsafe impl Send for Exported<ArrowSchema> {}
+
+// SAFETY: the array's pointers lead only to allocations that `release_array`
+// frees and to the immutable columns of the table that it keeps alive, so any
+// thread may hold and release it, as the Arrow C data interface requires.
+unsafe impl Send for Exported<ArrowArray> {}
 
 /// The field that is nullable, from the Arrow C data interface.
 const ARROW_FLAG_NULLABLE: i64 = 2;
@@ -875,20 +893,29 @@ struct SchemaChildren(Box<[*mut ArrowSchema]>);
 
 /// Releases a schema that [`schema`] built, and its children.
 unsafe extern "C" fn release_schema(schema: *mut ArrowSchema) {
+    if schema.is_null() {
+        return;
+    }
     // SAFETY: the consumer passes a schema that `schema()` built, whose
     // private data is null or its boxed children, each a boxed schema.
     unsafe {
-        let children = (*schema).private_data;
+        if (*schema).release.is_none() {
+            return;
+        }
+        (*schema).release = None;
+        (*schema).children = ptr::null_mut();
+        let children = std::mem::replace(&mut (*schema).private_data, ptr::null_mut());
         if !children.is_null() {
             let children = Box::from_raw(children.cast::<SchemaChildren>());
             for &child in &children.0 {
-                if let Some(release) = (*child).release {
-                    release(child);
+                if !child.is_null() {
+                    if let Some(release) = (*child).release {
+                        release(child);
+                    }
+                    drop(Box::from_raw(child));
                 }
-                drop(Box::from_raw(child));
             }
         }
-        (*schema).release = None;
     }
 }
 
@@ -972,17 +999,30 @@ struct ArrayData {
 
 /// Releases an array and its children.
 unsafe extern "C" fn release_array(array: *mut ArrowArray) {
+    if array.is_null() {
+        return;
+    }
     // SAFETY: the consumer passes an array that `array` built, whose private
     // data is its boxed `ArrayData`, with each child boxed.
     unsafe {
-        let data = Box::from_raw((*array).private_data.cast::<ArrayData>());
-        for &child in &data.children {
-            if let Some(release) = (*child).release {
-                release(child);
-            }
-            drop(Box::from_raw(child));
+        if (*array).release.is_none() {
+            return;
         }
         (*array).release = None;
+        (*array).buffers = ptr::null_mut();
+        (*array).children = ptr::null_mut();
+        let data = std::mem::replace(&mut (*array).private_data, ptr::null_mut());
+        if !data.is_null() {
+            let data = Box::from_raw(data.cast::<ArrayData>());
+            for &child in &data.children {
+                if !child.is_null() {
+                    if let Some(release) = (*child).release {
+                        release(child);
+                    }
+                    drop(Box::from_raw(child));
+                }
+            }
+        }
     }
 }
 

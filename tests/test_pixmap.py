@@ -7,6 +7,7 @@ Python surface, edits, and output.
 
 from __future__ import annotations
 
+import ctypes
 import stat
 import struct
 import sys
@@ -141,6 +142,74 @@ def test_the_buffer_is_read_only_and_shaped() -> None:
     assert view.format == "B"
     with pytest.raises(TypeError):
         view[0, 0, 0] = 1
+
+
+class _PyBuffer(ctypes.Structure):
+    _fields_ = [
+        ("buf", ctypes.c_void_p),
+        ("obj", ctypes.py_object),
+        ("len", ctypes.c_ssize_t),
+        ("itemsize", ctypes.c_ssize_t),
+        ("readonly", ctypes.c_int),
+        ("ndim", ctypes.c_int),
+        ("format", ctypes.c_char_p),
+        ("shape", ctypes.POINTER(ctypes.c_ssize_t)),
+        ("strides", ctypes.POINTER(ctypes.c_ssize_t)),
+        ("suboffsets", ctypes.POINTER(ctypes.c_ssize_t)),
+        ("internal", ctypes.c_void_p),
+    ]
+
+
+def test_the_buffer_checks_fortran_contiguity() -> None:
+    get_buffer = ctypes.pythonapi.PyObject_GetBuffer
+    get_buffer.argtypes = [ctypes.py_object, ctypes.POINTER(_PyBuffer), ctypes.c_int]
+    get_buffer.restype = ctypes.c_int
+    release_buffer = ctypes.pythonapi.PyBuffer_Release
+    release_buffer.argtypes = [ctypes.POINTER(_PyBuffer)]
+    release_buffer.restype = None
+    is_contiguous = ctypes.pythonapi.PyBuffer_IsContiguous
+    is_contiguous.argtypes = [ctypes.POINTER(_PyBuffer), ctypes.c_char]
+    is_contiguous.restype = ctypes.c_int
+
+    pybuf_strides = 0x0018
+    pybuf_c_contiguous = 0x0020 | pybuf_strides
+    pybuf_f_contiguous = 0x0040 | pybuf_strides
+    pybuf_any_contiguous = 0x0080 | pybuf_strides
+
+    pixmap = boxed().pages[0].pixmap()
+    view = _PyBuffer()
+    with pytest.raises(BufferError, match="Fortran-contiguous"):
+        get_buffer(pixmap, ctypes.byref(view), pybuf_f_contiguous)
+
+    for flags in (pybuf_c_contiguous, pybuf_any_contiguous):
+        view = _PyBuffer()
+        assert get_buffer(pixmap, ctypes.byref(view), flags) == 0
+        try:
+            assert is_contiguous(ctypes.byref(view), b"C") == 1
+            assert is_contiguous(ctypes.byref(view), b"F") == 0
+        finally:
+            release_buffer(ctypes.byref(view))
+        assert view.internal is None
+
+    # A 1x1x3 pixmap has only one dimension > 1, so it is both C- and F-contiguous.
+    one_by_one = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1 1] >>",
+            }
+        )
+    )
+    tiny = one_by_one.pages[0].pixmap()
+    assert (tiny.width, tiny.height) == (1, 1)
+    view = _PyBuffer()
+    assert get_buffer(tiny, ctypes.byref(view), pybuf_f_contiguous) == 0
+    try:
+        assert is_contiguous(ctypes.byref(view), b"F") == 1
+    finally:
+        release_buffer(ctypes.byref(view))
+    assert view.internal is None
 
 
 def test_to_bytes_writes_png_within_its_bound() -> None:
