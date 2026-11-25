@@ -43,8 +43,14 @@ strip = "symbols"
 # PyO3 converts Rust panics into Python exceptions only when they unwind.
 panic = "unwind"
 
-# Size-optimize the PDF store, engine, font code and RTen operator implementations.
-# The rasterizer, matrix-multiplication kernels and binding retain speed optimization.
+# Size-optimize the PDF store, engine, font/CMap code, and PyO3 runtime glue at
+# level `s`, and strictly cold-path crates (Arlington schema, OCR operators and
+# model loading, cold codecs, SVG/XML, and PAdES/X.509/CMS/PKCS crypto) at
+# level `z` (#858, #1110, #1164). The binding crate (`pyropdf-python`, which
+# drives fat LTO), rasterizer (`vello_cpu`, `vello_common`,
+# `ab_glyph_rasterizer`), matrix-multiplication kernels (`rten-gemm`), core PDF
+# parser/interpreter (`hayro`, `hayro-interpret`, `hayro-syntax`), and Flate
+# compression (`flate2`, `zlib-rs`) retain speed optimization (`opt-level = 2`).
 [profile.release.package.pyropdf-store]
 opt-level = "s"
 
@@ -57,8 +63,116 @@ opt-level = "s"
 [profile.release.package.read-fonts]
 opt-level = "s"
 
-[profile.release.package.rten]
+[profile.release.package.skrifa]
 opt-level = "s"
+
+[profile.release.package.hayro-font]
+opt-level = "s"
+
+[profile.release.package.hayro-cmap]
+opt-level = "s"
+
+[profile.release.package.pyo3]
+opt-level = "s"
+
+[profile.release.package.pyropdf-schema]
+opt-level = "z"
+
+[profile.release.package.rten]
+opt-level = "z"
+
+[profile.release.package.rten-tensor]
+opt-level = "z"
+
+[profile.release.package.rten-shape-inference]
+opt-level = "z"
+
+[profile.release.package.rten-model-file]
+opt-level = "z"
+
+[profile.release.package.flatbuffers]
+opt-level = "z"
+
+[profile.release.package.rayon]
+opt-level = "z"
+
+[profile.release.package.rayon-core]
+opt-level = "z"
+
+[profile.release.package.hayro-svg]
+opt-level = "z"
+
+[profile.release.package.hayro-jbig2]
+opt-level = "z"
+
+[profile.release.package.hayro-jpeg2000]
+opt-level = "z"
+
+[profile.release.package.hayro-ccitt]
+opt-level = "z"
+
+[profile.release.package.hayro-postscript]
+opt-level = "z"
+
+[profile.release.package.j2k-native]
+opt-level = "z"
+
+[profile.release.package.jpeg-encoder]
+opt-level = "z"
+
+[profile.release.package.tiff]
+opt-level = "z"
+
+[profile.release.package.gif]
+opt-level = "z"
+
+[profile.release.package.weezl]
+opt-level = "z"
+
+[profile.release.package.moxcms]
+opt-level = "z"
+
+[profile.release.package.pic-scale]
+opt-level = "z"
+
+[profile.release.package.pxfm]
+opt-level = "z"
+
+[profile.release.package.brotli-decompressor]
+opt-level = "z"
+
+[profile.release.package.quick-xml]
+opt-level = "z"
+
+[profile.release.package.cms]
+opt-level = "z"
+
+[profile.release.package.x509-cert]
+opt-level = "z"
+
+[profile.release.package.der]
+opt-level = "z"
+
+[profile.release.package.pkcs8]
+opt-level = "z"
+
+[profile.release.package.pkcs5]
+opt-level = "z"
+
+[profile.release.package.p256]
+opt-level = "z"
+
+[profile.release.package.p384]
+opt-level = "z"
+
+[profile.release.package.ecdsa]
+opt-level = "z"
+
+[profile.release.package.crypto-bigint]
+opt-level = "z"
+
+[profile.release.package.sec1]
+opt-level = "z"
 
 # hayro renders the corpus in the tests of pyropdf-engine; unoptimized, one
 # page takes seconds. Optimizing the dependencies alone keeps the workspace's
