@@ -16,17 +16,31 @@ hayro-syntax = { version = "0.9.0", default-features = false, features = ["std"]
 # The primitives of the standard security handler (DESIGN.md section 4.5),
 # MIT OR Apache-2.0 as the repository's license allows.
 aes = "0.9.4"
+# Read legacy CMS RC2-CBC envelopes with the encoded effective key size.
+rc2 = "0.9.0"
+aes-gcm = { version = "0.11.1", default-features = false, features = ["aes"] }
 md-5 = "0.11.0"
 sha2 = "0.11.1"
 # ISO 32000-2 algorithm for the V4 AESV2 recipient file key.
 sha1 = "0.11.0"
 # Fresh AES initialization vectors for recipient ciphertext.
 getrandom = "0.4.3"
+# The restricted ISO/TS 32004:2024 DER profile and its cryptographic primitives.
+der = { version = "0.8.3", features = ["alloc", "derive", "oid"] }
+aes-kw = { version = "0.3.1", default-features = false }
+hkdf = "0.13.0"
+hmac = "0.13.0"
+sha3 = { version = "0.11.0", default-features = false }
 
 # The Flate encoder of a save that compresses streams (DESIGN.md section
 # 4.4), the version that the binding and hayro already pull in.
 flate2 = "1.1.11"
+# The MSB-first PDF LZW encoder, also used by the workspace TIFF codec.
+weezl = "0.1.12"
 
 [dev-dependencies]
 # Property tests of the store's invariants (DESIGN.md F9).
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

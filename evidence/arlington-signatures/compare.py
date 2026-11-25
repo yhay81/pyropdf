@@ -13,9 +13,8 @@ from tempfile import TemporaryDirectory
 
 import pyropdf
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
-from tests.test_signing import DER, DOCUMENT, _pem_signer, make_pki  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
+from test_signing import DER, DOCUMENT, _pem_signer, make_pki
 
 RESPONSE = bytes.fromhex("30030a0106")
 OCSP_RULE = "VRI-OCSP-Array-9"

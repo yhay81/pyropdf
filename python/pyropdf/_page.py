@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Literal, overload
 
 from pyropdf import _core, _markdown
@@ -16,6 +16,13 @@ from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._fonts import FontInfo, page_fonts
 from pyropdf._geometry import Quad, Rect
 from pyropdf._images import PageImage, page_images
+from pyropdf._interchange import (
+    AssociatedFiles,
+    PieceData,
+    PieceInfo,
+    _delete_piece_info,
+    _replace_piece_info,
+)
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._links import Links
 from pyropdf._measurement import (
@@ -36,6 +43,7 @@ from pyropdf._ocr import (
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
 from pyropdf._page_labels import _label, _read_page_labels
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
+from pyropdf._prepress import BoxStyle, SeparationPlate, box_styles, separations, write_box_styles, write_separations
 from pyropdf._presentations import (
     NavigationStep,
     Transition,
@@ -69,6 +77,7 @@ from pyropdf._text import (
     text_options,
 )
 from pyropdf._text_edit import replace_text
+from pyropdf._transparency import uses_transparency
 from pyropdf._widgets import Widgets
 
 if TYPE_CHECKING:
@@ -342,6 +351,30 @@ class Page:
         _delete_page_triggers(self)
 
     @property
+    def associated_files(self) -> AssociatedFiles:
+        """Return the page's ``/AF`` associated files as a live :class:`AssociatedFiles` sequence."""
+        _ = self.index
+        return AssociatedFiles(self._document, self._page_host)
+
+    @property
+    def piece_info(self) -> PieceInfo:
+        """Return, replace, or delete the page's ``/PieceInfo`` application data as a live :class:`PieceInfo`."""
+        _ = self.index
+        return PieceInfo(self._document, self._page_host, is_page=True)
+
+    @piece_info.setter
+    def piece_info(self, values: Mapping[str, PieceData] | Iterable[tuple[str, PieceData]]) -> None:
+        _replace_piece_info(self._document, self._page_host, values, is_page=True)
+
+    @piece_info.deleter
+    def piece_info(self) -> None:
+        _delete_piece_info(self._document, self._page_host, is_page=True)
+
+    def _page_host(self) -> Dictionary:
+        _ = self.index
+        return self.obj
+
+    @property
     def thumbnail(self) -> Pixmap | None:
         """Return the page's embedded thumbnail image (``/Thumb``) decoded via hayro, or ``None``.
 
@@ -360,6 +393,41 @@ class Page:
     @thumbnail.deleter
     def thumbnail(self) -> None:
         _delete_page_thumbnail(self)
+
+    @property
+    def box_styles(self) -> dict[str, BoxStyle]:
+        """Local guideline styles keyed by CropBox, BleedBox, TrimBox or ArtBox.
+
+        An absent entry leaves the display choice to the reader. Assign a mapping
+        to replace the known styles or delete the property to remove them.
+        """
+        return _core.read_operation(self.document._core(), lambda _: box_styles(self))  # noqa: SLF001
+
+    @box_styles.setter
+    def box_styles(self, styles: Mapping[str, BoxStyle]) -> None:
+        write_box_styles(self, styles)
+
+    @box_styles.deleter
+    def box_styles(self) -> None:
+        write_box_styles(self, {})
+
+    @property
+    def separations(self) -> dict[Page, SeparationPlate]:
+        """The ordered pages of this pre-separated group and their colorants.
+
+        Assign a mapping including this page to create or replace the group.
+        Omitted members become ordinary pages. Deleting dissolves the group
+        in one transaction. A page already in another group must leave it first.
+        """
+        return _core.read_operation(self.document._core(), lambda _: separations(self))  # noqa: SLF001
+
+    @separations.setter
+    def separations(self, plates: Mapping[Page, SeparationPlate]) -> None:
+        write_separations(self, plates)
+
+    @separations.deleter
+    def separations(self) -> None:
+        write_separations(self, {})
 
     @property
     def viewports(self) -> tuple[Viewport, ...]:
@@ -599,7 +667,7 @@ class Page:
         box = None if clip is None else _clip_box(clip)
         try:
             return _core.render_page(
-                self._document._core(),  # noqa: SLF001
+                self._reader(),
                 self._number,
                 self._generation,
                 linear,
@@ -852,6 +920,10 @@ class Page:
     ) -> Content:
         """Return the text runs, paths, and images that the page paints.
 
+        A complete result can be rendered again with :meth:`Content.pixmap` or
+        placed with :meth:`Canvas.page` while this document is open, even after a
+        change to the original page. Filtering by kind or clip yields items only.
+
         Items come in paint order, in display coordinates, as hayro
         interprets the current version of the page, with optional-content
         visibility applied. Each carries its paints, its blend mode and soft
@@ -913,7 +985,10 @@ class Page:
             )
         except StaleObjectError as error:
             raise self._stale() from error
-        return _content_from_core(raw, self._document, snapshot)
+        content = _content_from_core(raw, self._document, snapshot)
+        if snapshot is not None and paths and images and clip_box is None:
+            object.__setattr__(content, "_page", _RetainedPage(self, snapshot, annotations=annotations))
+        return content
 
     def paths(
         self,
@@ -1421,6 +1496,16 @@ class Page:
         _warn_skipped(skipped)
         return build_tables(raw, strategy)
 
+    def uses_transparency(self) -> bool:
+        """Return whether the current page uses transparent imaging under ISO 32000-2 Annex Q.
+
+        Check paint operations, selected Forms, images, patterns, Type 3
+        character procedures and annotation appearances. The query follows only
+        the resources reached by painting. Cyclic resources and exhausted
+        limits raise an error.
+        """
+        return uses_transparency(self)
+
     @property
     def operations(self) -> Operations:
         """Return the page's content as :class:`Operations`, as hayro reads it.
@@ -1499,6 +1584,24 @@ class Page:
     def __repr__(self) -> str:
         """Return a representation naming the page object and the document."""
         return f"<Page {self._number} {self._generation} R of {self._document!r}>"
+
+
+class _RetainedPage(Page):
+    """Geometry and paints from the same version as a complete Content result."""
+
+    __slots__ = ("_annotations_included", "_snapshot")
+
+    def __init__(self, page: Page, snapshot: _core._PageSnapshot, *, annotations: bool) -> None:
+        super().__init__(page.document, page.xref, page._generation)  # noqa: SLF001
+        self._snapshot = snapshot
+        self._annotations_included = annotations
+
+    @property
+    def annotations_included(self) -> bool:
+        return self._annotations_included
+
+    def _reader(self) -> _core._PageSnapshot:
+        return self._snapshot
 
 
 class _ExportPage(Page):

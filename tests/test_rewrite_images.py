@@ -11,6 +11,7 @@ import zlib
 from pathlib import Path
 from typing import Literal
 
+import pikepdf
 import pytest
 from PIL import Image
 
@@ -944,6 +945,79 @@ def test_bitonal_images_are_written_as_group_4_or_one_bit_flate(bitonal_format: 
     assert bytes(doc.pages[0].pixmap(dpi=72)) == bytes(before)
 
 
+def _round_trip_rewritten_image(form: str, *, incremental: bool) -> None:
+    width, height = 129, 95
+    bitonal = form != "jpx"
+    samples = bytes(255 if (x // 8 + y // 7) % 3 else 0 for y in range(height) for x in range(width))
+    original_image = Image.frombytes("L", (width, height), samples)
+    stored_samples = original_image.convert("1").tobytes() if bitonal else samples
+    entries: dict[str, object] = {
+        "Width": width,
+        "Height": height,
+        "BitsPerComponent": 1 if bitonal else 8,
+        "ColorSpace": Name("DeviceGray"),
+    }
+    source = image_document(stored_samples, entries, [(width, height)])
+    # Many small tiles retain the image samples while adding tile-part headers.
+    # Re-encoding as a single tile should reduce the stored size on every platform.
+    if not bitonal:
+        existing = io.BytesIO()
+        original_image.save(existing, "JPEG2000", tile_size=(8, 8), num_resolutions=1)
+        image = stream(source)
+        image.write(existing.getvalue(), filter=None)
+        image["Filter"] = Name("JPXDecode")
+    keep = source.objects[source.objects.add_stream(b"4a 4b 4c >", filter=None)]
+    keep["Filter"] = Name("ASCIIHexDecode")
+    source.catalog["Unrelated"] = keep
+    original = source.to_bytes()
+    doc = pyropdf.open(original)
+    expected = ghostscript(doc)
+    old = stream(doc).read(decode=False)
+    if form == "jpx":
+        result = doc.rewrite_images(quality=90, lossless_format="jpx")
+    elif form == "jbig2":
+        result = doc.rewrite_images(quality=90, bitonal_format="jbig2")
+    else:
+        result = doc.rewrite_images(quality=90, bitonal_format="fax-g3")
+    assert result.rewritten == 1
+    output = doc.to_bytes(incremental=incremental)
+    if incremental:
+        assert output.startswith(original)
+    saved = pyropdf.open(output)
+    encoded = stream(saved)
+    name = {"fax-g3": "CCITTFaxDecode", "jbig2": "JBIG2Decode", "jpx": "JPXDecode"}[form]
+    assert encoded["Filter"] == Name(name)
+    assert encoded.read(decode=False) != old
+    if form == "fax-g3":
+        assert encoded["DecodeParms"]["K"] == 0
+    if form == "jpx":
+        with Image.open(io.BytesIO(stored(saved))) as independent:
+            assert independent.tobytes() == samples
+    with pikepdf.Pdf.open(io.BytesIO(output)) as independent_pdf:
+        assert independent_pdf.Root.Unrelated.read_raw_bytes() == b"4a 4b 4c >"
+        assert independent_pdf.Root.Unrelated.read_bytes() == b"JKL"
+    assert ghostscript(saved).tobytes() == expected.tobytes()
+    assert bytes(saved.pages[0].images()[0].pixmap().to_gray()) == samples
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.spec("ccitt-fax-filter", "create", "edit")
+def test_written_group_3_pixels_survive_save(incremental: bool) -> None:  # noqa: FBT001
+    _round_trip_rewritten_image("fax-g3", incremental=incremental)
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.spec("jbig2-filter", "create", "edit")
+def test_written_jbig2_pixels_survive_save(incremental: bool) -> None:  # noqa: FBT001
+    _round_trip_rewritten_image("jbig2", incremental=incremental)
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.spec("jpx-filter", "create", "edit")
+def test_reencoded_jpx_pixels_survive_save(incremental: bool) -> None:  # noqa: FBT001
+    _round_trip_rewritten_image("jpx", incremental=incremental)
+
+
 def test_a_resampled_bitonal_image_stays_one_bit() -> None:
     rows = scan()
     entries: dict[str, object] = {"Width": 256, "Height": 256, "BitsPerComponent": 1, "ColorSpace": Name("DeviceGray")}
@@ -1117,3 +1191,112 @@ def test_set_to_gray_leaves_vector_colors_to_recolor() -> None:
     doc.recolor("gray")
     red = doc.pages[0].pixmap(dpi=72).pixel(120, 70)[:3]
     assert red[0] == red[1] == red[2]
+
+
+@pytest.mark.parametrize(
+    ("mode", "width", "height", "constant"),
+    [("L", 29, 71, None), ("RGB", 29, 71, None), ("RGB", 513, 305, None), ("RGB", 65, 65, 128)],
+)
+def test_rewrite_generates_lossless_jp2_samples(mode: str, width: int, height: int, constant: int | None) -> None:
+    channels = 1 if mode == "L" else 3
+    # Midgray comprises empty JPEG 2000 packets, including at all four tile edges.
+    samples = (
+        bytes([constant]) * (width * height * channels)
+        if constant is not None
+        else bytes((x + 2 * y + c * 17) % 256 for y in range(height) for x in range(width) for c in range(channels))
+    )
+    entries: dict[str, object] = {
+        "Width": width,
+        "Height": height,
+        "BitsPerComponent": 8,
+        "ColorSpace": Name("DeviceGray" if channels == 1 else "DeviceRGB"),
+    }
+    doc = image_document(samples, entries, [(width, height)])
+    assert doc.rewrite_images(quality=90, lossless_format="jpx").rewritten == 1
+    saved = pyropdf.open(doc.to_bytes())
+    assert stream(saved)["Filter"] == "JPXDecode"
+    with Image.open(io.BytesIO(stored(saved))) as image:
+        assert (image.format, image.mode, image.size) == ("JPEG2000", mode, (width, height))
+        assert image.tobytes() == samples
+    native = saved.pages[0].images()[0].pixmap()
+    assert bytes(native.to_gray() if channels == 1 else native) == samples
+
+
+@pytest.mark.parametrize("form", ["fax-g3", "fax-g3-2d", "jbig2"])
+def test_bitonal_rewrite_emits_lossless_group3_and_jbig2_xobjects(
+    form: Literal["fax-g3", "fax-g3-2d", "jbig2"],
+) -> None:
+    width, height = 129, 95
+    # Alternating horizontal bands contain both polarities and a partial last byte.
+    pixels = bytes(
+        255 if (x >= 8 + y // 8 and x < width - 9) == (y // 6 % 2 == 0) else 0
+        for y in range(height)
+        for x in range(width)
+    )
+    rows = Image.frombytes("L", (width, height), pixels).convert("1").tobytes()
+    entries: dict[str, object] = {
+        "Width": width,
+        "Height": height,
+        "BitsPerComponent": 1,
+        "ColorSpace": Name("DeviceGray"),
+    }
+    doc = image_document(rows, entries, [(width, height)])
+    reference = ghostscript(doc).tobytes()
+    assert doc.rewrite_images(quality=75, bitonal_format=form).rewritten == 1
+    saved = pyropdf.open(doc.to_bytes())
+    out = stream(saved)
+    if form == "jbig2":
+        assert out["Filter"] == "JBIG2Decode"
+        assert "DecodeParms" not in out
+    else:
+        assert out["Filter"] == "CCITTFaxDecode"
+        assert dict(out["DecodeParms"].items()) == {
+            "K": 0 if form == "fax-g3" else 2,
+            "Columns": width,
+            "Rows": height,
+            "EndOfLine": True,
+        }
+    assert ghostscript(saved).tobytes() == reference
+    assert bytes(saved.pages[0].images()[0].pixmap().to_gray()) == pixels
+
+
+@pytest.mark.parametrize("form", ["jpx", "fax-g3", "fax-g3-2d", "jbig2"])
+def test_new_image_encoders_keep_the_original_when_output_would_grow(form: str) -> None:
+    source = image_document(
+        b"\0",
+        {"Width": 1, "Height": 1, "BitsPerComponent": 8 if form == "jpx" else 1, "ColorSpace": Name("DeviceGray")},
+        [(1, 1)],
+    )
+    before = source.to_bytes()
+    if form == "jpx":
+        report = source.rewrite_images(quality=90, lossless_format="jpx")
+    else:
+        report = source.rewrite_images(quality=90, bitonal_format=form)  # ty: ignore[invalid-argument-type]
+    assert report.rewritten == 0
+    assert source.to_bytes() == before
+
+
+def test_jp2_rewrite_observes_the_document_memory_limit_before_encoding() -> None:
+    source = image_document(
+        bytes(128 * 128),
+        {"Width": 128, "Height": 128, "BitsPerComponent": 8, "ColorSpace": Name("DeviceGray")},
+        [(128, 128)],
+    ).to_bytes()
+    doc = pyropdf.open(source, limits=pyropdf.DocumentLimits(max_memory_size=200_000))
+    with pytest.raises(pyropdf.LimitError) as refused:
+        doc.rewrite_images(quality=75, lossless_format="jpx")
+    assert refused.value.code == "memory_size"
+    assert doc.to_bytes(incremental=True) == source
+
+
+def test_jpx_output_keeps_icc_samples_lossless_in_their_original_space() -> None:
+    samples = gradient(3)
+    doc = placed(jp2("RGB", samples), {"BitsPerComponent": 8, "Filter": Name("JPXDecode")})
+    profile = doc.objects[doc.objects.add_stream(b"not read", {"N": 3, "Alternate": Name("DeviceRGB")})]
+    stream(doc)["ColorSpace"] = [Name("ICCBased"), profile]
+    assert doc.rewrite_images(dpi_threshold=150, dpi_target=72, quality=90, lossless_format="jpx").rewritten == 1
+    written = stream(pyropdf.open(doc.to_bytes()))
+    assert written["Filter"] == "FlateDecode"
+    assert written["ColorSpace"][1].xref == profile.xref
+    expected = pyropdf.Pixmap.from_bytes(pam(SIDE, 3, samples)).scale(36, 36)
+    assert written.read() == bytes(expected)

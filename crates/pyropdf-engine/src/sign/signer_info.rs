@@ -25,10 +25,6 @@ const SIGNING_CERTIFICATE_V2: ObjectIdentifier =
 /// id-aa-timeStampToken (RFC 3161 appendix A).
 const TIME_STAMP_TOKEN: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.14");
-const ECDSA_WITH_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
-const ECDSA_WITH_SHA384: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3");
-const SHA256_WITH_RSA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11");
-
 /// ESSCertIDv2 (RFC 5035) with the default SHA-256 hash, so that only the
 /// certificate's hash is written.
 #[derive(Sequence)]
@@ -57,29 +53,58 @@ fn attribute(oid: ObjectIdentifier, value: &impl Encode) -> Result<Attribute, Er
     Ok(Attribute { oid, values })
 }
 
-fn digest_identifier(algorithm: DigestAlgorithm) -> AlgorithmIdentifierOwned {
-    AlgorithmIdentifierOwned {
+fn digest_identifier(algorithm: DigestAlgorithm) -> Result<AlgorithmIdentifierOwned, Error> {
+    if algorithm == DigestAlgorithm::Shake256 {
+        // RFC 8419 section 3.1: Ed448 with signedAttrs declares a 512-bit output.
+        return Ok(AlgorithmIdentifierOwned {
+            oid: super::algorithms::SHAKE256_LEN,
+            parameters: Some(
+                Any::encode_from(&512u16)
+                    .map_err(|error| Error::invalid("the SHAKE256 length", error))?,
+            ),
+        });
+    }
+    Ok(AlgorithmIdentifierOwned {
         oid: algorithm.oid(),
         parameters: None,
-    }
+    })
 }
 
-fn signature_identifier(algorithm: SignatureAlgorithm) -> AlgorithmIdentifierOwned {
-    match algorithm {
-        SignatureAlgorithm::EcdsaP256 => AlgorithmIdentifierOwned {
-            oid: ECDSA_WITH_SHA256,
-            parameters: None,
+fn signature_identifier(chain: &Chain) -> Result<AlgorithmIdentifierOwned, Error> {
+    let oid = match chain.algorithm() {
+        SignatureAlgorithm::Ed25519 => super::algorithms::ED25519,
+        SignatureAlgorithm::Ed448 => super::algorithms::ED448,
+        SignatureAlgorithm::RsaSha256 => match chain.digest() {
+            DigestAlgorithm::Sha256 => ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11"),
+            DigestAlgorithm::Sha384 => ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.12"),
+            DigestAlgorithm::Sha512 => ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.13"),
+            DigestAlgorithm::Sha3_256 => ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.3.14"),
+            DigestAlgorithm::Sha3_384 => ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.3.15"),
+            DigestAlgorithm::Sha3_512 => ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.3.16"),
+            DigestAlgorithm::Shake256 => {
+                return Err(Error::Invalid(
+                    "SHAKE256 is not a PKCS#1 v1.5 digest".to_owned(),
+                ));
+            }
         },
-        SignatureAlgorithm::EcdsaP384 => AlgorithmIdentifierOwned {
-            oid: ECDSA_WITH_SHA384,
-            parameters: None,
+        _ => match chain.digest() {
+            DigestAlgorithm::Sha256 => ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2"),
+            DigestAlgorithm::Sha384 => ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3"),
+            DigestAlgorithm::Sha512 => ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.4"),
+            DigestAlgorithm::Sha3_256 => ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.3.10"),
+            DigestAlgorithm::Sha3_384 => ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.3.11"),
+            DigestAlgorithm::Sha3_512 => ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.3.12"),
+            DigestAlgorithm::Shake256 => {
+                return Err(Error::Invalid(
+                    "SHAKE256 is not a digest for this ECDSA key".to_owned(),
+                ));
+            }
         },
-        // RFC 4055 section 5: the parameters of an RSA signature are NULL.
-        SignatureAlgorithm::RsaSha256 => AlgorithmIdentifierOwned {
-            oid: SHA256_WITH_RSA,
-            parameters: Some(Any::null()),
-        },
-    }
+    };
+    Ok(AlgorithmIdentifierOwned {
+        oid,
+        parameters: (chain.algorithm() == SignatureAlgorithm::RsaSha256).then(Any::null),
+    })
 }
 
 fn signed_attribute_set(chain: &Chain, digest: &[u8]) -> Result<Attributes, Error> {
@@ -119,7 +144,7 @@ pub(super) fn signed_data(
     signature: &[u8],
     token: Option<&[u8]>,
 ) -> Result<Vec<u8>, Error> {
-    let algorithm = chain.algorithm();
+    let digest = digest_identifier(chain.digest())?;
     let signer = chain.signer().tbs_certificate();
     let unsigned_attrs = match token {
         None => None,
@@ -138,12 +163,12 @@ pub(super) fn signed_data(
             issuer: signer.issuer().clone(),
             serial_number: signer.serial_number().clone(),
         }),
-        digest_alg: digest_identifier(algorithm.digest()),
+        digest_alg: digest.clone(),
         signed_attrs: Some(
             Attributes::from_der(attributes)
                 .map_err(|error| Error::invalid("the signed attributes", error))?,
         ),
-        signature_algorithm: signature_identifier(algorithm),
+        signature_algorithm: signature_identifier(chain)?,
         signature: OctetString::new(signature)
             .map_err(|error| Error::invalid("the signature", error))?,
         unsigned_attrs,
@@ -160,7 +185,7 @@ pub(super) fn signed_data(
     }
     let signed = SignedData {
         version: CmsVersion::V1,
-        digest_algorithms: SetOfVec::try_from(vec![digest_identifier(algorithm.digest())])
+        digest_algorithms: SetOfVec::try_from(vec![digest])
             .map_err(|error| Error::invalid("the digest algorithms", error))?,
         encap_content_info: EncapsulatedContentInfo {
             econtent_type: ID_DATA,

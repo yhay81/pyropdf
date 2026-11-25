@@ -38,6 +38,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import behaviors
 from ownership import OwnerError, assignments, live_report, work_page
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -104,6 +105,28 @@ def profile_cases(node: ast.FunctionDef, where: str) -> dict[str, str]:
     raise MapError(msg)
 
 
+def arlington_cases(root: Path, names: list[str], feature: str, where: str) -> dict[str, str]:
+    """Expand schema-wide evidence to the exact descriptor cases that were exercised."""
+    cases = {name: f"{where}[{name}]" for name in names} if feature == ARLINGTON else {feature: where}
+    if feature in {"arlington-values", "arlington-authoring", "arlington-legacy-edits"}:
+        fixture_name = "arlington-values.tsv" if feature == "arlington-values" else "arlington-authoring.tsv"
+        fixture = root / "tests/fixtures" / fixture_name
+        mode = {"arlington-authoring": "create", "arlington-legacy-edits": "existing"}.get(feature)
+        with fixture.open(encoding="utf-8", newline="") as samples:
+            cases = {
+                row["Object"]: f"{where}[{row['Object']}]"
+                for row in csv.DictReader(samples, delimiter="\t")
+                if mode is None or row["Mode"] == mode
+            }
+    if feature == "arlington-roles":
+        cases = {}
+        for name in names:
+            with (root / MODEL / "tsv" / f"{name}.tsv").open(encoding="utf-8", newline="") as source:
+                if any(row["Link"].strip("[];") for row in csv.DictReader(source, delimiter="\t")):
+                    cases[name] = f"{where}[{name}]"
+    return cases
+
+
 def marked(root: Path, names: list[str]) -> dict[tuple[str, str], list[str]]:
     """Return the tests that prove each feature in each dimension, by pytest node ID."""
     proved: dict[tuple[str, str], list[str]] = {}
@@ -119,14 +142,7 @@ def marked(root: Path, names: list[str]) -> dict[tuple[str, str], list[str]]:
                 if marker is None:
                     continue
                 feature, *dimensions = marker
-                cases = {name: f"{where}[{name}]" for name in names} if feature == ARLINGTON else {feature: where}
-                if feature == "arlington-values":
-                    fixture = root / "tests/fixtures/arlington-values.tsv"
-                    with fixture.open(encoding="utf-8", newline="") as samples:
-                        cases = {
-                            row["Object"]: f"{where}[{row['Object']}]"
-                            for row in csv.DictReader(samples, delimiter="\t")
-                        }
+                cases = arlington_cases(root, names, feature, where)
                 if feature == "{profile}":
                     cases = profile_cases(node, where)
                 for name, test in cases.items():
@@ -181,6 +197,11 @@ def declared(root: Path, config: dict[str, Any], names: list[str]) -> dict[str, 
                 features[name].update(applied)
     for name, table in config.get("features", {}).items():
         features[name] = feature(name, dict(table), names)
+    for name, row in features.items():
+        unknown = set(row.get("includes", [])) - features.keys()
+        if unknown:
+            msg = f"{name} includes unknown features: {', '.join(sorted(unknown))}"
+            raise MapError(msg)
     return features
 
 
@@ -190,12 +211,18 @@ def feature(name: str, table: dict[str, Any], names: list[str]) -> dict[str, Any
     if not FEATURE_NAME.fullmatch(name):
         msg = f"{where} is named in lowercase words joined by hyphens"
         raise MapError(msg)
+    included = table.pop("includes", [])
     deprecated = table.pop("deprecated", False)
     about = {field: table.pop(field) for field in ("clause", "description", "objects") if field in table}
     unknown = sorted(set(about.get("objects", [])) - set(names))
     if unknown or set(about) != {"clause", "description", "objects"} or set(table) - set(DIMENSIONS):
         msg = f"{where} takes a clause, a description, objects of the model, and statuses; {unknown or ''}"
         raise MapError(msg)
+    if not isinstance(included, list) or not all(isinstance(item, str) for item in included):
+        msg = f"{where}.includes must list feature names"
+        raise MapError(msg)
+    if included:
+        about["includes"] = included
     if deprecated is not True and deprecated is not False:
         msg = f"{where}.deprecated is true or false"
         raise MapError(msg)
@@ -263,6 +290,7 @@ def inventory(root: Path, features: dict[str, dict[str, Any]]) -> dict[str, Any]
             corrections.append(
                 {
                     "issue": int(row["issue"]),
+                    **({"section_sha256": row["section_sha256"]} if row.get("section_sha256") else {}),
                     "locations": row["locations"].split(),
                     "work": [int(number) for number in row["work"].split()],
                     "features": names,
@@ -270,7 +298,16 @@ def inventory(root: Path, features: dict[str, dict[str, Any]]) -> dict[str, Any]
                     "summary": row["summary"],
                 }
             )
-    return {**baseline, "provisions": provisions, "corrections": corrections}
+    try:
+        behaviors.validate(baseline.get("behaviors", []), set(features), DIMENSIONS, corrections)
+    except ValueError as error:
+        raise MapError(str(error)) from error
+    return {
+        **baseline,
+        "provisions": provisions,
+        "corrections": corrections,
+        "behaviors": baseline.get("behaviors", []),
+    }
 
 
 def require_features(names: list[str], features: dict[str, dict[str, Any]], provision: str) -> None:
@@ -342,9 +379,11 @@ def coverage(spec_map: dict[str, Any]) -> dict[str, dict[str, int]]:
 def render(spec_map: dict[str, Any]) -> str:
     """Return the map as JSON with one feature per line."""
     baseline = spec_map["inventory"]
-    inventory_head = {key: value for key, value in baseline.items() if key not in {"provisions", "corrections"}}
+    inventory_head = {
+        key: value for key, value in baseline.items() if key not in {"provisions", "corrections", "behaviors"}
+    }
     inventory_text = json.dumps(inventory_head, indent=2, ensure_ascii=False)[:-2]
-    for key in ("provisions", "corrections"):
+    for key in ("provisions", "corrections", "behaviors"):
         rows = ",\n    ".join(json.dumps(row, ensure_ascii=False) for row in baseline[key])
         inventory_text += f',\n  "{key}": [\n    {rows}\n  ]'
     inventory_json = (inventory_text + "\n}").replace("\n", "\n  ")
@@ -400,6 +439,7 @@ def inventory_page(baseline: dict[str, Any]) -> list[str]:
         "Feature tests and release decisions remain on the feature rows. An erratum needs a targeted regression",
         "before a test can be cited for that specific correction. The register gives no automatic coverage credit.",
     ]
+    lines += behaviors.overview(baseline)
     source = baseline["sources"]["errata"]
     lines += [
         "",

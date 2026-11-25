@@ -62,6 +62,39 @@ fn real(bytes: &[u8]) -> Option<f64> {
     None
 }
 
+/// Decodes one CFF DICT integer operand at `at`, returning `(value, byte_len)`.
+fn decode_int(data: &[u8], at: usize) -> Option<(i32, usize)> {
+    let b0 = *data.get(at)?;
+    match b0 {
+        28 => Some((
+            i32::from(i16::from_be_bytes(
+                data.get(at.checked_add(1)?..at.checked_add(3)?)?
+                    .try_into()
+                    .ok()?,
+            )),
+            3,
+        )),
+        29 => Some((
+            i32::from_be_bytes(
+                data.get(at.checked_add(1)?..at.checked_add(5)?)?
+                    .try_into()
+                    .ok()?,
+            ),
+            5,
+        )),
+        32..=246 => Some((i32::from(b0) - 139, 1)),
+        247..=250 => Some((
+            (i32::from(b0) - 247) * 256 + i32::from(*data.get(at.checked_add(1)?)?) + 108,
+            2,
+        )),
+        251..=254 => Some((
+            -(i32::from(b0) - 251) * 256 - i32::from(*data.get(at.checked_add(1)?)?) - 108,
+            2,
+        )),
+        _ => None,
+    }
+}
+
 fn dict(data: &[u8]) -> Option<Vec<Entry>> {
     let mut entries = Vec::new();
     let (mut start, mut values, mut numbers, mut at) = (0, Vec::new(), Vec::new(), 0);
@@ -90,43 +123,29 @@ fn dict(data: &[u8]) -> Option<Vec<Entry>> {
                 start = at;
                 continue;
             }
-            28 => (
-                Some(i32::from(i16::from_be_bytes(
-                    data.get(at + 1..at + 3)?.try_into().ok()?,
-                ))),
-                3,
-            ),
-            29 => (
-                Some(i32::from_be_bytes(
-                    data.get(at + 1..at + 5)?.try_into().ok()?,
-                )),
-                5,
-            ),
+            28 | 29 | 32..=254 => {
+                let (v, len) = decode_int(data, at)?;
+                (Some(v), len)
+            }
             30 => {
-                let mut size = 1;
+                let mut size = 1_usize;
                 while data
-                    .get(at + size)
+                    .get(at.checked_add(size)?)
                     .is_some_and(|byte| byte & 0x0f != 0x0f && byte >> 4 != 0x0f)
                 {
-                    size += 1;
+                    size = size.checked_add(1)?;
                 }
-                (None, size + 1)
+                // The terminating 0x0f nibble must be present inside `data`.
+                data.get(at.checked_add(size)?)?;
+                (None, size.checked_add(1)?)
             }
-            32..=246 => (Some(i32::from(b0) - 139), 1),
-            247..=250 => (
-                Some((i32::from(b0) - 247) * 256 + i32::from(*data.get(at + 1)?) + 108),
-                2,
-            ),
-            251..=254 => (
-                Some(-(i32::from(b0) - 251) * 256 - i32::from(*data.get(at + 1)?) - 108),
-                2,
-            ),
             _ => return None,
         };
         // A DICT holds at most 48 operands per operator (5176, appendix B).
         if values.len() >= 48 {
             return None;
         }
+        let next = at.checked_add(size)?;
         #[expect(
             clippy::disallowed_methods,
             reason = "48 operands per operator at most, checked above"
@@ -139,9 +158,9 @@ fn dict(data: &[u8]) -> Option<Vec<Entry>> {
         numbers.push(
             value
                 .map(f64::from)
-                .or_else(|| data.get(at + 1..at + size).and_then(real)),
+                .or_else(|| data.get(at.checked_add(1)?..next).and_then(real)),
         );
-        at += size;
+        at = next;
     }
     Some(entries)
 }
@@ -195,26 +214,43 @@ fn push_operator(out: &mut Vec<u8>, op: u16) {
     }
 }
 
+/// Validates one 1-based CFF INDEX step `(previous, next)` against `base` and
+/// `data_len`, returning the in-bounds byte range for the item.
+fn index_step(base: usize, data_len: usize, previous: usize, next: usize) -> Option<Range<usize>> {
+    if previous == 0 || next < previous {
+        return None;
+    }
+    let start = base.checked_add(previous)?;
+    let end = base.checked_add(next)?;
+    if end > data_len {
+        return None;
+    }
+    Some(start..end)
+}
+
 /// Returns the items of the INDEX at `at` and where it ends.
 fn index(data: &[u8], at: usize) -> Option<(Vec<Range<usize>>, usize)> {
     let count = usize::from(be16(data, at)?);
     if count == 0 {
-        return Some((Vec::new(), at + 2));
+        return Some((Vec::new(), at.checked_add(2)?));
     }
-    let size = usize::from(*data.get(at + 2)?);
+    let size = usize::from(*data.get(at.checked_add(2)?)?);
     if !(1..=4).contains(&size) {
         return None;
     }
+    let offsets_start = at.checked_add(3)?;
     let read = |item: usize| -> Option<usize> {
-        let start = at + 3 + item * size;
-        let bytes = data.get(start..start + size)?;
+        let start = offsets_start.checked_add(item.checked_mul(size)?)?;
+        let bytes = data.get(start..start.checked_add(size)?)?;
         Some(
             bytes
                 .iter()
                 .fold(0usize, |sum, &byte| (sum << 8) | usize::from(byte)),
         )
     };
-    let base = at + 2 + (count + 1) * size;
+    let base = at
+        .checked_add(2)?
+        .checked_add(count.checked_add(1)?.checked_mul(size)?)?;
     // The last offset ends at `base`, so an INDEX whose offsets `data` lacks
     // is refused before its count sizes anything.
     data.get(base)?;
@@ -224,20 +260,30 @@ fn index(data: &[u8], at: usize) -> Option<(Vec<Range<usize>>, usize)> {
         reason = "one range per offset of the INDEX, whose offsets `data` holds, checked above"
     )]
     items.try_reserve(count).ok()?;
+    // CFF INDEX offsets are 1-based relative to `base` (5176, section 5);
+    // offset 0 would alias the last byte of the offset array itself.
     let mut previous = read(0)?;
+    let mut end = index_step(base, data.len(), previous, previous)?.end;
     for item in 1..=count {
         let next = read(item)?;
-        if next < previous || base + next > data.len() {
-            return None;
-        }
+        let range = index_step(base, data.len(), previous, next)?;
+        end = range.end;
         #[expect(
             clippy::disallowed_methods,
             reason = "one range per offset of the INDEX, whose offsets `data` holds, checked above"
         )]
-        items.push(base + previous..base + next);
+        items.push(range);
         previous = next;
     }
-    Some((items, base + previous))
+    Some((items, end))
+}
+
+/// Returns the smallest CFF INDEX `offSize` in `1..=4` that represents
+/// `total` (the last 1-based offset), using `u64` shifts so 4-byte offsets do
+/// not overflow `1usize << 32` on 32-bit targets.
+fn index_off_size(total: usize) -> Option<usize> {
+    let total_u64 = u64::try_from(total).ok()?;
+    (1_usize..=4).find(|&size| total_u64 < (1_u64 << (8 * size)))
 }
 
 #[expect(
@@ -250,13 +296,16 @@ fn write_index(items: &[&[u8]]) -> Option<Vec<u8>> {
     if count == 0 {
         return Some(out);
     }
-    let total = items.iter().map(|item| item.len()).sum::<usize>() + 1;
-    let size = (1..=4).find(|&size| total < 1 << (8 * size))?;
+    let total = items
+        .iter()
+        .try_fold(1_usize, |sum, item| sum.checked_add(item.len()))?;
+    let size = index_off_size(total)?;
     out.push(u8::try_from(size).ok()?);
-    out.try_reserve(total + (items.len() + 1) * size).ok()?;
-    let mut offset = 1usize;
+    let offsets_len = items.len().checked_add(1)?.checked_mul(size)?;
+    out.try_reserve(total.checked_add(offsets_len)?).ok()?;
+    let mut offset = 1_usize;
     for item in std::iter::once(&[][..]).chain(items.iter().copied()) {
-        offset += item.len();
+        offset = offset.checked_add(item.len())?;
         out.extend_from_slice(&offset.to_be_bytes()[std::mem::size_of::<usize>() - size..]);
     }
     for item in items {
@@ -270,22 +319,23 @@ fn charset_len(data: &[u8], at: usize, glyphs: usize) -> Option<usize> {
     let format = *data.get(at)?;
     let named = glyphs.saturating_sub(1);
     if format == 0 {
-        return Some(1 + 2 * named);
+        return named.checked_mul(2)?.checked_add(1);
     }
     let left = match format {
-        1 => 1,
-        2 => 2,
+        1 => 1_usize,
+        2 => 2_usize,
         _ => return None,
     };
-    let (mut covered, mut end) = (0, at + 1);
+    let (mut covered, mut end) = (0_usize, at.checked_add(1)?);
     while covered < named {
+        let count_at = end.checked_add(2)?;
         let count = if left == 1 {
-            usize::from(*data.get(end + 2)?)
+            usize::from(*data.get(count_at)?)
         } else {
-            usize::from(be16(data, end + 2)?)
+            usize::from(be16(data, count_at)?)
         };
-        covered += count + 1;
-        end += 2 + left;
+        covered = covered.checked_add(count.checked_add(1)?)?;
+        end = end.checked_add(2 + left)?;
     }
     Some(end - at)
 }
@@ -293,15 +343,15 @@ fn charset_len(data: &[u8], at: usize, glyphs: usize) -> Option<usize> {
 /// The length of the encoding at `at` (5176, section 12).
 fn encoding_len(data: &[u8], at: usize) -> Option<usize> {
     let format = *data.get(at)?;
-    let count = usize::from(*data.get(at + 1)?);
-    let mut end = at
-        + match format & 0x7f {
-            0 => 2 + count,
-            1 => 2 + 2 * count,
-            _ => return None,
-        };
+    let count = usize::from(*data.get(at.checked_add(1)?)?);
+    let mut end = at.checked_add(match format & 0x7f {
+        0 => 2 + count,
+        1 => 2 + 2 * count,
+        _ => return None,
+    })?;
     if format & 0x80 != 0 {
-        end += 1 + 3 * usize::from(*data.get(end)?);
+        let extra = usize::from(*data.get(end)?);
+        end = end.checked_add(1 + 3 * extra)?;
     }
     Some(end - at)
 }
@@ -309,8 +359,10 @@ fn encoding_len(data: &[u8], at: usize) -> Option<usize> {
 /// The length of the FDSelect at `at` for `glyphs` glyphs (5176, section 19).
 fn fd_select_len(data: &[u8], at: usize, glyphs: usize) -> Option<usize> {
     match *data.get(at)? {
-        0 => Some(1 + glyphs),
-        3 => Some(5 + 3 * usize::from(be16(data, at + 1)?)),
+        0 => glyphs.checked_add(1),
+        3 => usize::from(be16(data, at.checked_add(1)?)?)
+            .checked_mul(3)?
+            .checked_add(5),
         _ => None,
     }
 }
@@ -494,7 +546,7 @@ pub(super) fn identity_charset(data: &[u8]) -> Result<Option<Vec<u8>>, ()> {
             return Some(None);
         }
         let at = usize::try_from(charset).ok()?;
-        let block = data.get(at..at + charset_len(data, at, glyphs)?)?;
+        let block = data.get(at..at.checked_add(charset_len(data, at, glyphs)?)?)?;
         if charset_is_identity(block, glyphs)? {
             return Some(None);
         }
@@ -580,20 +632,20 @@ fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) ->
         Some(charset)
     } else if charset_value > PREDEFINED_CHARSET {
         let at = usize::try_from(charset_value).ok()?;
-        Some(data.get(at..at + charset_len(data, at, glyphs)?)?)
+        Some(data.get(at..at.checked_add(charset_len(data, at, glyphs)?)?)?)
     } else {
         None
     };
     let encoding = value(&top, ENCODING, 0).unwrap_or(0);
     let encoding_block = if !cid && encoding > PREDEFINED_ENCODING {
         let at = usize::try_from(encoding).ok()?;
-        Some(data.get(at..at + encoding_len(data, at)?)?)
+        Some(data.get(at..at.checked_add(encoding_len(data, at)?)?)?)
     } else {
         None
     };
     let fd_select_block = if cid {
         let at = offset(&top, FD_SELECT, 0)?;
-        Some(data.get(at..at + fd_select_len(data, at, glyphs)?)?)
+        Some(data.get(at..at.checked_add(fd_select_len(data, at, glyphs)?)?)?)
     } else {
         None
     };
@@ -687,10 +739,12 @@ fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) ->
         write_dict(&top, &replace)
     };
     let top_len = write_index(&[&replaced(&[0; 7])])?.len();
-    let mut at = names_end + top_len + (global_end - tops_end);
+    let mut at = names_end
+        .checked_add(top_len)?
+        .checked_add(global_end.checked_sub(tops_end)?)?;
     let mut place = |len: usize| -> Option<i32> {
         let here = i32::try_from(at).ok()?;
-        at += len;
+        at = at.checked_add(len)?;
         Some(here)
     };
     let charset_at = place(charset_block.map_or(0, <[u8]>::len))?;
@@ -834,28 +888,38 @@ fn push_entry(out: &mut Vec<u8>, op: u16, operands: &[i32]) {
 
 /// Appends `value` as a real operand (5176, table 5), to the millionth, which
 /// is finer than the 16.16 that readers keep of a value and of `BlueScale`'s
-/// thousandfold.
+/// thousandfold. Returns `None` if `value` is not finite.
 #[expect(
     clippy::disallowed_methods,
     reason = "an `f64` to the millionth has 317 characters at most, a nibble each"
 )]
-fn push_real(out: &mut Vec<u8>, value: f64) {
+fn push_real(out: &mut Vec<u8>, value: f64) -> Option<()> {
+    if !value.is_finite() {
+        return None;
+    }
     let text = format!("{value:.6}");
     let text = text.trim_end_matches('0').trim_end_matches('.');
-    let mut nibbles: Vec<u8> = text
-        .bytes()
-        .map(|byte| match byte {
+    let mut nibbles = Vec::new();
+    for byte in text.bytes() {
+        let nibble = match byte {
+            b'0'..=b'9' => byte - b'0',
             b'.' => 0x0a,
             b'-' => 0x0e,
-            digit => digit - b'0',
-        })
-        .collect();
+            _ => return None,
+        };
+        nibbles.push(nibble);
+    }
+    if nibbles.is_empty() || nibbles.as_slice() == [0x0e] {
+        nibbles.clear();
+        nibbles.push(0);
+    }
     nibbles.push(0x0f);
     if !nibbles.len().is_multiple_of(2) {
         nibbles.push(0x0f);
     }
     out.push(30);
     out.extend(nibbles.chunks(2).map(|pair| pair[0] << 4 | pair[1]));
+    Some(())
 }
 
 /// The bytes of the Private DICT of font DICT `fd`, which is the Top DICT's
@@ -880,6 +944,9 @@ fn private_dict(data: &[u8], fd: usize) -> Option<&[u8]> {
 /// `scale` scales; the bytes of each operand stay as they are at a scale of
 /// one.
 pub(super) fn hint_values(data: &[u8], fd: usize, scale: f64) -> Option<Vec<u8>> {
+    if !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
     let entries = dict(private_dict(data, fd)?)?;
     let unscaled = |by: f64| (by - 1.0).abs() < f64::EPSILON;
     let mut out = Vec::new();
@@ -903,7 +970,8 @@ pub(super) fn hint_values(data: &[u8], fd: usize, scale: f64) -> Option<Vec<u8>>
             out.extend_from_slice(&entry.operands);
         } else {
             for number in &entry.numbers {
-                push_real(&mut out, number.filter(|number| number.is_finite())? * by);
+                let scaled = (*number)? * by;
+                push_real(&mut out, scaled)?;
             }
         }
         push_operator(&mut out, entry.op);
@@ -917,7 +985,7 @@ pub(super) fn hint_values(data: &[u8], fd: usize, scale: f64) -> Option<Vec<u8>>
         ];
         for (op, value) in defaults {
             if !entries.iter().any(|entry| entry.op == op) {
-                push_real(&mut out, value);
+                push_real(&mut out, value)?;
                 push_operator(&mut out, op);
             }
         }
@@ -1001,10 +1069,15 @@ pub(super) fn cid_keyed(
     let strings = write_index(&[b"Adobe", b"Identity"])?;
     let global = write_index(&[])?;
     let top_len = write_index(&[&top(0, 0, 0, 0)])?.len();
-    let charset_at = header.len() + names.len() + top_len + strings.len() + global.len();
-    let fd_select_at = charset_at + charset.len();
-    let charstrings_at = fd_select_at + fd_select.len();
-    let fd_array_at = charstrings_at + charstrings.len();
+    let charset_at = header
+        .len()
+        .checked_add(names.len())?
+        .checked_add(top_len)?
+        .checked_add(strings.len())?
+        .checked_add(global.len())?;
+    let fd_select_at = charset_at.checked_add(charset.len())?;
+    let charstrings_at = fd_select_at.checked_add(fd_select.len())?;
+    let fd_array_at = charstrings_at.checked_add(charstrings.len())?;
     // The Font DICTs, with the Private DICTs in order from `private_at`.
     let font_dicts = |mut private_at: i32| -> Option<Vec<u8>> {
         let mut dicts = Vec::new();
@@ -1018,12 +1091,17 @@ pub(super) fn cid_keyed(
         let dicts: Vec<&[u8]> = dicts.iter().map(Vec::as_slice).collect();
         write_index(&dicts)
     };
-    let private_at = i32::try_from(fd_array_at + font_dicts(0)?.len()).ok()?;
+    let private_at = i32::try_from(fd_array_at.checked_add(font_dicts(0)?.len())?).ok()?;
     let at = |offset: usize| i32::try_from(offset).ok();
 
+    let privates_len = privates
+        .iter()
+        .try_fold(0_usize, |sum, private| sum.checked_add(private.len()))?;
     let mut out = Vec::new();
     out.try_reserve(
-        usize::try_from(private_at).ok()? + privates.iter().map(Vec::len).sum::<usize>(),
+        usize::try_from(private_at)
+            .ok()?
+            .checked_add(privates_len)?,
     )
     .ok()?;
     out.extend_from_slice(&header);
@@ -1044,4 +1122,175 @@ pub(super) fn cid_keyed(
         out.extend_from_slice(private);
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hint_values_rejects_non_finite_scaled_real() {
+        // Real operand `1e308` followed by StdHW operator (10).
+        // CFF real encoding: 0x1E (real), nibbles: 1, E(0xB), 3, 0, 8, end(0xF) -> 1E 1B 30 8F
+        let private = [0x1E_u8, 0x1B, 0x30, 0x8F, 10];
+        let header = [1_u8, 0, 4, 1];
+        let names = write_index(&[b"F"]).unwrap();
+        let make_top = |private_offset: i32| {
+            let mut dict = Vec::new();
+            push_entry(&mut dict, PRIVATE, &[private.len() as i32, private_offset]);
+            write_index(&[&dict]).unwrap()
+        };
+        let top_len = make_top(0).len();
+        let private_offset = (header.len() + names.len() + top_len) as i32;
+        let tops = make_top(private_offset);
+        assert_eq!(tops.len(), top_len);
+        let mut cff = Vec::new();
+        cff.extend_from_slice(&header);
+        cff.extend_from_slice(&names);
+        cff.extend_from_slice(&tops);
+        cff.extend_from_slice(&private);
+        assert!(hint_values(&cff, 0, 1.0).is_some());
+        assert!(hint_values(&cff, 0, 10.0).is_none());
+        assert!(hint_values(&cff, 0, 0.0).is_none());
+        assert!(hint_values(&cff, 0, -1.0).is_none());
+        assert!(hint_values(&cff, 0, f64::NAN).is_none());
+        assert!(hint_values(&cff, 0, f64::INFINITY).is_none());
+        assert!(hint_values(&cff, 0, 1e-311).is_none());
+    }
+
+    #[test]
+    fn hint_values_rejects_default_blue_scale_overflow_on_tiny_scale() {
+        // Empty Private DICT: only defaults (BLUE_SCALE = 0.039625 / scale, ...) apply.
+        let private: [u8; 0] = [];
+        let header = [1_u8, 0, 4, 1];
+        let names = write_index(&[b"F"]).unwrap();
+        let make_top = |private_offset: i32| {
+            let mut dict = Vec::new();
+            push_entry(&mut dict, PRIVATE, &[0, private_offset]);
+            write_index(&[&dict]).unwrap()
+        };
+        let top_len = make_top(0).len();
+        let private_offset = (header.len() + names.len() + top_len) as i32;
+        let tops = make_top(private_offset);
+        let mut cff = Vec::new();
+        cff.extend_from_slice(&header);
+        cff.extend_from_slice(&names);
+        cff.extend_from_slice(&tops);
+        cff.extend_from_slice(&private);
+        assert!(hint_values(&cff, 0, 2.0).is_some());
+        assert!(hint_values(&cff, 0, 0.0).is_none());
+        assert!(hint_values(&cff, 0, 1e-311).is_none());
+    }
+
+    #[test]
+    fn push_real_rejects_non_finite_and_roundtrips_finite() {
+        let mut out = Vec::new();
+        assert!(push_real(&mut out, f64::NAN).is_none());
+        assert!(push_real(&mut out, f64::INFINITY).is_none());
+        assert!(push_real(&mut out, f64::NEG_INFINITY).is_none());
+        assert!(out.is_empty());
+
+        for value in [0.0, -0.0, 1.0, -42.5, 0.039625, 1e-7] {
+            out.clear();
+            assert!(push_real(&mut out, value).is_some());
+            assert_eq!(out[0], 30);
+            let parsed = real(&out[1..]).expect("encoded real parses back");
+            assert!((parsed - value).abs() <= 1e-6, "{value} -> {parsed}");
+        }
+    }
+
+    #[test]
+    fn index_rejects_zero_offset_and_unterminated_dict_real() {
+        // count=1, offSize=1, offsets=[0, 1]: offset 0 would alias the offset array.
+        assert!(index(&[0, 1, 1, 0, 1], 0).is_none());
+        // count=1, offSize=4, offsets=[1, u32::MAX]: would wrap `base + next` on 32-bit.
+        assert!(index(&[0, 1, 4, 0, 0, 0, 1, 0xff, 0xff, 0xff, 0xff], 0).is_none());
+        // Valid empty item: count=1, offSize=1, offsets=[1, 1].
+        let (ranges, end) = index(&[0, 1, 1, 1, 1], 0).expect("empty item index reads");
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0], 5..5);
+        assert_eq!(end, 5);
+        // Unterminated real operand in DICT (missing 0x0f nibble).
+        assert!(dict(&[30, 0x12]).is_none());
+        assert!(dict(&[30]).is_none());
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Every `i32` encoded by `push_int` decodes back identically via `decode_int`.
+    #[kani::proof]
+    fn kani_cff_push_int_roundtrip() {
+        let val: i32 = kani::any();
+        let mut encoded = Vec::with_capacity(5);
+        push_int(&mut encoded, val);
+        let len = encoded.len();
+        assert!((1..=5).contains(&len));
+        assert_eq!(decode_int(&encoded, 0), Some((val, len)));
+    }
+
+    /// `index_off_size` chooses the minimal `offSize` in `1..=4` without shift
+    /// overflow across all `usize` values.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn kani_cff_index_off_size_minimal() {
+        let total: usize = kani::any();
+        match index_off_size(total) {
+            Some(size) => {
+                assert!((1..=4).contains(&size));
+                let t = total as u64;
+                assert!(t < (1_u64 << (8 * size)));
+                if size > 1 {
+                    assert!(t >= (1_u64 << (8 * (size - 1))));
+                }
+            }
+            None => {
+                assert!((total as u64) >= (1_u64 << 32));
+            }
+        }
+    }
+
+    /// `charset_len`, `encoding_len`, and `fd_select_len` never panic on
+    /// arbitrary bytes and offsets (including near `usize::MAX`).
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn kani_cff_table_lengths_never_panic() {
+        let data: [u8; 8] = kani::any();
+        let at: usize = kani::any();
+        let glyphs: usize = kani::any();
+        kani::assume(glyphs <= 4);
+        let _ = charset_len(&data, at, glyphs);
+        let _ = encoding_len(&data, at);
+        let _ = fd_select_len(&data, at, glyphs);
+    }
+
+    /// `index_step` rejects offset 0 and checked-overflowing offsets, and
+    /// guarantees every returned range starts strictly after `base` and stays
+    /// ordered within `data_len`.
+    #[kani::proof]
+    fn kani_cff_index_step_bounds() {
+        let base: usize = kani::any();
+        let data_len: usize = kani::any();
+        let prev: usize = kani::any();
+        let next: usize = kani::any();
+        match index_step(base, data_len, prev, next) {
+            Some(range) => {
+                assert!(prev >= 1);
+                assert!(next >= prev);
+                assert!(range.start > base);
+                assert!(range.start <= range.end);
+                assert!(range.end <= data_len);
+            }
+            None => {
+                assert!(
+                    prev == 0
+                        || next < prev
+                        || base.checked_add(prev).is_none()
+                        || base.checked_add(next).is_none_or(|end| end > data_len)
+                );
+            }
+        }
+    }
 }

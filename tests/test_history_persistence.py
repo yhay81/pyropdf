@@ -43,6 +43,31 @@ def resealed(body: bytes) -> bytes:
     return body + hashlib.sha256(body).digest()
 
 
+def test_new_scalar_history_matches_the_format_one_writer_byte_for_byte() -> None:
+    doc = Document()
+    doc.objects.add(42)
+    expected = bytes.fromhex(
+        "5059524f5044462d484953544f52590a01000000ae1617e4d9f660d6262c77292ea60a3e303757f01a09d2340"
+        "959ec510e06b0a701000000020000000000000003000000000000000000000000000000000000000004000000"
+        "0000000000010000000300000000000002000000343200000000b664caf52d1d302d62c49aebeb836a349e51"
+        "ab3526ea14ebf6d6b963cacb3210"
+    )
+    assert doc.history.save() == expected
+    reader = Document()
+    reader.history.restore(expected)
+    assert reader.history.save() == expected
+
+
+def test_existing_ordinary_array_and_dictionary_edits_keep_the_legacy_format() -> None:
+    source = Document()
+    number = source.objects.add([1, 2, 3])
+    doc = pyropdf.open(source.to_bytes())
+    doc.objects[number].append(4)
+    doc.catalog["Unrelated"] = {"Nested": [b"key", 42]}
+    doc.catalog["Kids"] = [doc.objects[number]]
+    assert struct.unpack_from("<I", doc.history.save(), 16) == (1,)
+
+
 def test_restore_undoes_and_redoes_the_named_steps() -> None:
     saved = edited()
     data = saved.history.save()
@@ -203,7 +228,7 @@ def corruptions(data: bytes) -> dict[str, bytes]:
         "truncated": data[:-1],
         "flipped": data[:100] + bytes([data[100] ^ 1]) + data[101:],
         "magic": resealed(b"X" + body[1:]),
-        "format": resealed(body[:16] + struct.pack("<I", 2) + body[20:]),
+        "format": resealed(body[:16] + struct.pack("<I", 3) + body[20:]),
         "position": resealed(body[: versions_at - 4] + struct.pack("<I", 9) + body[versions_at:]),
         "count": resealed(body[:versions_at] + struct.pack("<I", 99) + body[versions_at + 4 :]),
         "trailing": resealed(body + b"\0"),

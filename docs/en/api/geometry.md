@@ -27,7 +27,7 @@ up, also for the results of arithmetic. The operators and members are
 those of `Rect`, except `abs()`, truth testing, and
 `round()`, which `IRect` omits.
 
-### `IRect.EMPTY`
+### `EMPTY`
 
 ```python
 IRect.EMPTY: IRect
@@ -35,7 +35,7 @@ IRect.EMPTY: IRect
 
 `Rect.EMPTY` as an integer rectangle.
 
-### `IRect.INFINITE`
+### `INFINITE`
 
 ```python
 IRect.INFINITE: IRect
@@ -43,31 +43,31 @@ IRect.INFINITE: IRect
 
 `Rect.INFINITE` as an integer rectangle.
 
-### `IRect.x0`
+### `x0`
 
 ```python
 IRect.x0: int
 ```
 
-### `IRect.y0`
+### `y0`
 
 ```python
 IRect.y0: int
 ```
 
-### `IRect.x1`
+### `x1`
 
 ```python
 IRect.x1: int
 ```
 
-### `IRect.y1`
+### `y1`
 
 ```python
 IRect.y1: int
 ```
 
-### `IRect.width`
+### `width`
 
 ```python
 IRect.width: int
@@ -75,7 +75,7 @@ IRect.width: int
 
 `x1 - x0`, or 0 when that is negative.
 
-### `IRect.height`
+### `height`
 
 ```python
 IRect.height: int
@@ -83,7 +83,7 @@ IRect.height: int
 
 `y1 - y0`, or 0 when that is negative.
 
-### `IRect.is_empty`
+### `is_empty`
 
 ```python
 IRect.is_empty: bool
@@ -91,7 +91,7 @@ IRect.is_empty: bool
 
 Whether the rectangle encloses no area.
 
-### `IRect.is_valid`
+### `is_valid`
 
 ```python
 IRect.is_valid: bool
@@ -99,7 +99,7 @@ IRect.is_valid: bool
 
 Whether `x0 <= x1` and `y0 <= y1`.
 
-### `IRect.is_infinite`
+### `is_infinite`
 
 ```python
 IRect.is_infinite: bool
@@ -107,7 +107,7 @@ IRect.is_infinite: bool
 
 Whether this is MuPDF's infinite rectangle.
 
-### `IRect.top_left`
+### `top_left`
 
 ```python
 IRect.top_left: Point
@@ -115,7 +115,7 @@ IRect.top_left: Point
 
 `(x0, y0)`.
 
-### `IRect.top_right`
+### `top_right`
 
 ```python
 IRect.top_right: Point
@@ -123,7 +123,7 @@ IRect.top_right: Point
 
 `(x1, y0)`.
 
-### `IRect.bottom_left`
+### `bottom_left`
 
 ```python
 IRect.bottom_left: Point
@@ -131,7 +131,7 @@ IRect.bottom_left: Point
 
 `(x0, y1)`.
 
-### `IRect.bottom_right`
+### `bottom_right`
 
 ```python
 IRect.bottom_right: Point
@@ -139,7 +139,7 @@ IRect.bottom_right: Point
 
 `(x1, y1)`.
 
-### `IRect.quad`
+### `quad`
 
 ```python
 IRect.quad: Quad
@@ -147,7 +147,7 @@ IRect.quad: Quad
 
 The corners as a `Quad`, in the rectangle's own order.
 
-### `IRect.__contains__`
+### `__contains__`
 
 ```python
 IRect.__contains__(x: object) -> bool
@@ -160,7 +160,7 @@ valid rectangle, or the bounding box of a quad, is inside when it
 lies within the edges, which count as inside. A number tests the
 coordinates, as for a tuple; any other value is not contained.
 
-### `IRect.intersects`
+### `intersects`
 
 ```python
 IRect.intersects(r: Sequence[float]) -> bool
@@ -168,7 +168,7 @@ IRect.intersects(r: Sequence[float]) -> bool
 
 Return whether both rectangles are finite and share some area.
 
-### `IRect.area`
+### `area`
 
 ```python
 IRect.area(*, unit: Literal['px', 'in', 'cm', 'mm'] = 'px') -> float
@@ -176,7 +176,7 @@ IRect.area(*, unit: Literal['px', 'in', 'cm', 'mm'] = 'px') -> float
 
 Return `width * height` in `px` (PDF points), `in`, `cm`, or `mm` squared.
 
-### `IRect.norm`
+### `norm`
 
 ```python
 IRect.norm() -> float
@@ -184,7 +184,7 @@ IRect.norm() -> float
 
 Return the Euclidean norm of the four coordinates.
 
-### `IRect.normalized`
+### `normalized`
 
 ```python
 IRect.normalized() -> Self
@@ -192,7 +192,7 @@ IRect.normalized() -> Self
 
 Return the rectangle with `x0 <= x1` and `y0 <= y1`.
 
-### `IRect.morph`
+### `morph`
 
 ```python
 IRect.morph(p: Sequence[float], m: Sequence[float]) -> Quad
@@ -200,7 +200,7 @@ IRect.morph(p: Sequence[float], m: Sequence[float]) -> Quad
 
 Transform the corners by `m` around the fixed point `p`.
 
-### `IRect.torect`
+### `torect`
 
 ```python
 IRect.torect(r: Sequence[float]) -> Matrix
@@ -208,7 +208,7 @@ IRect.torect(r: Sequence[float]) -> Matrix
 
 Return the matrix that maps this rectangle onto `r`.
 
-### `IRect.rect`
+### `rect`
 
 ```python
 IRect.rect: Rect
@@ -237,7 +237,7 @@ explicit matrix with six coordinates or a six-item sequence.
 or the zero matrix for a singular matrix. Division by a singular matrix
 raises `ZeroDivisionError`. Coordinates must be finite.
 
-### `Matrix.IDENTITY`
+### `IDENTITY`
 
 ```python
 Matrix.IDENTITY: Matrix
@@ -245,43 +245,43 @@ Matrix.IDENTITY: Matrix
 
 The identity matrix `(1, 0, 0, 1, 0, 0)`.
 
-### `Matrix.a`
+### `a`
 
 ```python
 Matrix.a: float
 ```
 
-### `Matrix.b`
+### `b`
 
 ```python
 Matrix.b: float
 ```
 
-### `Matrix.c`
+### `c`
 
 ```python
 Matrix.c: float
 ```
 
-### `Matrix.d`
+### `d`
 
 ```python
 Matrix.d: float
 ```
 
-### `Matrix.e`
+### `e`
 
 ```python
 Matrix.e: float
 ```
 
-### `Matrix.f`
+### `f`
 
 ```python
 Matrix.f: float
 ```
 
-### `Matrix.__abs__`
+### `__abs__`
 
 ```python
 Matrix.__abs__() -> float
@@ -289,7 +289,7 @@ Matrix.__abs__() -> float
 
 Return the Euclidean norm of all six coordinates.
 
-### `Matrix.__bool__`
+### `__bool__`
 
 ```python
 Matrix.__bool__() -> bool
@@ -297,7 +297,7 @@ Matrix.__bool__() -> bool
 
 Return whether any coordinate is nonzero.
 
-### `Matrix.is_rectilinear`
+### `is_rectilinear`
 
 ```python
 Matrix.is_rectilinear: bool
@@ -305,7 +305,7 @@ Matrix.is_rectilinear: bool
 
 Whether axis-aligned rectangles remain axis-aligned.
 
-### `Matrix.planish`
+### `planish`
 
 ```python
 Matrix.planish(p1: Sequence[float], p2: Sequence[float]) -> Matrix
@@ -331,19 +331,19 @@ origin. `+` and `-` add or subtract coordinates; `*` and `/`
 scale by a number or apply a matrix and its inverse. Coordinates must
 be finite. Tuple indexing, unpacking, equality, and hashing remain.
 
-### `Point.x`
+### `x`
 
 ```python
 Point.x: float
 ```
 
-### `Point.y`
+### `y`
 
 ```python
 Point.y: float
 ```
 
-### `Point.__abs__`
+### `__abs__`
 
 ```python
 Point.__abs__() -> float
@@ -351,7 +351,7 @@ Point.__abs__() -> float
 
 Return the distance from the origin.
 
-### `Point.__bool__`
+### `__bool__`
 
 ```python
 Point.__bool__() -> bool
@@ -359,7 +359,7 @@ Point.__bool__() -> bool
 
 Return whether this point differs from the origin.
 
-### `Point.unit`
+### `unit`
 
 ```python
 Point.unit: Point
@@ -367,7 +367,7 @@ Point.unit: Point
 
 The direction vector of length one, or the origin for zero.
 
-### `Point.abs_unit`
+### `abs_unit`
 
 ```python
 Point.abs_unit: Point
@@ -375,7 +375,7 @@ Point.abs_unit: Point
 
 The direction vector with nonnegative coordinates.
 
-### `Point.distance_to`
+### `distance_to`
 
 ```python
 Point.distance_to(
@@ -408,7 +408,7 @@ quad's corners; `*` and `/` scale or transform every corner by a
 matrix and its inverse; `in` tests containment. Tuple indexing,
 unpacking, equality, and hashing remain.
 
-### `Quad.EMPTY`
+### `EMPTY`
 
 ```python
 Quad.EMPTY: Quad
@@ -416,7 +416,7 @@ Quad.EMPTY: Quad
 
 The quad of `Rect.EMPTY`.
 
-### `Quad.INFINITE`
+### `INFINITE`
 
 ```python
 Quad.INFINITE: Quad
@@ -424,31 +424,31 @@ Quad.INFINITE: Quad
 
 The quad of `Rect.INFINITE`.
 
-### `Quad.ul`
+### `ul`
 
 ```python
 Quad.ul: Point
 ```
 
-### `Quad.ur`
+### `ur`
 
 ```python
 Quad.ur: Point
 ```
 
-### `Quad.ll`
+### `ll`
 
 ```python
 Quad.ll: Point
 ```
 
-### `Quad.lr`
+### `lr`
 
 ```python
 Quad.lr: Point
 ```
 
-### `Quad.rect`
+### `rect`
 
 ```python
 Quad.rect: Rect
@@ -456,7 +456,7 @@ Quad.rect: Rect
 
 The smallest rectangle that contains the four corners.
 
-### `Quad.width`
+### `width`
 
 ```python
 Quad.width: float
@@ -464,7 +464,7 @@ Quad.width: float
 
 The longer of the top and bottom edges.
 
-### `Quad.height`
+### `height`
 
 ```python
 Quad.height: float
@@ -472,7 +472,7 @@ Quad.height: float
 
 The longer of the left and right edges.
 
-### `Quad.is_empty`
+### `is_empty`
 
 ```python
 Quad.is_empty: bool
@@ -480,7 +480,7 @@ Quad.is_empty: bool
 
 Whether `width` or `height` is below 1e-5.
 
-### `Quad.is_infinite`
+### `is_infinite`
 
 ```python
 Quad.is_infinite: bool
@@ -488,7 +488,7 @@ Quad.is_infinite: bool
 
 Whether the bounding rectangle is infinite.
 
-### `Quad.is_convex`
+### `is_convex`
 
 ```python
 Quad.is_convex: bool
@@ -499,7 +499,7 @@ Whether the outline `ul, ur, lr, ll` encloses a convex area.
 Each diagonal must separate, or touch, the two corners off it, so
 degenerate quads whose corners are collinear count as convex.
 
-### `Quad.is_rectangular`
+### `is_rectangular`
 
 ```python
 Quad.is_rectangular: bool
@@ -511,7 +511,7 @@ The sine of each corner's angle must be within 1e-5 of 1, so a
 mirror image of a rectangle's quad, or a quad with a zero-length
 edge, is not rectangular.
 
-### `Quad.__abs__`
+### `__abs__`
 
 ```python
 Quad.__abs__() -> float
@@ -519,7 +519,7 @@ Quad.__abs__() -> float
 
 Return `|ur - ul| * |ll - ul|`, the area of a rectangular quad, or 0 when empty.
 
-### `Quad.__bool__`
+### `__bool__`
 
 ```python
 Quad.__bool__() -> bool
@@ -527,7 +527,7 @@ Quad.__bool__() -> bool
 
 Return whether the quad is not empty.
 
-### `Quad.__contains__`
+### `__contains__`
 
 ```python
 Quad.__contains__(x: object) -> bool
@@ -540,7 +540,7 @@ A point is inside when it lies in triangle `ul, ur, lr` or
 nothing. A rectangle or quad is inside when all four of its corners
 are. Numbers and other values are not contained.
 
-### `Quad.morph`
+### `morph`
 
 ```python
 Quad.morph(p: Sequence[float], m: Sequence[float]) -> Quad
@@ -570,7 +570,7 @@ includes a point or rectangle; `&` intersects; `in` tests
 containment. `width` and `height` are never negative. Coordinates
 must be finite. Tuple indexing, unpacking, equality, and hashing remain.
 
-### `Rect.EMPTY`
+### `EMPTY`
 
 ```python
 Rect.EMPTY: Rect
@@ -578,7 +578,7 @@ Rect.EMPTY: Rect
 
 MuPDF's empty rectangle, the infinite one with its corners exchanged.
 
-### `Rect.INFINITE`
+### `INFINITE`
 
 ```python
 Rect.INFINITE: Rect
@@ -586,31 +586,31 @@ Rect.INFINITE: Rect
 
 MuPDF's infinite rectangle, from -2147483648 to 2147483520 on both axes.
 
-### `Rect.x0`
+### `x0`
 
 ```python
 Rect.x0: float
 ```
 
-### `Rect.y0`
+### `y0`
 
 ```python
 Rect.y0: float
 ```
 
-### `Rect.x1`
+### `x1`
 
 ```python
 Rect.x1: float
 ```
 
-### `Rect.y1`
+### `y1`
 
 ```python
 Rect.y1: float
 ```
 
-### `Rect.width`
+### `width`
 
 ```python
 Rect.width: float
@@ -618,7 +618,7 @@ Rect.width: float
 
 `x1 - x0`, or 0 when that is negative.
 
-### `Rect.height`
+### `height`
 
 ```python
 Rect.height: float
@@ -626,7 +626,7 @@ Rect.height: float
 
 `y1 - y0`, or 0 when that is negative.
 
-### `Rect.is_empty`
+### `is_empty`
 
 ```python
 Rect.is_empty: bool
@@ -634,7 +634,7 @@ Rect.is_empty: bool
 
 Whether the rectangle encloses no area.
 
-### `Rect.is_valid`
+### `is_valid`
 
 ```python
 Rect.is_valid: bool
@@ -642,7 +642,7 @@ Rect.is_valid: bool
 
 Whether `x0 <= x1` and `y0 <= y1`.
 
-### `Rect.is_infinite`
+### `is_infinite`
 
 ```python
 Rect.is_infinite: bool
@@ -650,7 +650,7 @@ Rect.is_infinite: bool
 
 Whether this is MuPDF's infinite rectangle.
 
-### `Rect.top_left`
+### `top_left`
 
 ```python
 Rect.top_left: Point
@@ -658,7 +658,7 @@ Rect.top_left: Point
 
 `(x0, y0)`.
 
-### `Rect.top_right`
+### `top_right`
 
 ```python
 Rect.top_right: Point
@@ -666,7 +666,7 @@ Rect.top_right: Point
 
 `(x1, y0)`.
 
-### `Rect.bottom_left`
+### `bottom_left`
 
 ```python
 Rect.bottom_left: Point
@@ -674,7 +674,7 @@ Rect.bottom_left: Point
 
 `(x0, y1)`.
 
-### `Rect.bottom_right`
+### `bottom_right`
 
 ```python
 Rect.bottom_right: Point
@@ -682,7 +682,7 @@ Rect.bottom_right: Point
 
 `(x1, y1)`.
 
-### `Rect.quad`
+### `quad`
 
 ```python
 Rect.quad: Quad
@@ -690,7 +690,7 @@ Rect.quad: Quad
 
 The corners as a `Quad`, in the rectangle's own order.
 
-### `Rect.__contains__`
+### `__contains__`
 
 ```python
 Rect.__contains__(x: object) -> bool
@@ -703,7 +703,7 @@ valid rectangle, or the bounding box of a quad, is inside when it
 lies within the edges, which count as inside. A number tests the
 coordinates, as for a tuple; any other value is not contained.
 
-### `Rect.intersects`
+### `intersects`
 
 ```python
 Rect.intersects(r: Sequence[float]) -> bool
@@ -711,7 +711,7 @@ Rect.intersects(r: Sequence[float]) -> bool
 
 Return whether both rectangles are finite and share some area.
 
-### `Rect.area`
+### `area`
 
 ```python
 Rect.area(*, unit: Literal['px', 'in', 'cm', 'mm'] = 'px') -> float
@@ -719,7 +719,7 @@ Rect.area(*, unit: Literal['px', 'in', 'cm', 'mm'] = 'px') -> float
 
 Return `width * height` in `px` (PDF points), `in`, `cm`, or `mm` squared.
 
-### `Rect.norm`
+### `norm`
 
 ```python
 Rect.norm() -> float
@@ -727,7 +727,7 @@ Rect.norm() -> float
 
 Return the Euclidean norm of the four coordinates.
 
-### `Rect.normalized`
+### `normalized`
 
 ```python
 Rect.normalized() -> Self
@@ -735,7 +735,7 @@ Rect.normalized() -> Self
 
 Return the rectangle with `x0 <= x1` and `y0 <= y1`.
 
-### `Rect.morph`
+### `morph`
 
 ```python
 Rect.morph(p: Sequence[float], m: Sequence[float]) -> Quad
@@ -743,7 +743,7 @@ Rect.morph(p: Sequence[float], m: Sequence[float]) -> Quad
 
 Transform the corners by `m` around the fixed point `p`.
 
-### `Rect.torect`
+### `torect`
 
 ```python
 Rect.torect(r: Sequence[float]) -> Matrix
@@ -751,7 +751,7 @@ Rect.torect(r: Sequence[float]) -> Matrix
 
 Return the matrix that maps this rectangle onto `r`.
 
-### `Rect.__abs__`
+### `__abs__`
 
 ```python
 Rect.__abs__() -> float
@@ -759,7 +759,7 @@ Rect.__abs__() -> float
 
 Return the area, or 0 for an empty or infinite rectangle.
 
-### `Rect.__bool__`
+### `__bool__`
 
 ```python
 Rect.__bool__() -> bool
@@ -767,7 +767,7 @@ Rect.__bool__() -> bool
 
 Return whether any coordinate is nonzero.
 
-### `Rect.round`
+### `round`
 
 ```python
 Rect.round() -> IRect

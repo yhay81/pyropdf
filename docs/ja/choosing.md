@@ -8,7 +8,7 @@ description: pyropdf が得意なこと、まだできないこと、PyMuPDF・p
 ## pyropdf が向いている場面
 
 - **信頼できる編集。** 編集はすべて版になります。失敗したトランザクションは自分で元に戻り、
-  `doc.history` で undo と redo ができ、`doc.changes` は保存の前に、どの署名と PDF/A・PDF/UA
+  `doc.history` で undo と redo ができ、`doc.changes()` は保存の前に、どの署名と PDF/A・PDF/UA
   の宣言が壊れるかを教えます。
 - **触れていない部分を保つ保存。** 増分保存は変わったオブジェクトだけを追記するので、元のバイト列に
   対する署名は有効なままで、編集なしの保存は入力を再現します。
@@ -34,17 +34,17 @@ description: pyropdf が得意なこと、まだできないこと、PyMuPDF・p
 | undo と原子的なトランザクション | あり | ジャーナル | なし | なし |
 
 この中で最も機能が揃っているのは PyMuPDF で、pyropdf は自分をそれと比べて測っています。
-実在する 15 文書のコーパスを Apple Silicon の macOS で測り（描画の画素は `bytes(pixmap)` で読み取り）、pyropdf の時間を PyMuPDF の時間で割った比（小さいほど速い）：
+実在する 15 文書のコーパスを Apple Silicon の macOS で測り（pyropdf 0.3.1 と PyMuPDF 2.1 の比較、描画は生サンプル読み取り）、pyropdf の時間を PyMuPDF の時間で割った比（小さいほど速い）：
 
 | 操作 | pyropdf / PyMuPDF |
 | --- | ---: |
-| 開く | 0.21 |
-| テキスト | 0.80 |
-| 単語 | 0.79 |
-| 検索 | 1.19 |
-| 描画 72 dpi | 2.03 |
-| 描画 144 dpi | 2.34 |
-| 全体保存 | 0.15 |
+| 開く | 0.13 |
+| テキスト | 0.50 |
+| 単語 | 0.41 |
+| 検索 | 0.37 |
+| 描画 72 dpi | 1.77 |
+| 描画 144 dpi | 1.82 |
+| 全体保存 | 0.16 |
 
 方法、生の計測値、機能ごとの比較は
 [evidence/pymupdf-comparison](https://github.com/yhay81/pyropdf/tree/main/evidence/pymupdf-comparison)

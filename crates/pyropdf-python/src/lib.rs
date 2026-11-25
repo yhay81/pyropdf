@@ -56,9 +56,10 @@ mod _core {
     };
     #[pymodule_export]
     use super::annotations::{
-        _stale_appearances, annotation_add, annotation_draw_face, annotation_edit, annotation_face,
-        annotation_geometry, annotation_list, annotation_open, annotation_pixmap, annotation_popup,
-        annotation_read, annotation_remove, annotation_reply, annotation_text,
+        _stale_appearances, annotation_add, annotation_attach, annotation_draw_face,
+        annotation_edit, annotation_face, annotation_geometry, annotation_list, annotation_open,
+        annotation_pixmap, annotation_popup, annotation_read, annotation_remove, annotation_reply,
+        annotation_text,
     };
     #[pymodule_export]
     use super::buffers::{CharColumns, Column, PathColumns};
@@ -80,7 +81,7 @@ mod _core {
         OcrError, PasswordError, PdfError, StaleObjectError,
     };
     #[pymodule_export]
-    use super::fax::encode_ccitt_g4;
+    use super::fax::{encode_ccitt_g4, encode_image_samples};
     #[pymodule_export]
     use super::fonts::{
         _Font, _FontFile, mark_font_subset, set_fallback_faces, subset_font_program, type3_codes,
@@ -109,9 +110,11 @@ mod _core {
     use super::items::{page_content, page_paths};
     #[pymodule_export]
     use super::objects::{
-        decode_text_string, object_add, object_add_stream, object_delete, object_free_unreferenced,
-        object_get, object_insert, object_keys, object_len, object_lookup, object_numbers,
-        object_replace, object_set, schema_entry, schema_leaf, stream_read, stream_write,
+        attachment_reader, decode_text_string, object_add, object_add_stream, object_delete,
+        object_entry_identity, object_free_nominated, object_free_unreferenced, object_get,
+        object_insert, object_keys, object_len, object_lookup, object_numbers,
+        object_reference_xobjects, object_replace, object_set, schema_change, schema_created,
+        schema_entry, schema_leaf, stream_read, stream_write,
     };
     #[pymodule_export]
     use super::ocr::{_OcrEngine, insert_ocr_layer};
@@ -123,12 +126,14 @@ mod _core {
     #[pymodule_export]
     use super::pages::{
         CanvasSourceSnapshot, PageForms, PageSnapshot, canvas_copy_image, canvas_page_form,
-        canvas_source_page, copy_page_resources, import_pages, new_page, page_boxes, page_count,
-        page_geometry, page_index, page_object, page_objects, page_space, set_page_box,
-        set_page_rotation, set_pages, snapshot_pages,
+        canvas_source_page, copy_page_resources, import_pages, import_pages_with_source, new_page,
+        page_boxes, page_count, page_geometry, page_index, page_object, page_objects, page_space,
+        set_page_box, set_page_rotation, set_pages, snapshot_pages,
     };
     #[pymodule_export]
-    use super::pixmap::{Pixmap, pixmap_png, recolor_samples, render_page, render_pages};
+    use super::pixmap::{
+        DeviceCurve, Pixmap, device_curve, pixmap_png, recolor_samples, render_page, render_pages,
+    };
     #[pymodule_export]
     use super::render::render_page_svg;
     #[pymodule_export]
@@ -136,13 +141,13 @@ mod _core {
     #[pymodule_export]
     use super::schema::{schema_names, schema_object};
     #[pymodule_export]
-    use super::security::{security_state, unlock};
+    use super::security::{decrypt_legacy_cms, security_state, unlock, verify_integrity};
     #[pymodule_export]
     use super::shadings::{CanvasShadings, canvas_gradient, canvas_gradient_pattern};
     #[pymodule_export]
     use super::sign::{
         _Signer, begin_signing, certificate_read, document_file, sign_document, signature_read,
-        verify_ecdsa,
+        timestamp_document, verify_ecdsa,
     };
     #[pymodule_export]
     use super::text::{

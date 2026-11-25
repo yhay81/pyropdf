@@ -1,6 +1,6 @@
 ---
 title: Status and safety
-description: What pyropdf 0.3 covers, what it does not yet, and what pyropdf does and does not claim about input safety.
+description: What pyropdf 0.4 covers, what it does not yet, and what pyropdf does and does not claim about input safety.
 ---
 
 # Status and safety
@@ -13,7 +13,13 @@ each change. [DESIGN.md](https://github.com/yhay81/pyropdf/blob/main/DESIGN.md)
 describes its foundation, and [Specification coverage](specification.md)
 how much of ISO 32000-2 each part covers.
 
-Not yet in 0.3.1:
+For a released version, select its tag on the [releases page](https://github.com/yhay81/pyropdf/releases)
+and open `capabilities.zip`. The release notes link the same archive. Its report names the
+processor role, the tested operations, exclusions and limitations. Input profiles, external
+engines and optional runtimes are identified separately. Version 0.3.1 predates these
+archives and has no published verified scope.
+
+Not yet in 0.4.0:
 
 - redaction, and removing the content outside a rectangle, which need the
   content provenance of a hayro change under review;

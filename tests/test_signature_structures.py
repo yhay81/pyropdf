@@ -19,6 +19,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from test_attachments import build_raw_pdf
 
 import pyropdf
 from pyropdf import (
@@ -50,6 +51,74 @@ DOCUMENT = Path(__file__).parent / "assets" / "real_world" / "pdf20-simple.pdf"
 PEM = serialization.Encoding.PEM
 DER = serialization.Encoding.DER
 PKCS8 = serialization.PrivateFormat.PKCS8
+
+
+@pytest.mark.parametrize(
+    ("version", "extensions", "allowed"),
+    [
+        ("1.7", "/ESIC << /BaseVersion /1.7 /ExtensionLevel 2 >>", True),
+        ("1.7", "/ESIC << /BaseVersion /1.7 /ExtensionLevel 4 >>", True),
+        ("1.7", "/ADBE << /BaseVersion /1.7 /ExtensionLevel 8 >>", True),
+        ("1.7", "/ESIC << /BaseVersion /1.7 /ExtensionLevel 1 >>", False),
+        ("1.7", "/ADBE << /BaseVersion /1.7 /ExtensionLevel 7 >>", False),
+        ("1.7", "/ETSI_PAdES << /BaseVersion /1.7 /ExtensionLevel 2 >>", False),
+        ("1.7", "/ESIC << /BaseVersion /2.0 /ExtensionLevel 2 >>", False),
+        ("1.7", "/ESIC << /BaseVersion /1.7 /ExtensionLevel true >>", False),
+        ("1.7", "/ESIC << /BaseVersion /1.7 /ExtensionLevel 8 0 R >>", False),
+        ("1.7", "/ESIC 7 0 R", False),
+        ("1.7", "", False),
+        ("2.0", "", True),
+    ],
+)
+@pytest.mark.parametrize("combined", [False, True], ids=["field", "field-widget"])
+def test_check_recognizes_the_registered_cades_subfilter(
+    version: str, extensions: str, *, allowed: bool, combined: bool
+) -> None:
+    # The fixture exercises the structural subfilter rule independently of any signer.
+    annotations = "/Annots [5 0 R]" if combined else ""
+    widget = "/Type /Annot /Subtype /Widget /Rect [0 0 10 10] /F (mistyped)" if combined else ""
+    data = build_raw_pdf(
+        {
+            1: f"<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R /Extensions << {extensions} >> >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> {annotations} >>",
+            4: "<< /Fields [5 0 R] >>",
+            5: f"<< /FT /Sig /T (Approval) /V 6 0 R {widget} >>",
+            6: "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /ETSI.CAdES.detached /Contents <00> >>",
+            7: "<< /BaseVersion /1.7 /ExtensionLevel 2 >>",
+            8: "2",
+        }
+    ).replace(b"%PDF-1.7", f"%PDF-{version}".encode(), 1)
+    with pyropdf.open(data) as doc:
+        checked = doc.check().defects
+        defects = [item for item in checked if item.clause == "Signature/SubFilter"]
+        if combined:
+            assert any(item.xref == 5 and item.path == "F" for item in checked)
+    assert bool(defects) is not allowed
+    assert all(item.xref == 6 and item.path == "SubFilter" for item in defects)
+
+
+@pytest.mark.parametrize(("base", "level"), [("7 0 R", "2"), ("/1.7", "8 0 R")])
+def test_signing_refuses_an_indirect_pades_declaration_value(pki: LocalPki, base: str, level: str) -> None:
+    data = build_raw_pdf(
+        {
+            1: (
+                "<< /Type /Catalog /Pages 2 0 R /Extensions << /ESIC "
+                f"<< /BaseVersion {base} /ExtensionLevel {level} >> >> >>"
+            ),
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>",
+            7: "/1.7",
+            8: "2",
+        }
+    )
+    with pyropdf.open(data) as doc:
+        entry = doc.catalog["Extensions"]["ESIC"]
+        assert entry["BaseVersion"] == pyropdf.Name("1.7")
+        assert entry["ExtensionLevel"] == 2
+        with pytest.raises(pyropdf.PdfError, match="ESIC"):
+            doc.sign("Approval", pki.signer)
+        assert doc.to_bytes(incremental=True) == data
 
 
 def _pdf_with_version(version: str = "1.7") -> bytes:
@@ -1247,3 +1316,364 @@ def test_password_protected_outer_document_is_not_an_unencrypted_wrapper() -> No
         protected = wrapper.to_bytes(encryption=Encryption(user_password="outer", owner_password="owner"))
     with pyropdf.open(protected, password="outer") as opened:
         assert opened.encrypted_payload is None
+
+
+@pytest.mark.spec("signature-fields", "read", "create", "edit")
+@pytest.mark.parametrize("incremental", [False, True])
+def test_prepared_signature_seeds_preserve_shared_external_constraints(*, incremental: bool) -> None:
+    """Retain private keys and other users of the original field, seed, MDP and lock."""
+    from pyropdf import typed  # noqa: PLC0415
+
+    with pyropdf.open(_pdf_with_version("2.0")) as doc:
+        for name in ("First", "Second"):
+            doc.prepare_signature(name)
+        policy = doc.objects[doc.objects.add({"P": 3, "XXVendor": "mdp"})]
+        seed = doc.objects[doc.objects.add({"Type": Name("SV"), "MDP": policy, "XXVendor": "seed"})]
+        lock = doc.objects[doc.objects.add({"Type": Name("SigFieldLock"), "Action": Name("All"), "XXVendor": "lock"})]
+        for name in ("First", "Second"):
+            obj = doc.form[name].obj
+            obj["SV"], obj["Lock"], obj["TU"] = seed, lock, "field description"
+        raw = doc.to_bytes()
+    with pyropdf.open(raw) as doc:
+        doc.prepare_signature(
+            "First",
+            seed_values={"Ff": 8, "DigestMethod": [Name("SHA256")]},
+            reason="Approved",
+            doc_mdp=DocMdpPermission.FORM_FILLING_AND_SIGNATURES,
+            field_lock=FieldLock(
+                FieldMdpAction.INCLUDE, ["Second"], permission=DocMdpPermission.FORM_FILLING_AND_SIGNATURES
+            ),
+        )
+        before = doc.to_bytes(incremental=True)
+        with pytest.raises((pyropdf.PdfError, TypeError, KeyError, ValueError)):
+            doc.prepare_signature("First", seed_values={"Reasons": Name("not-an-array")})
+        with pytest.raises(pyropdf.PdfError, match="string-text"):
+            doc.prepare_signature("First", seed_values={"Reasons": [Name("not-text")]})
+        assert doc.to_bytes(incremental=True) == before
+        saved = doc.to_bytes(incremental=incremental)
+    with pyropdf.open(saved) as doc, pikepdf.open(io.BytesIO(saved)) as other:
+        one, two = (typed.FieldSig(doc.form[name].obj) for name in ("First", "Second"))
+        assert one.SV is not None
+        assert one.SV.Reasons is not None
+        assert one.SV.Reasons[0] == "Approved"
+        assert one.Lock is not None
+        assert one.Lock.P == 2
+        assert two.Lock is not None
+        assert two.Lock.Action == Name("All")
+        a, b = other.Root.AcroForm.Fields
+        assert a.SV.objgen != b.SV.objgen
+        assert a.Lock.objgen != b.Lock.objgen
+        assert (int(a.SV.MDP.P), int(b.SV.MDP.P)) == (2, 3)
+        assert list(a.SV.DigestMethod) == [pikepdf.Name.SHA256]
+        assert "/DigestMethod" not in b.SV
+        for entry in (a, b):
+            assert tuple(map(str, (entry.TU, entry.SV.XXVendor, entry.SV.MDP.XXVendor, entry.Lock.XXVendor))) == (
+                "field description",
+                "seed",
+                "mdp",
+                "lock",
+            )
+
+
+@pytest.mark.spec("signature-fields", "interpret")
+@pytest.mark.parametrize(
+    ("seed", "reason", "wanted"),
+    [
+        ({"Ff": 1, "Filter": Name("Other.Handler")}, None, "Filter"),
+        ({"Ff": 2, "SubFilter": [Name("ETSI.RFC3161")]}, None, "SubFilter"),
+        ({"Ff": 4, "V": 4}, None, "V"),
+        ({"Ff": 8, "Reasons": ["Review", "Approve"]}, "Reject", "Reasons"),
+        ({"Ff": 8, "Reasons": ["."]}, "Approve", "Reasons"),
+        ({"Ff": 8}, "Approve", "Reasons"),
+        ({"Ff": 16, "LegalAttestation": ["No active content"]}, None, "LegalAttestation"),
+        ({"Ff": 32, "AddRevInfo": True}, None, "AddRevInfo"),
+        ({"Ff": 64, "DigestMethod": [Name("SHA512")]}, None, "DigestMethod"),
+        ({"Ff": 128, "LockDocument": Name("false"), "MDP": {"P": 1}}, None, "LockDocument"),
+        ({"Ff": 256, "AppearanceFilter": "Custom"}, None, "AppearanceFilter"),
+        ({"Ff": True}, None, "Ff"),
+        ({"MDP": {"P": 9}}, None, "MDP"),
+        ({"TimeStamp": {"URL": "https://example.invalid/tsa", "Ff": 1}}, None, "TimeStamp"),
+        ({"Cert": {"Ff": 1, "Subject": [b"not the signing certificate"]}}, None, "Subject"),
+        ({"Cert": {"Ff": 8, "SubjectDN": [{"CN": "Other"}]}}, None, "SubjectDN"),
+        ({"Cert": {"Ff": 32, "KeyUsage": ["0XXXXXXXX"]}}, None, "KeyUsage"),
+        ({"Cert": {"SignaturePolicyOID": "1.2.3"}}, None, "SignaturePolicyOID"),
+    ],
+)
+def test_hand_built_unsigned_field_refuses_unmet_seed_before_callback(
+    pki: LocalPki, seed: dict[str, object], reason: str | None, wanted: str
+) -> None:
+    with pyropdf.open(_pdf_with_version("2.0")) as doc:
+        # Build an external unsigned form field without the preparation or widget API.
+        target = doc.objects[
+            doc.objects.add(
+                {
+                    "Type": Name("Annot"),
+                    "Subtype": Name("Widget"),
+                    "FT": Name("Sig"),
+                    "T": "External",
+                    "Rect": [0, 0, 0, 0],
+                    "F": 132,
+                    "P": doc.pages[0].obj,
+                }
+            )
+        ]
+        doc.pages[0].obj["Annots"] = [target]
+        doc.catalog["AcroForm"] = {"Fields": [target]}
+        doc.form["External"].obj["SV"] = doc.objects[doc.objects.add(seed)]
+        source = doc.to_bytes()
+    with pyropdf.open(source) as doc:
+        callback = Mock(side_effect=AssertionError("callback called"))
+        signer = Signer.callback([pki.signer_cert.public_bytes(DER), pki.root.public_bytes(DER)], callback)
+        with pytest.raises(ValueError, match=wanted):
+            doc.sign("External", signer, reason=reason)
+        assert doc.to_bytes(incremental=True) == source
+        assert not doc.form["External"].is_signed
+        callback.assert_not_called()
+
+
+@pytest.mark.spec("signature-fields", "read", "interpret", "create", "edit")
+@pytest.mark.spec("digital-signatures", "create", "edit")
+@pytest.mark.parametrize("existing", [False, True])
+def test_signatures_record_direct_build_components_and_obey_field_seed(pki: LocalPki, *, existing: bool) -> None:
+    with pyropdf.open(_pdf_with_version("2.0")) as doc:
+        doc.catalog["XXNote"] = "preserve me"
+        if existing:
+            doc.prepare_signature(
+                "Approve",
+                seed_values={
+                    "Ff": 1 | 2 | 4 | 8 | 32,
+                    "Filter": Name("Adobe.PPKLite"),
+                    "SubFilter": [Name("ETSI.CAdES.detached")],
+                    "V": 3,
+                    "Reasons": ["Reviewed", "Approved"],
+                    "DigestMethod": [Name("SHA256")],
+                    "AddRevInfo": False,
+                    "Cert": {
+                        "Type": Name("SVCert"),
+                        "Ff": 1 | 2 | 8 | 32,
+                        "Subject": [pki.signer_cert.public_bytes(DER)],
+                        "Issuer": [pki.root.public_bytes(DER)],
+                        "SubjectDN": [
+                            {"CN": pki.signer_cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value}
+                        ],
+                        "KeyUsage": ["11"],
+                    },
+                },
+                field_lock=FieldLock(FieldMdpAction.INCLUDE, ["Protected"]),
+            )
+        source = doc.to_bytes()
+    with pyropdf.open(source) as doc:
+        with pytest.raises(ValueError, match="Preview"):
+            doc.sign("Approve", pki.signer, build_properties={"App": {"Preview": True}})
+        assert doc.to_bytes(incremental=True) == source
+        data = doc.sign(
+            "Approve",
+            pki.signer,
+            reason="Approved",
+            build_properties={
+                "App": {"Name": "Example", "REx": "2.7", "OS": ["Linux"]},
+                "Filter": {"Name": "Example.Sign", "R": 8},
+                "PubSec": {"TrustedMode": False},
+                "SigQ": {"Preview": False, "R": 65536},
+            },
+        )
+        assert data.startswith(source)
+    with pyropdf.open(data) as doc, pikepdf.open(io.BytesIO(data)) as other:
+        [signature] = doc.signatures
+        assert signature.verify(pki.trust).valid
+        assert signature.verify(pki.trust).intact
+        assert not doc.check()
+        [field] = other.Root.AcroForm.Fields
+        assert str(other.Root.XXNote) == "preserve me"
+        assert str(field.V.Reason) == "Approved"
+        build = field.V.Prop_Build
+        assert not build.is_indirect
+        assert all(not component.is_indirect for component in build.values())
+        assert (str(build.App.Name), str(build.App.REx), list(map(str, build.App.OS))) == ("/Example", "2.7", ["Linux"])
+        assert int(build.Filter.R) == 8
+        assert not build.PubSec.TrustedMode
+        assert not build.SigQ.Preview
+        if existing:
+            assert signature.field_locks == (FieldLock(FieldMdpAction.INCLUDE, ["Protected"]),)
+            assert field.SV.Cert.Subject[0].as_bytes() == pki.signer_cert.public_bytes(DER)
+        if sysconfig.get_config_var("Py_GIL_DISABLED") != 1:
+            from asn1crypto import x509 as asn1_x509  # noqa: PLC0415
+            from pyhanko.pdf_utils.reader import PdfFileReader  # noqa: PLC0415
+            from pyhanko.sign.validation import validate_pdf_signature  # noqa: PLC0415
+            from pyhanko_certvalidator import ValidationContext  # noqa: PLC0415
+
+            [embedded] = PdfFileReader(io.BytesIO(data)).embedded_signatures
+            status = validate_pdf_signature(
+                embedded,
+                ValidationContext(trust_roots=[asn1_x509.Certificate.load(pki.trust[0])], allow_fetching=False),
+            )
+            assert status.intact
+            assert status.valid
+            assert status.trusted
+            assert status.seed_value_ok
+
+
+@pytest.mark.spec("signature-fields", "interpret", "edit")
+def test_conflicting_and_previous_field_locks_refuse_later_signing(pki: LocalPki) -> None:
+    with pyropdf.open(_pdf_with_version("2.0")) as doc:
+        doc.prepare_signature("First", field_lock=FieldLock(FieldMdpAction.INCLUDE, ["Locked"]))
+        for name in ("Locked", "Free"):
+            doc.prepare_signature(name)
+        before = doc.to_bytes(incremental=True)
+        with pytest.raises(ValueError, match="Lock"):
+            doc.sign("First", pki.signer, field_lock=FieldLock())
+        assert doc.to_bytes(incremental=True) == before
+        first = doc.sign("First", pki.signer)
+        with pytest.raises(ValueError, match="FieldMDP Include"):
+            doc.sign("Locked", pki.signer)
+        assert doc.to_bytes(incremental=True) == first
+        final = doc.sign("Free", pki.signer)
+        assert final.startswith(first)
+    with pikepdf.open(io.BytesIO(final)) as pdf:
+        assert str(pdf.Root.AcroForm.Fields[0].V.Prop_Build.App.REx) == pyropdf.__version__
+
+
+@pytest.mark.spec("signature-fields", "interpret")
+def test_required_timestamp_reason_omission_and_lock_permission(pki: LocalPki) -> None:
+    with pyropdf.open(_pdf_with_version("2.0")) as doc:
+        doc.prepare_signature(
+            "Approve",
+            seed_values={
+                "Ff": 8 | 128,
+                "Reasons": ["."],
+                "LockDocument": Name("true"),
+                "TimeStamp": {"URL": "https://example.invalid/tsa", "Ff": 1},
+            },
+        )
+        doc.prepare_signature("Later")
+        signed = doc.sign("Approve", pki.signer, timestamper=pki.timestamper)
+        [signature] = doc.signatures
+        assert signature.verify(pki.trust).timestamp_valid
+        assert doc.form["Approve"].lock == FieldLock(permission=DocMdpPermission.NO_CHANGES)
+        assert "Reason" not in doc.form["Approve"].obj["V"]
+        with pytest.raises(ValueError, match="FieldMDP All"):
+            doc.sign("Later", pki.signer)
+        assert doc.to_bytes(incremental=True) == signed
+
+
+def test_optional_seed_preferences_and_limits(pki: LocalPki) -> None:
+    with pyropdf.open(_pdf_with_version("2.0")) as doc:
+        doc.prepare_signature("Approval", seed_values={"Filter": Name("Unavailable"), "Reasons": ["Optional"]})
+        source = doc.to_bytes()
+    with pyropdf.open(source) as doc:
+        doc.sign("Approval", pki.signer, reason="Different")
+        assert doc.form["Approval"].obj["V"]["Reason"].text == "Different"
+    with pyropdf.open(source) as doc:
+        doc.form["Approval"].obj["SV"]["Ff"] = 8
+        doc.form["Approval"].obj["SV"]["Reasons"] = ["bounded"] * 4097
+        before = doc.to_bytes(incremental=True)
+        with pytest.raises(pyropdf.LimitError, match="budget"):
+            doc.sign("Approval", pki.signer)
+        assert doc.to_bytes(incremental=True) == before
+
+
+def test_unrelated_certificate_in_supplemental_chain_is_not_an_issuer(pki: LocalPki) -> None:
+    unrelated_key = ec.generate_private_key(ec.SECP256R1())
+    candidate = _issue_cert(
+        "Another CA",
+        unrelated_key.public_key(),
+        (unrelated_key, x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Another CA")])),
+        ca=True,
+    )
+    with pyropdf.open(_pdf_with_version("2.0")) as doc:
+        doc.prepare_signature("Approval", seed_values={"Cert": {"Ff": 2, "Issuer": [candidate.public_bytes(DER)]}})
+        callback = Mock(side_effect=AssertionError("callback called"))
+        signer = Signer.callback([pki.signer_cert.public_bytes(DER), candidate.public_bytes(DER)], callback)
+        before = doc.to_bytes(incremental=True)
+        with pytest.raises(ValueError, match="Issuer"):
+            doc.sign("Approval", signer)
+        callback.assert_not_called()
+        assert doc.to_bytes(incremental=True) == before
+
+
+def test_extended_digest_seed_declares_iso32001_before_signing() -> None:
+    with pyropdf.open(_pdf_with_version("1.6")) as doc:
+        doc.prepare_signature("Approval", seed_values={"Ff": 64, "DigestMethod": [Name("SHA3-384")]})
+        saved = doc.to_bytes()
+    with pyropdf.open(saved) as doc, pikepdf.open(io.BytesIO(saved)) as pdf:
+        assert not doc.check()
+        assert str(pdf.Root.Version) == "/2.0"
+        assert any(item.ExtensionLevel == 32001 for item in pdf.Root.Extensions.ISO_)
+        assert list(pdf.Root.AcroForm.Fields[0].SV.DigestMethod) == [pikepdf.Name("/SHA3-384")]
+
+
+def test_prior_document_wide_field_permission_comes_from_signed_revision(pki: LocalPki) -> None:
+    with pyropdf.open(_pdf_with_version("2.0")) as doc:
+        doc.prepare_signature(
+            "Author", field_lock=FieldLock(FieldMdpAction.INCLUDE, ["One"], permission=DocMdpPermission.NO_CHANGES)
+        )
+        doc.prepare_signature("Other")
+        doc.sign("Author", pki.signer)
+        # A later edit cannot weaken the permission already covered by the signature.
+        doc.form["Author"].obj["Lock"]["P"] = 3
+        before = doc.to_bytes(incremental=True)
+        with pytest.raises(ValueError, match="Field lock P=1"):
+            doc.sign("Other", pki.signer)
+        assert doc.to_bytes(incremental=True) == before
+
+
+def test_required_certificate_policy_oids_are_read_from_the_signing_certificate(pki: LocalPki) -> None:
+    from cryptography.x509.oid import ObjectIdentifier  # noqa: PLC0415
+
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    root = _issue_cert(
+        "Policy CA",
+        ca_key.public_key(),
+        (ca_key, x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Policy CA")])),
+        ca=True,
+    )
+    issued = (
+        x509.CertificateBuilder()
+        .subject_name(pki.signer_cert.subject)
+        .issuer_name(root.subject)
+        .public_key(pki.signer_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(pki.signer_cert.not_valid_before_utc)
+        .not_valid_after(pki.signer_cert.not_valid_after_utc)
+        .add_extension(
+            x509.CertificatePolicies([x509.PolicyInformation(ObjectIdentifier("1.2.3.4"), None)]), critical=False
+        )
+        .sign(ca_key, hashes.SHA256())
+    )
+    signer = Signer.from_pem(
+        pki.signer_key.private_bytes(PEM, PKCS8, serialization.NoEncryption()),
+        issued.public_bytes(PEM) + root.public_bytes(PEM),
+    )
+    for oid in (b"1.2.3.4", b"1.2.3.5"):
+        with pyropdf.open(_pdf_with_version("2.0")) as doc:
+            doc.prepare_signature(
+                "Policy", seed_values={"Cert": {"Ff": 2 | 4, "Issuer": [root.public_bytes(DER)], "OID": [oid]}}
+            )
+            if oid == b"1.2.3.4":
+                result = doc.sign("Policy", signer)
+                with pyropdf.open(result) as signed:
+                    assert signed.signatures[0].verify([root.public_bytes(DER)]).valid
+            else:
+                before = doc.to_bytes(incremental=True)
+                with pytest.raises(ValueError, match="OID"):
+                    doc.sign("Policy", signer)
+                assert doc.to_bytes(incremental=True) == before
+
+
+@pytest.mark.parametrize(
+    "lock",
+    [
+        {"Type": Name("SV"), "Action": Name("All")},
+        {"Action": Name("Unknown")},
+        {"Action": Name("Include"), "Fields": [Name("not-field-text")]},
+        {"Action": Name("All"), "P": 4},
+    ],
+)
+def test_malformed_existing_field_lock_refuses_without_changes(pki: LocalPki, lock: dict[str, object]) -> None:
+    with pyropdf.open(_pdf_with_version("2.0")) as doc:
+        doc.prepare_signature("External")
+        doc.form["External"].obj["Lock"] = doc.objects[doc.objects.add(lock)]
+        before = doc.to_bytes(incremental=True)
+        with pytest.raises(ValueError, match="Lock"):
+            doc.sign("External", pki.signer)
+        assert doc.to_bytes(incremental=True) == before

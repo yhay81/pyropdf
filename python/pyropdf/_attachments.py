@@ -34,6 +34,8 @@ from pyropdf._objects import Array, Dictionary, Name, Stream, String, _encode, _
 from pyropdf._profiles import pdfa_claim
 
 if TYPE_CHECKING:
+    from typing import Self
+
     from pyropdf._document import Document
 
 _DEFAULT_MAX_EMBEDDED_FILE_SIZE = 64 * 1024 * 1024
@@ -53,6 +55,15 @@ class _Entry(NamedTuple):
     key: bytes
     name: str
     filespec: Any
+    names: Array
+    index: int
+
+    def identity(self) -> tuple[object, ...]:
+        """Identify an indirect object or an incarnation at a direct array slot."""
+        root = self.names._root  # noqa: SLF001 - address of this name-tree array.
+        path = self.names._path  # noqa: SLF001
+        token = _core.object_entry_identity(self.names._core(), root, list(path), self.index)  # noqa: SLF001
+        return token if isinstance(token, tuple) else (root, path, self.index, token)
 
 
 def _validate_text_size(texts: list[str], label: str) -> None:
@@ -184,10 +195,11 @@ def _text(value: object) -> str | None:
 
 def _pairs(names: object) -> Iterator[_Entry]:
     """Return the entries of a node's ``/Names``, skipping a key that is not a string."""
-    items = list(names) if isinstance(names, Array) else []
-    for key, filespec in zip(items[::2], items[1::2], strict=False):
-        if isinstance(key, String):
-            yield _Entry(bytes(key), key.text, filespec)
+    if isinstance(names, Array):
+        for index in range(1, len(names), 2):
+            key = names[index - 1]
+            if isinstance(key, String):
+                yield _Entry(bytes(key), key.text, names[index], names, index)
 
 
 def _walk(root: object) -> list[_Entry]:
@@ -201,14 +213,16 @@ def _walk(root: object) -> list[_Entry]:
             continue
         if depth > _MAX_TREE_DEPTH:
             msg = f"the EmbeddedFiles name tree exceeds the {_MAX_TREE_DEPTH}-level safety limit"
-            raise PdfError(msg)
+            code = "object_depth"
+            raise LimitError(code, msg)
         if node.is_indirect:
             seen.add(node.xref)
         for entry in _pairs(node.get("Names")):
             entries.append(entry)
             if len(entries) > _MAX_TREE_ENTRIES:
                 msg = f"the EmbeddedFiles name tree exceeds the {_MAX_TREE_ENTRIES}-entry safety limit"
-                raise PdfError(msg)
+                code = "object_count"
+                raise LimitError(code, msg)
         kids = node.get("Kids")
         if isinstance(kids, Array):
             stack.extend((kid, depth + 1) for kid in reversed(list(kids)))
@@ -224,7 +238,8 @@ def _check_inline(value: object) -> None:
         budget -= 1
         if budget < 0:
             msg = f"an inline file specification exceeds the {_MAX_INLINE_OBJECTS}-object safety limit"
-            raise PdfError(msg)
+            code = "object_count"
+            raise LimitError(code, msg)
         if isinstance(item, Dictionary) and not item.is_indirect:
             pending.extend(item.values())
         elif isinstance(item, Array) and not item.is_indirect:
@@ -323,7 +338,7 @@ def _related_array(rf: Dictionary, key: str) -> Array | None:
     return items
 
 
-def _read_related(filespec: object) -> Mapping[str, tuple[RelatedFile, ...]]:
+def _read_related(filespec: object, *, live_document: Document | None = None) -> Mapping[str, tuple[RelatedFile, ...]]:
     rf = filespec.get("RF") if isinstance(filespec, Dictionary) else None
     if rf is not None and (not isinstance(rf, Dictionary) or isinstance(rf, Stream)):
         msg = "file specification /RF must be a dictionary"
@@ -347,6 +362,9 @@ def _read_related(filespec: object) -> Mapping[str, tuple[RelatedFile, ...]]:
                 if total_bytes > _MAX_INPUT_TEXT_SIZE:
                     msg = "related filenames exceed the attachment input size limit"
                     raise LimitError(_RELATED_LIMIT, msg)
+                # Validate the pair on the pinned version, but return the live stream handle.
+                if live_document is not None:
+                    stream = Stream(live_document, stream._stream_root())  # noqa: SLF001
                 entries.append(RelatedFile(filename=filename, stream=stream))
             result[key] = tuple(entries)
     return MappingProxyType(result)
@@ -476,29 +494,54 @@ def _edit_dates(stream: Stream, edit: dict[str, str | None]) -> None:
             del params[key]
 
 
+def _attachment_reader(document: Document) -> Document:
+    """Use one store version for the name lookup, identity check and payload read."""
+    return document._import_source(_core.attachment_reader(document._core()))  # noqa: SLF001
+
+
 class Attachment:
     """A handle on one embedded file of a document, as ``doc.attachments[name]`` returns it.
 
     Properties read the document on every access, and assigning
     ``filename``, ``description``, ``created``, or ``modified`` edits the
-    file specification at once; ``del`` removes all but the file name. A
-    handle raises
-    :class:`StaleObjectError` once its attachment has been deleted.
+    file specification at once; ``del`` removes all but the file name.
+    A handle identifies the original file specification. An inline entry
+    also has to remain in its original array slot. Removing or replacing
+    the entry, or moving an inline entry, makes access raise
+    :class:`StaleObjectError`. Look up ``doc.attachments[name]`` again
+    to access the current entry. Undo can restore the original handle.
+    When restoring an older, format-one saved history, look up inline
+    entries again if the history rewrote their containing object.
     """
 
-    __slots__ = ("_document", "_name")
+    __slots__ = ("_document", "_identity", "_name")
 
     def __init__(self, document: Document, name: str) -> None:
-        """Create a handle; :class:`Attachments` does this."""
+        """Look up an existing embedded file by name."""
+        name = _validate_name(name)
+        found = _lookup(_attachment_reader(document), name)
+        if found is None:
+            raise KeyError(name)
+        self._bind(document, name, found.identity())
+
+    def _bind(self, document: Document, name: str, identity: tuple[object, ...]) -> None:
         self._document = document
         self._name = name
+        self._identity = identity
 
-    def _filespec(self) -> Any:  # noqa: ANN401 - a file specification is any PDF value.
+    @classmethod
+    def _added(cls, document: Document, name: str, filespec: Dictionary) -> Self:
+        """Bind the new handle inside the writer transaction without walking the name tree again."""
+        handle = cls.__new__(cls)
+        handle._bind(document, name, (filespec.xref, filespec.generation))  # noqa: SLF001
+        return handle
+
+    def _filespec(self, *, editing: bool = False) -> Any:  # noqa: ANN401 - a file specification is any PDF value.
         """Return the file specification of this attachment, or raise when it no longer exists."""
-        self._document._ensure_open()  # noqa: SLF001
-        found = _lookup(self._document, self._name)
-        if found is None:
-            msg = f"the attachment {self._name!r} no longer exists"
+        document = self._document if editing else _attachment_reader(self._document)
+        found = _lookup(document, self._name)
+        if found is None or found.identity() != self._identity:
+            msg = f"the original attachment {self._name!r} no longer occupies its name-tree entry"
             raise StaleObjectError(msg)
         return found.filespec
 
@@ -522,7 +565,7 @@ class Attachment:
         """
         checked = _check_edit(edit)
         with self._document.transaction("attachment edit"):
-            filespec = self._filespec()
+            filespec = self._filespec(editing=True)
             if not isinstance(filespec, Dictionary):
                 msg = f"the attachment {self._name!r} has a file specification that is not a dictionary"
                 raise PdfError(msg)
@@ -625,12 +668,12 @@ class Attachment:
         combined filenames can occupy up to 1 MiB. Exceeding either limit
         raises :class:`LimitError` with code ``embedded_file_input_size``.
         """
-        return _read_related(self._filespec())
+        return _read_related(self._filespec(), live_document=self._document)
 
     @related_files.setter
     def related_files(self, value: Mapping[str, Sequence[RelatedFile]]) -> None:
         with self._document.transaction("attachment related files"):
-            _write_related(self._document, self._filespec(), value)
+            _write_related(self._document, self._filespec(editing=True), value)
 
     @related_files.deleter
     def related_files(self) -> None:
@@ -657,7 +700,7 @@ class Attachment:
         checked = _validate_collection_item(item, error_code="embedded_file_input_size")
         entries = _collection_item_dict(checked)
         with self._document.transaction("attachment collection item"):
-            filespec = self._filespec()
+            filespec = self._filespec(editing=True)
             if not isinstance(filespec, Dictionary):
                 msg = f"the attachment {self._name!r} has a file specification that is not a dictionary"
                 raise PdfError(msg)
@@ -674,7 +717,7 @@ class Attachment:
         if not isinstance(filespec, Dictionary) or "CI" not in filespec:
             return
         with self._document.transaction("attachment collection item"):
-            filespec = self._filespec()
+            filespec = self._filespec(editing=True)
             if not isinstance(filespec, Dictionary) or "CI" not in filespec:
                 return
             retired = _collection_item_xrefs(filespec.get("CI"))
@@ -728,7 +771,7 @@ class Attachment:
             # Resolve the stream under the transaction's lock, so that a
             # concurrent delete cannot leave this write on a stream that
             # another attachment shares.
-            stream = _file(self._filespec())
+            stream = _file(self._filespec(editing=True))
             if stream is None:
                 msg = f"the attachment {self._name!r} has no embedded file stream"
                 raise PdfError(msg)
@@ -742,14 +785,14 @@ class Attachment:
                 del params["CheckSum"]
 
     def __eq__(self, other: object) -> bool:
-        """Compare handles by document and name."""
+        """Compare the document and the original attachment identity."""
         if not isinstance(other, Attachment):
             return NotImplemented
-        return self._document is other._document and self._name == other._name
+        return self._document is other._document and self._identity == other._identity
 
     def __hash__(self) -> int:
         """Hash consistently with equality."""
-        return hash((id(self._document), self._name))
+        return hash((id(self._document), self._identity))
 
     def __repr__(self) -> str:
         """Return ``Attachment('name')``."""
@@ -841,10 +884,6 @@ class Attachments(Mapping[str, Attachment]):
 
     def __getitem__(self, name: str) -> Attachment:
         """Return the handle of the attachment called ``name``; raise :class:`KeyError` when absent."""
-        _validate_name(name)
-        self._document._ensure_open()  # noqa: SLF001
-        if _lookup(self._document, name) is None:
-            raise KeyError(name)
         return Attachment(self._document, name)
 
     def __iter__(self) -> Iterator[str]:
@@ -953,7 +992,8 @@ class Attachments(Mapping[str, Attachment]):
                 raise PdfError(msg)
             if len(entries) >= _MAX_TREE_ENTRIES:
                 msg = f"the EmbeddedFiles name tree's {_MAX_TREE_ENTRIES}-entry safety limit is reached"
-                raise PdfError(msg)
+                code = "object_count"
+                raise LimitError(code, msg)
             objects = self._document.objects
             associated = _associated(self._document)
             dictionary = {"Type": Name("EmbeddedFile"), "Params": {"Size": len(payload)}}
@@ -969,18 +1009,13 @@ class Attachments(Mapping[str, Attachment]):
             filespec["EF"] = {"F": stream, "UF": stream} if unicode else {"F": stream}
             added = objects[objects.add(filespec)]
             raw_key = _encode_text_string(name)
-            _core.embedded_files_insert(
-                self._document._core(),  # noqa: SLF001
-                raw_key,
-                _encode(self._document, added, 1),
-                [
-                    (entry.key, _encode(self._document, entry.filespec, 1))
-                    for entry in [*entries, _Entry(raw_key, name, added)]
-                ],
-            )
+            encoded = _encode(self._document, added, 1)
+            fallback = [(entry.key, _encode(self._document, entry.filespec, 1)) for entry in entries]
+            fallback.append((raw_key, encoded))
+            _core.embedded_files_insert(self._document._core(), raw_key, encoded, fallback)  # noqa: SLF001
             if associated:
                 _associate(self._document, added, stream)
-        return Attachment(self._document, name)
+            return Attachment._added(self._document, name, added)  # noqa: SLF001
 
     def __repr__(self) -> str:
         """Return the names, such as ``Attachments(['a.xml', 'b.txt'])``."""

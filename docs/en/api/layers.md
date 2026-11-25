@@ -58,7 +58,7 @@ Layers(document: Document)
 
 The optional content groups of a document, in `/OCGs` order; empty without optional content.
 
-### `Layers.__len__`
+### `__len__`
 
 ```python
 Layers.__len__() -> int
@@ -66,7 +66,7 @@ Layers.__len__() -> int
 
 Return the number of optional content groups.
 
-### `Layers.__getitem__`
+### `__getitem__`
 
 ```python
 Layers.__getitem__(index: int | slice) -> Layer | list[Layer]
@@ -74,7 +74,7 @@ Layers.__getitem__(index: int | slice) -> Layer | list[Layer]
 
 Return the group at `index`, or a list for a slice.
 
-### `Layers.__iter__`
+### `__iter__`
 
 ```python
 Layers.__iter__() -> Iterator[Layer]
@@ -82,7 +82,7 @@ Layers.__iter__() -> Iterator[Layer]
 
 Iterate over the groups, read once.
 
-### `Layers.configs`
+### `configs`
 
 ```python
 Layers.configs: list[LayerConfig]
@@ -90,7 +90,27 @@ Layers.configs: list[LayerConfig]
 
 The default configuration, then the alternate ones of `/Configs`.
 
-### `Layers.add`
+### `usage_applications`
+
+```python
+Layers.usage_applications(
+    layer: Layer,
+    /,
+    *,
+    event: Literal['View', 'Print', 'Export'],
+    config: int = 0,
+) -> tuple[typed.OptContentUsageApplication, ...]
+```
+
+Return the editable usage applications for a group, event and configuration, in stored order.
+
+A usage application's `Category` names select entries in the group's
+`typed.OptContentGroup.Usage` dictionary. An omitted or empty
+`OCGs` applies to no groups. Configuration 0 is the default; the
+indices of alternate configurations are listed in `configs`.
+Looking up these settings leaves visibility unchanged.
+
+### `add`
 
 ```python
 Layers.add(name: str, /, *, visible: bool = True) -> Layer
@@ -102,7 +122,7 @@ The group joins `/OCGs` and the default configuration's
 `/Order`, creating `/OCProperties` when the document has none,
 and starts shown or hidden as `visible` says.
 
-### `Layers.switch`
+### `switch`
 
 ```python
 Layers.switch(xref: int, *, on: bool)
@@ -110,7 +130,7 @@ Layers.switch(xref: int, *, on: bool)
 
 Show or hide group `xref` in the default configuration, in one transaction.
 
-### `Layers.use`
+### `use`
 
 ```python
 Layers.use(index: int)
@@ -118,10 +138,10 @@ Layers.use(index: int)
 
 Make configuration `index` of `configs` the default, in one transaction.
 
-The configuration's `/BaseState`, `/ON`, `/OFF`, and
-`/Locked` replace those of `/D`; index 0 is `/D` itself.
+Its `/BaseState`, `/ON`, `/OFF`, `/Locked` and usage
+applications (`/AS`) replace those of `/D`; index 0 is `/D` itself.
 
-### `Layers.visible`
+### `visible`
 
 ```python
 Layers.visible(oc: Dictionary | None) -> bool

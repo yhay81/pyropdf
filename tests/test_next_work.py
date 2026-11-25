@@ -182,18 +182,27 @@ def test_an_engine_tracker_does_not_define_the_earliest_phase() -> None:
 
 
 def test_a_linked_pr_prevents_duplicate_work_without_a_claim(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        work,
-        "gh_json",
-        lambda *_args: {
-            "closingIssuesReferences": [
-                {"number": 27, "url": "https://github.com/yhay81/pyropdf/issues/27"},
-                {"number": 26, "url": "https://github.com/another/repo/issues/26"},
-            ]
-        },
+    calls: list[tuple[str, ...]] = []
+
+    def gh(*args: str) -> list[dict[str, Any]]:
+        calls.append(args)
+        return [
+            {
+                "number": 56,
+                "closingIssuesReferences": [
+                    {"number": 27, "url": "https://github.com/yhay81/pyropdf/issues/27"},
+                    {"number": 26, "url": "https://github.com/another/repo/issues/26"},
+                ],
+            },
+            {"number": 57, "closingIssuesReferences": []},
+        ]
+
+    monkeypatch.setattr(work, "gh_json", gh)
+    items = work.link_pull_requests(
+        [issue(2, labels=("tracker",)), issue(27), issue(26), issue(56, pull=True), issue(57, pull=True)]
     )
-    items = work.link_pull_requests([issue(2, labels=("tracker",)), issue(27), issue(26), issue(56, pull=True)])
     data = work.report(items, ci(), "codex/27-save")
+    assert len(calls) == 1
     assert data["groups"]["with_pr"][0]["number"] == 27
     assert data["groups"]["with_pr"][0]["linked_prs"] == (56,)
     assert [item["number"] for item in data["groups"]["ready"]] == [26]

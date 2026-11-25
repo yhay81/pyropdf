@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
 
 from pyropdf._actions import (
@@ -18,14 +18,18 @@ from pyropdf._actions import (
     _is_custom_target,
 )
 from pyropdf._geometry import Point
+from pyropdf._interchange import DocumentPartAction
 from pyropdf._media_actions import GoTo3DView, RenditionAction, RichMediaExecute
 from pyropdf._presentations import TransitionAction
 from pyropdf._threads import ThreadAction
+from pyropdf._viewer_actions import StructureDestination, UriAction, WindowsLaunch
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyropdf._core import _Target
+    from pyropdf._document import Document
+    from pyropdf._structure import StructureElement
 
 
 def _page_index(page: object, name: str) -> int:
@@ -87,12 +91,61 @@ class RemoteDestination:
     name: str | None = None
     """A named destination in that file, used instead of ``page``."""
 
+    structure_id: bytes | None = field(default=None, kw_only=True)
+    """The optional byte-string structure element ID in the remote document."""
+    structure_fit: str = field(default="Fit", kw_only=True)
+    structure_operands: tuple[float | None, ...] = field(default=(), kw_only=True)
+
     def __post_init__(self) -> None:
         """Validate the file, page, and name."""
         _text(self.file, "file")
         _page_index(self.page, "page")
         if self.name is not None:
             _text(self.name, "name")
+
+        if self.structure_id is not None:
+            if not isinstance(self.structure_id, bytes):
+                msg = "a remote structure ID is a PDF byte string"
+                raise TypeError(msg)
+            if len(self.structure_id) > 1024 * 1024:
+                from pyropdf._errors import LimitError  # noqa: PLC0415
+
+                code = "annotation_input_size"
+                msg = "the remote structure ID exceeds the 1-MiB action input limit"
+                raise LimitError(code, msg)
+            view = StructureDestination(
+                element=self.structure_id,
+                fallback=Destination(self.page),
+                fit=self.structure_fit,
+                operands=self.structure_operands,
+            )
+            object.__setattr__(self, "structure_operands", view.operands)
+        elif self.structure_fit != "Fit" or self.structure_operands:
+            msg = "a remote structure view requires its element ID"
+            raise ValueError(msg)
+
+    def resolve_structure(self, document: Document) -> StructureElement | None:
+        """Resolve the optional structure ID in the supplied remote PDF without opening a file."""
+        from pyropdf import _core  # noqa: PLC0415
+        from pyropdf._fragments import _structure_id  # noqa: PLC0415
+        from pyropdf._objects import _unlocked  # noqa: PLC0415
+        from pyropdf._structure import StructureElement  # noqa: PLC0415
+
+        key = self.structure_id
+        if key is None:
+            return None
+        obj = _core.read_operation(_unlocked(document), lambda budget: _structure_id(document, key, budget))
+        return (
+            StructureElement(document, obj.xref, obj.generation or 0)
+            if obj is not None and obj.xref is not None
+            else None
+        )
+
+    def resolve(self, document: Document) -> Destination | None:
+        """Resolve the page or named target in a caller-supplied remote document."""
+        if self.name is not None:
+            return document.destinations.get(self.name)
+        return Destination(self.page) if self.page < len(document.pages) else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,16 +173,31 @@ class NamedAction:
         """Validate the name."""
         _text(self.name, "name")
 
+    def resolve(self, document: Document, *, current_page: int) -> Destination | None:
+        """Return the target page of a standard navigation action, or None when unavailable."""
+        _page_index(current_page, "current_page")
+        count = len(document.pages)
+        if current_page >= count:
+            return None
+        page = {"FirstPage": 0, "LastPage": count - 1, "NextPage": current_page + 1, "PrevPage": current_page - 1}.get(
+            self.name
+        )
+        return Destination(page) if page is not None and 0 <= page < count else None
+
 
 #: Where a link or trigger leads: a destination, a file to open, a viewer,
 #: transition, thread, script, hide, layer-state, or form action, or a URI string.
 Target: TypeAlias = (
     Destination
     | RemoteDestination
+    | StructureDestination
+    | UriAction
+    | WindowsLaunch
     | EmbeddedDestination
     | GoTo3DView
     | RenditionAction
     | RichMediaExecute
+    | DocumentPartAction
     | Launch
     | NamedAction
     | TransitionAction
@@ -190,8 +258,8 @@ def _target_to_core(target: object, page_count: int) -> _Target:  # noqa: PLR091
             return ("named", None, None, None, None, name)
         case _:
             msg = (
-                "a target is a Destination, RemoteDestination, EmbeddedDestination, Launch, "
-                "NamedAction, TransitionAction, ThreadAction, JavaScriptAction, HideAction, "
+                "a target is a Destination, RemoteDestination, EmbeddedDestination, DocumentPartAction, "
+                "Launch, NamedAction, TransitionAction, ThreadAction, JavaScriptAction, HideAction, "
                 "SetLayerStateAction, SubmitFormAction, ResetFormAction, ImportDataAction, "
                 f"URI string, or None: {type(target).__name__}"
             )

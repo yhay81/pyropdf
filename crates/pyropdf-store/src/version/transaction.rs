@@ -5,6 +5,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use super::document::WriterLock;
+use super::{NameEdit, name_slots::NameSlots};
 use super::{Slot, Trailer, Version, Written, difference};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::settle::{self, Mark, Scope, Settlers, Structure};
@@ -189,6 +190,17 @@ impl Transaction {
     /// refuses. Refuses with a limit what the budget does not allow: the
     /// bytes, and the chunk and the branches that the write copies.
     pub fn write(&mut self, number: u32, value: &Value, budget: &Budget) -> Result<Reference> {
+        self.write_with_name_edit(number, value, NameEdit::Rebuild, budget)
+    }
+
+    /// Writes an object with the precise scope of a low-level assignment.
+    pub fn write_with_name_edit(
+        &mut self,
+        number: u32,
+        value: &Value,
+        edit: NameEdit,
+        budget: &Budget,
+    ) -> Result<Reference> {
         if number == 0 {
             return Err(Error::malformed(
                 "object number 0 heads the list of free objects and is never in use",
@@ -222,7 +234,11 @@ impl Transaction {
         let overhead = PendingCharge::new(budget, Written::OVERHEAD)?;
         let bytes = Bytes::written_copy(out.as_slice(), budget)?;
         drop(out);
-        let object = Arc::new(Written::new(generation, bytes.bytes().clone()));
+        let name_slots = NameSlots::written(&self.draft, number, value, edit, budget)?;
+        let object = Arc::new(Written {
+            name_slots,
+            ..Written::new(generation, bytes.bytes().clone(), value)
+        });
         budget.poll()?;
         self.draft
             .table

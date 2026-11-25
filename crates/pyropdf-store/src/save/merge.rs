@@ -82,9 +82,9 @@ const NONE: usize = usize::MAX;
 
 /// The objects that a save merges.
 pub(super) struct Plan<'b> {
-    /// Each object that merges into an identical one, with the number of the
-    /// object that it merges into, in ascending order.
-    pub(super) merged: BudgetVec<'b, (u32, u32)>,
+    /// Each object that merges into an identical one, with its generation and
+    /// the number of the object that it merges into, in ascending order.
+    pub(super) merged: BudgetVec<'b, (u32, u16, u32)>,
     /// The objects that the save keeps and that reference a merged one, in
     /// ascending order.
     pub(super) referrers: BudgetVec<'b, u32>,
@@ -103,6 +103,7 @@ pub(super) struct Plan<'b> {
 /// compared. An object that does not parse never merges either.
 pub(super) fn plan<'b>(version: &Version, rows: &[Row], budget: &'b Budget) -> Result<Plan<'b>> {
     let mut numbers = BudgetVec::new(budget);
+    let mut generations = BudgetVec::new(budget);
     let mut values = BudgetVec::new(budget);
     for row in rows {
         budget.poll()?;
@@ -115,9 +116,15 @@ pub(super) fn plan<'b>(version: &Version, rows: &[Row], budget: &'b Budget) -> R
             Err(error) => return Err(error.into()),
         };
         numbers.try_push(row.number)?;
+        generations.try_push(row.generation)?;
         values.try_push(value)?;
     }
-    let node_of = |reference: &Reference| numbers.binary_search(&reference.number()).ok();
+    let node_of = |reference: &Reference| {
+        numbers
+            .binary_search(&reference.number())
+            .ok()
+            .filter(|&at| generations[at] == reference.generation())
+    };
     let graph = Graph::new(&values, &node_of, budget)?;
     let pinned = pinned(version, &values, &node_of, budget)?;
     let components = graph.components(budget)?;
@@ -185,7 +192,7 @@ pub(super) fn plan<'b>(version: &Version, rows: &[Row], budget: &'b Budget) -> R
         if kept[class] == NONE {
             kept[class] = node;
         } else {
-            merged.try_push((numbers[node], numbers[kept[class]]))?;
+            merged.try_push((numbers[node], generations[node], numbers[kept[class]]))?;
         }
     }
     let mut referrers = BudgetVec::new(budget);

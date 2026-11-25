@@ -1,0 +1,59 @@
+# Kani bit-precise bounded model checking for pyropdf-store's unsafe memory
+# routines, budget accounting, and indexing invariants, plus pyropdf-engine's
+# CFF and SFNT binary codecs (DESIGN.md F6 and F9).
+name: Kani
+
+on:
+  pull_request:
+    paths:
+      - "crates/pyropdf-store/**"
+      - "crates/pyropdf-engine/**"
+      - ".github/workflows/kani.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/pyropdf-store/**"
+      - "crates/pyropdf-engine/**"
+      - ".github/workflows/kani.yml"
+  schedule:
+    # Mondays at 04:47 UTC.
+    - cron: "47 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kani-${{ github.ref }}
+  # A push to a pull request supersedes its earlier run; every run on main finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  KANI_VERSION: 0.68.0
+
+jobs:
+  kani:
+    name: Kani
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup toolchain install
+      - name: Install and set up Kani
+        run: |
+          cargo install --locked kani-verifier --version "$KANI_VERSION"
+          cargo kani setup
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: kani-${{ env.KANI_VERSION }}
+          cache-bin: false
+      - name: Verify pyropdf-store proof harnesses
+        run: >-
+          cargo kani -p pyropdf-store --lib -j 2 --output-format=terse
+          -Z stubbing -Z unstable-options --harness-timeout 120s
+      - name: Verify pyropdf-engine proof harnesses
+        run: >-
+          cargo kani -p pyropdf-engine --lib -j 2 --output-format=terse
+          -Z unstable-options --harness-timeout 120s

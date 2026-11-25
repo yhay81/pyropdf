@@ -13,8 +13,12 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, NoReturn, TypeAlias, Type
 from pyropdf import _core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Point
+from pyropdf._interchange import (
+    DocumentPartAction,
+    _gotodp_action_dict,
+    _read_gotodp_action_dict,
+)
 from pyropdf._media_actions import GoTo3DView, RenditionAction, RichMediaExecute, media_action_dict, read_media_action
-from pyropdf._metadata import _require_version
 from pyropdf._objects import (
     Array,
     Dictionary,
@@ -26,6 +30,14 @@ from pyropdf._objects import (
     _Handle,
     _unlocked,
 )
+from pyropdf._viewer_actions import (
+    StructureDestination,
+    UriAction,
+    WindowsLaunch,
+    read_extra,
+    require_navigation_version,
+)
+from pyropdf._viewer_actions import action_dict as viewer_action_dict
 
 if TYPE_CHECKING:
     from pyropdf._document import Document
@@ -643,7 +655,11 @@ class ImportDataAction:
 def _is_custom_target(target: object) -> bool:
     """Return whether ``target`` serializes via a Python-built action dictionary outside the Rust link/outline core."""
     from pyropdf._presentations import TransitionAction  # noqa: PLC0415
+    from pyropdf._targets import RemoteDestination  # noqa: PLC0415
     from pyropdf._threads import ThreadAction  # noqa: PLC0415
+
+    if isinstance(target, RemoteDestination) and target.structure_id is not None:
+        return True
 
     return isinstance(
         target,
@@ -653,8 +669,12 @@ def _is_custom_target(target: object) -> bool:
             RichMediaExecute,
             TransitionAction,
             ThreadAction,
+            DocumentPartAction,
             JavaScriptAction,
             EmbeddedDestination,
+            StructureDestination,
+            UriAction,
+            WindowsLaunch,
             HideAction,
             SetLayerStateAction,
             SubmitFormAction,
@@ -664,9 +684,19 @@ def _is_custom_target(target: object) -> bool:
     )
 
 
-def _custom_target_budget_text(target: object) -> str | None:  # noqa: PLR0911 - one branch per action.
+def _custom_target_budget_text(target: object) -> str | None:  # noqa: C901, PLR0911 - one branch per action.
     """Return representative non-script text of a custom action for aggregate link, outline, or step UTF-8 checks."""
     match target:
+        case UriAction(uri=uri):
+            return uri
+        case WindowsLaunch(
+            file=file, directory=directory, parameters=parameters, operation=operation, fallback_file=fallback
+        ):
+            return (
+                "".join(value.decode("latin1") for value in (file, directory, parameters) if value)
+                + (operation or "")
+                + (fallback or "")
+            )
         case GoTo3DView(view=str(view)):
             return view
         case RichMediaExecute(command=command, arguments=arg):
@@ -844,21 +874,35 @@ def _import_data_action_dict(action: ImportDataAction) -> tuple[dict[str, object
     )
 
 
-def _custom_target_action_dict(  # noqa: C901, PLR0911 - dispatches one branch per custom action class.
+def _custom_target_action_dict(  # noqa: C901, PLR0911, PLR0912 - dispatches one branch per custom action class.
     document: Document,
     target: object,
 ) -> tuple[dict[str, object], tuple[int, int]]:
     """Serialize a custom :data:`Target` into ``(action_dict, minimum_pdf_version)``."""
     from pyropdf._presentations import TransitionAction, _transition_action_dict  # noqa: PLC0415
+    from pyropdf._targets import RemoteDestination  # noqa: PLC0415
     from pyropdf._threads import ThreadAction, _thread_action_dict  # noqa: PLC0415
 
     match target:
+        case RemoteDestination(structure_id=bytes(identifier)):
+            destination: object = target.name.encode() if target.name is not None else [target.page, Name("Fit")]
+            return {
+                "Type": Name("Action"),
+                "S": Name("GoToR"),
+                "F": target.file,
+                "D": destination,
+                "SD": [identifier, Name(target.structure_fit), *target.structure_operands],
+            }, (2, 0)
+        case StructureDestination() | UriAction() | WindowsLaunch():
+            return viewer_action_dict(document, target)
         case GoTo3DView() | RenditionAction() | RichMediaExecute():
             return media_action_dict(document, target)
         case TransitionAction():
             return _transition_action_dict(target)
         case ThreadAction():
             return _thread_action_dict(document, target)
+        case DocumentPartAction():
+            return _gotodp_action_dict(document, target)
         case JavaScriptAction(script=script):
             return {"Type": Name("Action"), "S": Name("JavaScript"), "JS": script}, (1, 3)
         case EmbeddedDestination():
@@ -907,8 +951,8 @@ def _target_action_dict(
             return {"Type": Name("Action"), "S": Name("Named"), "N": Name(name)}, (1, 2)
         case _:
             msg = (
-                "a target is a Destination, RemoteDestination, EmbeddedDestination, Launch, "
-                "NamedAction, TransitionAction, ThreadAction, JavaScriptAction, HideAction, "
+                "a target is a Destination, RemoteDestination, EmbeddedDestination, DocumentPartAction, "
+                "Launch, NamedAction, TransitionAction, ThreadAction, JavaScriptAction, HideAction, "
                 "SetLayerStateAction, SubmitFormAction, ResetFormAction, ImportDataAction, "
                 f"or URI string: {type(target).__name__}"
             )
@@ -1214,11 +1258,15 @@ def _read_custom_action_dict(
     if not isinstance(kind, Name):
         return None
     kind_name = str(kind)
+    if kind_name in {"Launch", "GoTo", "URI"}:
+        return read_extra(document, action)
     if kind_name == "Trans":
         trans = _read_transition(action.get("Trans"))
         return None if trans is None else TransitionAction(trans)
     if kind_name == "Thread":
         return _read_thread_action_dict(document, action, thread_index_map=thread_index_map)
+    if kind_name == "GoToDp":
+        return _read_gotodp_action_dict(document, action)
     reader = _STATELESS_ACTION_READERS.get(kind_name)
     return None if reader is None else reader(action)
 
@@ -1226,6 +1274,11 @@ def _read_custom_action_dict(
 def _read_custom_holder_action(document: Document, holder: Dictionary) -> Target | None:
     """Return a custom :data:`Target` when ``holder['A']`` holds one, else ``None``."""
     raw = holder.get("A")
+    if raw is None and isinstance(named := holder.get("Dest"), (Name, String)):
+        from pyropdf._viewer_actions import lookup_destination, read_structure  # noqa: PLC0415
+
+        target = lookup_destination(document, named)
+        return read_structure(document, target) if isinstance(target, Dictionary) else None
     if not _is_dict(raw):
         return None
     return _read_custom_action_dict(document, raw)
@@ -1305,7 +1358,7 @@ def _write_open_action(document: Document, target: Target | None) -> None:
         else:
             value, minimum = _target_action_dict(document, target)
         retired = _collect_action_xrefs(catalog.get("OpenAction"))
-        _require_version(document, catalog, max((1, 1), minimum))
+        require_navigation_version(document, catalog, max((1, 1), minimum))
         catalog["OpenAction"] = value
         if retired:
             _core.object_free_unreferenced(document._core(), sorted(set(retired)))  # noqa: SLF001
@@ -1507,7 +1560,7 @@ def _write_js_tree_entries(document: Document, entries: list[_ScriptTreeEntry]) 
         return
 
     entries_sorted = sorted(entries, key=lambda item: item.raw_key)
-    _require_version(document, catalog, (1, 3))
+    require_navigation_version(document, catalog, (1, 3))
     new_root = _build_canonical_js_tree(document, entries_sorted)
     if names_dict is None:
         names_xref = document.objects.add({"JavaScript": new_root})
@@ -1740,7 +1793,7 @@ def _write_document_aa(document: Document, mapping: Mapping[DocumentTrigger, str
         if trigger in mapping:
             preserved[pdf_key] = {"Type": Name("Action"), "S": Name("JavaScript"), "JS": mapping[trigger]}
     if preserved:
-        _require_version(document, catalog, (1, 4))
+        require_navigation_version(document, catalog, (1, 4))
         catalog["AA"] = preserved
     elif "AA" in catalog:
         del catalog["AA"]
@@ -1982,7 +2035,7 @@ class PageTriggers(MutableMapping[PageTrigger, "Target"]):
             retired = _collect_aa_xrefs(current_aa, prepared)
             merged = {k: current_aa[k] for k in current_aa} if _is_dict(current_aa) else {}
             merged.update(prepared)
-            _require_version(document, _catalog(document), minimum)
+            require_navigation_version(document, _catalog(document), minimum)
             self._page.obj["AA"] = merged
             if retired:
                 _core.object_free_unreferenced(document._core(), sorted(set(retired)))  # noqa: SLF001
@@ -2032,7 +2085,7 @@ def _replace_page_triggers(
             preserved[_PAGE_TRIGGER_KEYS[trig]] = act_dict
             minimum = max(minimum, req)
         if preserved:
-            _require_version(document, _catalog(document), minimum)
+            require_navigation_version(document, _catalog(document), minimum)
             page.obj["AA"] = preserved
         elif "AA" in page.obj:
             del page.obj["AA"]
@@ -2299,7 +2352,7 @@ class ActionTriggers(MutableMapping[AnnotationTrigger, "Target"]):
                 staged_dicts[trig] = act_dict
                 trig_ver = (1, 5) if trig in _PDF_15_ANNOTATION_TRIGGERS else self._base_version
                 minimum = max(minimum, req, trig_ver)
-            _require_version(self._document, _catalog(self._document), minimum)
+            require_navigation_version(self._document, _catalog(self._document), minimum)
             retired = _apply_annot_trigger_writes(
                 holder,
                 self._allowed,
@@ -2348,7 +2401,7 @@ class ActionTriggers(MutableMapping[AnnotationTrigger, "Target"]):
                 trig_ver = (1, 5) if trig in _PDF_15_ANNOTATION_TRIGGERS else self._base_version
                 minimum = max(minimum, req, trig_ver)
             if staged_dicts:
-                _require_version(self._document, _catalog(self._document), minimum)
+                require_navigation_version(self._document, _catalog(self._document), minimum)
             retired = _apply_annot_trigger_writes(
                 holder,
                 self._allowed,
@@ -2391,7 +2444,7 @@ def _write_screen_action(document: Document, get_holder: Callable[[], Dictionary
             raise ValueError(msg)
         act_dict, req = _target_action_dict(document, target)
         retired = _collect_action_xrefs(holder.get("A"))
-        _require_version(document, _catalog(document), max((1, 5), req))
+        require_navigation_version(document, _catalog(document), max((1, 5), req))
         holder["A"] = act_dict
         if retired:
             _core.object_free_unreferenced(document._core(), sorted(set(retired)))  # noqa: SLF001

@@ -6,7 +6,10 @@
 //! never changes the version, its base, or its object allocation state.
 
 mod base;
+mod extensions;
 mod hybrid;
+mod integrity;
+pub(crate) use base::encryption_dict;
 mod linear;
 mod merge;
 mod pack;
@@ -18,6 +21,7 @@ mod renumber;
 #[cfg(test)]
 mod tests;
 
+use std::borrow::Cow;
 use std::fmt;
 use std::io::{self, Write};
 
@@ -58,6 +62,12 @@ pub enum Refusal {
     Encryption,
     /// A recipient must hold Table 24 bit 2 to change the handler.
     RecipientPermissions,
+    /// A protected revision must retain its integrity protection.
+    IntegrityProtection,
+    /// Linearized byte-range signing is not implemented.
+    MacLinearization,
+    /// An attached MAC is bound to the existing signature's exact bytes.
+    SignedMacRevision,
     /// Pruning, decompressing, another cross-reference form, object
     /// streams, and renumbering rewrite the original file, whose objects,
     /// numbers, and cross-reference form an incremental save keeps.
@@ -108,6 +118,9 @@ impl fmt::Display for Error {
                 Refusal::RepairedBase => "incremental save is unavailable for a repaired base",
                 Refusal::Encryption => "saving encrypted documents requires the security handler",
                 Refusal::RecipientPermissions => "the recipient lacks permission to change encryption; keep the encryption or unlock with an authorized recipient",
+                Refusal::IntegrityProtection => "a PDF MAC protected document requires retained encryption or a replacement with integrity protection",
+                Refusal::SignedMacRevision => "use an incremental save to preserve the existing signature and its attached PDF MAC",
+                Refusal::MacLinearization => "linearization of a PDF MAC protected document is not supported",
                 Refusal::FullSaveOption => {
                     "prune, decompress, a new cross-reference form, object streams, renumbering, and linearization require a full save"
                 }
@@ -283,7 +296,31 @@ pub fn full_with(
         )
         .into());
     }
+    let mut declared = None;
+    if encryption.is_some_and(|config| config.method() == security::Method::AesGcm) {
+        declared = Some(extensions::declare(
+            version,
+            32003,
+            ":2023",
+            "https://www.iso.org/standard/45876.html",
+            budget,
+        )?);
+    }
+    if matches!(
+        encryption,
+        Some(Encryption::PasswordWithMac(_) | Encryption::RecipientWithMac(_))
+    ) {
+        declared = Some(extensions::declare(
+            declared.as_deref().unwrap_or(version),
+            32004,
+            ":2024",
+            "https://www.iso.org/standard/45877.html",
+            budget,
+        )?);
+    }
+    let version = declared.as_deref().unwrap_or(version);
     let mut mode = Mode::of(version, encryption, budget)?;
+    let mac = integrity::plan(version, &mode, true, options.linearize, budget)?;
     if options.linearize {
         if options.object_streams
             || options.dedupe
@@ -338,7 +375,7 @@ pub fn full_with(
             referrers: BudgetVec::new(budget),
         }
     };
-    for &(number, _) in plan.merged.iter() {
+    for &(number, _, _) in plan.merged.iter() {
         budget.poll()?;
         if let Ok(at) = rows.binary_search_by_key(&number, |row| row.number) {
             rows[at].offset = None;
@@ -370,22 +407,8 @@ pub fn full_with(
         None
     };
     let mut out = Output::new(target, budget, 0, options.renew_id);
-    let header = version
-        .base()
-        .header_bytes()
-        .and_then(|bytes| bytes.get(..8))
-        .filter(|bytes| bytes.starts_with(b"%PDF-"))
-        .unwrap_or(b"%PDF-1.7");
-    // Cross-reference streams and object streams are of PDF 1.5.
-    if stream
-        && header
-            .get(5..)
-            .is_some_and(|number| number < b"1.5".as_slice())
-    {
-        out.bytes(b"%PDF-1.5")?;
-    } else {
-        out.bytes(header)?;
-    }
+    out.mac = mac.map(integrity::MacOutput::new);
+    out.bytes(mode.header(version, stream, out.mac.is_some()))?;
     out.bytes(b"\n%\xE2\xE3\xCF\xD3\n")?;
     // A copied linearization dictionary must not remain the first object:
     // its old offsets describe the base, not this full save. Write the
@@ -471,6 +494,9 @@ pub fn full_with(
         renumbering: renumbering.filter(|_| options.renumber),
     };
     finish(version, &mut rows, &mut out, &mode, ending)?;
+    if let Some(mac) = out.mac.take() {
+        mac.finish(out.target, budget)?;
+    }
     Ok(out.position)
 }
 
@@ -498,6 +524,29 @@ pub fn incremental_with(
     budget: &Budget,
     options: Options,
 ) -> Result<u64> {
+    write_incremental(version, target, budget, options, None).map(|(size, _)| size)
+}
+
+/// Write an incremental signing revision and, for a MAC-protected source,
+/// reserve the trailer link to the signature object. The caller embeds the
+/// returned MAC in its signed CMS container before publishing the bytes.
+pub fn incremental_signature(
+    version: &Version,
+    target: &mut dyn Write,
+    budget: &Budget,
+    signature: Reference,
+) -> Result<Option<security::integrity::Writer>> {
+    write_incremental(version, target, budget, Options::default(), Some(signature))
+        .map(|(_, mac)| mac)
+}
+
+fn write_incremental(
+    version: &Version,
+    target: &mut dyn Write,
+    budget: &Budget,
+    options: Options,
+    signature: Option<Reference>,
+) -> Result<(u64, Option<security::integrity::Writer>)> {
     if options.prune
         || options.streams == Streams::Decompress
         || options.cross_reference != CrossReference::Base
@@ -516,6 +565,10 @@ pub fn incremental_with(
         return Err(Error::Refused(Refusal::RepairedBase));
     }
     let mode = Mode::of(version, None, budget)?;
+    let mut mac = integrity::plan(version, &mode, false, false, budget)?;
+    if signature.is_some() && file.is_encrypted() && mac.is_none() {
+        return Err(Error::Refused(Refusal::IntegrityProtection));
+    }
     let previous = file
         .revisions()
         .last()
@@ -523,9 +576,16 @@ pub fn incremental_with(
         .and_then(|s| s.offset().checked_sub(file.origin()))
         .ok_or_else(|| StoreError::malformed("the original file has no cross-reference offset"))?;
     let mut out = Output::new(target, budget, file.origin() as u64, options.renew_id);
+    if version.has_changes() && mac.is_some() {
+        if let Some(reference) = signature {
+            out.attached = Some(reference);
+        } else {
+            out.mac = mac.take().map(integrity::MacOutput::new);
+        }
+    }
     out.bytes(file.bytes())?;
     if !version.has_changes() {
-        return Ok(out.position);
+        return Ok((out.position, None));
     }
     out.bytes(b"\n")?;
     let mut rows = BudgetVec::new(budget);
@@ -540,6 +600,19 @@ pub fn incremental_with(
             rows.try_push(row)?;
         }
     }
+    for &number in mode.changed_streams() {
+        let mut affected = row(version, number);
+        write_object(
+            version,
+            &mut affected,
+            None,
+            &mut out,
+            &mode,
+            options.streams,
+        )?;
+        rows.try_push(affected)?;
+    }
+    rows.sort_unstable_by_key(|r| r.number);
     if let Ok(last) = u32::try_from(version.next_number().saturating_sub(1))
         && version.generation(last).is_none()
         && rows.last().is_some_and(|row| row.number < last)
@@ -566,7 +639,10 @@ pub fn incremental_with(
         renumbering: None,
     };
     finish(version, &mut rows, &mut out, &mode, ending)?;
-    Ok(out.position)
+    if let Some(mac) = out.mac.take() {
+        mac.finish(out.target, budget)?;
+    }
+    Ok((out.position, mac))
 }
 
 /// How a save treats encryption.
@@ -577,7 +653,8 @@ enum Mode<'a> {
     /// The base's own encryption: untouched objects of the file keep their
     /// encrypted bytes, and the rest are encrypted with its handler.
     Keep {
-        handler: &'a Handler,
+        handler: Cow<'a, Handler>,
+        changed_streams: Vec<u32>,
         index: &'a Index,
         /// The object of the `/Encrypt` dictionary.
         encrypt: Option<u32>,
@@ -608,9 +685,6 @@ impl<'a> Mode<'a> {
             {
                 return Err(Error::Refused(Refusal::RecipientPermissions));
             }
-            if encryption.is_none() && selected.is_some() && edited_dictionary {
-                return Err(Error::Refused(Refusal::Encryption));
-            }
         }
         if let Some(encryption) = encryption {
             let id = match version.trailer().get("ID") {
@@ -636,8 +710,55 @@ impl<'a> Mode<'a> {
         let file = version.base().file();
         match file.and_then(|index| Some((index, index.security()?))) {
             Some((index, handler)) if version.base().trailer().get("Encrypt") == Some(encrypt) => {
+                let original = handler;
+                let (mut handler, selector_changed) = if let Value::Reference(reference) = encrypt
+                    && let Some(Slot::Written(written)) = version.slot(reference.number())
+                {
+                    let Some(raw) = index.object(*reference, budget)? else {
+                        return Err(Error::Refused(Refusal::Encryption));
+                    };
+                    let Value::Dict(mut old) = Value::parse(&raw, budget)? else {
+                        return Err(Error::Refused(Refusal::Encryption));
+                    };
+                    let new_value = written.value(budget)?;
+                    let Value::Dict(new) = &*new_value else {
+                        return Err(Error::Refused(Refusal::Encryption));
+                    };
+                    let mut other = new.clone();
+                    let old_eff = old.remove("EFF");
+                    let new_eff = other.remove("EFF");
+                    if old != other {
+                        return Err(Error::Refused(Refusal::Encryption));
+                    }
+                    if old_eff == new_eff {
+                        (Cow::Borrowed(handler), false)
+                    } else {
+                        let selected = handler.with_embedded_filter(new)?;
+                        let changed = !selected.same_embedded_filter(handler);
+                        (Cow::Owned(selected), changed)
+                    }
+                } else {
+                    (Cow::Borrowed(handler), false)
+                };
+                if selector_changed
+                    || handler.distinguishes_embedded_files() && version.has_changes()
+                {
+                    handler
+                        .to_mut()
+                        .remember_file_roles(security::embedded::discover(
+                            index,
+                            Some(version),
+                            budget,
+                        )?);
+                }
+                let changed_streams = if version.has_changes() {
+                    handler.changed_streams(version, index, original, selector_changed, budget)?
+                } else {
+                    Vec::new()
+                };
                 Ok(Self::Keep {
                     handler,
+                    changed_streams,
                     index,
                     encrypt: match encrypt {
                         Value::Reference(reference) => Some(reference.number()),
@@ -649,6 +770,35 @@ impl<'a> Mode<'a> {
         }
     }
 
+    fn removing_encryption(&self, version: &Version) -> bool {
+        matches!(self, Self::Plain) && version.base().file().is_some_and(Index::is_encrypted)
+    }
+
+    fn changed_streams(&self) -> &[u32] {
+        match self {
+            Self::Keep {
+                changed_streams, ..
+            } => changed_streams,
+            _ => &[],
+        }
+    }
+
+    fn header<'v>(&self, version: &'v Version, xref_stream: bool, mac: bool) -> &'v [u8] {
+        let original = version
+            .base()
+            .header_bytes()
+            .and_then(|bytes| bytes.get(..8))
+            .filter(|bytes| bytes.starts_with(b"%PDF-"))
+            .unwrap_or(b"%PDF-1.7");
+        if (mac || self.handler().is_some_and(Handler::uses_gcm)) && original < b"%PDF-2.0" {
+            b"%PDF-2.0"
+        } else if xref_stream && original < b"%PDF-1.5" {
+            b"%PDF-1.5"
+        } else {
+            original
+        }
+    }
+
     fn handler(&self) -> Option<&Handler> {
         match self {
             Self::Plain => None,
@@ -656,6 +806,17 @@ impl<'a> Mode<'a> {
             Self::New { handler, .. } => Some(handler),
         }
     }
+}
+
+fn plain_body(bytes: Bytes, version: &Version, budget: &Budget) -> Result<Bytes> {
+    if version.base().file().is_some_and(Index::is_encrypted) {
+        return Ok(security::filters::plain(
+            bytes,
+            &|r, b| version.filter_object(r, b),
+            budget,
+        )?);
+    }
+    Ok(bytes)
 }
 
 fn row(version: &Version, number: u32) -> Row {
@@ -697,11 +858,24 @@ fn write_object(
     if let Some(renumbering) = renumbering {
         let target = renumbering.number(row.number)?;
         let reference = Reference::new(row.number, row.generation);
-        let plain = renumbering.bytes(version, reference, streams, out.budget)?;
+        let plain = renumbering.bytes(
+            version,
+            reference,
+            streams,
+            mode.removing_encryption(version),
+            out.budget,
+        )?;
         // The keys of an encrypted object derive from its new reference.
         let bytes = match (mode, mode.handler()) {
             (Mode::Keep { encrypt, .. }, _) if Some(row.number) == *encrypt => plain,
-            (_, Some(handler)) => security::encrypt_bytes(handler, target, &plain, out.budget)?,
+            (_, Some(handler)) => security::encrypt_bytes_as(
+                handler,
+                reference,
+                target,
+                &plain,
+                &|r, b| renumbering.lookup(version, r, b),
+                out.budget,
+            )?,
             (_, None) => plain,
         };
         row.offset = Some(out.offset()?);
@@ -718,25 +892,54 @@ fn write_object(
     let context =
         |e: StoreError| e.context(format!("saving object {} {}", row.number, row.generation));
     let bytes = match (version.slot(row.number), mode) {
-        (Some(Slot::Written(object)), Mode::Plain) => object.bytes().clone(),
+        (Some(Slot::Written(object)), Mode::Plain) => {
+            version.check_stream_filters(&*object.value(budget)?, budget)?;
+            plain_body(object.bytes().clone(), version, budget)?
+        }
+        (Some(Slot::Written(object)), Mode::Keep { encrypt, .. })
+            if Some(row.number) == *encrypt =>
+        {
+            object.bytes().clone()
+        }
         (Some(Slot::Written(object)), _) => {
             let handler = mode.handler().expect("an encrypting mode has a handler");
-            security::encrypt_bytes(handler, reference, object.bytes(), budget).map_err(context)?
+            security::encrypt_bytes_as(
+                handler,
+                reference,
+                reference,
+                object.bytes(),
+                &|r, b| version.filter_object(r, b),
+                budget,
+            )
+            .map_err(context)?
         }
         (_, Mode::Keep { index, encrypt, .. })
             if Some(row.number) == *encrypt
-                || matches!(
-                    index.get(row.number).map(|entry| entry.location()),
-                    Some(Location::Offset(_))
-                ) =>
+                || (mode.changed_streams().binary_search(&row.number).is_err()
+                    && matches!(
+                        index.get(row.number).map(|entry| entry.location()),
+                        Some(Location::Offset(_))
+                    )) =>
         {
             raw::file_body(index, reference, budget).map_err(context)?
         }
-        (_, Mode::Plain) => raw::body(&**version.base(), reference, budget).map_err(context)?,
+        (_, Mode::Plain) => plain_body(
+            raw::body(&**version.base(), reference, budget).map_err(context)?,
+            version,
+            budget,
+        )?,
         (_, _) => {
             let handler = mode.handler().expect("an encrypting mode has a handler");
             let plain = raw::body(&**version.base(), reference, budget).map_err(context)?;
-            security::encrypt_bytes(handler, reference, &plain, budget).map_err(context)?
+            security::encrypt_bytes_as(
+                handler,
+                reference,
+                reference,
+                &plain,
+                &|r, b| version.filter_object(r, b),
+                budget,
+            )
+            .map_err(context)?
         }
     };
     let bytes = match recode(version, reference, streams, mode, budget).map_err(|error| {
@@ -771,14 +974,36 @@ fn recode(
         Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let Some(value) = recode::recoded(object.value(), streams, budget)? else {
+    let mut clear;
+    let value = if mode.removing_encryption(version)
+        && matches!(object.value().as_ref(), Value::Stream(_))
+    {
+        clear = crate::value::copy_for_edit(object.value(), budget)?;
+        security::filters::remove_explicit(
+            &mut clear,
+            &|r, b| version.filter_object(r, b),
+            budget,
+        )?;
+        &clear
+    } else {
+        object.value().as_ref()
+    };
+    let Some(value) = recode::recoded(value, streams, &|r, b| version.filter_object(r, b), budget)?
+    else {
         return Ok(None);
     };
     let mut plain = BudgetVec::new(budget);
     write::value(&mut plain, &value)?;
     let plain = Bytes::new(plain.into_vec());
     Ok(Some(match mode.handler() {
-        Some(handler) => security::encrypt_bytes(handler, reference, &plain, budget)?,
+        Some(handler) => security::encrypt_bytes_as(
+            handler,
+            reference,
+            reference,
+            &plain,
+            &|r, b| version.filter_object(r, b),
+            budget,
+        )?,
         None => plain,
     }))
 }
@@ -840,6 +1065,7 @@ fn finish(
     if let Some(previous) = ending.previous {
         out.display(format_args!(" /Prev {previous}"))?;
     }
+    out.authentication()?;
     if let Some((number, level)) = ending.stream {
         let own = Row {
             number,
@@ -1046,7 +1272,9 @@ fn trailer(
     renumbering: Option<&Renumbering<'_>>,
 ) -> Result<()> {
     for (name, value) in dict.iter() {
-        if replaced.contains(&name.as_bytes()) {
+        if replaced.contains(&name.as_bytes())
+            || ((out.mac.is_some() || out.attached.is_some()) && name.as_bytes() == b"AuthCode")
+        {
             continue;
         }
         if !trailer_key(name.as_bytes()) {
@@ -1081,6 +1309,8 @@ struct Output<'a> {
     /// Whether the bytes count against the output size: not those of a
     /// pass that only measures.
     charge: bool,
+    mac: Option<integrity::MacOutput<'a>>,
+    attached: Option<Reference>,
 }
 
 impl<'a> Output<'a> {
@@ -1092,6 +1322,8 @@ impl<'a> Output<'a> {
             origin,
             digest: digest.then(Md5::new),
             charge: true,
+            mac: None,
+            attached: None,
         }
     }
 
@@ -1115,7 +1347,11 @@ impl<'a> Output<'a> {
                 self.budget
                     .charge(LimitCode::PdfOutputSize, chunk.len() as u64)?;
             }
-            self.target.write_all(chunk)?;
+            if let Some(mac) = &mut self.mac {
+                mac.write(chunk, self.target)?;
+            } else {
+                self.target.write_all(chunk)?;
+            }
             if let Some(digest) = &mut self.digest {
                 digest.update(chunk);
             }
@@ -1125,6 +1361,18 @@ impl<'a> Output<'a> {
                 .ok_or_else(|| StoreError::malformed("PDF output size overflow"))?;
         }
         Ok(())
+    }
+
+    fn authentication(&mut self) -> Result<()> {
+        if let Some(r) = self.attached {
+            self.display(format_args!(
+                " /AuthCode << /MACLocation /AttachedToSig /SigObjRef {} {} R >>",
+                r.number(),
+                r.generation()
+            ))
+        } else {
+            integrity::MacOutput::reserve(self)
+        }
     }
 
     fn display(&mut self, args: fmt::Arguments<'_>) -> Result<()> {

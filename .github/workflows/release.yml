@@ -29,6 +29,10 @@ on:
         description: "Verify the Pyodide wheel in Node and local Cloudflare Workers"
         type: boolean
         default: false
+      capability_rehearsal:
+        description: "Rehearse only the checked capability declaration for this example version tag"
+        type: string
+        default: ""
 
 permissions: {}
 
@@ -58,8 +62,57 @@ jobs:
           package_version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
           test "v${package_version}" = "${GITHUB_REF_NAME}"
 
+  capability-declaration:
+    name: Verify the release capability declaration
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.capability_rehearsal != '')
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Resolve the declaration and replay its exact candidate evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REHEARSAL_TAG: ${{ inputs.capability_rehearsal }}
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          tag="$GITHUB_REF_NAME"
+          mode=()
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            tag="$REHEARSAL_TAG"
+            mode+=(--rehearsal)
+          else
+            test "$(git rev-parse "refs/tags/${tag}^{commit}")" = "$revision"
+          fi
+          args=(--tag "$tag" --revision "$revision" "${mode[@]}")
+          evidence=()
+          needs_evidence="$(python3 tools/spec_map/declaration.py needs-evidence "${args[@]}")"
+          if [[ "$needs_evidence" == true ]]; then
+            run_id="$(gh run list --workflow ci.yml --commit "$revision" --status success \
+              --json databaseId,event --jq 'map(select(.event == "push" or .event == "workflow_dispatch")) | first.databaseId // empty')"
+            test -n "$run_id" || { echo "::error::Missing successful CI for $revision"; exit 1; }
+            gh run download "$run_id" --name release-evidence --dir "$RUNNER_TEMP/observations"
+            evidence+=(--evidence "$RUNNER_TEMP/observations/release-evidence.json")
+          fi
+          python3 tools/spec_map/declaration.py build "${args[@]}" "${evidence[@]}" --output release/capabilities.zip
+          mkdir "$RUNNER_TEMP/verify-capabilities"
+          unzip -q release/capabilities.zip -d "$RUNNER_TEMP/verify-capabilities"
+          cd "$RUNNER_TEMP/verify-capabilities"
+          python3 tools/spec_map/declaration.py verify --tag "$tag" --revision "$revision" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-capabilities
+          path: release/capabilities.zip
+          if-no-files-found: error
+
   build-wheels:
-    if: github.event_name != 'pull_request' && !inputs.pyodide_only
+    if: github.event_name != 'pull_request' && !inputs.pyodide_only && !inputs.capability_rehearsal
     name: wheel (${{ matrix.platform.target }})
     needs: verify
     runs-on: ${{ matrix.platform.runner }}
@@ -82,10 +135,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Read native release arguments
+      - name: Prepare the native release build
         id: native
         shell: bash
         run: |
+          # The host replaces the wheel after the manylinux container writes it.
+          mkdir -p dist
           args=$(cat tools/native-wheel-args.txt)
           echo "args=$args" >> "$GITHUB_OUTPUT"
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
@@ -98,6 +153,12 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.9"
+          enable-cache: false
+      - name: Recompress the native abi3 wheel
+        run: uv run --locked --only-group wheel --python 3.14 python tools/repack_wheel.py dist
       - name: Check compressed abi3 wheel size and licenses
         run: python tools/wheel_size.py dist --abi abi3
       - name: Smoke-test installed wheel
@@ -118,7 +179,7 @@ jobs:
           path: dist
 
   build-free-threaded-wheels:
-    if: github.event_name != 'pull_request' && !inputs.pyodide_only
+    if: github.event_name != 'pull_request' && !inputs.pyodide_only && !inputs.capability_rehearsal
     name: free-threaded wheel (${{ matrix.python.tag }}, ${{ matrix.platform.target }})
     needs: verify
     runs-on: ${{ matrix.platform.runner }}
@@ -176,6 +237,7 @@ jobs:
           path: dist
 
   build-pyodide-wheel:
+    if: ${{ !inputs.capability_rehearsal }}
     name: Pyodide and Workers wheel
     needs: verify
     runs-on: ubuntu-24.04
@@ -226,7 +288,7 @@ jobs:
           subject-path: dist/*.whl
 
   build-sdist:
-    if: github.event_name != 'pull_request' && !inputs.pyodide_only
+    if: github.event_name != 'pull_request' && !inputs.pyodide_only && !inputs.capability_rehearsal
     name: sdist
     needs: verify
     runs-on: ubuntu-latest
@@ -309,7 +371,7 @@ jobs:
   publish:
     name: Publish to PyPI
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    needs: [build-wheels, build-free-threaded-wheels, build-pyodide-wheel, attest-pyodide-wheel, build-sdist, compare-release]
+    needs: [build-wheels, build-free-threaded-wheels, build-pyodide-wheel, attest-pyodide-wheel, build-sdist, compare-release, capability-declaration]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: pypi
@@ -397,12 +459,16 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          pattern: "{*wheels-*,sdist,release-capabilities,release-comparison,release-sbom}"
           path: release-assets
           merge-multiple: true
       # With assets, gh creates a draft, uploads them, and then publishes it,
       # which is when the release becomes immutable.
       - name: Create GitHub release
-        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes release-assets/*
+        run: |
+          unzip -p release-assets/capabilities.zip RELEASE-NOTES.md > "$RUNNER_TEMP/capability-notes.md"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
+            --notes-file "$RUNNER_TEMP/capability-notes.md" release-assets/*
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # GITHUB_TOKEN cannot read the repository setting beforehand, so the

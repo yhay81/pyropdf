@@ -23,6 +23,8 @@
 pub mod edit;
 pub mod geometry;
 mod icons;
+mod line;
+mod line_caption;
 mod missing;
 pub mod popup;
 pub mod read;
@@ -37,7 +39,7 @@ use std::sync::Arc;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
-use pyropdf_store::refs::copy_for_edit;
+use pyropdf_store::refs::{copy_dict_for_edit, copy_for_edit};
 use pyropdf_store::settle::Settler;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
@@ -47,11 +49,32 @@ use crate::forms;
 use crate::forms::face::FaceText;
 use shapes::{cloud_radius_in_unit, ending_size_in_unit};
 
-/// Whether this dictionary can be a multimedia annotation target.
-pub(crate) fn is_media_annotation(dict: &Dict) -> bool {
-    dict.get("Rect").is_some()
-        && matches!(dict.get("Subtype"), Some(Value::Name(kind)) if
-        matches!(kind.as_bytes(), b"3D" | b"RichMedia" | b"Screen" | b"Projection" | b"Movie" | b"Sound"))
+/// Whether this print or multimedia annotation must remain attached while targeted.
+pub(crate) fn is_linked_annotation(
+    version: &Version,
+    dict: &Dict,
+    budget: &Budget,
+) -> Result<bool> {
+    if dict.get("Rect").is_none() {
+        return Ok(false);
+    }
+    let subtype = crate::pages::resolve(version, dict.get("Subtype"), budget)?;
+    Ok(matches!(subtype, Some(Value::Name(name)) if linked_subtype(name.as_bytes())))
+}
+
+pub(crate) fn linked_subtype(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"3D"
+            | b"RichMedia"
+            | b"Screen"
+            | b"Projection"
+            | b"Movie"
+            | b"Sound"
+            | b"PrinterMark"
+            | b"TrapNet"
+            | b"Watermark"
+    )
 }
 
 /// The result of an annotation reading or editing operation.
@@ -171,9 +194,7 @@ pub use geometry::{
     NOTE_ICONS, RECT_SUBTYPES, Rect, STAMP_ICONS, TEXT_KEYS, annotation_geometry, border_style,
     rgb,
 };
-pub use missing::{
-    MAX_SYNTHESIZED_APPEARANCES, MAX_SYNTHESIZED_POINTS, synthesized, synthesized_for,
-};
+pub use missing::{synthesized, synthesized_for};
 pub use popup::{annotation_open, annotation_popup, annotation_reply};
 pub use read::{
     AnnotationRecord, IsolatedAnnotation, PageAnnots, RecordTuple, annotation_face,
@@ -259,7 +280,10 @@ impl Settler for AppearanceSettler {
             // An annotation that cannot be drawn still has its rectangle
             // fitted to its geometry.
             let (form, rect) = match appearance(&reader, dict)? {
-                Some(drawn) => (Some(drawn.form()), drawn.fitted.then_some(drawn.rect)),
+                Some(drawn) => {
+                    let rect = drawn.fitted.then_some(drawn.rect);
+                    (Some(drawn), rect)
+                }
                 None => (None, fitted_rect(&reader, dict)?),
             };
             if form.is_none() && rect.is_none() {
@@ -269,9 +293,10 @@ impl Settler for AppearanceSettler {
                 unreachable!("checked dictionary variant");
             };
             if let Some(form) = form {
+                let mut appearances = reader.appearances(&dict)?;
+                let form = form.stored_form(transaction, budget)?;
                 let reference = transaction.allocate()?;
                 transaction.write(reference.number(), &Value::from(form), budget)?;
-                let mut appearances = Dict::new();
                 #[expect(
                     clippy::disallowed_methods,
                     reason = "each key is a constant: the appearances hold one entry, and the annotation gains one"
@@ -537,6 +562,14 @@ impl<'b> Reader<'b> {
             .map(|value| value.filter(|value| !matches!(**value, Value::Null)))
     }
 
+    /// Detach the AP dictionary before replacing a single display state.
+    fn appearances(&self, dict: &Dict) -> Result<Dict> {
+        match self.entry(dict, "AP")?.as_deref() {
+            Some(Value::Dict(entries)) => copy_dict_for_edit(entries, self.budget),
+            _ => Ok(Dict::new()),
+        }
+    }
+
     pub(crate) fn number(&self, value: &Value) -> Result<Option<f64>> {
         Ok(match &*self.resolve(value)? {
             #[expect(
@@ -649,7 +682,7 @@ impl<'b> Reader<'b> {
     }
 
     /// Reads text-markup quadrilaterals, rejecting excessive geometry.
-    fn quads(&self, dict: &Dict, subtype: &[u8]) -> Result<Option<BudgetVec<'b, Quad>>> {
+    fn quad_geometry(&self, dict: &Dict, subtype: &[u8]) -> Result<Option<Geometry>> {
         let Some(value) = self.entry(dict, "QuadPoints")? else {
             return Ok(None);
         };
@@ -675,7 +708,7 @@ impl<'b> Reader<'b> {
                 zigzag_points(&quads) as u64,
             )?;
         }
-        Ok(Some(quads))
+        Ok(Some(Geometry::Quads(quads.into_vec())))
     }
 
     /// Reads the border that `/BS`, else `/Border`, describes, or `None`
@@ -1000,14 +1033,48 @@ impl Appearance {
         self.fit
     }
 
+    /// Use a complete Type 1 font for a persisted PDF 2.0 caption.
+    fn stored_form(&self, transaction: &mut Transaction, budget: &Budget) -> Result<Stream> {
+        let mut references = [None; 14];
+        if !matches!(self.font, None | Some(text::TextFont::Embedded(_)))
+            && forms::is_pdf_2_0(transaction.version(), budget)?
+        {
+            for (i, &(_, base)) in crate::standard::DA_FONTS.iter().enumerate() {
+                if self.standard_font(i) {
+                    references[i] = Some(forms::write_standard_type1(
+                        transaction,
+                        base,
+                        true,
+                        budget,
+                    )?);
+                }
+            }
+        }
+        Ok(self.form_with_font(&references))
+    }
+
+    fn standard_font(&self, index: usize) -> bool {
+        match self.font {
+            Some(text::TextFont::Standard(resource)) => {
+                resource == crate::standard::DA_FONTS[index]
+            }
+            Some(text::TextFont::Standards(mask)) => mask & (1 << index) != 0,
+            _ => false,
+        }
+    }
+
     /// Returns the form XObject of the appearance, whose `/Matrix` maps its
     /// box onto the rectangle.
     #[must_use]
+    pub fn form(&self) -> Stream {
+        self.form_with_font(&[None; 14])
+    }
+
     #[expect(
         clippy::disallowed_methods,
-        reason = "each key is a constant, so each dictionary of the form holds five entries at most"
+        reason = "form and resource dictionaries have a fixed set of keys"
     )]
-    pub fn form(&self) -> Stream {
+    fn form_with_font(&self, standard_fonts: &[Option<Reference>; 14]) -> Stream {
         let (width, height) = self.size;
         let mut dict = Dict::new();
         dict.insert(Name::from("Type"), Value::Name(Name::from("XObject")));
@@ -1018,8 +1085,17 @@ impl Appearance {
         );
         dict.insert(Name::from("Matrix"), numbers_array(&self.matrix));
         let mut resources = Dict::new();
-        match self.font {
-            Some(text::TextFont::Standard((resource, base_font))) => {
+        let mut fonts = Dict::new();
+        if let Some(text::TextFont::Embedded(reference)) = self.font {
+            fonts.insert(Name::from(FACE_RESOURCE), Value::Reference(reference));
+        }
+        for (i, &(resource, base_font)) in crate::standard::DA_FONTS.iter().enumerate() {
+            if !self.standard_font(i) {
+                continue;
+            }
+            let value = if let Some(reference) = standard_fonts[i] {
+                Value::Reference(reference)
+            } else {
                 let mut font = Dict::new();
                 font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
                 font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
@@ -1030,16 +1106,12 @@ impl Appearance {
                         Value::Name(Name::from("WinAnsiEncoding")),
                     );
                 }
-                let mut fonts = Dict::new();
-                fonts.insert(Name::from(resource), Value::Dict(font));
-                resources.insert(Name::from("Font"), Value::Dict(fonts));
-            }
-            Some(text::TextFont::Embedded(reference)) => {
-                let mut fonts = Dict::new();
-                fonts.insert(Name::from(FACE_RESOURCE), Value::Reference(reference));
-                resources.insert(Name::from("Font"), Value::Dict(fonts));
-            }
-            None => {}
+                Value::Dict(font)
+            };
+            fonts.insert(Name::from(resource), value);
+        }
+        if !fonts.is_empty() {
+            resources.insert(Name::from("Font"), Value::Dict(fonts));
         }
         if self.alpha < 1.0 || self.blend.is_some() {
             let mut state = Dict::new();
@@ -1071,9 +1143,7 @@ enum Geometry {
 /// missing or malformed.
 fn geometry(reader: &Reader<'_>, dict: &Dict, subtype: &[u8]) -> Result<Option<Geometry>> {
     Ok(if is_text_markup(subtype) {
-        reader
-            .quads(dict, subtype)?
-            .map(|quads| Geometry::Quads(quads.into_vec()))
+        reader.quad_geometry(dict, subtype)?
     } else if has_points(subtype) {
         reader.point_lists(dict, subtype)?.map(Geometry::Points)
     } else {
@@ -1104,13 +1174,18 @@ fn fit(
     dict: &Dict,
     subtype: &[u8],
     geometry: &Geometry,
+    dimension: Option<&line::Dimension>,
 ) -> Result<Option<[f64; 4]>> {
     let lists = match geometry {
         Geometry::Quads(quads) => return Ok(Some(bounds(quads.iter().flatten()))),
         Geometry::Points(lists) => lists,
         Geometry::Rect => return Ok(None),
     };
-    let [x0, y0, x1, y1] = bounds(lists.iter().flatten());
+    let mut area = bounds(lists.iter().flatten());
+    if let Some(dimension) = dimension {
+        dimension.expand(&mut area);
+    }
+    let [x0, y0, x1, y1] = area;
     if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
         return Ok(None);
     }
@@ -1140,9 +1215,28 @@ pub fn fitted_rect(reader: &Reader<'_>, dict: &Dict) -> Result<Option<[f64; 4]>>
         return Ok(None);
     };
     match geometry(reader, dict, &subtype)? {
-        Some(geometry) => fit(reader, dict, &subtype, &geometry),
+        Some(geometry) => {
+            let dimension = read_dimension(reader, dict, &subtype, &geometry, None)?;
+            fit(reader, dict, &subtype, &geometry, dimension.as_ref())
+        }
         None => Ok(None),
     }
+}
+
+fn read_dimension(
+    reader: &Reader<'_>,
+    dict: &Dict,
+    subtype: &[u8],
+    geometry: &Geometry,
+    face: Option<&FaceText<'_>>,
+) -> Result<Option<line::Dimension>> {
+    if subtype == b"Line"
+        && let Geometry::Points(lists) = geometry
+        && let Some(vertices) = lists.first()
+    {
+        return line::Dimension::read(reader, dict, vertices, face);
+    }
+    Ok(None)
 }
 
 /// Draws the normal appearance of the annotation `dict`, or returns `None`
@@ -1161,7 +1255,10 @@ pub fn face_appearance(
     dict: &Dict,
     face: &mut FaceText<'_>,
 ) -> Result<Option<Appearance>> {
-    if reader.name(dict, "Subtype")?.as_deref() != Some(b"FreeText".as_slice()) {
+    if !matches!(
+        reader.name(dict, "Subtype")?.as_deref(),
+        Some(b"FreeText" | b"Line")
+    ) {
         return Ok(None);
     }
     appearance_with(reader, dict, false, Some(face))
@@ -1181,13 +1278,22 @@ fn appearance_with(
     let Some(subtype) = reader.name(dict, "Subtype")? else {
         return Ok(None);
     };
-    if !draws(&subtype) {
+    // Authored redaction marks have their own stored normal appearances.
+    // Only the virtual render path supplies an outline for a missing one.
+    let redaction = aggregate && &*subtype == b"Redact";
+    if !draws(&subtype) && !redaction {
         return Ok(None);
     }
-    let Some(geometry) = geometry(reader, dict, &subtype)? else {
+    let geometry = if redaction && dict.get("QuadPoints").is_some() {
+        reader.quad_geometry(dict, &subtype)?
+    } else {
+        geometry(reader, dict, &subtype)?
+    };
+    let Some(geometry) = geometry else {
         return Ok(None);
     };
-    let fitted = fit(reader, dict, &subtype, &geometry)?;
+    let dimension = read_dimension(reader, dict, &subtype, &geometry, face.as_deref())?;
+    let fitted = fit(reader, dict, &subtype, &geometry, dimension.as_ref())?;
     let rect = match (&geometry, fitted) {
         (_, Some(rect)) => rect,
         (Geometry::Rect, None) => match reader.rect(dict)? {
@@ -1293,6 +1399,14 @@ fn appearance_with(
                 intensity,
             )?;
         }
+        (b"Redact", _) => {
+            let area = [[(x0, y1), (x1, y1), (x0, y0), (x1, y0)]];
+            let quads = match &geometry {
+                Geometry::Quads(quads) => quads.as_slice(),
+                _ => &area,
+            };
+            shapes::redaction(&mut canvas, &paint, size, quads, to_canvas);
+        }
         (b"Highlight", Geometry::Quads(quads)) => {
             if let Some(color) = paint.stroke {
                 for quad in quads {
@@ -1322,7 +1436,9 @@ fn appearance_with(
         (_, Geometry::Points(lists)) => {
             let intensity = reader.cloud_intensity(dict)?;
             let endings = reader.line_endings(dict)?;
-            if !shapes::lines(
+            if let Some(dimension) = dimension {
+                (fit, font) = dimension.draw(&mut canvas, &paint, endings, rect, face)?;
+            } else if !shapes::lines(
                 &mut canvas,
                 &paint,
                 &subtype,

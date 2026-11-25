@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jpeg_encoder::{ColorType, Encoder as JpegEncoder, PixelDensity, PixelDensityUnit};
 use pyropdf_store::LimitExceeded;
-use pyropdf_store::budget::{Budget, BudgetVec};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::save::deflate;
 
 use super::{Layout, codecs, device_samples};
@@ -152,6 +152,12 @@ impl<'b> BudgetedPngOutput<'b> {
     pub const fn take_refusal(&mut self) -> Option<LimitExceeded> {
         self.refusal.take()
     }
+
+    /// Consumes the buffer and returns the written bytes.
+    #[must_use]
+    pub fn into_vec(self) -> Vec<u8> {
+        self.bytes.into_vec()
+    }
 }
 
 impl Write for BudgetedPngOutput<'_> {
@@ -214,7 +220,7 @@ impl<'a> Bounded<'a> {
 impl Write for Bounded<'_> {
     #[expect(
         clippy::disallowed_methods,
-        reason = "the shared atomic output count checks every extension against the caller output-size limit first"
+        reason = "checks the caller output-size limit when set and reserves fallibly before extending"
     )]
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         let counted = self
@@ -227,6 +233,12 @@ impl Write for Bounded<'_> {
         if counted.is_err() {
             self.exceeded = true;
             return Err(io::Error::other("the encoded image passes its limit"));
+        }
+        if self.bytes.try_reserve(buffer.len()).is_err() {
+            return Err(io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                "out of memory while encoding the image",
+            ));
         }
         self.bytes.extend_from_slice(buffer);
         Ok(buffer.len())
@@ -267,9 +279,11 @@ fn encode_other(
                 u16::try_from(length).map_err(|_| "JPEG sides end at 65535 pixels".to_owned())
             };
             let mut encoder = JpegEncoder::new(out, quality);
-            // Resolutions never pass the 65,535 of JFIF's densities.
             encoder.set_density(PixelDensity {
-                density: (resolution.0 as u16, resolution.1 as u16),
+                density: (
+                    resolution.0.clamp(1, 65_535) as u16,
+                    resolution.1.clamp(1, 65_535) as u16,
+                ),
                 unit: PixelDensityUnit::Inches,
             });
             let color = if layout.gray {
@@ -359,35 +373,56 @@ pub fn encode_png(
 
 /// Returns the colors of `data` without alpha, as the samples of an image
 /// in 1 (gray), 3 (RGB), or 4 (CMYK) `components`, or encoded as a JPEG at
-/// `quality` when given, for gray or RGB.
+/// `quality` when given, for gray or RGB, charging allocations to `budget`.
 pub fn recolor_samples(
     data: &[u8],
     layout: Layout,
     components: usize,
     quality: Option<u8>,
-) -> Result<Vec<u8>, String> {
+    budget: &Budget,
+) -> Result<Vec<u8>, EncodeError> {
+    budget.poll().map_err(EncodeError::Limit)?;
     let color = match (components, quality) {
         (1 | 3 | 4, None) => None,
         (1, Some(_)) => Some(ColorType::Luma),
         (3, Some(_)) => Some(ColorType::Rgb),
         _ => {
-            return Err(format!(
+            return Err(EncodeError::Other(format!(
                 "no {components}-component samples{}",
                 if quality.is_some() { " in JPEG" } else { "" }
-            ));
+            )));
         }
     };
+    let sample_bytes = u64::from(layout.width)
+        .saturating_mul(u64::from(layout.height))
+        .saturating_mul(u64::try_from(components).unwrap_or(u64::MAX));
+    budget
+        .charge(LimitCode::MemorySize, sample_bytes)
+        .map_err(EncodeError::Limit)?;
     let samples = device_samples(data, layout, components);
     let (Some(color), Some(quality)) = (color, quality) else {
         return Ok(samples);
     };
     let side = |length: u32| {
-        u16::try_from(length).map_err(|_| "JPEG sides end at 65535 pixels".to_owned())
+        u16::try_from(length)
+            .map_err(|_| EncodeError::Other("JPEG sides end at 65535 pixels".to_owned()))
     };
-    let (width, height) = (side(layout.width)?, side(layout.height)?);
-    let mut out = Vec::new();
-    JpegEncoder::new(&mut out, quality)
-        .encode(&samples, width, height, color)
-        .map_err(|e| e.to_string())?;
-    Ok(out)
+    let (width, height) = match (side(layout.width), side(layout.height)) {
+        (Ok(width), Ok(height)) => (width, height),
+        (Err(error), _) | (_, Err(error)) => {
+            budget.release(LimitCode::MemorySize, sample_bytes);
+            return Err(error);
+        }
+    };
+    let mut out = BudgetedPngOutput::new(budget);
+    let encoded = JpegEncoder::new(&mut out, quality).encode(&samples, width, height, color);
+    drop(samples);
+    budget.release(LimitCode::MemorySize, sample_bytes);
+    if let Err(error) = encoded {
+        if let Some(refusal) = out.take_refusal() {
+            return Err(EncodeError::Limit(refusal));
+        }
+        return Err(EncodeError::Other(error.to_string()));
+    }
+    Ok(out.into_vec())
 }

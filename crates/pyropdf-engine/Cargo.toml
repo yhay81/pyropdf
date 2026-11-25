@@ -16,6 +16,8 @@ hayro-svg = "0.9.0"
 # The stretch of a substitute font's glyph, which hayro-interpret keeps to
 # itself, for the advances of text (#656).
 hayro-font = "0.5.0"
+# The Type 1 interpreter that hayro-font uses for glyph IDs and seac.
+read-fonts = "0.46.0"
 # The font tables that hayro already reads, for the line metrics of text.
 skrifa = "0.50.0"
 # The bidirectional classes of the reading order of text.
@@ -25,6 +27,8 @@ unicode-bidi = "0.3.18"
 pdf-base14-metrics = "0.0.2"
 unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.13.3"
+# Rich-text field values use the XHTML subset of XFA.
+quick-xml = { version = "0.42.0", default-features = false }
 # PP-OCR inference in pure Rust, with pylopdf's pins (DESIGN.md section 14).
 rten = { version = "0.28.0", default-features = false, features = ["rten_format"] }
 rten-tensor = "0.28.0"
@@ -41,6 +45,7 @@ p384 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pem
 # PKCS#12 file's MAC.
 pkcs8 = { version = "0.11.0", features = ["encryption", "pem"] }
 sha2 = "0.11.1"
+sha3 = { version = "0.11.0", default-features = false }
 hmac = "0.13.0"
 harfrust = "0.16.0"
 unicode-script = "0.5.9"
@@ -50,6 +55,8 @@ flate2 = "1.1.11"
 png = "0.18.1"
 # JPEG output of Pixmap, doc.render, and image rewriting, as pylopdf encodes it.
 jpeg-encoder = "0.7.1"
+# Lossless JPEG 2000 Part 1 encoding for JPXDecode image XObjects.
+j2k-native = { version = "0.14.0", default-features = false, features = ["std"] }
 # JPEG input of Pixmap.from_bytes and image samples, the version that hayro
 # already pulls in.
 zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
@@ -63,3 +70,6 @@ tiff = { version = "0.11.3", default-features = false, features = ["deflate", "j
 [dev-dependencies]
 # Property tests of the bridge (DESIGN.md F9).
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

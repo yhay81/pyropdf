@@ -15,9 +15,10 @@ import math
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, overload
 
 from pyropdf._geometry import Matrix, Point, Rect
+from pyropdf._pixmap import Colorspace
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -25,6 +26,9 @@ if TYPE_CHECKING:
 
     from pyropdf._core import PathColumns, _OperationBudget, _PageSnapshot, _PathPaint, _PathRow, _PathStroke
     from pyropdf._document import Document
+    from pyropdf._objects import Array, Dictionary
+    from pyropdf._page import _RetainedPage
+    from pyropdf._pixmap import Pixmap
 
 
 class BlendMode(enum.StrEnum):
@@ -164,6 +168,7 @@ class ClosePath:
     """Close the current subpath with a line to its start."""
 
 
+#: One path construction segment of a `Path` or `PathBuilder`.
 Segment: TypeAlias = MoveTo | LineTo | CurveTo | ClosePath
 
 
@@ -217,6 +222,22 @@ class TilingPattern:
     """The opacity of the pattern cell as a whole."""
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PatternPaint:
+    """Paint with an indirect tiling or shading pattern in the canvas document.
+
+    Pass the pattern's store handle, for example the ``obj`` of a
+    :class:`typed.PatternType1` or :class:`typed.PatternType2`. Its PDF matrix
+    positions it in default user space. For an uncolored tiling pattern,
+    supply an indirect ``[/Pattern base]`` color space and its color components.
+    DeviceN bases support up to 32 components, matching the renderer.
+    """
+
+    pattern: Dictionary
+    space: Array | None = None
+    components: tuple[float, ...] = ()
+
+
 @dataclass(frozen=True, slots=True)
 class ColorStop:
     """A place on a gradient's line, and the color and alpha there."""
@@ -261,12 +282,13 @@ class RadialGradient:
     extend: GradientExtend = GradientExtend.PAD
 
 
+#: A linear or radial gradient paint for a `Canvas`.
 Gradient: TypeAlias = LinearGradient | RadialGradient
 _ReadGradient: TypeAlias = tuple[
     Gradient, tuple[float, float, float, float] | None, tuple[float, float, float, float] | None
 ]
-# A canvas also repaints an axial/radial ShadingPattern retained by extraction.
-Paint: TypeAlias = Color | ShadingPattern | TilingPattern | Gradient
+#: A solid color, pattern, shading, or gradient paint; a canvas also repaints axial/radial `ShadingPattern` values.
+Paint: TypeAlias = Color | PatternPaint | ShadingPattern | TilingPattern | Gradient
 
 
 class _ShadingSource:
@@ -571,14 +593,63 @@ class Image:
     _source: _Source | None = field(default=None, init=False, repr=False, compare=False)
 
 
+#: One painted item yielded by `Page.content`: a `TextRun`, `Path`, or `Image`.
 ContentItem: TypeAlias = TextRun | Path | Image
 
 
+class _ContentOrigin:
+    """Keep playback provenance outside the public dataclass fields and pickle."""
+
+    __slots__ = ("_page",)
+    _page: _RetainedPage
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
-class Content(Sequence[ContentItem]):
+class Content(_ContentOrigin, Sequence[ContentItem]):
     """The items that a page paints, in paint order."""
 
     items: tuple[ContentItem, ...]
+
+    def _retained_page(self) -> _RetainedPage:
+        page = getattr(self, "_page", None)
+        if page is None:
+            msg = "replay requires complete, unfiltered content captured from a page"
+            raise ValueError(msg)
+        page.document._ensure_open()  # noqa: SLF001 - a captured result follows its source lifetime.
+        return page
+
+    def pixmap(  # noqa: PLR0913 - the same keyword rendering options as Page.pixmap.
+        self,
+        *,
+        dpi: float | None = None,
+        matrix: Sequence[float] | None = None,
+        fit: int | tuple[int, int] | None = None,
+        clip: Sequence[float] | None = None,
+        alpha: bool = False,
+        background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
+        colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
+        hinting: bool = False,
+        glyph_cache: bool = False,
+    ) -> Pixmap:
+        """Render this complete page capture with the options of :meth:`Page.pixmap`.
+
+        Geometry, paints, resources and annotation visibility are those of the
+        capture. Each call has its own budget. Filtered, constructed or unpickled
+        content raises :class:`ValueError`; a closed source raises :class:`PdfError`.
+        """
+        page = self._retained_page()
+        return page.pixmap(
+            dpi=dpi,
+            matrix=matrix,
+            fit=fit,
+            clip=clip,
+            alpha=alpha,
+            background=background,
+            colorspace=colorspace,
+            hinting=hinting,
+            glyph_cache=glyph_cache,
+            annotations=page.annotations_included,
+        )
 
     @overload
     def __getitem__(self, index: int) -> ContentItem: ...
@@ -1289,6 +1360,7 @@ for _public in (
     CurveTo,
     ClosePath,
     Color,
+    PatternPaint,
     ShadingPattern,
     TilingPattern,
     ColorStop,

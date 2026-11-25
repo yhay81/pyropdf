@@ -34,12 +34,12 @@ build arguments used in this run from `tools/native-wheel-args.txt`.
 The `Wheel size` workflow builds the PR test merge and its first parent on
 each of the five release targets. This isolates the change introduced by the PR.
 Both checkouts use the same runner, Rust, maturin and compatibility setting.
-Each checkout supplies its own `tools/native-wheel-args.txt`, so changes to the
-packaging command count toward PR growth. Older revisions use their original
+Each checkout supplies its own `tools/native-wheel-args.txt` and applies its own
+abi3 repacking script when present, so packaging changes count toward PR growth. Older revisions use their original
 `--release --locked --out dist` command. The comparison matches Python, ABI and
 platform tags and uploads a `size.json` for each target. Growth over 262,144 bytes needs an
 explanation in the PR body on a line beginning `Wheel growth justification:`.
-Editing the body reruns the comparison. The absolute limit still applies.
+Changing that justification or the target branch reruns the comparison. The absolute limit applies to every abi3 wheel.
 `tests/test_release.py` exercises 262,145 bytes of growth, rejects a missing
 reason and records the explanation for its synthetic font-notice fixture.
 
@@ -81,7 +81,10 @@ python3 evidence/wheel-size/measure.py "target/wheel-size/$run" --run "$run"
 The release profile keeps unwind, uses speed level 2 and fat LTO, strips native
 symbols, and uses `s` for pyropdf-engine, harfrust, read-fonts and RTen. The
 binding and raster and matrix-multiplication kernels keep speed optimization.
-Release wheels use level-9 DEFLATE, which pip reads on every supported Python.
+Maturin writes level-9 DEFLATE. The abi3 release job then repacks with one
+Zopfli iteration. It adopts the smaller wheel after checking the installed
+bytes and raw ZIP headers. If a valid header or layout cannot be reproduced
+losslessly, the release keeps the original artifact.
 For a native build with local symbols for profiling, set
 `CARGO_PROFILE_RELEASE_STRIP=none`.
 
@@ -117,3 +120,62 @@ independently.
 gh run download 44783571685 --pattern 'abi3-size-*' --dir target/wheel-size/pairs
 jq -s . target/wheel-size/pairs/abi3-size-*/size.json
 ```
+
+## Windows abi3 recompression
+
+The Windows comparison for #979 reported 9,359,600 bytes on its base and
+9,467,150 on its head. The compressed head exceeded the 9,437,184-byte cap
+by 29,966 bytes. [Windows comparison](https://github.com/yhay81/pyropdf/actions/runs/44903451300/job/136844014884)
+
+Repacking the Windows wheel from the release rehearsal above reduced its size
+from 9,090,201 to 8,847,599 bytes. The compressed extension accounted for
+221,572 of the 242,602 bytes saved. Python's standard ZIP reader compared
+all 68 archive members, including their order, names, timestamps, permissions
+and data. The independent checker also verified the SHA-256 hashes and sizes
+in RECORD. The inputs and outputs are identified in
+[windows-recompression.json](windows-recompression.json).
+
+### Reproducing the Windows measurement
+
+```sh
+gh run download 44783558184 --repo yhay81/pyropdf --name wheels-x86_64-pc-windows-msvc --dir original
+mkdir delivered
+cp original/*.whl delivered/
+uv run --locked --only-group wheel --python 3.14 python tools/repack_wheel.py delivered
+python3 evidence/wheel-size/recompression.py original/*.whl delivered/*.whl \
+  --source https://github.com/yhay81/pyropdf/actions/runs/44783558184/artifacts/14654361426
+```
+
+## Integrated object store release profile
+
+After #1101, the delivered Windows x86_64 wheel was 9,573,339 bytes and the
+Linux x86_64 wheel was 9,454,025 bytes. Both exceeded the 9,437,184-byte
+limit. The corresponding paired jobs measured the same overrun on their
+bases. [Windows build](https://github.com/yhay81/pyropdf/actions/runs/44976395403/job/137067205245)
+and [Linux build](https://github.com/yhay81/pyropdf/actions/runs/44976395403/job/137067205425).
+
+On the same integrated sources at `138fd449`, compiling `pyropdf-store` at
+level `s` reduced the delivered macOS arm64 wheel from 8,225,735 to
+8,037,684 bytes, a saving of 188,051 bytes. The installed wheel passed the
+release smoke test, including panic unwinding, rendering, extraction, editing,
+and reopening full and incremental saves. [Artifact hashes and timings](store-profile.json).
+
+To reproduce, build the base with the pinned release options, then build
+it again with the one package override. Use separate output directories.
+
+```sh
+uvx --from maturin==1.16.0 maturin build --release --locked --compression-level 9 --out baseline
+uvx --from maturin==1.16.0 maturin build --release --locked --compression-level 9 --out candidate \
+  --config 'profile.release.package.pyropdf-store.opt-level="s"'
+for directory in baseline candidate; do
+  uv run --locked --only-group wheel --python 3.14 python tools/repack_wheel.py "$directory"
+  python tools/smoke_artifact.py "$directory" --pattern '*.whl'
+done
+```
+
+Install each delivered wheel in a separate environment and run the two-document
+timing command above there. The benchmark takes the best of five freshly
+opened documents per operation. On this machine whole-document text extraction
+took 124.2 and 65.9 ms with the new profile, compared with 127.2 and 67.0 ms
+before. The four 72 and 144 dpi rendering comparisons ranged from 2.7% faster
+to 1.7% slower. The paired native-platform results are tracked in [#1108](https://github.com/yhay81/pyropdf/issues/1108).

@@ -3325,3 +3325,154 @@ fn free_unreferenced_frees_seeds_and_orphaned_candidates_in_a_transaction() {
         );
     }
 }
+
+#[test]
+fn nominated_retirement_keeps_outside_objects_and_their_shared_targets() {
+    let objects = vec![
+        (1, dict(vec![("Keep", reference(2))])),
+        (2, dict(vec![("Child", reference(3))])),
+        (3, Value::Integer(3)),
+        (
+            4,
+            dict(vec![("Shared", reference(2)), ("Indirect", reference(5))]),
+        ),
+        (5, dict(vec![("Back", reference(6))])),
+        (6, dict(vec![("Back", reference(5))])),
+        (
+            7,
+            dict(vec![("Private", reference(8)), ("Other", reference(9))]),
+        ),
+        (8, Value::Integer(8)),
+        (9, Value::Integer(9)),
+        (10, dict(vec![("Cycle", reference(11))])),
+        (11, dict(vec![("Cycle", reference(10))])),
+    ];
+    let trailer = [(Name::from("Root"), reference(1))].into_iter().collect();
+    let doc = document_of(&objects, trailer);
+    let budget = Budget::default();
+    let index = build(&doc.current(), &budget).unwrap();
+    let targets =
+        nominated_unreferenced(&index, &[1, 2, 3, 5, 6, 7, 8, 8, 10, 11], &budget).unwrap();
+    assert_eq!(&*targets, &[7, 8, 10, 11]);
+}
+
+#[test]
+fn pruning_all_leaves_of_multilevel_parent_tree_removes_parent_tree_and_clears_cache() {
+    let objects = vec![
+        (
+            1,
+            dict(vec![
+                ("Type", name("Catalog")),
+                ("Pages", reference(2)),
+                ("StructTreeRoot", reference(3)),
+            ]),
+        ),
+        (
+            2,
+            dict(vec![
+                ("Type", name("Pages")),
+                ("Kids", array(vec![reference(10), reference(11)])),
+                ("Count", Value::Integer(2)),
+            ]),
+        ),
+        (
+            10,
+            dict(vec![
+                ("Type", name("Page")),
+                ("Parent", reference(2)),
+                ("StructParents", Value::Integer(0)),
+            ]),
+        ),
+        (
+            11,
+            dict(vec![
+                ("Type", name("Page")),
+                ("Parent", reference(2)),
+                ("StructParents", Value::Integer(1)),
+            ]),
+        ),
+        (
+            20,
+            dict(vec![
+                ("Type", name("StructElem")),
+                ("S", name("P")),
+                ("P", reference(3)),
+                ("Pg", reference(10)),
+                ("K", Value::Integer(0)),
+            ]),
+        ),
+        (
+            21,
+            dict(vec![
+                ("Type", name("StructElem")),
+                ("S", name("P")),
+                ("P", reference(3)),
+                ("Pg", reference(11)),
+                ("K", Value::Integer(0)),
+            ]),
+        ),
+        (
+            70,
+            dict(vec![
+                ("Limits", array(vec![Value::Integer(0), Value::Integer(0)])),
+                (
+                    "Nums",
+                    array(vec![Value::Integer(0), array(vec![reference(20)])]),
+                ),
+            ]),
+        ),
+        (
+            71,
+            dict(vec![
+                ("Limits", array(vec![Value::Integer(1), Value::Integer(1)])),
+                (
+                    "Nums",
+                    array(vec![Value::Integer(1), array(vec![reference(21)])]),
+                ),
+            ]),
+        ),
+        (
+            69,
+            dict(vec![("Kids", array(vec![reference(70), reference(71)]))]),
+        ),
+        (
+            3,
+            dict(vec![
+                ("Type", name("StructTreeRoot")),
+                ("K", array(vec![reference(20), reference(21)])),
+                ("ParentTree", reference(69)),
+            ]),
+        ),
+    ];
+    let trailer = [(Name::from("Root"), reference(1))].into_iter().collect();
+    let doc = document_of(&objects, trailer);
+    let budget = Budget::default();
+    let cache = Cache::new();
+    let _ = cache.get(&doc.current(), &budget).unwrap();
+    cache.clear();
+    let index = cache.get(&doc.current(), &budget).unwrap();
+
+    let version = doc.current();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    structure::plan(
+        &mut reads,
+        &index,
+        &[10, 11],
+        &[],
+        &mut edits,
+        structure::Reach::Affected,
+    )
+    .unwrap();
+    let mut tx = doc.begin();
+    edits.write(&mut tx, &budget).unwrap();
+    let committed = tx.commit(&budget).unwrap();
+    let root = committed.get(3, &budget).unwrap().unwrap();
+    let Value::Dict(root_dict) = root.value().as_ref() else {
+        panic!("expected StructTreeRoot dict");
+    };
+    assert!(
+        root_dict.get("ParentTree").is_none(),
+        "empty multi-level /ParentTree must be removed from StructTreeRoot: {root_dict:?}"
+    );
+}

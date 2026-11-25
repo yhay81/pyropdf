@@ -47,21 +47,22 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Layers", ("_layers",)),
     ("Sanitizing", ("_sanitize",)),
     ("Fonts", ("_fonts", "_fallback_fonts")),
-    ("Pages", ("_pages", "_page", "_presentations")),
+    ("Pages", ("_pages", "_page", "_presentations", "_prepress")),
     ("Drawing", ("_canvas",)),
     ("Text and content", ("_text", "_content", "_tables", "_markdown", "_chunks", "_chunk_sources")),
     ("OCR", ("_ocr",)),
     ("Rendering", ("_pixmap",)),
-    ("Annotations", ("_annotations", "_media")),
-    ("Links and destinations", ("_links", "_targets")),
+    ("Annotations", ("_annotations", "_media", "_redaction_mark")),
+    ("Links and destinations", ("_links", "_targets", "_name_resources", "_viewer_actions", "_fragments")),
     ("Actions and triggers", ("_actions", "_media_actions")),
     ("Forms and widgets", ("_form", "_widgets", "_fdf")),
     ("Outline", ("_outline",)),
     ("Threads", ("_threads",)),
     ("Structure", ("_structure",)),
     ("Attachments", ("_attachments",)),
-    ("Collections", ("_collections",)),
+    ("Collections", ("_collections", "_web_capture")),
     ("Measurement and requirements", ("_measurement",)),
+    ("Interchange", ("_interchange",)),
     ("History and changes", ("_history", "_changes", "_revisions")),
     ("Encryption", ("_encryption",)),
     ("Signing", ("_signing", "_signature_structures")),
@@ -149,6 +150,8 @@ INDEX = f"""\
 ---
 title: API reference
 description: Every public name of pyropdf, with its signature and docstring, by topic.
+hide:
+  - toc
 ---
 
 {NOTICE}
@@ -578,7 +581,7 @@ def _stub_members(cls: type, owner: str, stubs: dict[str, _StubMember]) -> list[
             assert stub.signature is not None  # noqa: S101
             code = _format_signature(stub.signature, qualified)
             text = _doc(runtime) if runtime is not None else ""
-        entries.append("\n\n".join(part for part in (f"### `{qualified}`", f"```python\n{code}\n```", text) if part))
+        entries.append("\n\n".join(part for part in (f"### `{name}`", f"```python\n{code}\n```", text) if part))
     return entries
 
 
@@ -599,7 +602,7 @@ def _class_constant_entries(cls: type, owner: str, info: _SourceInfo) -> tuple[l
                 code = f"{qualified}: {const_type}"
             text = info.attr_docs.get(f"{base.__name__}.{const_name}", "")
             entries.append(
-                "\n\n".join(part for part in (f"### `{qualified}`", f"```python\n{code}\n```", text) if part)
+                "\n\n".join(part for part in (f"### `{const_name}`", f"```python\n{code}\n```", text) if part)
             )
     return entries, seen
 
@@ -633,7 +636,7 @@ def _render_member(qualified: str, defining_base: type, name: str, member: objec
         target = member.__func__ if isinstance(member, classmethod | staticmethod) else member
         code = _unalias_typed(_signature(target, qualified), is_typed=is_typed) or qualified
         text = _doc(target)
-    return "\n\n".join(part for part in (f"### `{qualified}`", f"```python\n{code}\n```", text) if part)
+    return "\n\n".join(part for part in (f"### `{name}`", f"```python\n{code}\n```", text) if part)
 
 
 def _members(cls: type, owner: str, info: _SourceInfo) -> list[str]:
@@ -676,7 +679,7 @@ def _property_type(member: object) -> str:
 
 def _noun(text: str) -> str:
     """Word a property's docstring as what it is: 'Return or set the pages' becomes 'The pages'."""
-    match = re.match(r"Returns?(?: or sets?)? (\w|`)", text)
+    match = re.match(r"Returns?(?:,? (?:replace,? )?or (?:sets?|deletes?))? (\w|`)", text)
     if match is None:
         return text
     return match.group(1).upper() + text[match.end() :]

@@ -4,7 +4,7 @@
 //! `doc.render` through the hayro bridge, with the GIL released while
 //! rendering.
 
-use std::ffi::{CString, c_int, c_void};
+use std::ffi::{c_int, c_void};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -808,7 +808,7 @@ impl Pixmap {
             if out.exceeded() {
                 let limit = max_size.unwrap_or_default();
                 return Err(LimitError::new_err((
-                    "pixmap_output_size",
+                    LimitCode::PixmapOutputSize.as_str(),
                     format!(
                         "the encoded {} exceeds the {limit}-byte output limit",
                         encoding.name()
@@ -862,13 +862,14 @@ impl Pixmap {
                 let mut out = BufWriter::new(file);
                 let result = self
                     .encode(&mut out, encoding, &Budget::default())
-                    .map_err(|e| match e {
-                        EncodeError::Limit(refusal) => refusal.to_string(),
-                        EncodeError::Other(message) => message,
+                    .map_err(|e| {
+                        encode_error(
+                            e,
+                            &format!("failed to save the image to {}", path.display()),
+                        )
                     })
-                    .and_then(|()| out.flush().map_err(|e| e.to_string()))
-                    .and_then(|()| out.get_ref().sync_all().map_err(|e| e.to_string()))
-                    .map_err(|e| error(&e));
+                    .and_then(|()| out.flush().map_err(|e| error(&e)))
+                    .and_then(|()| out.get_ref().sync_all().map_err(|e| error(&e)));
                 drop(out);
                 let result = result.and_then(|()| {
                     if let Some(permissions) = permissions {
@@ -914,12 +915,29 @@ impl Pixmap {
             let data = &pixmap.data;
             let length = isize::try_from(data.len())
                 .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
-            let channels = pixmap.channels() as isize;
-            let width = pixmap.width as isize;
-            let height = pixmap.height as isize;
+            let channels = isize::try_from(pixmap.channels())
+                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let width = isize::try_from(pixmap.width)
+                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let height = isize::try_from(pixmap.height)
+                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let row_stride = width
+                .checked_mul(channels)
+                .ok_or_else(|| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let f_contiguous = length == 0
+                || [height, width, channels]
+                    .into_iter()
+                    .filter(|&dim| dim > 1)
+                    .count()
+                    <= 1;
+            if (flags & ffi::PyBUF_F_CONTIGUOUS) == ffi::PyBUF_F_CONTIGUOUS && !f_contiguous {
+                return Err(PyBufferError::new_err(
+                    "Pixmap buffer is not Fortran-contiguous",
+                ));
+            }
             // Shape and strides live in one allocation that `internal` owns
             // until `__releasebuffer__`.
-            let mut dimensions = Box::new([height, width, channels, width * channels, channels, 1]);
+            let mut dimensions = Box::new([height, width, channels, row_stride, channels, 1]);
             let dimensions_ptr = dimensions.as_mut_ptr();
             let nd = (flags & ffi::PyBUF_ND) == ffi::PyBUF_ND;
             let strides = (flags & ffi::PyBUF_STRIDES) == ffi::PyBUF_STRIDES;
@@ -933,9 +951,7 @@ impl Pixmap {
                 (*view).readonly = 1;
                 (*view).itemsize = 1;
                 (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
-                    CString::new("B")
-                        .expect("the format has no null byte")
-                        .into_raw()
+                    c"B".as_ptr().cast_mut()
                 } else {
                     ptr::null_mut()
                 };
@@ -959,16 +975,12 @@ impl Pixmap {
             if view.is_null() {
                 return;
             }
-            // SAFETY: `__getbuffer__` made every non-null format with
-            // `CString::into_raw` and stored a boxed `[isize; 6]` in
-            // `internal`, once for this view.
+            // SAFETY: `__getbuffer__` stored a boxed `[isize; 6]` in
+            // `internal`, once for this view; `format` is a static C string.
             unsafe {
-                let format = (*view).format;
-                if !format.is_null() {
-                    drop(CString::from_raw(format));
-                }
                 let internal = (*view).internal;
                 if !internal.is_null() {
+                    (*view).internal = ptr::null_mut();
                     drop(Box::from_raw(internal.cast::<[isize; 6]>()));
                 }
             }
@@ -1188,22 +1200,98 @@ pub fn pixmap_png<'py>(
     })?
 }
 
+/// A bounded PDF function retained for one recolouring operation.
+#[pyclass(frozen, name = "_DeviceCurve", module = "pyropdf._core")]
+pub struct DeviceCurve(pixel_ops::DeviceCurve);
+
+#[pymethods]
+impl DeviceCurve {
+    fn evaluate(&self, k: f32) -> PyResult<Option<f32>> {
+        crate::errors::boundary(|| self.0.evaluate(k))
+    }
+}
+
+/// Resolves a scalar output-device function through the same bridge as rendering.
+#[pyfunction]
+pub(crate) fn device_curve(
+    document: &_Document,
+    root: (u32, u16),
+    path: Vec<crate::objects::Step>,
+) -> PyResult<Option<DeviceCurve>> {
+    crate::errors::boundary(|| {
+        if path.len() > 32 {
+            return Ok(None);
+        }
+        let (version, index, budget) = crate::pages::index(document)?;
+        let bridged = document
+            .bridge
+            .get(&version, &index, &budget)
+            .map_err(|e| bridge_error(&e))?;
+        let steps = path.iter().map(|step| match step {
+            crate::objects::Step::Key(key) => pixel_ops::CurveStep::Key(key),
+            crate::objects::Step::Index(index) => pixel_ops::CurveStep::Index(*index),
+        });
+        // Checking an encrypted stream can allocate its decrypted bytes even if
+        // its declared length is wrong. The bridge length bounds the largest
+        // temporary plaintext buffer; regular unencrypted streams are borrowed.
+        let scratch = if version.trailer().get("Encrypt").is_some() {
+            bridged.pdf().data().as_ref().len() as u64
+        } else {
+            0
+        };
+        budget
+            .charge(LimitCode::MemorySize, scratch)
+            .map_err(|e| limit_error(&e))?;
+        let curve =
+            pixel_ops::DeviceCurve::load(&bridged, Reference::new(root.0, root.1), steps, &budget);
+        budget.release(LimitCode::MemorySize, scratch);
+        curve
+            .map(|curve| curve.map(DeviceCurve))
+            .map_err(|e| limit_error(&e))
+    })?
+}
+
 /// Returns the colors of `pixmap` without its alpha, as the samples of an
 /// image in 1 (gray), 3 (RGB), or 4 (CMYK) `components` (`page.recolor`),
 /// or as a JPEG at `quality` when it is given, for gray or RGB.
 #[pyfunction]
-#[pyo3(signature = (pixmap, components, quality=None))]
+#[pyo3(signature = (document, pixmap, components, quality=None, tables=None))]
 pub fn recolor_samples<'py>(
     py: Python<'py>,
+    document: &_Document,
     pixmap: &Pixmap,
     components: usize,
     quality: Option<u8>,
+    tables: Option<([u8; 256], [i16; 256])>,
 ) -> PyResult<Bound<'py, PyBytes>> {
     crate::errors::boundary(|| {
         let layout = pixmap.layout();
-        let out = py
-            .detach(|| pixel_ops::recolor_samples(&pixmap.data, layout, components, quality))
-            .map_err(PyValueError::new_err)?;
+        let budget = document.budget();
+        if tables.is_some() && (components != 4 || quality.is_some()) {
+            return Err(PyValueError::new_err(
+                "device curves require raw CMYK output",
+            ));
+        }
+        let out = py.detach(|| -> PyResult<_> {
+            let mut data =
+                pixel_ops::recolor_samples(&pixmap.data, layout, components, quality, &budget)
+                    .map_err(|e| match e {
+                        EncodeError::Limit(refusal) => limit_error(&refusal),
+                        EncodeError::Other(message) => PyValueError::new_err(message),
+                    })?;
+            if let Some((black, removal)) = tables {
+                pixel_ops::apply_black_tables(&mut data, &black, &removal, &budget)
+                    .map_err(|e| limit_error(&e))?;
+            }
+            Ok(data)
+        })?;
+        // The native buffer and the new Python bytes coexist briefly.
+        budget
+            .charge(
+                LimitCode::MemorySize,
+                u64::try_from(out.len()).unwrap_or(u64::MAX),
+            )
+            .map_err(|e| limit_error(&e))?;
         Ok(PyBytes::new(py, &out))
     })?
 }
@@ -1215,7 +1303,7 @@ pub fn recolor_samples<'py>(
 #[expect(clippy::too_many_arguments, reason = "the options of Page.pixmap")]
 pub fn render_page(
     py: Python<'_>,
-    document: &_Document,
+    source: crate::pages::PageSource<'_>,
     number: u32,
     generation: u16,
     matrix: (f64, f64, f64, f64),
@@ -1229,7 +1317,10 @@ pub fn render_page(
     glyph_cache: bool,
 ) -> PyResult<Pixmap> {
     crate::errors::boundary(|| {
-        let (version, index, budget) = crate::pages::index(document)?;
+        let document = source.document();
+        document.document()?;
+        let budget = document.budget();
+        let (version, index) = source.paint_index(None, &budget)?;
         let (red, green, blue, opacity) = background;
         let options = render::Options {
             matrix,
@@ -1244,7 +1335,7 @@ pub fn render_page(
         let scale = fit.map_or(render::Scale::Matrix(matrix), |(w, h)| {
             render::Scale::Fit(w, h)
         });
-        let fallback = document.fallback();
+        let fallback = source.fallback();
         let raster = py.detach(|| -> PyResult<Raster> {
             budget.poll().map_err(|e| limit_error(&e))?;
             let at = index
@@ -1373,7 +1464,7 @@ pub fn render_pages(
                 if out.exceeded() {
                     let limit = max_size.unwrap_or_default();
                     return Err(Failed(LimitError::new_err((
-                        "render_output_size",
+                        LimitCode::RenderOutputSize.as_str(),
                         format!("the rendered batch exceeds the {limit}-byte encoded-output limit"),
                     ))));
                 }
@@ -1393,9 +1484,10 @@ pub fn render_pages(
 pub fn bridge_error(error: &BridgeError) -> PyErr {
     match error {
         BridgeError::Store(error) => store_error(error),
-        BridgeError::EncryptionChanged | BridgeError::PasswordNotUtf8 => {
-            EncryptedDocumentError::new_err(error.to_string())
-        }
+        BridgeError::EncryptionChanged
+        | BridgeError::PasswordNotUtf8
+        | BridgeError::AesGcm
+        | BridgeError::LegacyRecipientKey => EncryptedDocumentError::new_err(error.to_string()),
         _ => PdfError::new_err(error.to_string()),
     }
 }

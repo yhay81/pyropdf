@@ -185,9 +185,9 @@ fn rebuild(glyf: &[u8], offsets: &[usize], keep: &BTreeSet<u32>) -> Option<(Vec<
             if copied > glyf.len() {
                 return None;
             }
-            new_glyf.try_reserve(data.len() + 3).ok()?;
+            new_glyf.try_reserve(data.len().checked_add(3)?).ok()?;
             new_glyf.extend_from_slice(data);
-            new_glyf.resize(new_glyf.len().next_multiple_of(4), 0);
+            new_glyf.resize(new_glyf.len().checked_next_multiple_of(4)?, 0);
         }
     }
     #[expect(
@@ -198,25 +198,40 @@ fn rebuild(glyf: &[u8], offsets: &[usize], keep: &BTreeSet<u32>) -> Option<(Vec<
     Some((new_glyf, new_loca))
 }
 
-/// Writes an sfnt with `tables`, in their order, and its `head` adjustment.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the bytes of `tables`, which the caller holds, and 16 of record and 3 of padding per table"
-)]
-pub(super) fn write(version: &[u8], tables: &[([u8; 4], Vec<u8>)]) -> Option<Vec<u8>> {
-    let count = u16::try_from(tables.len()).ok()?;
+/// Returns the OpenType offset-table binary-search fields `(searchRange,
+/// entrySelector, rangeShift)` for `count <= 4095` tables.
+fn search_params(count: u16) -> Option<(u16, u16, u16)> {
+    if count > 4095 {
+        return None;
+    }
     let power = if count == 0 {
         0
     } else {
         1u16 << (15 - count.leading_zeros())
     };
     let selector = u16::try_from(power.max(1).trailing_zeros()).ok()?;
+    let search_range = power * 16;
+    let range_shift = count * 16 - search_range;
+    Some((search_range, selector, range_shift))
+}
+
+/// Writes an sfnt with `tables`, in their order, and its `head` adjustment.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the bytes of `tables`, which the caller holds, and 16 of record and 3 of padding per table"
+)]
+pub(super) fn write(version: &[u8], tables: &[([u8; 4], Vec<u8>)]) -> Option<Vec<u8>> {
+    if version.len() != 4 {
+        return None;
+    }
+    let count = u16::try_from(tables.len()).ok()?;
+    let (search_range, selector, range_shift) = search_params(count)?;
     let mut out = Vec::new();
     out.extend_from_slice(version);
     out.extend_from_slice(&count.to_be_bytes());
-    out.extend_from_slice(&(power * 16).to_be_bytes());
+    out.extend_from_slice(&search_range.to_be_bytes());
     out.extend_from_slice(&selector.to_be_bytes());
-    out.extend_from_slice(&(count * 16 - power * 16).to_be_bytes());
+    out.extend_from_slice(&range_shift.to_be_bytes());
     let mut offset = 12 + 16 * tables.len();
     let mut head_at = None;
     for (tag, data) in tables {
@@ -229,16 +244,16 @@ pub(super) fn write(version: &[u8], tables: &[([u8; 4], Vec<u8>)]) -> Option<Vec
         out.extend_from_slice(&checksum(&sum_data).to_be_bytes());
         out.extend_from_slice(&u32::try_from(offset).ok()?.to_be_bytes());
         out.extend_from_slice(&u32::try_from(data.len()).ok()?.to_be_bytes());
-        offset += data.len().next_multiple_of(4);
+        offset = offset.checked_add(data.len().checked_next_multiple_of(4)?)?;
     }
     for (tag, data) in tables {
         let start = out.len();
-        out.try_reserve(data.len() + 3).ok()?;
+        out.try_reserve(data.len().checked_add(3)?).ok()?;
         out.extend_from_slice(data);
         if *tag == HEAD && data.len() >= ADJUSTMENT_AT + 4 {
             out[start + ADJUSTMENT_AT..start + ADJUSTMENT_AT + 4].fill(0);
         }
-        out.resize(out.len().next_multiple_of(4), 0);
+        out.resize(out.len().checked_next_multiple_of(4)?, 0);
     }
     if let Some(at) = head_at {
         let adjustment = MAGIC.wrapping_sub(checksum(&out));
@@ -405,10 +420,10 @@ pub(super) fn compact(data: &[u8], keep: &BTreeSet<u32>) -> Option<(Vec<u8>, Vec
             if copied > glyf.len() {
                 return None;
             }
-            new_glyf.try_reserve(outline.len() + 3).ok()?;
+            new_glyf.try_reserve(outline.len().checked_add(3)?).ok()?;
             new_glyf.extend_from_slice(outline);
             renumber_components(&mut new_glyf[at..], new_id)?;
-            new_glyf.resize(new_glyf.len().next_multiple_of(4), 0);
+            new_glyf.resize(new_glyf.len().checked_next_multiple_of(4)?, 0);
         }
         let metric = glyph.min(long_metrics - 1);
         #[expect(
@@ -493,4 +508,74 @@ fn renumber_components(data: &mut [u8], new_id: impl Fn(u16) -> Option<usize>) -
         }
     }
     Some(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_rejects_more_than_4095_tables_without_u16_overflow() {
+        let tables: Vec<([u8; 4], Vec<u8>)> = (0u32..4096)
+            .map(|i| (i.to_be_bytes(), Vec::new()))
+            .collect();
+        assert!(write(&[0, 1, 0, 0], &tables).is_none());
+    }
+
+    #[test]
+    fn write_rejects_non_four_byte_version_and_sets_magic_checksum() {
+        assert!(write(&[0, 1, 0], &[]).is_none());
+        assert!(write(&[0, 1, 0, 0, 0], &[]).is_none());
+        let head = vec![0x12_u8; 54];
+        let extra = vec![1_u8, 2, 3];
+        let out = write(&[0, 1, 0, 0], &[(HEAD, head), (*b"test", extra)]).unwrap();
+        assert_eq!(out.len() % 4, 0);
+        assert_eq!(checksum(&out), MAGIC);
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Setting `head`'s `checkSumAdjustment` to `MAGIC - checksum(font)` makes
+    /// the whole font's checksum equal OpenType's `MAGIC` (`0xB1B0AFBA`) for
+    /// every possible 4-byte-aligned content.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn kani_sfnt_head_checksum_adjustment_hits_magic() {
+        let mut font: [u8; 24] = kani::any();
+        // Zero the 4-byte checkSumAdjustment slot at a 4-byte-aligned offset.
+        font[ADJUSTMENT_AT..ADJUSTMENT_AT + 4].fill(0);
+        let adjustment = MAGIC.wrapping_sub(checksum(&font));
+        font[ADJUSTMENT_AT..ADJUSTMENT_AT + 4].copy_from_slice(&adjustment.to_be_bytes());
+        assert_eq!(checksum(&font), MAGIC);
+    }
+
+    /// OpenType offset-table binary-search parameters (`searchRange`,
+    /// `entrySelector`, `rangeShift`) never overflow or underflow `u16` for any
+    /// accepted table count (`0..=4095`) and reject larger counts.
+    #[kani::proof]
+    fn kani_sfnt_header_search_params_no_overflow() {
+        let count: u16 = kani::any();
+        match search_params(count) {
+            Some((search_range, selector, range_shift)) => {
+                assert!(count <= 4095);
+                if count > 0 {
+                    let power = search_range / 16;
+                    assert_eq!(search_range % 16, 0);
+                    assert!(power.is_power_of_two());
+                    assert!(power <= count);
+                    assert!(u32::from(power) * 2 > u32::from(count));
+                    assert_eq!(1u16 << selector, power);
+                    assert_eq!(search_range + range_shift, count * 16);
+                } else {
+                    assert_eq!((search_range, selector, range_shift), (0, 0, 0));
+                }
+            }
+            None => {
+                assert!(count > 4095);
+            }
+        }
+    }
 }

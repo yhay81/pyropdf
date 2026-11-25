@@ -21,7 +21,7 @@ ChangeReport(
 
 What the edits since opening invalidate, for a save that is incremental or not.
 
-### `ChangeReport.__bool__`
+### `__bool__`
 
 ```python
 ChangeReport.__bool__() -> bool
@@ -59,7 +59,7 @@ after undo discards the redo steps. `max_size` bounds the bytes
 that the steps keep, 256 MiB by default: the farthest redo steps go
 first while redo alone is over it, then the oldest undo steps.
 
-### `History.steps`
+### `steps`
 
 ```python
 History.steps: tuple[str, ...]
@@ -67,7 +67,7 @@ History.steps: tuple[str, ...]
 
 The names of the steps, oldest first: those that undo and then redo can take.
 
-### `History.position`
+### `position`
 
 ```python
 History.position: int
@@ -75,7 +75,7 @@ History.position: int
 
 How many steps undo can take.
 
-### `History.can_undo`
+### `can_undo`
 
 ```python
 History.can_undo: bool
@@ -83,7 +83,7 @@ History.can_undo: bool
 
 Whether a step can be undone.
 
-### `History.can_redo`
+### `can_redo`
 
 ```python
 History.can_redo: bool
@@ -91,7 +91,7 @@ History.can_redo: bool
 
 Whether a step can be redone.
 
-### `History.size`
+### `size`
 
 ```python
 History.size: int
@@ -99,7 +99,7 @@ History.size: int
 
 The bytes that the steps keep, as the budget counts them.
 
-### `History.max_size`
+### `max_size`
 
 ```python
 History.max_size: int | None
@@ -109,7 +109,7 @@ The budget of the steps in bytes, or `None` for no limit; 0 keeps no step.
 
 Settable.
 
-### `History.undo`
+### `undo`
 
 ```python
 History.undo()
@@ -117,7 +117,7 @@ History.undo()
 
 Undo one step; raises `PdfError` with nothing to undo or inside a transaction.
 
-### `History.redo`
+### `redo`
 
 ```python
 History.redo()
@@ -125,7 +125,7 @@ History.redo()
 
 Redo one step; raises `PdfError` with nothing to redo or inside a transaction.
 
-### `History.save`
+### `save`
 
 ```python
 History.save() -> bytes
@@ -138,7 +138,7 @@ them needs the document they were saved from. They hold the objects
 that the steps wrote unencrypted, even for an encrypted document.
 Raises `PdfError` inside a transaction.
 
-### `History.restore`
+### `restore`
 
 ```python
 History.restore(data: bytes)
@@ -155,7 +155,7 @@ transaction. Every byte is checked before the document changes, so
 document and its history as they were. `max_size` still
 applies: the steps that do not fit it are dropped, as after an edit.
 
-### `History.clear`
+### `clear`
 
 ```python
 History.clear()
@@ -185,7 +185,7 @@ it), or `None` when the revision's `startxref` has no `%%EOF`.
 `added`, `updated`, and `freed` list the indirect object numbers
 that this revision added, updated, or freed, each sorted ascending.
 
-### `Revision.objects`
+### `objects`
 
 ```python
 Revision.objects: tuple[int, ...]
@@ -193,7 +193,7 @@ Revision.objects: tuple[int, ...]
 
 The indirect object numbers that this revision added, updated, or freed, ascending.
 
-### `Revision.open`
+### `open`
 
 ```python
 Revision.open(*, limits: DocumentLimits | None = None) -> Document
@@ -222,7 +222,7 @@ An opened signature affected by the save mode or edits to covered objects.
 `objects` lists the edited objects that the signature signs, empty when
 the save mode alone invalidates it.
 
-### `SignatureChange.signed_bytes_preserved`
+### `signed_bytes_preserved`
 
 ```python
 SignatureChange.signed_bytes_preserved: bool
@@ -270,7 +270,7 @@ A transaction belongs to the thread that opened it. Other threads read
 the version before it until it commits, and their edits, transactions,
 undo, and redo wait until it ends.
 
-### `Transaction.__enter__`
+### `__enter__`
 
 ```python
 Transaction.__enter__() -> Self
@@ -278,7 +278,7 @@ Transaction.__enter__() -> Self
 
 Open the transaction, or nest it in the open one.
 
-### `Transaction.__exit__`
+### `__exit__`
 
 ```python
 Transaction.__exit__(

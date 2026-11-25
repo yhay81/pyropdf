@@ -74,7 +74,23 @@ impl Document {
     /// beyond the current version, or any amount for `None`.
     #[must_use]
     pub fn new(base: Arc<dyn Base>, history_limit: Option<u64>) -> Self {
-        let first = Arc::new(Version::first(Arc::new(Origin::new(base))));
+        Self::from_version(
+            Arc::new(Version::first(Arc::new(Origin::new(base)))),
+            history_limit,
+        )
+    }
+
+    /// An isolated writer for save-time declarations. Its next number and history
+    /// are private, while unchanged objects are shared with the source version.
+    pub(crate) fn for_save(version: &Version) -> Transaction {
+        Self::from_version(Arc::new(version.draft()), Some(0)).begin()
+    }
+
+    /// Starts independent history at an existing immutable version. The base
+    /// and persistent object map are shared; later edits on either document
+    /// cannot change the other's view.
+    #[must_use]
+    pub fn from_version(first: Arc<Version>, history_limit: Option<u64>) -> Self {
         Self {
             shared: Arc::new(Shared {
                 current: RwLock::new(Arc::clone(&first)),

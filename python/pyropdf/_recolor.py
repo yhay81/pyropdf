@@ -13,7 +13,8 @@ convert as the device spaces of their component count; Indexed through its
 base; Separation through its alternate space when its tint transform is an
 exponential function. The conversions are the ones of ISO 32000-2 10.4.2,
 with BT.601 luma for gray as rendering to gray uses, and full black
-generation and undercolor removal for CMYK.
+generation and undercolor removal by default. RGB-to-CMYK rewrites use the
+active BG/UCR functions when the bounded evaluator can read them.
 
 Nothing is edited in place: a changed Form XObject, appearance, or image
 becomes a new object that the drawing which changed draws instead, so a
@@ -25,11 +26,11 @@ from __future__ import annotations
 
 import struct
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from pyropdf import _core
-from pyropdf._errors import PdfError
+from pyropdf._errors import LimitError, PdfError
 from pyropdf._objects import Array, Dictionary, Name, Real, Stream
 from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._xobjects import (
@@ -106,10 +107,11 @@ class Unconverted:
 
     page: int
     """The index of the page that paints it."""
-    kind: Literal["shading", "pattern", "colorspace", "image", "form"]
+    kind: Literal["shading", "pattern", "colorspace", "image", "form", "conversion"]
     """What it is: a ``sh`` shading, a pattern, a color space that does not
-    convert, an image that does not convert, or a Form XObject past the
-    nesting or drawing limit."""
+    convert, an image, a Form XObject past the nesting or drawing limit, or
+    an active black-generation or undercolor-removal function that could
+    not be evaluated. In the last case the source color is retained."""
     detail: str
     """What it is in particular, such as ``"Lab"`` or the image's name."""
 
@@ -132,6 +134,44 @@ class RecolorReport:
 
 
 @dataclass(frozen=True, slots=True)
+class _Black:
+    """Effective black generation and undercolor removal for RGB-to-CMYK conversion."""
+
+    bg: _core._DeviceCurve | Literal[False] | None = None
+    ucr: _core._DeviceCurve | Literal[False] | None = None
+
+    def values(self, k: float) -> tuple[float, float] | None:
+        if self.bg is False or self.ucr is False:
+            return None
+        black = k if self.bg is None else self.bg.evaluate(k)
+        removal = k if self.ucr is None else self.ucr.evaluate(k)
+        if black is None or removal is None:
+            return None
+        return min(max(black, 0), 1), min(max(removal, -1), 1)
+
+    def convert(self, values: tuple[float, ...]) -> tuple[float, ...] | None:
+        c, m, y = (1 - min(max(value, 0), 1) for value in values)
+        mapped = self.values(min(c, m, y))
+        if mapped is None:
+            return None
+        generated, removal = mapped
+        return (*(min(max(ink - removal, 0), 1) for ink in (c, m, y)), generated)
+
+    def image_tables(self) -> tuple[list[int], list[int]] | None:
+        black, removal = [], []
+        for value in range(256):
+            pair = self.values(value / 255)
+            if pair is None:
+                return None
+            black.append(round(pair[0] * 255))
+            removal.append(round(pair[1] * 255))
+        return black, removal
+
+
+_DEFAULT_BLACK = _Black()
+
+
+@dataclass(frozen=True, slots=True)
 class _Space:
     """A color space as a recoloring reads it."""
 
@@ -149,24 +189,35 @@ class _Space:
     """A Separation's exponential tint transform: C0, C1, and N."""
     pattern: bool = False
 
-    def convert(self, values: tuple[float, ...], target: str) -> tuple[float, ...] | None:
+    @property
+    def base_family(self) -> str | None:
+        space = self
+        while space.base is not None:
+            space = space.base
+        return space.family
+
+    def convert(
+        self, values: tuple[float, ...], target: str, black: _Black = _DEFAULT_BLACK
+    ) -> tuple[float, ...] | None:
         """Return ``values`` of this space in ``target``, or ``None`` when they do not convert."""
         if len(values) != self.components:
             return None
         if self.function is not None and self.base is not None:
             c0, c1, exponent = self.function
             tint = min(max(values[0], 0.0), 1.0)
-            return self.base.convert(tuple(a + tint**exponent * (b - a) for a, b in zip(c0, c1, strict=True)), target)
+            return self.base.convert(
+                tuple(a + tint**exponent * (b - a) for a, b in zip(c0, c1, strict=True)), target, black
+            )
         if self.lookup and self.base is not None:
             width = self.base.components
             index = int(values[0])
             entry = self.lookup[index * width : (index + 1) * width]
             if index < 0 or len(entry) != width:
                 return None
-            return self.base.convert(tuple(byte / 255 for byte in entry), target)
-        if self.family is None:
-            return None
-        return _convert(self.family, values, target)
+            return self.base.convert(tuple(byte / 255 for byte in entry), target, black)
+        if self.family == "rgb" and target == "cmyk" and black != _DEFAULT_BLACK:
+            return black.convert(values)
+        return _convert(self.family, values, target) if self.family is not None else None
 
 
 _DEVICE = {
@@ -215,6 +266,36 @@ class _State:
 
     fill: _Space = field(default_factory=lambda: _DEVICE["gray"])
     stroke: _Space = field(default_factory=lambda: _DEVICE["gray"])
+    black: _Black = _DEFAULT_BLACK
+    fill_select: Operation | None = None
+    stroke_select: Operation | None = None
+    fill_source: tuple[tuple[Operation, ...], tuple[float, ...]] | None = None
+    stroke_source: tuple[tuple[Operation, ...], tuple[float, ...]] | None = None
+
+    def set_color(self, operation: Operation, space: _Space, values: tuple[float, ...] | None, target: str) -> None:
+        """Track the source space and retain RGB selections that a later gs can remap."""
+        operator = operation.operator
+        stroking, lower = operator.isupper(), operator.lower()
+        if stroking:
+            self.stroke = space
+        else:
+            self.fill = space
+        if target != "cmyk":
+            return
+        selection = self.stroke_select if stroking else self.fill_select
+        if lower == "cs":
+            selection = operation
+        elif operator in _DEVICE_OPERATORS:
+            selection = None
+        ops = (selection, operation) if selection is not None and lower != "cs" else (operation,)
+        # A preceding device operator also selects its color space implicitly.
+        if lower in ("sc", "scn") and selection is None and space == _DEVICE["rgb"]:
+            ops = (Operation("CS" if stroking else "cs", (Name("DeviceRGB"),)), operation)
+        source = (ops, values) if space.base_family == "rgb" and values is not None else None
+        if stroking:
+            self.stroke_select, self.stroke_source = selection, source
+        else:
+            self.fill_select, self.fill_source = selection, source
 
 
 @dataclass(slots=True)
@@ -252,8 +333,12 @@ def recolor(document: Document, target: object, indexes: Iterable[int]) -> Recol
         msg = f"target must be 'gray', 'rgb', or 'cmyk': {target!r}"
         raise ValueError(msg)
     all_pages = document.pages
-    recoloring = _Recoloring(document, str(target))
-    edits = [recoloring.page(all_pages[index]) for index in indexes]
+
+    def plan(budget: _core._OperationBudget) -> tuple[_Recoloring, list[_PageEdit]]:
+        recoloring = _Recoloring(document, str(target), budget)
+        return recoloring, [recoloring.page(all_pages[index]) for index in indexes]
+
+    recoloring, edits = _core.read_operation(document._core(), plan)  # noqa: SLF001
     recoloring.write(edits)
     return RecolorReport(
         target=target,  # ty: ignore[invalid-argument-type] - checked above.
@@ -268,8 +353,9 @@ def recolor(document: Document, target: object, indexes: Iterable[int]) -> Recol
 class _Recoloring:
     """One call: reads the pages, then writes what changed in one transaction."""
 
-    def __init__(self, document: Document, target: str) -> None:
+    def __init__(self, document: Document, target: str, budget: _core._OperationBudget) -> None:
         self.document = document
+        self.budget = budget
         self.target = target
         self.operations = 0
         self.images = 0
@@ -283,7 +369,9 @@ class _Recoloring:
         #: The copy of each drawing of a Form XObject, by the form, its inherited resources, and spaces.
         self.copies: dict[tuple[object, ...], tuple[int | None, Any, tuple[tuple[str, str], ...]]] = {}
         #: The conversion of each image object, and what it leaves as it was.
-        self.converted: dict[int, tuple[int | None, tuple[tuple[str, str], ...]]] = {}
+        self.curves: dict[Dictionary, _core._DeviceCurve | Literal[False]] = {}
+        self.tables: dict[_Black, tuple[list[int], list[int]] | None] = {}
+        self.converted: dict[tuple[int, _Black], tuple[int | None, tuple[tuple[str, str], ...]]] = {}
         self.parsed: dict[int, Operations] = {}
         self.page_index = 0
         self.page_images: dict[int, PageImage] | None = None
@@ -350,17 +438,24 @@ class _Recoloring:
         drawn: dict[str, int | Stream] = {}
         changed = False
         for operation in operations:
+            self.budget.poll()
             if isinstance(operation, InlineImage):
-                image = self._inline(operation, resources)
+                image = self._inline(operation, resources, state.black)
                 changed = changed or image is not operation
                 out.append(image)
                 continue
             operator = operation.operator
             if operator == "q":
-                states.append(_State(state.fill, state.stroke))
+                states.append(replace(state))
             elif operator == "Q":
                 if states:
                     state = states.pop()
+            elif operator == "gs":
+                replay = self._graphics_state(operation, resources, state)
+                out.append(operation)
+                out.extend(replay)
+                changed = changed or bool(replay)
+                continue
             elif operator == "sh":
                 self.report("shading", str(operation.operands[0]) if operation.operands else "")
             elif operator == "Do":
@@ -368,13 +463,63 @@ class _Recoloring:
                 changed = changed or drawing is not operation
                 operation = drawing  # noqa: PLW2901 - the drawing under its new name.
             else:
-                replacement = self._color(operation, resources, state)
-                if replacement is not None:
-                    out.append(replacement)
+                replacement = self._color_edit(operation, resources, state)
+                if replacement:
+                    out.extend(replacement)
                     changed = True
                     continue
             out.append(operation)
         return (out, drawn) if changed or drawn else None
+
+    def _curve(self, value: object, *, allow_default: bool) -> _core._DeviceCurve | Literal[False] | None:
+        if allow_default and isinstance(value, Name) and value == "Default":
+            return None
+        if not isinstance(value, Dictionary) or value._root is None:  # noqa: SLF001
+            return False
+        if value not in self.curves:
+            self.budget.charge("memory_size", 256 + len(value._path) * 16)  # noqa: SLF001
+            self.curves[value] = _core.device_curve(value._core(), value._root, list(value._path)) or False  # noqa: SLF001
+        return self.curves[value]
+
+    def _graphics_state(self, operation: Operation, resources: Dictionary | None, state: _State) -> list[Operation]:
+        if self.target != "cmyk":
+            return []
+        table = _sub(resources, "ExtGState")
+        if table is None or len(operation.operands) != 1 or not isinstance(operation.operands[0], Name):
+            return []
+        params = table.get(str(operation.operands[0]))
+        if not isinstance(params, Dictionary):
+            return []
+        curves = state.black
+        for modern, legacy, slot in (("BG2", "BG", "bg"), ("UCR2", "UCR", "ucr")):
+            key = modern if modern in params else legacy
+            if key in params:
+                curves = replace(curves, **{slot: self._curve(params[key], allow_default=key == modern)})
+        if curves == state.black:
+            return []
+        state.black = curves
+        return self._remap(state)
+
+    def _remap(self, state: _State) -> list[Operation]:
+        # The source colour can precede the gs. Reset its converted paint before
+        # subsequent paths, text, or forms consume it. Restore the original color
+        # selection when the new conversion cannot be evaluated.
+        replay: list[Operation] = []
+        for source, space, stroking in (
+            (state.fill_source, state.fill, False),
+            (state.stroke_source, state.stroke, True),
+        ):
+            if source:
+                operations, values = source
+                converted = self._paint(space, values, state, stroking=stroking)
+                if converted is not None:
+                    replay.append(converted)
+                elif space == _DEVICE["rgb"] and operations[0].operator.lower() == "cs":
+                    # Inside a Form its own resources can shadow the parent's color-space name.
+                    replay.append(Operation("RG" if stroking else "rg", tuple(_number(v) for v in values)))
+                else:
+                    replay.extend(operations)
+        return replay
 
     def _draw(
         self,
@@ -407,6 +552,17 @@ class _Recoloring:
             drawn[name] = new
         return operation
 
+    def _color_edit(self, operation: Operation, resources: Dictionary | None, state: _State) -> tuple[Operation, ...]:
+        color = self._color(operation, resources, state)
+        if color is not None:
+            return (color,)
+        if operation.operator.lower() in ("sc", "scn") and state.black != _DEFAULT_BLACK:
+            source = state.stroke_source if operation.operator.isupper() else state.fill_source
+            if source and len(source[0]) > 1:
+                # The preceding source selection may already have been rewritten to CMYK.
+                return source[0]
+        return ()
+
     def _color(self, operation: Operation, resources: Dictionary | None, state: _State) -> Operation | None:
         """Track a color operation and return the operation that sets its converted color, or ``None``."""
         operator, operands = operation.operator, operation.operands
@@ -424,15 +580,19 @@ class _Recoloring:
                 self.report("pattern", space.detail)
         else:
             return None
-        if stroking:
-            state.stroke = space
-        else:
-            state.fill = space
+        state.set_color(operation, space, values, self.target)
+        return self._paint(space, values, state, stroking=stroking)
+
+    def _paint(
+        self, space: _Space, values: tuple[float, ...] | None, state: _State, *, stroking: bool
+    ) -> Operation | None:
         if space.family == self.target:
             return None
-        converted = space.convert(values, self.target) if values is not None else None
+        converted = space.convert(values, self.target, state.black) if values is not None else None
         if converted is None:
-            if not space.pattern and space.detail != "Separation /None":
+            if state.black != _DEFAULT_BLACK and (state.stroke_source if stroking else state.fill_source):
+                self.report("conversion", "active black generation or undercolor removal cannot be evaluated")
+            elif not space.pattern and space.detail != "Separation /None":
                 self.report("colorspace", space.detail)
             return None
         self.operations += 1
@@ -482,7 +642,7 @@ class _Recoloring:
         if subtype == "Form":
             return self._form(xobject, resources, state, depth + 1)
         if subtype == "Image":
-            return self._image(xobject, name)
+            return self._image(xobject, name, state.black)
         return None
 
     def _form(self, form: Stream, inherited: Dictionary | None, state: _State, depth: int) -> int | None:
@@ -490,7 +650,15 @@ class _Recoloring:
         own = form.get("Resources")
         resources = own if isinstance(own, Dictionary) else inherited
         number = _xref(form)
-        key = (number, None if resources is own else _key(inherited), state.fill, state.stroke)
+        key = (
+            number,
+            None if resources is own else _key(inherited),
+            state.fill,
+            state.stroke,
+            state.black,
+            state.fill_source,
+            state.stroke_source,
+        )
         cached = self.copies.get(key)
         if cached is not None:
             self._replay(cached[2])
@@ -512,7 +680,7 @@ class _Recoloring:
         notes: dict[tuple[str, str], None] = {}
         self.recorders.append(notes)
         try:
-            edited = self._edit(operations, resources, _State(state.fill, state.stroke), depth)
+            edited = self._edit(operations, resources, replace(state), depth)
         finally:
             self.recorders.pop()
         copy = None
@@ -530,23 +698,34 @@ class _Recoloring:
         for kind, detail in notes:
             self.report(kind, detail)
 
-    def _image(self, stream: Stream, name: str) -> int | None:
+    def _image(self, stream: Stream, name: str, black: _Black) -> int | None:
         """Return the pending conversion of an image object, or ``None`` when it stays."""
         number = _xref(stream)
-        cached = self.converted.get(number)
+        cached = self.converted.get((number, black))
         if cached is not None:
             self._replay(cached[1])
             return cached[0]
         notes: dict[tuple[str, str], None] = {}
         self.recorders.append(notes)
         try:
-            converted = self._convert_image(stream, number, name)
+            converted = self._convert_image(stream, number, name, black)
         finally:
             self.recorders.pop()
-        self.converted[number] = (converted, tuple(notes))
+        self.converted[number, black] = (converted, tuple(notes))
         return converted
 
-    def _convert_image(self, stream: Stream, number: int, name: str) -> int | None:
+    @staticmethod
+    def _decode_pixmap(image: PageImage | None) -> Any:  # noqa: ANN401 - Pixmap or None.
+        if image is None:
+            return None
+        try:
+            return image.pixmap()
+        except LimitError:
+            raise
+        except PdfError:
+            return None
+
+    def _convert_image(self, stream: Stream, number: int, name: str, black: _Black) -> int | None:
         if stream.get("ImageMask") is True:
             return None
         space = self._space(stream.get("ColorSpace"), None, 0) if "ColorSpace" in stream else None
@@ -561,17 +740,26 @@ class _Recoloring:
             images = self.current.images(annotations=True)
             self.page_images = {image.item.xref: image for image in images if image.item.xref}
         image = self.page_images.get(number)
-        try:
-            pixmap = image.pixmap() if image is not None else None
-        except PdfError:
-            pixmap = None
+        pixmap = self._decode_pixmap(image)
         if image is None or pixmap is None or (pixmap.width, pixmap.height) != (image.item.width, image.item.height):
             self.report("image", f"{detail}: not decoded")
             return None
         stored = image.stored()
         jpeg = stored is not None and stored.filter == "DCTDecode" and self.target != "cmyk"
         quality = _jpeg_quality(stored.data) if jpeg and stored is not None else None
-        data = _core.recolor_samples(pixmap, _COMPONENTS[self.target], quality)
+        tables = None
+        if black != _DEFAULT_BLACK and (space is None or space.base_family != "gray"):
+            if black not in self.tables:
+                # A pair of 256-entry Python integer lists and their cache entry.
+                self.budget.charge("memory_size", 512 * 40 + 256)
+                self.tables[black] = black.image_tables()
+            tables = self.tables[black]
+            if tables is None:
+                self.report(
+                    "conversion", f"{detail}: active black generation or undercolor removal cannot be evaluated"
+                )
+                return None
+        data = _core.recolor_samples(self.document._core(), pixmap, _COMPONENTS[self.target], quality, tables)  # noqa: SLF001
         entries = {
             "Width": pixmap.width,
             "Height": pixmap.height,
@@ -582,7 +770,7 @@ class _Recoloring:
         self.images += 1
         return len(self.pending) - 1
 
-    def _inline(self, image: InlineImage, resources: Dictionary | None) -> InlineImage:
+    def _inline(self, image: InlineImage, resources: Dictionary | None, black: _Black) -> InlineImage:
         """Return an inline image converted to the target, or ``image`` when it stays."""
         entries = image.dictionary
         if entries.get("IM", entries.get("ImageMask")) is True:
@@ -609,14 +797,17 @@ class _Recoloring:
         colors: dict[bytes, bytes] = {}
         step = space.components
         for at in range(0, width * height * step, step):
+            if at % (step * 1024) == 0:
+                self.budget.poll()
             sample = data[at : at + step]
             color = colors.get(sample)
             if color is None:
                 # An Indexed sample is an index; another space's is a component of 0 to 1.
                 values = tuple(sample) if space.lookup else tuple(byte / 255 for byte in sample)
-                converted = space.convert(values, self.target)
+                converted = space.convert(values, self.target, black)
                 if converted is None:
-                    self.report("image", f"inline image in {space.detail}")
+                    kind = "conversion" if black != _DEFAULT_BLACK and space.base_family == "rgb" else "image"
+                    self.report(kind, f"inline image in {space.detail}")
                     return image
                 color = bytes(round(value * 255) for value in converted)
                 colors[sample] = color

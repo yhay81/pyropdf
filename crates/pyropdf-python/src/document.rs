@@ -42,6 +42,8 @@ const MAX_PROBE_METADATA_SIZE: usize = 1024 * 1024;
 pub struct _Document {
     document: RwLock<Option<Arc<Document>>>,
     limits: DocumentLimits,
+    /// Whether opening requested parsing every object up front (`check_at_open`).
+    check_at_open: bool,
     /// The page index, memoized by what its walk read.
     pub(crate) pages: Memo<PageTree, PageIndex>,
     /// The page index of what an open transaction has written, kept apart
@@ -98,10 +100,37 @@ fn with_settlers(document: Document) -> Document {
 
 impl _Document {
     pub(crate) fn new(document: Document, limits: DocumentLimits) -> Self {
+        Self::with_history(document, limits, false, crate::history::State::default())
+    }
+
+    pub(crate) fn new_checked(
+        document: Document,
+        limits: DocumentLimits,
+        check_at_open: bool,
+    ) -> Self {
+        Self::with_history(
+            document,
+            limits,
+            check_at_open,
+            crate::history::State::default(),
+        )
+    }
+
+    pub(crate) const fn check_at_open(&self) -> bool {
+        self.check_at_open
+    }
+
+    fn with_history(
+        document: Document,
+        limits: DocumentLimits,
+        check_at_open: bool,
+        history: crate::history::State,
+    ) -> Self {
         let document = with_settlers(document);
         Self {
             document: RwLock::new(Some(Arc::new(document))),
             limits,
+            check_at_open,
             pages: Memo::new(1),
             draft_pages: Memo::new(1),
             results: Memo::new(RESULT_CAPACITY),
@@ -118,8 +147,19 @@ impl _Document {
             bridge: pyropdf_engine::bridge::Cache::new(),
             fallback: RwLock::new(Fallback::default()),
             references: pyropdf_store::refs::Cache::new(),
-            history: Arc::new(crate::history::State::default()),
+            history: Arc::new(history),
         }
+    }
+
+    /// A private view for catalog reads after a page import, sharing exactly
+    /// the version that supplied the graph without retaining source history.
+    pub(crate) fn import_source(&self, version: Arc<Version>, operation: SharedBudget) -> Self {
+        Self::with_history(
+            Document::from_version(version, Some(0)),
+            self.limits.clone(),
+            false,
+            crate::history::State::import_view(operation),
+        )
     }
 
     /// Returns the faces that render the CJK fonts that the document does
@@ -525,7 +565,7 @@ fn open(
     if complete && !locked {
         check_every_object(&document.current(), budget).map_err(|e| store_error(&e))?;
     }
-    Ok(_Document::new(document, limits))
+    Ok(_Document::new_checked(document, limits, complete))
 }
 
 fn credential_base(

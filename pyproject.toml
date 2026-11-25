@@ -26,7 +26,7 @@ classifiers = [
 
 [project.optional-dependencies]
 # The CMS provider for recipient-encrypted PDFs.
-recipients = ["cryptography>=44"]
+recipients = ["asn1crypto>=1.5.1", "cryptography>=44"]
 # pylopdf's PP-OCR models, which `OcrEngine` discovers (DESIGN.md section 14).
 ocr = ["pylopdf-ocr-models>=0.1.0,<0.2"]
 # pylopdf's Noto CJK faces, which render the CJK fonts that a document does
@@ -54,7 +54,10 @@ python-source = "python"
 module-name = "pyropdf._core"
 
 [dependency-groups]
+# Build-time DEFLATE encoder; native wheels contain no dependency on it.
+wheel = ["zopflipy==1.14"]
 dev = [
+    { include-group = "wheel" },
     # pikepdf reads saved documents through its own parser in the consistency
     # harness.
     "pikepdf>=10.18.2",

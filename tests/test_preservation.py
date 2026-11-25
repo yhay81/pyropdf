@@ -10,13 +10,18 @@ its text and its rendering. A later editing operation adds its row to
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
-from corpus import ASSETS, NAMES
+from corpus import NAMES, SOURCES
 from test_pages import build_raw_pdf
 from test_preservation_operations import FAMILY_EDITS, NEW_EDITS, Edit, face, first_page, flattened, page_labels
 
 import pyropdf
 from pyropdf import Array, Dictionary, Name, Operation, Real, Stream, typed
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 #: Plain values are compared through this, which nests no deeper.
 _MAX_DEPTH = 64
@@ -246,6 +251,22 @@ def typed_delete(doc: pyropdf.Document) -> set[int]:
     return {number(doc.catalog)}
 
 
+def typed_author(doc: pyropdf.Document) -> set[int]:
+    """Create, replace and remove checked objects without leaving a dangling alias."""
+    original = doc.catalog.get("ViewerPreferences")
+    values = dict(original) if isinstance(original, Dictionary) else {}
+    view = typed.ViewerPreferences.create(doc, {**values, "HideToolbar": False})
+    replacement = typed.ViewerPreferences.create(doc, {**values, "HideToolbar": True})
+    view.replace(replacement)
+    replacement.remove()
+    doc.catalog["ViewerPreferences"] = view.obj
+    return {number(doc.catalog)}
+
+
+def check_typed_author(doc: pyropdf.Document) -> None:
+    assert typed.ViewerPreferences(doc.catalog["ViewerPreferences"]).HideToolbar is True
+
+
 def undo(doc: pyropdf.Document) -> set[int]:
     touched = catalog_entry(doc)
     doc.catalog["PageMode"] = Name("FullScreen")
@@ -369,6 +390,7 @@ EDITS = (
         "delete_attachment": Edit(prepare=prepare_attachment, apply=delete_attachment, check=check_attachment_deleted),
         "delete_entry": Edit(prepare=prepare_catalog, apply=delete_entry, check=check_entry_deleted),
         "array_insert_delete": Edit(apply=array_insert_delete, check=check_array),
+        "checked_typed_objects": Edit(apply=typed_author, check=check_typed_author),
         "typed_set": Edit(prepare=prepare_layout, apply=typed_set, check=check_layout),
         "typed_delete": Edit(prepare=prepare_layout, apply=typed_delete, check=check_layout_deleted),
         "undo": Edit(prepare=prepare_catalog, apply=undo, check=check_catalog),
@@ -392,10 +414,11 @@ def page_state(doc: pyropdf.Document, index: int) -> tuple[str, bytes]:
 
 @pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
 @pytest.mark.parametrize("edit", sorted(EDITS))
-@pytest.mark.parametrize("name", NAMES)
-def test_an_edit_and_a_save_keep_every_untouched_object(name: str, edit: str, *, incremental: bool) -> None:
+@pytest.mark.parametrize("source", SOURCES, ids=NAMES)
+@pytest.mark.corpus_matrix
+def test_an_edit_and_a_save_keep_every_untouched_object(source: Path, edit: str, *, incremental: bool) -> None:
     case = EDITS[edit]
-    doc = case.open(ASSETS / name)
+    doc = case.open(source)
     before = snapshot(doc)
     raw_before = raw_objects(doc)
     # A page outside the declared effect, found by object number after edits

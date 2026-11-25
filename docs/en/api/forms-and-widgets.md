@@ -83,7 +83,7 @@ Properties read the document on every access. A handle names its field's
 object and raises `StaleObjectError` while that object is no
 terminal field of the form; it works again if undo restores it.
 
-### `Field.xref`
+### `xref`
 
 ```python
 Field.xref: int
@@ -91,7 +91,7 @@ Field.xref: int
 
 The field dictionary's object number.
 
-### `Field.obj`
+### `obj`
 
 ```python
 Field.obj: Dictionary
@@ -99,7 +99,7 @@ Field.obj: Dictionary
 
 The field dictionary in the low-level object model.
 
-### `Field.name`
+### `name`
 
 ```python
 Field.name: str
@@ -107,7 +107,7 @@ Field.name: str
 
 The fully qualified name, the partial names of the field and its ancestors joined by dots.
 
-### `Field.type`
+### `type`
 
 ```python
 Field.type: FieldType
@@ -115,7 +115,7 @@ Field.type: FieldType
 
 The field's kind.
 
-### `Field.flags`
+### `flags`
 
 ```python
 Field.flags: FieldFlags
@@ -128,7 +128,7 @@ Assigning writes the field's own `/Ff`; the bits that decide its kind
 
 Settable.
 
-### `Field.choices`
+### `choices`
 
 ```python
 Field.choices: tuple[FieldChoice, ...]
@@ -143,7 +143,7 @@ records or strings, at most 4,096, and writes the field's own
 
 Settable.
 
-### `Field.label`
+### `label`
 
 ```python
 Field.label: str | None
@@ -153,7 +153,7 @@ The field's description for users, `/TU`; `del` removes it.
 
 Settable.
 
-### `Field.max_length`
+### `max_length`
 
 ```python
 Field.max_length: int | None
@@ -165,7 +165,7 @@ The most characters that a text field holds, `/MaxLen`; `del` removes it.
 
 Settable.
 
-### `Field.default_value`
+### `default_value`
 
 ```python
 Field.default_value: str | None
@@ -175,7 +175,7 @@ The value that `reset` restores, `/DV`; `del` removes it.
 
 Settable.
 
-### `Field.reset`
+### `reset`
 
 ```python
 Field.reset()
@@ -185,7 +185,7 @@ Restore the field's default value, or clear its value, and draw its widgets agai
 
 A check box or radio button without a default value turns off.
 
-### `Field.is_signed`
+### `is_signed`
 
 ```python
 Field.is_signed: bool
@@ -196,7 +196,7 @@ Whether this is a signature field whose value is a signature dictionary.
 `Document.signatures` lists the signatures, and
 `Signature.verify` checks one.
 
-### `Field.lock`
+### `lock`
 
 ```python
 Field.lock: FieldLock | None
@@ -206,7 +206,7 @@ A signature field's `/Lock` `FieldLock` (PDF 1.5), or `None`; `del` removes it.
 
 Settable.
 
-### `Field.widgets`
+### `widgets`
 
 ```python
 Field.widgets: list[Widget]
@@ -214,7 +214,31 @@ Field.widgets: list[Widget]
 
 The widgets that show the field, in page order, each a `Widget` handle.
 
-### `Field.value`
+### `rich_text`
+
+```python
+Field.rich_text: str | None
+```
+
+Read or replace the terminal text field's XHTML value (`/RV`).
+
+Writing XHTML derives the plain `/V` and regenerates the widgets' appearances.
+An existing stream remains a stream. Assigning `None` removes the XHTML and
+leaves the plain value available. A plain value assignment also clears stale XHTML.
+
+Settable.
+
+### `default_style`
+
+```python
+Field.default_style: str | None
+```
+
+Read or replace the field's default inline CSS (`/DS`); `None` removes it.
+
+Settable.
+
+### `value`
 
 ```python
 Field.value: str | None
@@ -243,7 +267,7 @@ are drawn too.
 
 Settable.
 
-### `Field.scripts`
+### `scripts`
 
 ```python
 Field.scripts: Scripts
@@ -309,7 +333,50 @@ more than 4,096 fields or tree nodes, 8,192 edges, 64 levels, 4,096
 widgets, 1 MiB of names or values, or 4,096 value items with
 `PdfError` rather than return part of the form.
 
-### `Form.repair_radio_groups`
+### `xfa_packet_names`
+
+```python
+Form.xfa_packet_names: tuple[str, ...]
+```
+
+The names of existing XFA packets in document order, including repeated names.
+
+An XDP stream exposes its direct child element names. A packet array exposes
+its stored names, including the opening and closing XDP wrapper packets.
+
+### `xfa_packet`
+
+```python
+Form.xfa_packet(index: int) -> bytes
+```
+
+Return the original decoded XML bytes of an existing XFA packet by index.
+
+### `replace_xfa_packet`
+
+```python
+Form.replace_xfa_packet(index: int, data: bytes)
+```
+
+Replace an existing XFA packet with XML bytes in the resource's encoding.
+
+### `remove_xfa_packet`
+
+```python
+Form.remove_xfa_packet(index: int)
+```
+
+Remove an existing packet if the remaining document is a well-formed XDP resource.
+
+### `remove_xfa`
+
+```python
+Form.remove_xfa() -> bool
+```
+
+Remove the existing XFA resource, returning whether one was present.
+
+### `repair_radio_groups`
 
 ```python
 Form.repair_radio_groups() -> int
@@ -323,7 +390,7 @@ selecting a button does not clear the others. Each such set becomes
 the widgets of one new radio field of that name, which takes the
 group's value.
 
-### `Form.signature_flags`
+### `signature_flags`
 
 ```python
 Form.signature_flags: SignatureFlags
@@ -331,7 +398,7 @@ Form.signature_flags: SignatureFlags
 
 The AcroForm's `/SigFlags`, without undefined bits; a document without a form reads none.
 
-### `Form.font`
+### `font`
 
 ```python
 Form.font: Font | None
@@ -349,7 +416,7 @@ saved. A Standard 14 font raises `PdfError`.
 
 Settable.
 
-### `Form.need_appearances`
+### `need_appearances`
 
 ```python
 Form.need_appearances: bool
@@ -364,7 +431,7 @@ assignment.
 
 Settable.
 
-### `Form.to_fdf`
+### `to_fdf`
 
 ```python
 Form.to_fdf(
@@ -385,7 +452,7 @@ write string arrays, and the trailer's `/ID` is included when present.
 fields with `None` or an empty string or selection, and `file` sets
 `/F`. Pushbutton and signature fields are skipped.
 
-### `Form.import_fdf`
+### `import_fdf`
 
 ```python
 Form.import_fdf(
@@ -405,7 +472,7 @@ widgets, and `"Off"` turns buttons off. Unknown names, pushbuttons,
 and signature fields are skipped. Returns the sorted names of the
 updated fields; on error, nothing changes.
 
-### `Form.to_xfdf`
+### `to_xfdf`
 
 ```python
 Form.to_xfdf(
@@ -426,7 +493,7 @@ fields (raising `KeyError` for an unknown name), and
 `include_empty=False` omits fields with `None` or an empty string
 or selection. Pushbutton and signature fields are skipped.
 
-### `Form.import_xfdf`
+### `import_xfdf`
 
 ```python
 Form.import_xfdf(
@@ -446,7 +513,7 @@ bounded by `max_size` (16 MiB by default; `LimitError` code
 appearances are updated atomically, returning the sorted names of the
 updated fields.
 
-### `Form.__getitem__`
+### `__getitem__`
 
 ```python
 Form.__getitem__(name: str) -> Field
@@ -454,7 +521,7 @@ Form.__getitem__(name: str) -> Field
 
 Return the field named `name`; another name raises `KeyError`.
 
-### `Form.__delitem__`
+### `__delitem__`
 
 ```python
 Form.__delitem__(name: str)
@@ -466,7 +533,7 @@ The widgets leave every page that lists them, and the field leaves
 the field tree and the calculation order with each named parent
 that it leaves without kids.
 
-### `Form.__iter__`
+### `__iter__`
 
 ```python
 Form.__iter__() -> Iterator[str]
@@ -474,13 +541,30 @@ Form.__iter__() -> Iterator[str]
 
 Iterate over the field names in sorted order.
 
-### `Form.__len__`
+### `__len__`
 
 ```python
 Form.__len__() -> int
 ```
 
 Return the number of distinct field names.
+
+## `IconFit`
+
+```python
+IconFit(
+    *,
+    when: Literal['always', 'larger', 'smaller', 'never'] = 'always',
+    proportional: bool = True,
+    anchor: tuple[float, float] = (0.5, 0.5),
+    fit_bounds: bool = False,
+)
+```
+
+Pushbutton icon scaling and alignment, shared by its three display modes.
+
+Anchor coordinates select the fraction of unused space on the left and
+bottom. A true fit_bounds includes the border in the available rectangle.
 
 ## `ListBox`
 
@@ -617,7 +701,7 @@ others. pyropdf never runs the scripts. Each script and the mapping's
 scripts together stop at 1 MiB of UTF-8 (`script_size`); a refused
 write changes nothing.
 
-### `Scripts.__getitem__`
+### `__getitem__`
 
 ```python
 Scripts.__getitem__(trigger: ScriptTrigger) -> str
@@ -625,7 +709,7 @@ Scripts.__getitem__(trigger: ScriptTrigger) -> str
 
 Return the script of `trigger`; a trigger without one raises `KeyError`.
 
-### `Scripts.__setitem__`
+### `__setitem__`
 
 ```python
 Scripts.__setitem__(trigger: ScriptTrigger, source: str)
@@ -633,7 +717,7 @@ Scripts.__setitem__(trigger: ScriptTrigger, source: str)
 
 Set the JavaScript that `trigger` runs.
 
-### `Scripts.__delitem__`
+### `__delitem__`
 
 ```python
 Scripts.__delitem__(trigger: ScriptTrigger)
@@ -641,7 +725,7 @@ Scripts.__delitem__(trigger: ScriptTrigger)
 
 Remove the script of `trigger`; a trigger without one raises `KeyError`.
 
-### `Scripts.__iter__`
+### `__iter__`
 
 ```python
 Scripts.__iter__() -> Iterator[ScriptTrigger]
@@ -649,7 +733,7 @@ Scripts.__iter__() -> Iterator[ScriptTrigger]
 
 Iterate over the triggers that have a script.
 
-### `Scripts.__len__`
+### `__len__`
 
 ```python
 Scripts.__len__() -> int
@@ -696,6 +780,8 @@ TextField(
     rect: Sequence[float],
     *,
     value: str | None = None,
+    rich_text: str | None = None,
+    default_style: str | None = None,
     default_value: str | None = None,
     max_length: int | None = None,
     font: Font | None = None,
@@ -718,7 +804,8 @@ Helvetica by default, at `font_size` points (0 fits the text; written
 to `/DA` in the page's user space), in `text_color`, aligned by
 `align`. `flags` adds `FieldFlags` such as `MULTILINE`,
 `PASSWORD`, `COMB`, `REQUIRED`, or `READ_ONLY`; `max_length`
-bounds the text.
+bounds the text. `rich_text` supplies XHTML and derives the plain value;
+`default_style` supplies the default CSS declaration.
 
 ## `Widget`
 
@@ -735,23 +822,7 @@ raises `StaleObjectError` while the widget is not on its page and
 `StalePageError` while the page is gone, and it works again if
 undo restores them.
 
-### `Widget.page`
-
-```python
-Widget.page: Page
-```
-
-The page that shows the widget.
-
-### `Widget.xref`
-
-```python
-Widget.xref: int
-```
-
-The widget's object number, or 0 for a dictionary stored in `/Annots` itself.
-
-### `Widget.obj`
+### `obj`
 
 ```python
 Widget.obj: Dictionary
@@ -759,7 +830,57 @@ Widget.obj: Dictionary
 
 The widget dictionary as a live low-level handle.
 
-### `Widget.scripts`
+### `appearance_stream`
+
+```python
+Widget.appearance_stream(
+    mode: Mode = 'normal',
+    *,
+    state: str | None = None,
+) -> Stream | None
+```
+
+Return the displayed Form for a normal, rollover or down appearance.
+
+A missing interaction appearance falls back to normal. An appearance
+dictionary selects the named state or the annotation's current /AS.
+
+### `set_appearance`
+
+```python
+Widget.set_appearance(
+    mode: Mode,
+    source: Stream | bytes,
+    *,
+    state: str | None = None,
+    bbox: Sequence[float] | None = None,
+    resources: Mapping[str, object] | None = None,
+) -> Stream
+```
+
+Attach a Form or build it from PDF drawing commands in the given local bounding box.
+
+Byte sources use the owner's rectangle size when bbox is omitted. A named
+state updates one member of a state dictionary. Other interaction modes,
+state names and shared appearance objects retain their values.
+
+### `page`
+
+```python
+Widget.page: Page
+```
+
+The page that shows the widget.
+
+### `xref`
+
+```python
+Widget.xref: int
+```
+
+The widget's object number, or 0 for a dictionary stored in `/Annots` itself.
+
+### `scripts`
 
 ```python
 Widget.scripts: Scripts
@@ -767,7 +888,7 @@ Widget.scripts: Scripts
 
 The widget's JavaScript by trigger: focus, blur, enter, exit, down, up, and activate.
 
-### `Widget.triggers`
+### `triggers`
 
 ```python
 Widget.triggers: ActionTriggers
@@ -781,7 +902,7 @@ and `del widget.triggers` removes them.
 
 Settable.
 
-### `Widget.field`
+### `field`
 
 ```python
 Widget.field: Field | None
@@ -789,7 +910,7 @@ Widget.field: Field | None
 
 The terminal form field that the widget shows, or `None` when no field owns it.
 
-### `Widget.rect`
+### `rect`
 
 ```python
 Widget.rect: Rect
@@ -799,7 +920,7 @@ The widget rectangle in display coordinates.
 
 Settable.
 
-### `Widget.flags`
+### `flags`
 
 ```python
 Widget.flags: AnnotationFlags
@@ -809,7 +930,7 @@ The widget's `/F` flags, such as `AnnotationFlags.HIDDEN`.
 
 Settable.
 
-### `Widget.border`
+### `border`
 
 ```python
 Widget.border: Border | None
@@ -819,7 +940,7 @@ The border, `/BS` else `/Border`; `del` removes it.
 
 Settable.
 
-### `Widget.border_color`
+### `border_color`
 
 ```python
 Widget.border_color: Color | None
@@ -829,7 +950,7 @@ The border color, `/MK /BC`; `del` removes it.
 
 Settable.
 
-### `Widget.background_color`
+### `background_color`
 
 ```python
 Widget.background_color: Color | None
@@ -839,7 +960,44 @@ The background color, `/MK /BG`; `del` removes it.
 
 Settable.
 
-### `Widget.caption`
+### `icon`
+
+```python
+Widget.icon(mode: Mode = 'normal') -> Stream | None
+```
+
+Return the explicit icon Form for normal, rollover or down.
+
+### `icon_fit`
+
+```python
+Widget.icon_fit: IconFit
+```
+
+Read or replace the shared pushbutton icon fit dictionary.
+
+Settable.
+
+### `set_icon`
+
+```python
+Widget.set_icon(
+    mode: Mode,
+    icon: Stream,
+    *,
+    fit: IconFit | None = None,
+    position: int | None = None,
+)
+```
+
+Set an interaction icon and redraw the pushbutton in one transaction.
+
+An indirect Form from this document supplies the icon. The first icon
+defaults to an icon-only layout. An explicit position selects the PDF
+caption layout (0 caption, 1 icon, 2 below, 3 above, 4 right, 5 left,
+6 overlaid). Existing explicit positions and other modes are retained.
+
+### `caption`
 
 ```python
 Widget.caption: str | None
@@ -851,7 +1009,7 @@ A caption with a character outside WinAnsi is kept but not drawn.
 
 Settable.
 
-### `Widget.rotation`
+### `rotation`
 
 ```python
 Widget.rotation: int
@@ -861,7 +1019,7 @@ The rotation of the widget's appearance, `/MK /R`: 0, 90, 180, or 270 degrees.
 
 Settable.
 
-### `Widget.text_color`
+### `text_color`
 
 ```python
 Widget.text_color: Color
@@ -871,7 +1029,7 @@ The color of the widget's text, from the `/DA` that it draws with.
 
 Settable.
 
-### `Widget.font`
+### `font`
 
 ```python
 Widget.font: Font | None
@@ -887,7 +1045,7 @@ Setting takes a Standard 14 `Font` and names it in the form's `/DR`.
 
 Settable.
 
-### `Widget.font_size`
+### `font_size`
 
 ```python
 Widget.font_size: float
@@ -897,7 +1055,7 @@ The size of the widget's text in points, 0 to fit the text to the widget.
 
 Settable.
 
-### `Widget.button_states`
+### `button_states`
 
 ```python
 Widget.button_states: tuple[str, ...]
@@ -905,7 +1063,7 @@ Widget.button_states: tuple[str, ...]
 
 The appearance states of a check box or radio button, such as `("Off", "Yes")`.
 
-### `Widget.on_state`
+### `on_state`
 
 ```python
 Widget.on_state: str | None
@@ -925,7 +1083,7 @@ The form widgets of a page, as `page.widgets` returns them, in `/Annots` order.
 Reads reject more than 4,096 annotations or 1 MiB of state names per
 page.
 
-### `Widgets.__getitem__`
+### `__getitem__`
 
 ```python
 Widgets.__getitem__(index: int | slice) -> Widget | list[Widget]
@@ -933,7 +1091,7 @@ Widgets.__getitem__(index: int | slice) -> Widget | list[Widget]
 
 Return one widget, or a list of them for a slice.
 
-### `Widgets.__delitem__`
+### `__delitem__`
 
 ```python
 Widgets.__delitem__(index: int | slice)
@@ -946,7 +1104,7 @@ A widget of a field leaves every page that lists it and the field's
 `del doc.form[name]` removes it. The widget objects stay in the
 document.
 
-### `Widgets.add`
+### `add`
 
 ```python
 Widgets.add(specification: FieldSpecification) -> Widget
@@ -962,7 +1120,7 @@ transaction. A name with dots, the name of a field that has fields
 below it, and an existing field of another kind raise
 `PdfError`.
 
-### `Widgets.__len__`
+### `__len__`
 
 ```python
 Widgets.__len__() -> int
@@ -970,7 +1128,7 @@ Widgets.__len__() -> int
 
 Return the number of widgets on the page.
 
-### `Widgets.__iter__`
+### `__iter__`
 
 ```python
 Widgets.__iter__() -> Iterator[Widget]

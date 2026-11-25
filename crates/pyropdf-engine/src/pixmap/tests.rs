@@ -2,9 +2,9 @@ use proptest::prelude::*;
 use pyropdf_store::budget::{Budget, LimitCode};
 
 use super::{
-    DecodeError, Encoding, Layout, MAX_PIXELS, Projection, add_alpha, check_size, color_runs,
-    convert, crop, decode, drop_alpha, encode, fax, fill, flip, gamma_table, images, invert,
-    map_colors, recolor_samples, rotate, scale, tint_table, warp,
+    DecodeError, EncodeError, Encoding, Layout, MAX_PIXELS, Projection, add_alpha, check_size,
+    color_runs, convert, crop, decode, drop_alpha, encode, fax, fill, flip, gamma_table, images,
+    invert, map_colors, recolor_samples, rotate, scale, tint_table, warp,
 };
 
 fn layout_and_samples() -> impl Strategy<Value = (Layout, Vec<u8>)> {
@@ -222,15 +222,20 @@ fn jpeg_psd_ps_and_other_ops_behave_as_specified() {
     assert!(ps.ends_with(b"~>\ngrestore\nshowpage\n%%Trailer\n%%EOF\n"));
 
     let cmyk = [20_u8, 40, 60, 80].repeat(4);
-    let with_adobe = images::encode_jpeg_samples(&cmyk, 2, 2, 4, 90, true).unwrap();
-    let without_adobe = images::encode_jpeg_samples(&cmyk, 2, 2, 4, 90, false).unwrap();
+    let with_adobe = images::encode_jpeg_samples(&cmyk, 2, 2, 4, 90, true, &budget).unwrap();
+    let without_adobe = images::encode_jpeg_samples(&cmyk, 2, 2, 4, 90, false, &budget).unwrap();
     assert!(with_adobe.windows(5).any(|w| w == b"Adobe"));
     assert!(!without_adobe.windows(5).any(|w| w == b"Adobe"));
     let (w, h, comps, _, alpha) = images::image_samples(&with_adobe, false).unwrap();
     assert_eq!((w, h, comps, alpha), (2, 2, 4, None));
 
-    assert_eq!(recolor_samples(&data, layout, 4, None).unwrap().len(), 48);
-    assert!(recolor_samples(&data, layout, 4, Some(85)).is_err());
+    assert_eq!(
+        recolor_samples(&data, layout, 4, None, &budget)
+            .unwrap()
+            .len(),
+        48
+    );
+    assert!(recolor_samples(&data, layout, 4, Some(85), &budget).is_err());
 
     // Exercise crop, scale, fill, gamma, tint, convert, and projective warp.
     let cropped = crop(&data, layout, (1, 1, 3, 3));
@@ -249,4 +254,124 @@ fn jpeg_psd_ps_and_other_ops_behave_as_specified() {
     assert_eq!(warp(&data, layout, proj, 4, 3).len(), 36);
     assert!(fax::encode_checked(&[0xFF], (MAX_PIXELS as usize) + 1, 1, 64).is_err());
     assert!(fax::encode_checked(&[0xFF], 8, 2, 64).is_err());
+}
+
+#[test]
+fn zero_width_interlaced_gif_does_not_panic() {
+    // GIF89a 1x1 logical screen with a 2-color global palette and a 0x0 interlaced frame.
+    let gif = [
+        b'G', b'I', b'F', b'8', b'9', b'a', 1, 0, 1, 0, 0x80, 0, 0, 0, 0, 0, 255, 255, 255, 0x2C,
+        0, 0, 0, 0, 0, 0, 0, 0, 0x40, 2, 2, 0x4C, 0x01, 0, 0x3B,
+    ];
+    let decoded = decode(&gif, &Budget::default()).unwrap();
+    assert_eq!((decoded.layout.width, decoded.layout.height), (1, 1));
+}
+
+#[test]
+fn png_phys_dpi_clamps_to_u16_max_and_encoders_never_truncate() {
+    // Build a minimal 1x1 RGB PNG with pHYs = 2_580_158 px/m (~65536 DPI).
+    let mut png = Vec::new();
+    encode(
+        &mut png,
+        Layout {
+            width: 1,
+            height: 1,
+            gray: false,
+            alpha: false,
+        },
+        &[10, 20, 30],
+        (96, 96),
+        Encoding::Png,
+        &Budget::default(),
+    )
+    .unwrap();
+    // Locate the pHYs chunk and overwrite xppu/yppu with 2_580_158 and valid CRC.
+    let phys_pos = png.windows(4).position(|w| w == b"pHYs").unwrap();
+    let payload = [
+        2_580_158_u32.to_be_bytes()[0],
+        2_580_158_u32.to_be_bytes()[1],
+        2_580_158_u32.to_be_bytes()[2],
+        2_580_158_u32.to_be_bytes()[3],
+        2_580_158_u32.to_be_bytes()[0],
+        2_580_158_u32.to_be_bytes()[1],
+        2_580_158_u32.to_be_bytes()[2],
+        2_580_158_u32.to_be_bytes()[3],
+        1,
+    ];
+    png[phys_pos + 4..phys_pos + 13].copy_from_slice(&payload);
+    let mut crc = flate2::Crc::new();
+    crc.update(b"pHYs");
+    crc.update(&payload);
+    png[phys_pos + 13..phys_pos + 17].copy_from_slice(&crc.sum().to_be_bytes());
+
+    let decoded = decode(&png, &Budget::default()).unwrap();
+    assert_eq!(decoded.resolution, (65_535, 65_535));
+
+    // Encoding with an unclamped resolution directly also clamps cleanly for JPEG and PSD.
+    let mut psd = Vec::new();
+    encode(
+        &mut psd,
+        decoded.layout,
+        &decoded.data,
+        (70_000, 70_000),
+        Encoding::Psd,
+        &Budget::default(),
+    )
+    .unwrap();
+    let res_pos = psd.windows(6).position(|w| w == b"8BIM\x03\xed").unwrap();
+    let h_res = u32::from_be_bytes(psd[res_pos + 12..res_pos + 16].try_into().unwrap());
+    assert_eq!(h_res, 65_535_u32 << 16);
+}
+
+#[test]
+fn projection_rejects_overflowing_finite_quad_and_rotate_handles_zero_and_four() {
+    assert!(Projection::new([(0.0, 0.0), (1e200, 0.0), (0.0, 1e200), (1e200, 2e200),]).is_none());
+    let layout = Layout {
+        width: 2,
+        height: 4,
+        gray: true,
+        alpha: false,
+    };
+    let pixels: Vec<u8> = (0..8).collect();
+    assert_eq!(rotate(&pixels, layout, 0), pixels);
+    assert_eq!(rotate(&pixels, layout, 4), pixels);
+}
+
+#[test]
+fn recolor_and_encode_jpeg_samples_obey_budget_limits() {
+    use pyropdf_store::budget::{CancellationToken, LimitCode};
+
+    let layout = Layout {
+        width: 4,
+        height: 4,
+        gray: false,
+        alpha: false,
+    };
+    let data = vec![128_u8; 4 * 4 * 3];
+    let tight = Budget::default().with_limit(LimitCode::MemorySize, Some(10));
+    assert!(matches!(
+        recolor_samples(&data, layout, 3, None, &tight),
+        Err(EncodeError::Limit(refusal)) if refusal.code() == LimitCode::MemorySize
+    ));
+    assert!(matches!(
+        recolor_samples(&data, layout, 3, Some(80), &tight),
+        Err(EncodeError::Limit(refusal)) if refusal.code() == LimitCode::MemorySize
+    ));
+    let cmyk = vec![10_u8; 4 * 4 * 4];
+    assert!(matches!(
+        images::encode_jpeg_samples(&cmyk, 4, 4, 4, 80, true, &tight),
+        Err(EncodeError::Limit(refusal)) if refusal.code() == LimitCode::MemorySize
+    ));
+
+    let token = CancellationToken::new();
+    token.cancel();
+    let cancelled = Budget::default().with_cancellation(token);
+    assert!(matches!(
+        recolor_samples(&data, layout, 3, None, &cancelled),
+        Err(EncodeError::Limit(refusal)) if refusal.code() == LimitCode::Cancelled
+    ));
+    assert!(matches!(
+        images::encode_jpeg_samples(&data, 4, 4, 3, 80, false, &cancelled),
+        Err(EncodeError::Limit(refusal)) if refusal.code() == LimitCode::Cancelled
+    ));
 }

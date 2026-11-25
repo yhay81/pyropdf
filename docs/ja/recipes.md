@@ -200,3 +200,46 @@ with open("input.pdf", "rb") as file:
 ```
 
 制限は各操作の仕事量を抑えます。制限が約束しないことは[状態と安全性](status.md)にあります。
+
+## アクセシブルな長期保存用のグラフを作る
+
+[グラフ作成プログラムをダウンロード](https://raw.githubusercontent.com/yhay81/pyropdf/main/docs/includes/accessible-archive.py)できます。
+空の文書から、タグ付きのグラフを1ページ作成します。表示する文字を収録した埋め込み可能なフォントと、
+描画で使うRGB色に対応したICCプロファイルを指定します。リポジトリに含まれる見本で新旧両方の規格を試せます。
+
+```sh
+uv run python -c "import runpy; from pathlib import Path; Path('chart.icc').write_bytes(runpy.run_path('tests/assets/pdfa/generate.py')['icc']())"
+FONT=crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf
+uv run python docs/includes/accessible-archive.py "$FONT" chart.icc chart.pdf
+uv run python docs/includes/accessible-archive.py "$FONT" chart.icc earlier.pdf --earlier
+```
+
+| 出力 | 保存とアクセシビリティの規格 | 作例で指定する値 |
+| --- | --- | --- |
+| `chart.pdf` | PDF/A-4 と PDF/UA-2 | PDF 2.0 のヘッダー、XMPに各規格の改訂年（2020年と2024年）、文書と3つの子要素にPDF 2.0の標準名前空間 |
+| `earlier.pdf` | PDF/A-2a と PDF/UA-1 | PDF 1.7 のヘッダー、適合レベルA、XMPにPDF/UA識別用の拡張スキーマ、PDF 1.7の暗黙の構造名前空間 |
+
+どちらもフォントとRGB出力プロファイルを埋め込み、本文言語を米国英語に指定します。
+ビューアにはXMPの文書タイトルを表示するよう指定しています。
+次のコマンドで、ページの見た目とPopplerで取得した読み順を照合できます。
+
+```sh
+pdfinfo -struct-text chart.pdf
+pdftoppm -png -singlefile -scale-to 520 chart.pdf chart
+```
+
+見出し「Air flow」、本文「Air flow fell to 1」、図の順に読み上げられることを確認します。
+図では上の棒が2、下の棒が1で、下の棒の長さは上の半分です。
+図の代替説明からも、1回目から2回目にかけてこの変化があったと理解できるか確認します。
+機械判定できる規則は、それぞれの規格を明示して検証します。
+
+```sh
+verapdf --flavour 4 chart.pdf
+verapdf --flavour ua2 chart.pdf
+verapdf --flavour 2a earlier.pdf
+verapdf --flavour ua1 earlier.pdf
+```
+
+テストでは図の代替説明を書き換え、全体保存と増分保存の両方を検証します。
+説明を削除するとPDF/UA-2の規則 `8.2.5.28.2-1` とPDF/UA-1の規則 `7.3-1` に違反します。
+この場合も、両方のPDF/A検証には合格します。
