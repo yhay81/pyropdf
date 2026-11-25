@@ -1657,6 +1657,28 @@ def test_glyphs_share_equal_shadings(paints: pyropdf.Font) -> None:
     assert len(_shadings(document)) == 1
 
 
+def test_mutated_cached_shading_is_rebuilt_on_next_colr_draw(paints: pyropdf.Font) -> None:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("L", (10, 40), font=paints, size=24)
+    (original,) = _shadings(document)
+    original_xref = original.xref
+    assert original_xref is not None
+    # Corrupt the cached shading object directly via doc.objects[xref].
+    document.objects[original_xref] = {"Corrupted": True}
+
+    with page.draw() as canvas:
+        # G uses the same COLR gradient; the cache must reject the mutated xref and allocate a fresh shading.
+        canvas.text("G", (10, 80), font=paints, size=24)
+
+    live_shadings = _shadings(document)
+    assert len(live_shadings) == 1
+    assert live_shadings[0].xref != original_xref
+    reopened = pyropdf.open(document.to_bytes())
+    assert reopened.pages[0].text().split() == ["L", "G"]
+    assert min(bytes(reopened.pages[0].pixmap(dpi=72))) < 240
+
+
 def test_undo_removes_what_a_colr_drawing_added(paints: pyropdf.Font) -> None:
     document, page = _new_page()
     with page.draw() as canvas:

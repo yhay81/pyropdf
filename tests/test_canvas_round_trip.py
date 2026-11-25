@@ -383,6 +383,20 @@ def test_repaint_keeps_a_shadings_bbox(shading_type: int, rotate: int) -> None:
     assert _largest_difference(page.pixmap(dpi=72), copy.pixmap(dpi=72), []) <= ROUND_TRIP_TOLERANCE
 
 
+@pytest.mark.parametrize("matrix", ["0 0 0 0 0 0", "1 0 0 0 10 20", "1 1 1 1 0 0"])
+def test_sample_shading_returns_no_bounds_for_singular_pattern_matrix(matrix: str) -> None:
+    page = _shaded(2, 4, (True, True), matrix=matrix)
+    page.document.objects[7]["BBox"] = [30, 20, 150, 70]
+    (item,) = page.content().paths
+    assert isinstance(item.fill, ShadingPattern)
+    source = item.fill._source  # noqa: SLF001 - verify sampled bounds directly.
+    assert source is not None
+    operation = pyropdf._core.begin_canvas(page.document._core())  # noqa: SLF001
+    gradient, bbox, _background = source.gradient(operation)
+    assert isinstance(gradient, LinearGradient)
+    assert bbox is None
+
+
 @pytest.mark.parametrize("shading_type", [2, 3])
 @pytest.mark.parametrize("extend", [(False, False), (False, True), (True, False), (True, True)])
 def test_repaint_keeps_background_and_opacity(shading_type: int, extend: tuple[bool, bool]) -> None:

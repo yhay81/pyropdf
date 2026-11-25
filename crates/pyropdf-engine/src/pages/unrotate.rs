@@ -366,11 +366,12 @@ impl Turn<'_> {
             moved.try_reserve_exact(paths.len())?;
             let mut complete = true;
             for path in paths.iter() {
-                let Value::Array(points) = path else {
+                self.budget.poll()?;
+                let Some(Value::Array(points)) = self.resolved(Some(path))? else {
                     complete = false;
                     break;
                 };
-                match mapped_points(&map, points, self.budget)? {
+                match mapped_points(&map, &points, self.budget)? {
                     Some(points) => moved.try_push(points)?,
                     None => {
                         complete = false;
@@ -1268,5 +1269,76 @@ mod tests {
         let r6 = mk_r(6).unwrap();
         assert!((0..360).contains(&r5));
         assert!((0..360).contains(&r6));
+    }
+
+    #[test]
+    fn indirect_inner_inklist_and_path_arrays_are_rotated() {
+        for turn in [90_i64, 180, 270] {
+            let page_obj =
+                format!("<< /Type /Page /Parent 2 0 R /Rotate {turn} /Annots [4 0 R 5 0 R] >>");
+            let doc = open_pdf(&[
+                "<< /Type /Catalog /Pages 2 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 200] >>",
+                &page_obj,
+                // Outer /InkList is indirect (6 0 R); inner strokes mix direct & indirect (7 0 R).
+                "<< /Type /Annot /Subtype /Ink /Rect [50 60 110 120] /InkList 6 0 R >>",
+                // Direct outer /Path with indirect inner stroke array (8 0 R).
+                "<< /Type /Annot /Subtype /Polygon /Rect [20 30 80 90] /Path [8 0 R] >>",
+                "[7 0 R [80 90 110 120]]",
+                "[50 60 70 80]",
+                "[20 30 50 60 80 90]",
+            ]);
+            let budget = Budget::default();
+            let refs_cache = refs::Cache::new();
+            let index = PageIndex::memoized(&Memo::new(1), &doc.current(), &budget).unwrap();
+            let m = unrotation((0.0, 0.0, 300.0, 200.0), turn);
+
+            let mut tx = doc.begin();
+            assert!(
+                remove_page_rotation(&mut tx, &index, &refs_cache, &budget, Reference::new(3, 0))
+                    .unwrap()
+            );
+            let committed = tx.commit(&budget).unwrap();
+
+            let read_paths = |annot_num: u32, key: &str| -> Vec<Vec<f64>> {
+                let obj = committed.get(annot_num, &budget).unwrap().unwrap();
+                let Value::Dict(dict) = obj.value().as_ref() else {
+                    panic!("expected annotation dict");
+                };
+                let Some(Value::Array(outer)) = dict.get(key) else {
+                    panic!("expected direct rotated {key}");
+                };
+                outer
+                    .iter()
+                    .map(|inner| {
+                        let Value::Array(points) = inner else {
+                            panic!("expected inner stroke array");
+                        };
+                        points.iter().map(|v| as_number(v).unwrap()).collect()
+                    })
+                    .collect()
+            };
+
+            let expect_stroke = |pts: &[(f64, f64)]| -> Vec<f64> {
+                pts.iter()
+                    .flat_map(|&p| {
+                        let (x, y) = apply(&m, p);
+                        [x, y]
+                    })
+                    .collect()
+            };
+
+            let ink = read_paths(4, "InkList");
+            assert_eq!(ink.len(), 2);
+            assert_eq!(ink[0], expect_stroke(&[(50.0, 60.0), (70.0, 80.0)]));
+            assert_eq!(ink[1], expect_stroke(&[(80.0, 90.0), (110.0, 120.0)]));
+
+            let path = read_paths(5, "Path");
+            assert_eq!(path.len(), 1);
+            assert_eq!(
+                path[0],
+                expect_stroke(&[(20.0, 30.0), (50.0, 60.0), (80.0, 90.0)])
+            );
+        }
     }
 }

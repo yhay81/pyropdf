@@ -241,6 +241,41 @@ def test_a_page_outside_the_page_tree_is_not_written() -> None:
     assert len(reopened.pages) == 1
 
 
+@pytest.mark.parametrize("page_mode", ["", " /PageMode /UseOutlines"], ids=["default-mode", "use-outlines"])
+def test_direct_catalog_outlines_linearize_cleanly_in_pdf_2_0(page_mode: str) -> None:
+    empty_direct = build_raw_pdf(
+        {
+            1: f"<< /Type /Catalog /Version /2.0 /Pages 2 0 R{page_mode} /Outlines << /Type /Outlines >> >>",
+            2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> >>",
+            4: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> >>",
+        }
+    ).replace(b"%PDF-1.7", b"%PDF-2.0", 1)
+    saved_empty = pyropdf.open(empty_direct).to_bytes(linearize=True)
+    qpdf_accepts(saved_empty)
+    reopened_empty = pyropdf.open(saved_empty)
+    assert reopened_empty.is_linearized
+    assert reopened_empty.check().defects == ()
+
+    with_items = build_raw_pdf(
+        {
+            1: f"<< /Type /Catalog /Version /2.0 /Pages 2 0 R{page_mode} "
+            "/Outlines << /Type /Outlines /First 4 0 R /Last 4 0 R /Count 1 >> >>",
+            2: "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> >>",
+            4: "<< /Title (Chapter 1) /Dest [3 0 R /Fit] >>",
+            5: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> >>",
+        }
+    ).replace(b"%PDF-1.7", b"%PDF-2.0", 1)
+    original = pyropdf.open(with_items)
+    saved = original.to_bytes(linearize=True)
+    qpdf_accepts(saved)
+    reopened = pyropdf.open(saved)
+    assert reopened.is_linearized
+    assert reopened.outline.entries() == original.outline.entries()
+    assert all(defect.path != "Outlines" for defect in reopened.check().defects)
+
+
 def assert_hint_offsets(data: bytes, *, page_count: int) -> None:
     """Check the Annex F byte ranges as well as qpdf's independent computed hints."""
     with pikepdf.open(io.BytesIO(data), attempt_recovery=False) as pdf:
