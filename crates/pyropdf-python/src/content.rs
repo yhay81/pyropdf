@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::{IntoPyObjectExt, intern};
 use pyropdf_engine::content::{Operations, PageContent};
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, LimitCode, StreamKind};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::value::{Bytes, Dict, Reference, Value};
 
@@ -79,6 +79,36 @@ pub fn page_operations<'py>(
             .detach(|| PageContent::read(&mut Reads::new(&version, &budget), page))
             .map_err(|e| store_error(&e))?;
         tagged(py, content.operations()).map(Some)
+    })?
+}
+
+/// Parse a referenced content stream in the calling document's read operation.
+#[pyfunction]
+pub fn stream_operations<'py>(
+    py: Python<'py>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+) -> PyResult<Option<Content<'py>>> {
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        let budget = document.budget();
+        let operations = py
+            .detach(|| -> pyropdf_store::Result<_> {
+                let Some(object) = version.get(number, &budget)? else {
+                    return Ok(None);
+                };
+                let Value::Stream(stream) = object.value().as_ref() else {
+                    return Ok(None);
+                };
+                if object.generation() != generation {
+                    return Ok(None);
+                }
+                let data = stream.decoded_as(StreamKind::PageContent, &budget)?;
+                Operations::parse(Bytes::new(data), &budget).map(Some)
+            })
+            .map_err(|e| store_error(&e))?;
+        operations.as_ref().map(|ops| tagged(py, ops)).transpose()
     })?
 }
 
