@@ -8,6 +8,7 @@ on:
   pull_request:
     paths:
       - "crates/pyropdf-store/**"
+      - "crates/pyropdf-schema/**"
       - "crates/pyropdf-engine/**"
       - "fuzz/**"
       - ".github/workflows/fuzz.yml"
@@ -15,6 +16,7 @@ on:
     branches: [main]
     paths:
       - "crates/pyropdf-store/**"
+      - "crates/pyropdf-schema/**"
       - "crates/pyropdf-engine/**"
       - "fuzz/**"
       - ".github/workflows/fuzz.yml"
@@ -45,7 +47,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [index, value, save, bridge, content, fonts, bitmaps, colr, interpret]
+        target:
+          - index
+          - value
+          - save
+          - bridge
+          - content
+          - fonts
+          - bitmaps
+          - colr
+          - interpret
+          - encryption
+          - forms_markup
+          - structure_history
+          - type1_cmap
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the nightly toolchain and cargo-fuzz

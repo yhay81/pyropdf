@@ -1255,11 +1255,20 @@ dependencies = [
 name = "pyropdf-fuzz"
 version = "0.0.0"
 dependencies = [
+ "hayro-font",
  "libfuzzer-sys",
  "pyropdf-engine",
+ "pyropdf-schema",
  "pyropdf-store",
+ "quick-xml",
+ "read-fonts 0.46.0",
+ "sha2",
  "skrifa 0.50.0",
 ]
+
+[[package]]
+name = "pyropdf-schema"
+version = "0.4.0"
 
 [[package]]
 name = "pyropdf-store"
