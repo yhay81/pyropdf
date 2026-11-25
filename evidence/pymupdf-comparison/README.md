@@ -59,7 +59,7 @@ and the import-time change. The latter has no timing workload. The official
 | `results/darwin-arm64.md` | The measured comparison, with the raw timings in the `.json` beside it |
 | `sample_hashes.py OUT` | Hashes every corpus page's samples in each raster layout, to show that a change keeps every byte; `results/rgb8-take-darwin-arm64.md` records its use for #393 |
 | `compare_text.py` | Compares text hashes and word multisets on the corpus in separate engine environments; `results/text-main.md` explains its limits |
-| `quality.py` | Scores text, reading order, word boxes, and table cells of six labeled pages against `quality/*.json`, for #430; `results/quality.md` holds the scores |
+| `quality.py` | Scores text, reading order, word boxes, and table cells of 11 labeled pages against `quality/*.json`, for #430, #840, and #1149; `results/quality.md` holds the scores |
 | `gray_probe.py` | Reproduces the engines' different `rewrite_images(set_to_gray=True)` behavior on a synthetic PDF |
 
 ```bash
@@ -188,12 +188,18 @@ protocol, `bytes(pixmap)`; the corpus totals of rendering fell from 2.65 and
 
 ## Text quality against labels
 
-For #430: does each engine read the right text, in the right order, with
-the right boxes? Neither engine is the ground truth. `quality/` labels six
-pages, chosen for their kinds of layout: a bill in one column
-(bill-hr815 p1), a tax form (f1040 p1), Japanese prose with a header box
-(mhlw-doc p1), a wide table (nics p1), a scanned two-column patent with an
-OCR layer (patent-us223898 p2), and a LaTeX manual (usrguide p2). Each
+For #430, #840, and #1149: does each engine read the right text, in the right
+order, with the right boxes? Neither engine is the ground truth. `quality/`
+labels 11 pages from `tests/assets/real_world/`, chosen for their kinds of
+layout: a bill in one column (`bill-hr815 p1`), both pages of a tax form
+(`f1040 p1` and `p2`), Japanese administrative prose with a header box and
+mixed-script text (`mhlw-doc p1` and `p2`), a wide 25-column table (`nics p1`),
+a 90°-rotated financial table with a merged bordered header and borderless
+multi-line rows (`senate-expenditures p1`), two pages of a scanned two-column
+patent with an OCR layer (`patent-us223898 p2` and `p3`), and a LaTeX manual's
+title/TOC page and body page (`usrguide p1` and `p2`). Image-only scans with no
+PDF text layer (`bunka-kokugo-series-019-p4.pdf` and `wdl6812-manuscript.pdf`)
+have no native text to score here and are tested by the OCR suite instead. Each
 label holds:
 
 - **Anchors**: lines in the order a reader reads the Ghostscript
@@ -201,42 +207,54 @@ label holds:
   NFKC and the removal of all whitespace, since the engines place spaces
   between CJK characters and digits differently. Neighboring found anchors
   count as in order when their positions increase.
-- **Words**: six words per page, each found once by both engines with
-  boxes that overlap, spread over the page. Their ink boxes are measured
-  in Ghostscript renderings at 288 dpi, inside a seed box around both
-  engines' boxes, without the rules of tables and forms or the ink of
+- **Words**: six words per native-text page (54 words across 9 pages), each
+  found once by both engines with boxes that overlap (after applying page
+  rotation on `senate-expenditures p1`), spread over the page. Their ink boxes
+  are measured in Ghostscript renderings at 288 dpi, inside a seed box around
+  both engines' boxes, without the rules of tables and forms or the ink of
   neighboring lines (`python quality.py ink`). A word counts as placed when
   a word of the same text covers 90% of its ink box. The mean IoU compares
   the box with the ink, so it measures box conventions, such as font
-  ascent and descent, more than errors. The patent's OCR layer has no ink
-  of its own, so it has no word labels.
-- **Table**: three rows of the nics table (Alabama, Wyoming, and Totals),
-  checked against a 150 dpi rendering, and its 25 columns.
+  ascent and descent, more than errors. The scanned patent pages' OCR layer has
+  no ink of its own, so `patent-us223898 p2` and `p3` have no word labels.
+- **Tables**: three rows of the `nics` table (Alabama, Wyoming, and Totals;
+  25 columns) and three voucher rows of the rotated `senate-expenditures` table
+  (`DHAW20190001`, `DHAW20190031`, and `DHAW20190070`; 7 columns), checked
+  against high-DPI Ghostscript renderings.
 
-The labels were made by an agent from the renderings, and the owner
-checked them by eye against the crops of `python quality.py crops DIR`
-(`"checked": true`). A changed label is checked again the same way.
-`tests/test_text_quality.py` holds pyropdf to the labels.
+The six unchanged pages from #430 were checked by the owner against the crops
+of `python quality.py crops DIR` (`"checked": true`). The four newly labeled
+pages from #1149 (`f1040-p2`, `patent-us223898-p3`, `senate-expenditures-p1`,
+and `usrguide-p1`) and `mhlw-doc-p2` (whose anchors were verified in #840 and
+whose six Japanese mixed-script word ink boxes were newly agent-measured in
+#1149) are marked `"checked": false` until the owner checks their crops by eye.
+A changed label is checked again the same way; `release.py` scores only
+`"checked": true` pages. `tests/test_text_quality.py` holds pyropdf to all
+labels (recording the tracked `senate-expenditures-p1` table gap in
+`KNOWN_TABLES`).
 
 ```bash
-python evidence/pymupdf-comparison/quality.py collect pyropdf /tmp/pyropdf.json
+uv run python evidence/pymupdf-comparison/quality.py collect pyropdf /tmp/pyropdf.json
 target/pymupdf-comparison/pymupdf-env/bin/python evidence/pymupdf-comparison/quality.py collect pymupdf /tmp/mupdf.json
 target/pymupdf-comparison/pymupdf-env/bin/python evidence/pymupdf-comparison/quality.py collect pymupdf-sort /tmp/mupdf-sort.json
-python evidence/pymupdf-comparison/quality.py score evidence/pymupdf-comparison/results/quality COMMIT /tmp/mupdf.json /tmp/mupdf-sort.json /tmp/pyropdf.json
+uv run python evidence/pymupdf-comparison/quality.py score evidence/pymupdf-comparison/results/quality COMMIT /tmp/mupdf.json /tmp/mupdf-sort.json /tmp/pyropdf.json
 ```
 
 [`results/quality.md`](results/quality.md) holds the scores, measured with
-PyMuPDF 2.0 on Python 3.13.16 and pyropdf 0.2.0 at 967fc36 on Ghostscript's
-renderings. Both engines find every anchor and place every labeled word,
-except where noted below.
+PyMuPDF 2.1 on Python 3.13.18 and pyropdf 0.4.0 at `129eb3aa` with #1149 on
+Ghostscript's renderings. Both engines find every anchor and place every
+labeled word, except where noted below.
 
 | Difference | Kind |
 | --- | --- |
-| The patent page: pyropdf split the headings above the two columns at the gutter (`UNITED STATES` … `PATENT OFFICE.` after the left column) | pyropdf engine error, fixed by #460; the table shows the fixed scores |
-| The patent page: PyMuPDF reads the right column before the left one ends, with or without `sort=True` | PyMuPDF engine error on a scanned page |
-| The nics table: PyMuPDF's `find_tables()` finds 17 rows, with the states merged into a few cells; pyropdf finds every labeled row and cell | PyMuPDF engine error |
-| mhlw-doc and nics: PyMuPDF's default puts the header box after the body and the first rows before the title | API choice: `get_text()` follows the content stream unless `sort=True`, which reads both pages in order |
-| Word IoU 0.71 to 0.90 for both engines | Box conventions: both engines' boxes cover the ink |
+| `patent-us223898 p2`: pyropdf split the headings above the two columns at the gutter (`UNITED STATES` … `PATENT OFFICE.` after the left column) | pyropdf engine error, fixed by #460; the table shows the fixed scores |
+| `usrguide p1`: pyropdf pinned the footnote line baseline on its leading 6pt superscript (`∗`) and split the lowered `E` of `\LaTeX` onto a separate line | pyropdf engine error, fixed by #1149; the table shows the fixed scores |
+| `senate-expenditures p1` table: pyropdf's `page.tables()` extracts only the 2×7 bordered header and misses the 32 borderless data rows across the 1.84 pt double-rule gap; PyMuPDF's `find_tables()` collapses all payroll rows and all voucher rows into two garbled cells | pyropdf limitation tracked in #1153; PyMuPDF engine error |
+| `senate-expenditures p1` reading order and word boxes: PyMuPDF's default reads payroll rows right-to-left (content-stream order), `sort=True` sorts in unrotated portrait space and loses 10/16 anchors, and `get_text("words")` returns unrotated `612×792` cropbox boxes (`0/6` placed against display-space ink); pyropdf reads and places all words in display coordinates (`16/16` anchors, `15/15` pairs, `6/6` words) | PyMuPDF rotated-page behavior (`page.get_text` / `get_text("words")` do not rotate to `page.rect` display space by default) |
+| `patent-us223898 p2` and `p3`: PyMuPDF reads the right column before the left one ends (p2, both modes; p3, `sort=True`) and places the top stamp between columns by default (p3) | PyMuPDF engine error on scanned two-column pages |
+| `nics` table: PyMuPDF's `find_tables()` finds 17 rows, with the states merged into a few cells; pyropdf finds every labeled row and cell (`75/75`) | PyMuPDF engine error |
+| `mhlw-doc p1` and `nics p1`: PyMuPDF's default puts the header box after the body and the first rows before the title | API choice: `get_text()` follows the content stream unless `sort=True`, which reads both pages in order |
+| Word IoU 0.65 to 0.90 across unrotated pages (and 0.70 for pyropdf on rotated `senate-expenditures p1`) | Box conventions: both engines' boxes cover the ink (except PyMuPDF's unrotated boxes on `senate-expenditures p1`) |
 
 ## Limits
 
@@ -244,7 +262,8 @@ except where noted below.
   waits for, and whether both engines do equal work for it is not measured.
 - The benchmark times text and words, not their quality. The separate
   [main comparison](results/text-main.md) compares default outputs, not
-  labeled accuracy. The labeled comparison covers six pages with anchors
-  and six words each, not every character. Phase 1's parity evidence (`evidence/phase1-parity`)
-  compares pyropdf's output with pylopdf's.
+  labeled accuracy. The labeled comparison covers 11 pages with anchors and
+  9 pages with six ink-measured words each, not every character. Phase 1's
+  parity evidence (`evidence/phase1-parity`) compares pyropdf's output with
+  pylopdf's.
 - One machine, one thread, and a 15-document corpus.

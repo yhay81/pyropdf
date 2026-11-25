@@ -1,14 +1,14 @@
 {
- "commit": "3115d2c with #460",
+ "commit": "129eb3aa with #1149",
  "engines": [
-  "PyMuPDF 2.0",
-  "PyMuPDF 2.0 sort=True",
-  "pyropdf 0.2.0"
+  "PyMuPDF 2.1",
+  "PyMuPDF 2.1 sort=True",
+  "pyropdf 0.4.0"
  ],
  "pages": {
   "bill-hr815-p1": {
    "checked": true,
-   "PyMuPDF 2.0": {
+   "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 12,
      "found": 12,
@@ -20,11 +20,11 @@
     "words": {
      "words": 6,
      "placed": 6,
-     "mean_iou": 0.8114462857979654,
+     "mean_iou": 0.7696636635958106,
      "failures": []
     }
    },
-   "PyMuPDF 2.0 sort=True": {
+   "PyMuPDF 2.1 sort=True": {
     "anchors": {
      "anchors": 12,
      "found": 12,
@@ -36,11 +36,11 @@
     "words": {
      "words": 6,
      "placed": 6,
-     "mean_iou": 0.8114462857979654,
+     "mean_iou": 0.7696636635958106,
      "failures": []
     }
    },
-   "pyropdf 0.2.0": {
+   "pyropdf 0.4.0": {
     "anchors": {
      "anchors": 12,
      "found": 12,
@@ -59,7 +59,7 @@
   },
   "f1040-p1": {
    "checked": true,
-   "PyMuPDF 2.0": {
+   "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 18,
      "found": 18,
@@ -75,7 +75,7 @@
      "failures": []
     }
    },
-   "PyMuPDF 2.0 sort=True": {
+   "PyMuPDF 2.1 sort=True": {
     "anchors": {
      "anchors": 18,
      "found": 18,
@@ -91,7 +91,7 @@
      "failures": []
     }
    },
-   "pyropdf 0.2.0": {
+   "pyropdf 0.4.0": {
     "anchors": {
      "anchors": 18,
      "found": 18,
@@ -108,9 +108,60 @@
     }
    }
   },
+  "f1040-p2": {
+   "checked": false,
+   "PyMuPDF 2.1": {
+    "anchors": {
+     "anchors": 18,
+     "found": 18,
+     "in_order": 17,
+     "pairs": 17,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 6,
+     "placed": 6,
+     "mean_iou": 0.654392834896817,
+     "failures": []
+    }
+   },
+   "PyMuPDF 2.1 sort=True": {
+    "anchors": {
+     "anchors": 18,
+     "found": 18,
+     "in_order": 17,
+     "pairs": 17,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 6,
+     "placed": 6,
+     "mean_iou": 0.654392834896817,
+     "failures": []
+    }
+   },
+   "pyropdf 0.4.0": {
+    "anchors": {
+     "anchors": 18,
+     "found": 18,
+     "in_order": 17,
+     "pairs": 17,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 6,
+     "placed": 6,
+     "mean_iou": 0.76539167756373,
+     "failures": []
+    }
+   }
+  },
   "mhlw-doc-p1": {
    "checked": true,
-   "PyMuPDF 2.0": {
+   "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 11,
      "found": 11,
@@ -131,7 +182,7 @@
      "failures": []
     }
    },
-   "PyMuPDF 2.0 sort=True": {
+   "PyMuPDF 2.1 sort=True": {
     "anchors": {
      "anchors": 11,
      "found": 11,
@@ -147,7 +198,7 @@
      "failures": []
     }
    },
-   "pyropdf 0.2.0": {
+   "pyropdf 0.4.0": {
     "anchors": {
      "anchors": 11,
      "found": 11,
@@ -164,9 +215,60 @@
     }
    }
   },
+  "mhlw-doc-p2": {
+   "checked": false,
+   "PyMuPDF 2.1": {
+    "anchors": {
+     "anchors": 5,
+     "found": 5,
+     "in_order": 4,
+     "pairs": 4,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 6,
+     "placed": 6,
+     "mean_iou": 0.876286963607987,
+     "failures": []
+    }
+   },
+   "PyMuPDF 2.1 sort=True": {
+    "anchors": {
+     "anchors": 5,
+     "found": 5,
+     "in_order": 4,
+     "pairs": 4,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 6,
+     "placed": 6,
+     "mean_iou": 0.876286963607987,
+     "failures": []
+    }
+   },
+   "pyropdf 0.4.0": {
+    "anchors": {
+     "anchors": 5,
+     "found": 5,
+     "in_order": 4,
+     "pairs": 4,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 6,
+     "placed": 6,
+     "mean_iou": 0.7951418007497663,
+     "failures": []
+    }
+   }
+  },
   "nics-background-checks-2015-11-p1": {
    "checked": true,
-   "PyMuPDF 2.0": {
+   "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 11,
      "found": 11,
@@ -195,7 +297,7 @@
      "expected_columns": 25
     }
    },
-   "PyMuPDF 2.0 sort=True": {
+   "PyMuPDF 2.1 sort=True": {
     "anchors": {
      "anchors": 11,
      "found": 11,
@@ -219,7 +321,7 @@
      "expected_columns": 25
     }
    },
-   "pyropdf 0.2.0": {
+   "pyropdf 0.4.0": {
     "anchors": {
      "anchors": 11,
      "found": 11,
@@ -246,7 +348,7 @@
   },
   "patent-us223898-p2": {
    "checked": true,
-   "PyMuPDF 2.0": {
+   "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 9,
      "found": 9,
@@ -267,7 +369,7 @@
      "failures": []
     }
    },
-   "PyMuPDF 2.0 sort=True": {
+   "PyMuPDF 2.1 sort=True": {
     "anchors": {
      "anchors": 9,
      "found": 9,
@@ -288,7 +390,7 @@
      "failures": []
     }
    },
-   "pyropdf 0.2.0": {
+   "pyropdf 0.4.0": {
     "anchors": {
      "anchors": 9,
      "found": 9,
@@ -305,9 +407,243 @@
     }
    }
   },
+  "patent-us223898-p3": {
+   "checked": false,
+   "PyMuPDF 2.1": {
+    "anchors": {
+     "anchors": 14,
+     "found": 14,
+     "in_order": 12,
+     "pairs": 13,
+     "missing": [],
+     "inversions": [
+      [
+       "EST ^VAILABLE COPY",
+       "material be molded around it in the act of car"
+      ]
+     ]
+    },
+    "words": {
+     "words": 0,
+     "placed": 0,
+     "mean_iou": null,
+     "failures": []
+    }
+   },
+   "PyMuPDF 2.1 sort=True": {
+    "anchors": {
+     "anchors": 14,
+     "found": 14,
+     "in_order": 12,
+     "pairs": 13,
+     "missing": [],
+     "inversions": [
+      [
+       "a nercury-pump.",
+       "vacuum has been reached, is heronetically"
+      ]
+     ]
+    },
+    "words": {
+     "words": 0,
+     "placed": 0,
+     "mean_iou": null,
+     "failures": []
+    }
+   },
+   "pyropdf 0.4.0": {
+    "anchors": {
+     "anchors": 14,
+     "found": 14,
+     "in_order": 13,
+     "pairs": 13,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 0,
+     "placed": 0,
+     "mean_iou": null,
+     "failures": []
+    }
+   }
+  },
+  "senate-expenditures-p1": {
+   "checked": false,
+   "PyMuPDF 2.1": {
+    "anchors": {
+     "anchors": 16,
+     "found": 16,
+     "in_order": 11,
+     "pairs": 15,
+     "missing": [],
+     "inversions": [
+      [
+       "BAIN, J MATTHEW",
+       "DISTRICT DIRECTOR"
+      ],
+      [
+       "DISTRICT DIRECTOR",
+       "37,499.96"
+      ],
+      [
+       "GRUENDER, BENJAMIN L",
+       "FIELD REPRESENTATIVE FROM SEP. 16"
+      ],
+      [
+       "FIELD REPRESENTATIVE FROM SEP. 16",
+       "1,458.33"
+      ]
+     ]
+    },
+    "words": {
+     "words": 6,
+     "placed": 0,
+     "mean_iou": 0.0,
+     "failures": [
+      "OBLIGATION/SERVICE",
+      "37,499.96",
+      "CLINTON",
+      "DHAW20190005",
+      "HARTMAN",
+      "463.30"
+     ]
+    },
+    "table": {
+     "columns": 7,
+     "rows": 3,
+     "rows_found": 0,
+     "cells": 21,
+     "cells_right": 0,
+     "expected_columns": 7
+    }
+   },
+   "PyMuPDF 2.1 sort=True": {
+    "anchors": {
+     "anchors": 16,
+     "found": 6,
+     "in_order": 4,
+     "pairs": 5,
+     "missing": [
+      "DOCUMENT NO.",
+      "PAYEE NAME",
+      "AMOUNT ($)",
+      "BAIN, J MATTHEW",
+      "DISTRICT DIRECTOR",
+      "GRUENDER, BENJAMIN L",
+      "FIELD REPRESENTATIVE FROM SEP. 16",
+      "AIRFARE FOR E JOHNSON KANSAS CITY TO WASHINGTON DC AND RETURN",
+      "TRAIN FARE FOR SEN HAWLEY WASHINGTON DC TO NEW YORK NY AND RETURN",
+      "AIRFARE FOR C WEIHS WASHINGTON DC TO SPRINGFIELD AND RETURN"
+     ],
+     "inversions": [
+      [
+       "OBLIGATION/SERVICE",
+       "37,499.96"
+      ]
+     ]
+    },
+    "words": {
+     "words": 6,
+     "placed": 0,
+     "mean_iou": 0.0,
+     "failures": [
+      "OBLIGATION/SERVICE",
+      "37,499.96",
+      "CLINTON",
+      "DHAW20190005",
+      "HARTMAN",
+      "463.30"
+     ]
+    },
+    "table": {
+     "columns": 7,
+     "rows": 3,
+     "rows_found": 0,
+     "cells": 21,
+     "cells_right": 0,
+     "expected_columns": 7
+    }
+   },
+   "pyropdf 0.4.0": {
+    "anchors": {
+     "anchors": 16,
+     "found": 16,
+     "in_order": 15,
+     "pairs": 15,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 6,
+     "placed": 6,
+     "mean_iou": 0.6954672473632356,
+     "failures": []
+    },
+    "table": {
+     "columns": 7,
+     "rows": 3,
+     "rows_found": 0,
+     "cells": 21,
+     "cells_right": 0,
+     "expected_columns": 7
+    }
+   }
+  },
+  "usrguide-p1": {
+   "checked": false,
+   "PyMuPDF 2.1": {
+    "anchors": {
+     "anchors": 14,
+     "found": 14,
+     "in_order": 13,
+     "pairs": 13,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 6,
+     "placed": 6,
+     "mean_iou": 0.7498838711234971,
+     "failures": []
+    }
+   },
+   "PyMuPDF 2.1 sort=True": {
+    "anchors": {
+     "anchors": 14,
+     "found": 14,
+     "in_order": 13,
+     "pairs": 13,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 6,
+     "placed": 6,
+     "mean_iou": 0.7498838711234971,
+     "failures": []
+    }
+   },
+   "pyropdf 0.4.0": {
+    "anchors": {
+     "anchors": 14,
+     "found": 14,
+     "in_order": 13,
+     "pairs": 13,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 6,
+     "placed": 6,
+     "mean_iou": 0.7458164697130035,
+     "failures": []
+    }
+   }
+  },
   "usrguide-p2": {
    "checked": true,
-   "PyMuPDF 2.0": {
+   "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 12,
      "found": 12,
@@ -319,11 +655,11 @@
     "words": {
      "words": 6,
      "placed": 6,
-     "mean_iou": 0.7240215506379545,
+     "mean_iou": 0.7121361639264393,
      "failures": []
     }
    },
-   "PyMuPDF 2.0 sort=True": {
+   "PyMuPDF 2.1 sort=True": {
     "anchors": {
      "anchors": 12,
      "found": 12,
@@ -335,11 +671,11 @@
     "words": {
      "words": 6,
      "placed": 6,
-     "mean_iou": 0.7240215506379545,
+     "mean_iou": 0.7121361639264393,
      "failures": []
     }
    },
-   "pyropdf 0.2.0": {
+   "pyropdf 0.4.0": {
     "anchors": {
      "anchors": 12,
      "found": 12,

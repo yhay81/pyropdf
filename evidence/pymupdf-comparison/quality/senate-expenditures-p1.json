@@ -1,0 +1,148 @@
+{
+ "document": "senate-expenditures.pdf",
+ "page": 1,
+ "checked": false,
+ "notes": "Agent-labeled from Ghostscript renderings at 150 and 288 dpi; awaiting the owner's check. 90-degree rotated financial table with a merged bordered header and borderless payroll and multi-line voucher rows.",
+ "anchors": [
+  "DOCUMENT NO.",
+  "PAYEE NAME",
+  "OBLIGATION/SERVICE",
+  "AMOUNT ($)",
+  "BAIN, J MATTHEW",
+  "DISTRICT DIRECTOR",
+  "37,499.96",
+  "GRUENDER, BENJAMIN L",
+  "FIELD REPRESENTATIVE FROM SEP. 16",
+  "1,458.33",
+  "DHAW20190001",
+  "AIRFARE FOR E JOHNSON KANSAS CITY TO WASHINGTON DC AND RETURN",
+  "DHAW20190031",
+  "TRAIN FARE FOR SEN HAWLEY WASHINGTON DC TO NEW YORK NY AND RETURN",
+  "DHAW20190070",
+  "AIRFARE FOR C WEIHS WASHINGTON DC TO SPRINGFIELD AND RETURN"
+ ],
+ "words": [
+  {
+   "text": "OBLIGATION/SERVICE",
+   "seed": [
+    349.66,
+    100.98,
+    414.61,
+    109.25
+   ],
+   "ink": [
+    350.0,
+    102.75,
+    414.5,
+    107.0
+   ]
+  },
+  {
+   "text": "37,499.96",
+   "seed": [
+    680.28,
+    137.73,
+    703.11,
+    144.56
+   ],
+   "ink": [
+    680.5,
+    139.25,
+    702.75,
+    142.75
+   ]
+  },
+  {
+   "text": "CLINTON",
+   "seed": [
+    253.21,
+    185.52,
+    275.73,
+    192.34
+   ],
+   "ink": [
+    253.5,
+    187.0,
+    275.25,
+    190.5
+   ]
+  },
+  {
+   "text": "DHAW20190005",
+   "seed": [
+    88.62,
+    262.43,
+    127.12,
+    269.26
+   ],
+   "ink": [
+    89.0,
+    263.75,
+    127.0,
+    267.5
+   ]
+  },
+  {
+   "text": "HARTMAN",
+   "seed": [
+    469.37,
+    311.09,
+    494.74,
+    317.92
+   ],
+   "ink": [
+    469.75,
+    312.5,
+    494.25,
+    316.25
+   ]
+  },
+  {
+   "text": "463.30",
+   "seed": [
+    687.43,
+    427.65,
+    703.12,
+    434.48
+   ],
+   "ink": [
+    687.5,
+    429.0,
+    702.75,
+    432.75
+   ]
+  }
+ ],
+ "table": {
+  "columns": 7,
+  "rows": {
+   "DHAW20190001": [
+    "DHAW20190001",
+    "05/03/2019",
+    "CITIBANK - TRAVEL CBA CARD",
+    "03/04/2019",
+    "03/06/2019",
+    "STAFF TRANSPORTATION\nAIRFARE FOR E JOHNSON KANSAS CITY TO WASHINGTON DC AND RETURN",
+    "920.68"
+   ],
+   "DHAW20190031": [
+    "DHAW20190031",
+    "05/28/2019",
+    "CITIBANK - SENATOR IBA CARD",
+    "05/10/2019",
+    "05/11/2019",
+    "SENATOR'S TRANSPORTATION\nTRAIN FARE FOR SEN HAWLEY WASHINGTON DC TO NEW YORK NY AND RETURN",
+    "618.00"
+   ],
+   "DHAW20190070": [
+    "DHAW20190070",
+    "09/09/2019",
+    "CITIBANK - TRAVEL CBA CARD",
+    "08/12/2019",
+    "08/14/2019",
+    "STAFF TRANSPORTATION\nAIRFARE FOR C WEIHS WASHINGTON DC TO SPRINGFIELD AND RETURN",
+    "411.49"
+   ]
+  }
+ }
+}
