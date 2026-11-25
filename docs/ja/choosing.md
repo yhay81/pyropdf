@@ -34,18 +34,21 @@ description: pyropdf が得意なこと、まだできないこと、PyMuPDF・p
 | undo と原子的なトランザクション | あり | ジャーナル | なし | なし |
 
 この中で最も機能が揃っているのは PyMuPDF で、pyropdf は自分をそれと比べて測っています。
-実在する 15 文書のコーパスを Apple Silicon の macOS で測り（pyropdf 0.3.1 と PyMuPDF 2.1 の比較、描画は生サンプル読み取り）、pyropdf の時間を PyMuPDF の時間で割った比（小さいほど速い）：
+実在する 15 文書のコーパスで PyMuPDF 2.1 と比べた値（描画は生サンプル読み取り、5 回計測の最速値）、
+pyropdf の時間を PyMuPDF の時間で割った比（小さいほど速く、プラットフォームにより差があります）：
 
-| 操作 | pyropdf / PyMuPDF |
-| --- | ---: |
-| 開く | 0.13 |
-| テキスト | 0.50 |
-| 単語 | 0.41 |
-| 検索 | 0.37 |
-| 描画 72 dpi | 1.77 |
-| 描画 144 dpi | 1.82 |
-| 全体保存 | 0.16 |
+| 操作 | 0.4.0 (Linux x86-64) | 0.3.1 (macOS arm64) |
+| --- | ---: | ---: |
+| 開く | 0.27 | 0.13 |
+| テキスト | 1.38 | 0.50 |
+| 単語 | 1.63 | 0.41 |
+| 検索 | 0.95 | 0.37 |
+| 描画 72 dpi | 1.78 | 1.77 |
+| 描画 144 dpi | 1.49 | 1.82 |
+| 全体保存 | 0.12 | 0.16 |
 
-方法、生の計測値、機能ごとの比較は
+Linux x86-64 のリリース比較レポート（`comparison-v0.4.0.zip`）は
+[v0.4.0 リリース](https://github.com/yhay81/pyropdf/releases/tag/v0.4.0) に添付されています。
+計測方法、Apple Silicon の macOS 基準値、生の計測値、機能ごとの比較は
 [evidence/pymupdf-comparison](https://github.com/yhay81/pyropdf/tree/main/evidence/pymupdf-comparison)
 にあります（英語）。

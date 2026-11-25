@@ -39,19 +39,22 @@ description: What pyropdf is good at, what it does not do yet, and how it compar
 | Undo and atomic transactions | yes | journalling | no | no |
 
 PyMuPDF is the most complete of these and the one pyropdf measures itself
-against. On the 15-document real-world corpus on Apple Silicon macOS (pyropdf
-0.3.1 vs PyMuPDF 2.1, reading raw samples on render), as the ratio of
-pyropdf's time to PyMuPDF's (lower is faster):
+against. On the 15-document real-world corpus (reading raw samples on render,
+best of 5 runs), as the ratio of pyropdf's time to PyMuPDF 2.1's (lower is
+faster; ratios vary by platform):
 
-| Operation | pyropdf / PyMuPDF |
-| --- | ---: |
-| Open | 0.13 |
-| Text | 0.50 |
-| Words | 0.41 |
-| Search | 0.37 |
-| Render 72 dpi | 1.77 |
-| Render 144 dpi | 1.82 |
-| Full save | 0.16 |
+| Operation | 0.4.0 (Linux x86-64) | 0.3.1 (macOS arm64) |
+| --- | ---: | ---: |
+| Open | 0.27 | 0.13 |
+| Text | 1.38 | 0.50 |
+| Words | 1.63 | 0.41 |
+| Search | 0.95 | 0.37 |
+| Render 72 dpi | 1.78 | 1.77 |
+| Render 144 dpi | 1.49 | 1.82 |
+| Full save | 0.12 | 0.16 |
 
-The method, the raw timings, and the feature-by-feature comparison are in
+The Linux x86-64 release report (`comparison-v0.4.0.zip`) is attached to the
+[v0.4.0 release](https://github.com/yhay81/pyropdf/releases/tag/v0.4.0);
+the method, Apple Silicon macOS baseline, raw timings, and feature-by-feature
+comparison are in
 [evidence/pymupdf-comparison](https://github.com/yhay81/pyropdf/tree/main/evidence/pymupdf-comparison).

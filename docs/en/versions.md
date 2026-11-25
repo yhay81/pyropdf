@@ -211,7 +211,7 @@ signature-reference dictionaries.
 The reproducible fixtures in `tests/test_signing.py` and
 `tests/test_verify.py` generate keys and certificates for each row.
 Each of the 20 pairs is used to fill an existing field, sign again,
-validate both revisions in pyHanko 0.38.1 and verify an independently
+validate both revisions in pyHanko 0.38.2 and verify an independently
 signed PDF. pyHanko's Ed25519 fixture encoder explicitly omits the
 SHA-512 parameters required to be absent by RFC 8419. Separate tests
 check the explicit-NULL rejection and all four extension timestamp
