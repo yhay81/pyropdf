@@ -611,3 +611,208 @@ def test_appearance_state_defects_cover_indirect_direct_null_and_r_d(
     report = pyropdf.open(CORPUS["pdf"](objects)).check()
     invariants = [(d.xref, d.path, d.clause, d.kind) for d in report.defects if d.kind == "invariant"]
     assert invariants == [(expected_xref, expected_path, "AnnotSquare/AS", "invariant")]
+
+
+def _blank_version_doc(version: str) -> pyropdf.Document:
+    data: bytes = CORPUS["pdf"](
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>",
+        ],
+        version,
+    )
+    if version == "2.0":
+        data = data.replace(b"/Root 1 0 R >>", b"/Root 1 0 R /ID [(0123456789abcdef) (0123456789abcdef)] >>")
+    return pyropdf.open(data)
+
+
+@pytest.mark.parametrize("filter_cls", [pyropdf.typed.FilterFlateDecode, pyropdf.typed.FilterLZWDecode])
+@pytest.mark.parametrize("version", ["1.3", "1.7", "2.0"])
+def test_filter_colors_accepts_valid_values_on_pdf13_plus_and_rejects_nonpositive(
+    filter_cls: type[pyropdf.typed.FilterFlateDecode | pyropdf.typed.FilterLZWDecode], version: str
+) -> None:
+    with _blank_version_doc(version) as doc:
+        for colors in (1, 3, 5):
+            created = filter_cls.create(doc, {"Colors": colors})
+            assert created.interpret("Colors") == colors
+        for colors in (0, -1):
+            with pytest.raises(pyropdf.MalformedPdfError, match="Colors"):
+                filter_cls.create(doc, {"Colors": colors})
+            raw = doc.objects[doc.objects.add({"Colors": colors})]
+            with pytest.raises(pyropdf.PdfError, match="admitted types or values"):
+                filter_cls(raw).interpret("Colors")
+
+
+@pytest.mark.parametrize("filter_cls", [pyropdf.typed.FilterFlateDecode, pyropdf.typed.FilterLZWDecode])
+def test_filter_colors_enforces_upper_bound_on_pre13_pdfs(
+    filter_cls: type[pyropdf.typed.FilterFlateDecode | pyropdf.typed.FilterLZWDecode],
+) -> None:
+    with _blank_version_doc("1.2") as doc:
+        for colors in (1, 4):
+            created = filter_cls.create(doc, {"Colors": colors})
+            assert created.interpret("Colors") == colors
+        for colors in (0, 5):
+            with pytest.raises(pyropdf.MalformedPdfError, match="Colors"):
+                filter_cls.create(doc, {"Colors": colors})
+            raw = doc.objects[doc.objects.add({"Colors": colors})]
+            with pytest.raises(pyropdf.PdfError, match="admitted types or values"):
+                filter_cls(raw).interpret("Colors")
+
+
+def test_before_version_is_required_rules_stay_enforced() -> None:
+    form = b"<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << >> /Length 0 >>\nstream\n\nendstream"
+    for version, expected in (
+        ("1.2", {"XObjectFormType1/FormType", "XObjectFormType1/Matrix", "XObjectFormType1/Name"}),
+        ("1.3", set()),
+    ):
+        data = CORPUS["pdf"](
+            [
+                b"<< /Type /Catalog /Pages 2 0 R >>",
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /XObject << /Fm0 4 0 R >> >> >>",
+                form,
+            ],
+            version,
+        )
+        required = {d.clause for d in pyropdf.open(data).check().defects if d.kind == "required"}
+        assert required == expected
+
+
+@pytest.mark.parametrize(
+    ("zoom", "expected"),
+    [
+        (b"/min 2.0", []),
+        (b"/max 5.0", []),
+        (b"/min 0.0", []),
+        (b"/max 0.0", []),
+        (b"/min 1.0 /max 5.0", []),
+        (b"/min 2.0 /max 2.0", []),
+        (b"/min -1.0", [(4, "Usage/Zoom/min", "OptContentZoom/min", "value")]),
+        (b"/max -0.5", [(4, "Usage/Zoom/max", "OptContentZoom/max", "value")]),
+        (
+            b"/min 5.0 /max 2.0",
+            [
+                (4, "Usage/Zoom/max", "OptContentZoom/max", "value"),
+                (4, "Usage/Zoom/min", "OptContentZoom/min", "value"),
+            ],
+        ),
+        (
+            b"",
+            [
+                (4, "Usage/Zoom/max", "OptContentZoom/max", "required"),
+                (4, "Usage/Zoom/min", "OptContentZoom/min", "required"),
+            ],
+        ),
+    ],
+)
+def test_opt_content_zoom_allows_single_bound_and_enforces_constraints(
+    zoom: bytes, expected: list[tuple[int, str, str, str]]
+) -> None:
+    data = CORPUS["pdf"](
+        [
+            b"<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [4 0 R] /D << >> >> >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>",
+            b"<< /Type /OCG /Name (Layer) /Usage << /Zoom << " + zoom + b" >> >> >>",
+        ]
+    )
+    defects = sorted((d.xref, d.path, d.clause, d.kind) for d in pyropdf.open(data).check().defects)
+    assert defects == expected
+
+
+def test_opt_content_zoom_typed_create_and_interpret_accept_single_bound() -> None:
+    with pyropdf.Document() as doc:
+        min_only = pyropdf.typed.OptContentZoom.create(doc, {"min": 2.0})
+        assert min_only.interpret("min") == 2.0
+        max_only = pyropdf.typed.OptContentZoom.create(doc, {"max": 5.0})
+        assert max_only.interpret("max") == 5.0
+        with pytest.raises(pyropdf.MalformedPdfError, match="OptContentZoom/min"):
+            pyropdf.typed.OptContentZoom.create(doc, {"min": -1.0})
+        with pytest.raises(pyropdf.MalformedPdfError, match="OptContentZoom/"):
+            pyropdf.typed.OptContentZoom.create(doc, {"min": 5.0, "max": 2.0})
+
+
+def test_indirect_structure_k_arrays_validate_parent_backlinks() -> None:
+    def root_indirect_k(second_parent: int) -> pyropdf.Document:
+        return pyropdf.open(
+            CORPUS["pdf"](
+                [
+                    b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 4 0 R >>",
+                    b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                    b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>",
+                    b"<< /Type /StructTreeRoot /K 7 0 R >>",
+                    b"<< /Type /StructElem /S /Document /P 4 0 R >>",
+                    f"<< /Type /StructElem /S /P /P {second_parent} 0 R >>".encode(),
+                    b"[5 0 R 6 0 R]",
+                ]
+            )
+        )
+
+    assert [d for d in root_indirect_k(4).check().defects if d.kind == "invariant"] == []
+    assert [
+        (d.xref, d.path, d.clause, d.kind) for d in root_indirect_k(1).check().defects if d.kind == "invariant"
+    ] == [(6, "P", "StructTreeRoot/K", "invariant")]
+
+    def elem_indirect_k(leaf_parent: int) -> pyropdf.Document:
+        return pyropdf.open(
+            CORPUS["pdf"](
+                [
+                    b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 4 0 R >>",
+                    b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                    b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>",
+                    b"<< /Type /StructTreeRoot /K 5 0 R >>",
+                    b"<< /Type /StructElem /S /Document /P 4 0 R /K 6 0 R >>",
+                    b"[0 7 0 R 8 0 R]",
+                    b"<< /Type /StructElem /S /P /P 5 0 R >>",
+                    f"<< /Type /StructElem /S /Span /P {leaf_parent} 0 R >>".encode(),
+                ]
+            )
+        )
+
+    assert [d for d in elem_indirect_k(5).check().defects if d.kind == "invariant"] == []
+    assert [
+        (d.xref, d.path, d.clause, d.kind) for d in elem_indirect_k(4).check().defects if d.kind == "invariant"
+    ] == [(8, "P", "StructElem/K", "invariant")]
+
+    cyclic = pyropdf.open(
+        CORPUS["pdf"](
+            [
+                b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 4 0 R >>",
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>",
+                b"<< /Type /StructTreeRoot /K 5 0 R >>",
+                b"[5 0 R]",
+            ]
+        )
+    )
+    assert not cyclic.check().truncated
+
+
+def test_etsi_pades_cades_requires_direct_extensions_dictionary() -> None:
+    def check_cades(extensions_entry: bytes, extra: list[bytes]) -> set[tuple[str, str]]:
+        data = CORPUS["pdf"](
+            [
+                b"<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R /Extensions " + extensions_entry + b" >>",
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>",
+                b"<< /Fields [5 0 R] >>",
+                b"<< /FT /Sig /T (Approval) /V 6 0 R >>",
+                b"<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /ETSI.CAdES.detached /Contents <00> >>",
+                *extra,
+            ]
+        )
+        return {(d.clause, d.kind) for d in pyropdf.open(data).check().defects}
+
+    direct = check_cades(b"<< /ESIC << /BaseVersion /1.7 /ExtensionLevel 2 >> >>", [])
+    assert ("Signature/SubFilter", "version") not in direct
+    assert ("Catalog/Extensions", "indirect") not in direct
+
+    # ISO 32000-1 7.12.1 requires /Extensions and developer extension dictionaries to be direct.
+    indirect_ext = check_cades(b"7 0 R", [b"<< /ESIC << /BaseVersion /1.7 /ExtensionLevel 2 >> >>"])
+    assert ("Catalog/Extensions", "indirect") in indirect_ext
+    assert ("Signature/SubFilter", "version") in indirect_ext
+
+    indirect_vendor = check_cades(b"<< /ESIC 7 0 R >>", [b"<< /BaseVersion /1.7 /ExtensionLevel 2 >>"])
+    assert ("Extensions/*", "indirect") in indirect_vendor
+    assert ("Signature/SubFilter", "version") in indirect_vendor
