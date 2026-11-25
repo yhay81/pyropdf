@@ -26,6 +26,7 @@ import tempfile
 from pathlib import Path
 
 import pyropdf
+from pyropdf._objects import _direct_value
 
 ROOT = Path(__file__).resolve().parent.parent
 # The preservation harness imports its sibling test modules.
@@ -87,6 +88,15 @@ for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
     if part not in "1234":
         continue
     edit_rules = {"action_triggers": {"6.6.1-3" if part == "1" else "6.4.1-1"}}
+    # The edit deliberately adds alternate appearances, an unembedded caption font,
+    # and a Redact annotation (which PDF/A-1 additionally forbids).
+    interaction_rules = {
+        "1": {"6.3.4-1", "6.5.2-1", "6.5.3-4"},
+        "2": {"6.2.11.4.1-1", "6.3.3-2"},
+        "3": {"6.2.11.4.1-1", "6.3.3-2"},
+        "4": {"6.2.10.4.1-1", "6.3.3-2"},
+    }
+    expect(source, profile, {"edit_interaction": interaction_rules[part]}, "#903")
     if part == "1":
         edit_rules.update(
             annotation_relations={"6.5.3-2"},
@@ -107,6 +117,8 @@ for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
     if part in "12" or profile == "4":
         attachment_rules = {"1": {"6.1.11-1", "6.1.11-2"}, "2": {"6.8-5"}, "4": {"6.9-3"}}[part]
         expect(source, profile, dict.fromkeys(ATTACHMENT_EDITS, attachment_rules), "#301")
+        interchange_rules = {"1": {"6.1.11-1"}, "2": {"6.8-5"}, "4": {"6.9-3"}}[part]
+        expect(source, profile, {"interchange": interchange_rules}, "#839")
     if part in "23":
         expect(
             source,
@@ -116,6 +128,22 @@ for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
             modes=("full",),
         )
 
+# A fixed-print Watermark is unavailable in PDF/A-1. On accessible
+# documents these two deliberately untagged print annotations need tagging.
+for source in ("pdfa-1a", "pdfa-1b"):
+    expect(source, source.removeprefix("pdfa-"), {"prepress": {"6.5.2-1"}}, "#861")
+expect("pdfua-1", "ua1", {"prepress": {"7.18.1-1", "7.18.1-2", "7.18.3-1"}}, "#861")
+for source in ("pdfua-2", DUAL):
+    expect(source, "ua2", {"prepress": {"8.9.3.3-1"}}, "#861")
+
+expect(
+    "pdfua-1",
+    "ua1",
+    {"edit_interaction": {"7.18.1-1", "7.18.1-2", "7.18.1-3", "7.18.3-1", "7.18.4-1", "7.21.4.1-1"}},
+    "#903",
+)
+for source in ("pdfua-2", DUAL):
+    expect(source, "ua2", {"edit_interaction": {"8.4.5.5.1-1", "8.9.2.3-1", "8.9.3.3-1", "8.10.2.3-1"}}, "#903")
 expect("pdfua-1", "ua1", UNTAGGED_RULES, "#794")
 expect("pdfua-1", "ua1", {"remove-language": {"7.2-22", "7.2-33"}}, "#847")
 expect(
@@ -437,19 +465,112 @@ def profile_saves(directory: Path) -> dict[Path, str]:
     return files
 
 
+def declares_pades(extensions: object) -> bool:
+    """Recognize the PDF 1.7 declarations registered for PAdES signatures."""
+    if not isinstance(extensions, pyropdf.Dictionary) or extensions.is_indirect:
+        return False
+    for prefix, required in (("ESIC", PADES_LEVEL), ("ADBE", 8)):
+        entry = extensions.get(prefix)
+        if (
+            isinstance(entry, pyropdf.Dictionary)
+            and not entry.is_indirect
+            and _direct_value(entry, "BaseVersion") == "1.7"
+        ):
+            level = _direct_value(entry, "ExtensionLevel")
+            if type(level) is int and level >= required:
+                return True
+    return False
+
+
+# The same generated inputs and edits are exercised in pytest and with the pinned jars.
+ALTERNATES = runpy.run_path(str(ROOT / "tests/assets/profile_edits.py"))
+
+
+def line_caption_saves(directory: Path) -> dict[Path, str]:
+    """Isolate an unembedded Standard 14 font in an otherwise valid normal Line appearance."""
+    source = ROOT / "tests/assets/pdfa/pdfa-2b.pdf"
+    with pyropdf.open(source) as original:
+        line = original.pages[0].annotations.add(pyropdf.LineAnnotation((16, 20), (80, 20), contents="Measured"))
+        line.line_details = pyropdf.LineDetails(caption=False)
+        baseline = original.to_bytes()
+    files = {}
+    for caption in (False, True):
+        with pyropdf.open(baseline) as doc:
+            if caption:
+                doc.pages[0].annotations[0].line_details = pyropdf.LineDetails(caption=True)
+            for incremental in (False, True):
+                name = "caption" if caption else "no-caption"
+                mode = "incremental" if incremental else "full"
+                path = directory / f"pdfa-2b-line-{name}-{mode}.pdf"
+                doc.save(path, incremental=incremental)
+                files[path] = "2b"
+                if caption:
+                    EXPECTED[f"2b {path.name}"] = ("#1035", {"6.2.11.4.1-1"})
+    return files
+
+
+def alternate_report(doc: pyropdf.Document, case: str, operation: str, rules: dict[str, set[str]]) -> dict:
+    """Apply the edit or its control and identify each newly failing claim's owner."""
+    if operation == "edit":
+        owner = ALTERNATES["edit"](doc, case)
+        return {claim_name(f): (owner,) for f in rules if rules[f]}
+    doc.pages[0].rotation = 90
+    if case == "nested-cmyk" and operation == "existing-control":
+        # Removing the RGB intent cannot introduce the CMYK rule it already failed.
+        del doc.catalog["OutputIntents"]
+    return {}
+
+
+def alternate_saves(source: Path, flavour: str, directory: Path) -> dict[Path, str]:
+    """Check the report on each original/edited pair before writing the independent validator inputs."""
+    files = {}
+    dual = source.stem == DUAL
+    profiles = (flavour, "4") if dual else (flavour,)
+    for case in ALTERNATES["cases"](flavour, dual=dual):
+        stem = f"{source.stem}-{case}"
+        with pyropdf.open(source) as original:
+            data = ALTERNATES["prepare"](original, case)
+        baseline = directory / f"{stem}-input.pdf"
+        baseline.write_bytes(data)
+        files[baseline] = flavour
+        rules = {f: ALTERNATES["failed_rules"](f, case) for f in profiles}
+        for operation in ("edit", "valid-control", "existing-control"):
+            if operation == "existing-control" and not any(rules.values()):
+                continue
+            start = directory / f"{stem}-edit-full.pdf" if operation == "existing-control" else baseline
+            with pyropdf.open(start) as doc:
+                expected = alternate_report(doc, case, operation, rules)
+                for incremental in (False, True):
+                    changes = doc.changes(incremental=incremental).claims
+                    if {c.claim for c in changes} != expected.keys() or any(
+                        c.objects != expected[c.claim] or not c.reason for c in changes
+                    ):
+                        msg = f"{stem} {operation}, incremental={incremental}: expected {expected}, got {changes}"
+                        raise ValueError(msg)
+                    mode = "incremental" if incremental else "full"
+                    path = directory / f"{stem}-{operation}-{mode}.pdf"
+                    doc.save(path, incremental=incremental)
+                    with pyropdf.open(path) as reopened:
+                        if reopened.profiles != doc.profiles or reopened.pages[0].rotation != doc.pages[0].rotation:
+                            msg = f"{path.name}: lost the claim identification or the control edit"
+                            raise ValueError(msg)
+                    files[path] = flavour
+                    for f in profiles:
+                        if operation != "valid-control" and rules[f]:
+                            issue = "#1035" if case.startswith("appearance-") else "#932"
+                            if case.startswith("program-"):
+                                issue = "#1041"
+                            EXPECTED[f"{f} {path.name}"] = (issue, rules[f])
+    return files
+
+
 def arlington(path: Path, flavour: str) -> str:
     """Validate the effective version, including a catalog promotion in a later revision."""
     with path.open("rb") as source:
         header = source.read(8)[5:8].decode("ascii")
     with pyropdf.open(path) as doc:
         declared = doc.catalog.get("Version")
-        extensions = doc.catalog.get("Extensions")
-        pades = extensions.get("ETSI_PAdES") if isinstance(extensions, pyropdf.Dictionary) else None
-        declares_pades = (
-            isinstance(pades, pyropdf.Dictionary)
-            and pades.get("BaseVersion") == pyropdf.Name("1.7")
-            and pades.get("ExtensionLevel") == PADES_LEVEL
-        )
+        pades = declares_pades(doc.catalog.get("Extensions"))
     # Valid PDF version names are ordered by their one-digit components.
     effective = (
         max(header, str(declared))
@@ -458,7 +579,7 @@ def arlington(path: Path, flavour: str) -> str:
     )
     version = "arlington" + effective
     names = [EXTENSIONS[flavour]] if flavour in EXTENSIONS else []
-    if declares_pades:
+    if pades:
         names.append("ETSI_PAdES")
     return f"{version}+{','.join(names)}" if names else version
 
@@ -541,16 +662,19 @@ def failed_rules(report: str) -> set[str]:
     return set(re.findall(r"^[ \t]+(?:FAIL|DEVIATION) ([^\r\n]+)$", report, re.MULTILINE))
 
 
-def run(jar: Path, files: dict[Path, str]) -> list[tuple[str, Path]]:
+def run(
+    jar: Path, files: dict[Path, str], *, outcomes: dict[str, tuple[str, set[str]]] | None = None
+) -> list[tuple[str, Path]]:
     """Verify the verdict and the complete failed-rule set under each flavour."""
     failures = []
+    outcomes = EXPECTED if outcomes is None else outcomes
     for flavour, paths in by_flavour(files).items():
         verdicts = validate(jar, flavour, paths)
         reports = detailed_reports(jar, flavour, [path for path in paths if not verdicts[path.name]])
         for path in paths:
             accepted = verdicts[path.name]
             key = f"{flavour} {path.name}"
-            expected = EXPECTED.get(key)
+            expected = outcomes.get(key)
             note = f" ({expected[0]})" if expected else ""
             sys.stdout.write(f"{'PASS' if accepted else 'FAIL'} {key}{note}\n")
             report = reports.get(path, "")
@@ -699,6 +823,88 @@ def pades_comparisons(models: dict[Path, str]) -> dict[Path, str]:
     }
 
 
+def signature_widget_controls(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Check the separate page and widget rules on an independently sourced PDF/UA-2 file."""
+    source = ROOT / "tests/assets/profile-sources/ua2-pass.pdf"
+    signing = runpy.run_path(str(ROOT / "tests/test_preservation_operations.py"))["local_pki"]()
+    files = {}
+    outcomes = {}
+    cases = (
+        (True, True, set()),
+        (True, False, {"8.10.2.3-1"}),
+        (False, True, {"8.9.3.3-1"}),
+        (False, False, {"8.9.3.3-1", "8.10.2.3-1"}),
+    )
+    for tabs, described, rules in cases:
+        with pyropdf.open(source) as doc:
+            number = doc.prepare_signature("Review")
+            if described:
+                doc.objects[number]["Contents"] = "Approval by the reviewer"
+            if not tabs:
+                del doc.pages[0].obj["Tabs"]
+            saves = {"full": doc.to_bytes(), "incremental": doc.to_bytes(incremental=True)}
+        with pyropdf.open(saves["incremental"]) as prepared:
+            saves["signed"] = prepared.sign("Review", signing.signer)
+            if (
+                not saves["signed"].startswith(saves["incremental"])
+                or prepared.form["Review"].xref != number
+                or not prepared.signatures[-1].verify(signing.trust)
+            ):
+                msg = "signing the prepared widget changed the original revision or failed verification"
+                raise ValueError(msg)
+        for mode, data in saves.items():
+            path = directory / f"signature-widget-tabs-{tabs}-described-{described}-{mode}.pdf"
+            path.write_bytes(data)
+            files[path] = "ua2"
+            if rules:
+                outcomes[f"ua2 {path.name}"] = ("#1094", rules)
+    with pyropdf.open(source) as doc:
+        number = doc.prepare_signature("Review")
+        doc.objects[number]["Rect"] = [14, 17, 48, 31]
+        visible = doc.to_bytes()
+    with pyropdf.open(visible) as doc:
+        doc.objects[number]["Rect"] = [14, 17, 14, 17]
+        sizes = {"visible": visible, "zero-full": doc.to_bytes(), "zero-incremental": doc.to_bytes(incremental=True)}
+    for size, data in sizes.items():
+        path = directory / f"signature-widget-undescribed-{size}.pdf"
+        path.write_bytes(data)
+        files[path] = "ua2"
+        outcomes[f"ua2 {path.name}"] = ("#1094", {"8.10.2.3-1"})
+    return run(jar, files, outcomes=outcomes)
+
+
+def artifact_widget_label_controls(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Verify the actual label in a signature widget's reciprocal structure relationships."""
+    fixtures = runpy.run_path(str(ROOT / "tests/test_changes.py"))
+    files = {}
+    outcomes = {}
+    for label, has_label in fixtures["WIDGET_LABELS"].items():
+        original = fixtures["tagged_signature_widget"](label)
+        with pyropdf.open(original) as doc:
+            del doc.form["Review"].obj["Contents"]
+            saves = {"original": original, "full": doc.to_bytes(), "incremental": doc.to_bytes(incremental=True)}
+        for mode, data in saves.items():
+            path = directory / f"artifact-widget-{label}-{mode}.pdf"
+            path.write_bytes(data)
+            files[path] = "ua2"
+            if mode != "original" and not has_label:
+                outcomes[f"ua2 {path.name}"] = ("#1094", {"8.10.2.3-1"})
+
+    with pyropdf.open(fixtures["tagged_signature_widget"]("legacy")) as doc:
+        del doc.form["Review"].obj["Contents"]
+        labeled = directory / "widget-role-map-original.pdf"
+        labeled.write_bytes(doc.to_bytes())
+        files[labeled] = "ua2"
+    with pyropdf.open(labeled) as doc:
+        doc.catalog["StructTreeRoot"]["RoleMap"] = {"ReviewLabel": pyropdf.Name("Span")}
+        for mode, incremental in (("full", False), ("incremental", True)):
+            path = directory / f"widget-role-map-{mode}.pdf"
+            path.write_bytes(doc.to_bytes(incremental=incremental))
+            files[path] = "ua2"
+            outcomes[f"ua2 {path.name}"] = ("#1094", {"8.10.2.3-1"})
+    return run(jar, files, outcomes=outcomes)
+
+
 def negative_control(source: Path, flavour: str) -> tuple[bytes, str]:
     """Break one requirement, leaving the XMP claim, xref offsets and stream lengths intact."""
     if flavour.startswith("ua"):
@@ -730,18 +936,104 @@ def controls(jar: Path, directory: Path) -> list[tuple[str, Path]]:
     return failures
 
 
+def accessible_archive_workflows(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Force both claimed flavours for the executable guide, its edits and its missing-Alt controls."""
+    cases = runpy.run_path(str(ROOT / "tests/test_accessible_archive.py"))
+    archival, accessible = {}, {}
+    for edition, (pdfa, pdfua) in cases["PROFILES"].items():
+        for path in cases["archive_saves"](directory, edition):
+            archival[path] = pdfa
+            accessible[path] = pdfua
+    return run(jar, archival) + run(jar, accessible)
+
+
+expect("authored-modern", "ua2", {"without-alt": {"8.2.5.28.2-1"}}, "#846")
+expect("authored-earlier", "ua1", {"without-alt": {"7.3-1"}}, "#846")
+
+
+def source_matrix(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Validate independent sources, negative controls and newly authored files in both save modes."""
+    fixtures = runpy.run_path(str(ROOT / "tests/test_profile_sources.py"))
+    negative = {
+        "1a": "6.8.2.2-1",
+        "1b": "6.2.3.3-2",
+        "2a": "6.7.3.4-1",
+        "2b": "6.1.13-11",
+        "2u": "6.2.11.7.2-1",
+        "3a": "6.7.3.4-1",
+        "3b": "6.8-4",
+        "3u": "6.2.11.7.2-1",
+        "4": "6.2.4.3-2",
+        "4e": "6.7.3-3",
+        "4f": "6.9-5",
+        "ua1": "7.1-3",
+        "ua2": "8.4.5.7-2",
+    }
+    files = {}
+    outcomes = {}
+    for flavour, rule in negative.items():
+        inputs = {k: fixtures["source"](flavour, k).read_bytes() for k in ("pass", "fail")}
+        if flavour not in ("4", "ua2"):  # The dual PDF/A-4 and PDF/UA-2 authoring workflow belongs to #846.
+            profile = "pdfua-1" if flavour == "ua1" else f"pdfa-{flavour}"
+            with fixtures["authored"](profile) as doc:
+                inputs["authored"] = doc.to_bytes()
+        for kind, original in inputs.items():
+            with pyropdf.open(original) as doc:
+                doc.pages[0].rotation = 90
+                saves = {"original": original, "full": doc.to_bytes(), "incremental": doc.to_bytes(incremental=True)}
+            for mode, data in saves.items():
+                path = directory / f"independent-{flavour}-{kind}-{mode}.pdf"
+                path.write_bytes(data)
+                files[path] = flavour
+                if kind == "fail":
+                    outcomes[f"{flavour} {path.name}"] = ("source corpus negative control", {rule})
+    return run(jar, files, outcomes=outcomes)
+
+
+def archival_colour_controls(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Compare selected colours, actual painting, local defaults and transparency blending spaces."""
+    fixtures = runpy.run_path(str(ROOT / "tests/test_archival_output_intents.py"))
+    files = {}
+    outcomes = {}
+    for flavour, case, _device, rule in fixtures["CONTROLS"]:
+        with fixtures["control"](flavour, case) as doc:
+            original = doc.to_bytes()
+        with pyropdf.open(original) as doc:
+            doc.pages[0].rotation = 90
+            saves = {"original": original, "full": doc.to_bytes(), "incremental": doc.to_bytes(incremental=True)}
+        for mode, data in saves.items():
+            path = directory / f"archival-colour-{case}-{mode}.pdf"
+            path.write_bytes(data)
+            files[path] = flavour
+            if rule is not None:
+                outcomes[f"{flavour} {path.name}"] = ("device colour use", {rule})
+    return run(jar, files, outcomes=outcomes)
+
+
 def main() -> int:
     """Validate the corpus and its saves, and return the exit status."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--jar", type=Path, required=True, help="veraPDF's greenfield-apps jar")
     parser.add_argument("--arlington", type=Path, help="veraPDF's greenfield-apps-arlington jar")
+    parser.add_argument(
+        "--profile-sources-only", action="store_true", help="run the per-flavour source and authoring matrix"
+    )
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
+        source_failures = source_matrix(args.jar.resolve(), Path(directory))
+        if args.profile_sources_only:
+            return int(bool(source_failures))
         files = saves(Path(directory))
         files.update(language_saves(Path(directory)))
         files.update(remove_signature_saves(Path(directory) / "pdfa-2b-sign_revision-incremental.pdf", Path(directory)))
         targeted = profile_saves(Path(directory))
-        failures = run(args.jar.resolve(), targeted)
+        lines = line_caption_saves(Path(directory))
+        targeted.update(lines)
+        for source, flavour in FIXTURES.items():
+            targeted.update(alternate_saves(source, flavour, Path(directory)))
+        failures = source_failures + archival_colour_controls(args.jar.resolve(), Path(directory))
+        failures += accessible_archive_workflows(args.jar.resolve(), Path(directory))
+        failures += run(args.jar.resolve(), targeted)
         failures += run(args.jar.resolve(), dual_archival(targeted))
         failures += run(args.jar.resolve(), files)
         failures += run(args.jar.resolve(), dual_archival(files))
@@ -749,8 +1041,17 @@ def main() -> int:
         failures += run(args.jar.resolve(), media)
         failures += run(args.jar.resolve(), dual_archival(media))
         failures += controls(args.jar.resolve(), Path(directory))
+        failures += signature_widget_controls(args.jar.resolve(), Path(directory))
+        failures += artifact_widget_label_controls(args.jar.resolve(), Path(directory))
         if args.arlington:
             models = {path: arlington(path, flavour) for path, flavour in files.items()}
+            models.update(
+                {
+                    path: arlington(path, flavour)
+                    for path, flavour in targeted.items()
+                    if "-appearance-" in path.name or path in lines
+                }
+            )
             models.update(rich_media_saves(Path(directory)))
             failures += run(args.arlington.resolve(), models)
             failures += run(args.arlington.resolve(), pades_comparisons(models))

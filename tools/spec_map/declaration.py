@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MAP = Path("docs/spec-map.json")
 EVIDENCE = Path("release-evidence.json")
 DECISIONS = Path("decisions.toml")
-CHECKERS = ("declaration.py", "claim.py", "release_evidence.py", "minimum.py")
+CHECKERS = ("declaration.py", "claim.py", "behaviors.py", "release_evidence.py", "minimum.py")
 RELEASES = "https://github.com/yhay81/pyropdf/releases"
 TAG = re.compile(r"v\d+\.\d+\.\d+(?:[-+][A-Za-z0-9][A-Za-z0-9.-]*)?")
 
@@ -219,7 +219,7 @@ def check_checkout(root: Path, tag: str, revision: str, *, rehearsal: bool) -> N
     inputs = [
         MAP,
         template(root, tag, rehearsal=rehearsal).relative_to(root),
-        *(Path("tools/spec_map") / name for name in (*CHECKERS, "behaviors.py")),
+        *(Path("tools/spec_map") / name for name in CHECKERS),
     ]
     if tag.startswith("v1.0."):
         inputs.append(Path("evidence/releases") / tag / DECISIONS)
@@ -252,10 +252,6 @@ def build(root: Path, tag: str, revision: str, output: Path, evidence: Path | No
         scripts.mkdir(parents=True)
         for script in CHECKERS:
             shutil.copyfile(root / "tools/spec_map" / script, scripts / script)
-        # The correction-aware checker records its obligations inside the map.
-        for extra in ("behaviors.py",):
-            if (root / "tools/spec_map" / extra).is_file():
-                shutil.copyfile(root / "tools/spec_map" / extra, scripts / extra)
         if record["scope"] is not None:
             if evidence is None:
                 msg = "a positive capability claim needs the candidate CI release-evidence.json"

@@ -33,12 +33,13 @@ use std::io;
 use std::sync::Arc;
 
 use super::{Error, Mode, Output, Result, Row, Streams, identifier, recode, renews, table};
-use crate::budget::{Budget, BudgetVec};
+use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::memo::Reads;
 use crate::pages::PageIndex;
 use crate::security;
 use crate::value::{Bytes, Dict, Name, PdfString, Reference, Stream, Value};
 use crate::version::Version;
+use crate::version::table::Table;
 use crate::{Error as StoreError, write};
 
 /// The attributes that pages inherit (ISO 32000-2 table 31).
@@ -74,23 +75,72 @@ pub fn is_linearized(version: &Version, budget: &Budget) -> crate::Result<bool> 
     let Some(body) = version.base().object(reference, budget)? else {
         return Ok(false);
     };
-    let Ok(Value::Dict(dict)) = Value::parse(&body, budget) else {
-        return Ok(false);
+    budget.check(
+        LimitCode::ObjectParseSize,
+        u64::try_from(body.len()).unwrap_or(u64::MAX),
+    )?;
+    let dict = match Value::parse(&body, budget) {
+        Ok(Value::Dict(dict)) => dict,
+        Err(error) if error.limit().is_some() => return Err(error),
+        _ => return Ok(false),
     };
     Ok(dict.get("Linearized").is_some()
         && matches!(dict.get("L"), Some(Value::Integer(length))
             if u64::try_from(*length).ok() == Some(bytes.len() as u64)))
 }
 
-/// Returns the reference of the first `N G obj` in `bytes`.
+/// Returns whether `byte` is a PDF whitespace byte (ISO 32000-2 Table 1).
+const fn is_pdf_whitespace(byte: u8) -> bool {
+    matches!(byte, 0x00 | 0x09 | 0x0A | 0x0C | 0x0D | 0x20)
+}
+
+/// Returns whether `byte` separates PDF tokens (whitespace or delimiter).
+const fn is_pdf_separator(byte: u8) -> bool {
+    is_pdf_whitespace(byte)
+        || matches!(
+            byte,
+            b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+        )
+}
+
+/// Returns the reference of the first `N G obj` in `bytes`, skipping comments.
 fn first_object(bytes: &[u8]) -> Option<Reference> {
-    let at = bytes.windows(3).position(|window| window == b"obj")?;
-    let mut words = bytes[..at]
-        .rsplit(|byte| byte.is_ascii_whitespace())
-        .filter(|word| !word.is_empty());
-    let generation = std::str::from_utf8(words.next()?).ok()?.parse().ok()?;
-    let number = std::str::from_utf8(words.next()?).ok()?.parse().ok()?;
-    Some(Reference::new(number, generation))
+    let mut at = 0;
+    let mut prev2: Option<&[u8]> = None;
+    let mut prev1: Option<&[u8]> = None;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if is_pdf_whitespace(byte) {
+            at += 1;
+            continue;
+        }
+        if byte == b'%' {
+            while at < bytes.len() && bytes[at] != b'\n' && bytes[at] != b'\r' {
+                at += 1;
+            }
+            continue;
+        }
+        if is_pdf_separator(byte) {
+            // A delimiter breaks any pending `N G obj` sequence.
+            prev2 = None;
+            prev1 = None;
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < bytes.len() && !is_pdf_separator(bytes[at]) {
+            at += 1;
+        }
+        let token = &bytes[start..at];
+        if token == b"obj" {
+            let number = std::str::from_utf8(prev2?).ok()?.parse().ok()?;
+            let generation = std::str::from_utf8(prev1?).ok()?.parse().ok()?;
+            return Some(Reference::new(number, generation));
+        }
+        prev2 = prev1;
+        prev1 = Some(token);
+    }
+    None
 }
 
 /// Who uses an object, as qpdf's linearization groups the users.
@@ -132,6 +182,7 @@ enum Class {
 #[derive(Clone, Copy, Debug, Default)]
 struct Info {
     number: u32,
+    generation: u16,
     /// The last walk that reached the object.
     stamp: u32,
     /// The number of users that reach it.
@@ -314,14 +365,15 @@ impl<'a> Plan<'a> {
         let mut infos: BudgetVec<'_, Info> = BudgetVec::new(budget);
         for &number in numbers.iter() {
             budget.poll()?;
-            if number == 0
-                || infos.last().is_some_and(|info| info.number == number)
-                || version.generation(number).is_none()
-            {
+            let Some(generation) = version.generation(number) else {
+                continue;
+            };
+            if number == 0 || infos.last().is_some_and(|info| info.number == number) {
                 continue;
             }
             infos.try_push(Info {
                 number,
+                generation,
                 ..Info::default()
             })?;
         }
@@ -368,6 +420,18 @@ impl<'a> Plan<'a> {
             .ok()
     }
 
+    fn find_reference(&self, reference: Reference) -> Option<usize> {
+        self.find(reference.number())
+            .filter(|&at| self.infos[at].generation == reference.generation())
+    }
+
+    fn reference_value(&self, reference: Reference) -> Result<Option<Arc<Value>>> {
+        if self.find_reference(reference).is_none() {
+            return Ok(None);
+        }
+        self.value(reference.number())
+    }
+
     /// Returns the value that the save writes for object `number`.
     fn value(&self, number: u32) -> Result<Option<Arc<Value>>> {
         if let Ok(at) = self
@@ -391,7 +455,7 @@ impl<'a> Plan<'a> {
             return Err(refused("a document without pages"));
         }
         let catalog = match self.version.trailer().get("Root") {
-            Some(Value::Reference(root)) => self.value(root.number())?,
+            Some(Value::Reference(root)) => self.reference_value(*root)?,
             _ => None,
         };
         let tree = match catalog.as_deref() {
@@ -401,12 +465,19 @@ impl<'a> Plan<'a> {
         let Some(Value::Reference(tree)) = tree else {
             return Err(refused("a page tree that is not an indirect object"));
         };
+        if self.find_reference(*tree).is_none() {
+            return Err(refused("a page tree that is not a live object"));
+        }
         let mut stack: BudgetVec<'_, (bool, u32, [Option<Value>; 4])> = BudgetVec::new(budget);
+        let mut visited: Table<()> = Table::new();
         stack.try_push((true, tree.number(), Default::default()))?;
         let mut pages = BudgetVec::new(budget);
         let mut overrides = BudgetVec::new(budget);
         while let Some((node, number, inherited)) = stack.pop() {
             budget.poll()?;
+            if node && visited.insert(number, (), budget)?.is_some() {
+                continue;
+            }
             let Some(value) = self.value(number)? else {
                 continue;
             };
@@ -459,7 +530,7 @@ impl<'a> Plan<'a> {
                 overrides.try_push((number, Arc::new(Value::Dict(own))))?;
             }
             let kids = match dict.get("Kids") {
-                Some(Value::Reference(kids)) => self.value(kids.number())?,
+                Some(Value::Reference(kids)) => self.reference_value(*kids)?,
                 Some(kids) => Some(Arc::new(kids.clone())),
                 None => None,
             };
@@ -473,7 +544,7 @@ impl<'a> Plan<'a> {
                         "a page or page-tree node written directly in /Kids",
                     ));
                 };
-                let node = match self.value(kid.number())?.as_deref() {
+                let node = match self.reference_value(*kid)?.as_deref() {
                     Some(Value::Dict(kid)) => is_type(kid, b"Pages"),
                     Some(Value::Reference(_)) => {
                         return Err(refused("a /Kids entry that names a reference"));
@@ -508,9 +579,13 @@ impl<'a> Plan<'a> {
     fn classify(&mut self, encrypt: Option<&Value>) -> Result<()> {
         let version = self.version;
         for page in 0..self.pages.len() {
-            let number = self.infos[self.pages[page]].number;
+            let info = self.infos[self.pages[page]];
             let user = User::Page(u32::try_from(page).map_err(|_| refused("too many pages"))?);
-            self.walk(&Value::Reference(Reference::new(number, 0)), user, true)?;
+            self.walk(
+                &Value::Reference(Reference::new(info.number, info.generation)),
+                user,
+                true,
+            )?;
         }
         for (name, value) in version.trailer().iter() {
             if super::trailer_key(name.as_bytes())
@@ -523,10 +598,10 @@ impl<'a> Plan<'a> {
             self.walk(encrypt, User::Open, false)?;
         }
         let root = match version.trailer().get("Root") {
-            Some(Value::Reference(root)) => root.number(),
+            Some(Value::Reference(root)) => *root,
             _ => return Err(refused("a trailer without a catalog")),
         };
-        let catalog = self.value(root)?;
+        let catalog = self.reference_value(root)?;
         let Some(Value::Dict(catalog)) = catalog.as_deref() else {
             return Err(refused("a trailer without a catalog"));
         };
@@ -540,7 +615,7 @@ impl<'a> Plan<'a> {
             self.walk(value, user, false)?;
         }
         let at = self
-            .find(root)
+            .find_reference(root)
             .ok_or_else(|| refused("a trailer without a catalog"))?;
         self.infos[at].root = true;
         self.infos[at].users += 1;
@@ -557,22 +632,22 @@ impl<'a> Plan<'a> {
     fn walk(&mut self, start: &Value, user: User, top: bool) -> Result<()> {
         self.stamp += 1;
         let budget = self.budget;
-        let mut pending: BudgetVec<'_, (u32, User, bool)> = BudgetVec::new(budget);
+        let mut pending: BudgetVec<'_, (Reference, User, bool)> = BudgetVec::new(budget);
         let mut found = BudgetVec::new(budget);
         match start {
-            Value::Reference(reference) => pending.try_push((reference.number(), user, top))?,
+            Value::Reference(reference) => pending.try_push((*reference, user, top))?,
             value => {
                 direct(value, user, false, &mut found, budget)?;
-                pending.try_extend(found.iter().rev().map(|&(n, u)| (n, u, false)))?;
+                pending.try_extend(found.iter().rev().map(|&(r, u)| (r, u, false)))?;
                 found.clear();
             }
         }
-        while let Some((number, user, top)) = pending.pop() {
+        while let Some((reference, user, top)) = pending.pop() {
             budget.poll()?;
-            let Some(at) = self.find(number) else {
+            let Some(at) = self.find_reference(reference) else {
                 continue;
             };
-            let Some(value) = self.value(number)? else {
+            let Some(value) = self.value(reference.number())? else {
                 continue;
             };
             let page = matches!(&*value, Value::Dict(dict) if is_type(dict, b"Page"));
@@ -602,7 +677,7 @@ impl<'a> Plan<'a> {
                 User::Other => info.others += 1,
             }
             direct(&value, user, page, &mut found, budget)?;
-            pending.try_extend(found.iter().rev().map(|&(n, u)| (n, u, false)))?;
+            pending.try_extend(found.iter().rev().map(|&(r, u)| (r, u, false)))?;
             found.clear();
         }
         Ok(())
@@ -801,7 +876,7 @@ impl<'a> Plan<'a> {
         while let Some(value) = stack.pop() {
             match value {
                 Value::Reference(reference) => {
-                    *value = match self.find(reference.number()) {
+                    *value = match self.find_reference(*reference) {
                         Some(at) if self.infos[at].class != Class::Unused => {
                             Value::Reference(Reference::new(self.infos[at].new, 0))
                         }
@@ -819,12 +894,10 @@ impl<'a> Plan<'a> {
         Ok(())
     }
 
-    /// Returns a copy of `value` with its references renumbered, read again
-    /// from its bytes so that the copy grows through the budget.
+    /// Returns a copy of `value` with its references renumbered, copied
+    /// through the budget.
     fn copy(&self, value: &Value) -> Result<Value> {
-        let mut bytes = BudgetVec::new(self.budget);
-        write::value(&mut bytes, value)?;
-        let mut value = Value::parse(&Bytes::new(bytes.into_vec()), self.budget)?;
+        let mut value = crate::value::copy_for_edit(value, self.budget)?;
         self.rewrite(&mut value)?;
         Ok(value)
     }
@@ -837,14 +910,14 @@ fn direct(
     value: &Value,
     user: User,
     page: bool,
-    found: &mut BudgetVec<'_, (u32, User)>,
+    found: &mut BudgetVec<'_, (Reference, User)>,
     budget: &Budget,
 ) -> Result<()> {
     let mut stack: BudgetVec<'_, (&Value, User)> = BudgetVec::new(budget);
     children(value, user, page, &mut stack, budget)?;
     while let Some((value, user)) = stack.pop() {
         match value {
-            Value::Reference(reference) => found.try_push((reference.number(), user))?,
+            Value::Reference(reference) => found.try_push((*reference, user))?,
             Value::Dict(dict) if is_type(dict, b"Page") => {}
             value => children(value, user, false, &mut stack, budget)?,
         }
@@ -952,14 +1025,7 @@ impl Writer<'_> {
     ) -> Result<Fields> {
         let plan = self.plan;
         let fields = fields.unwrap_or_default();
-        let header = plan
-            .version
-            .base()
-            .header_bytes()
-            .and_then(|bytes| bytes.get(..8))
-            .filter(|bytes| bytes.starts_with(b"%PDF-"))
-            .unwrap_or(b"%PDF-1.7");
-        out.bytes(header)?;
+        out.bytes(self.mode.header(plan.version, false, false))?;
         out.bytes(b"\n%\xE2\xE3\xCF\xD3\n")?;
         let linearization = plan.linearization();
         let first_page = plan.infos[plan.pages[0]].new;
@@ -1111,9 +1177,24 @@ impl Writer<'_> {
         let value = plan
             .value(info.number)?
             .ok_or_else(|| StoreError::malformed("a written object has no value"))?;
-        let mut value = plan.copy(&value).map_err(context)?;
+        let mut value = crate::value::copy_for_edit(&value, budget)?;
+        if self.mode.removing_encryption(plan.version) {
+            security::filters::remove_explicit(
+                &mut value,
+                &|r, b| plan.version.filter_object(r, b),
+                budget,
+            )?;
+        } else {
+            plan.version.check_stream_filters(&value, budget)?;
+        }
         if self.streams != Streams::Keep
-            && let Some(recoded) = recode::recoded(&value, self.streams, budget).map_err(context)?
+            && let Some(recoded) = recode::recoded(
+                &value,
+                self.streams,
+                &|r, b| plan.version.filter_object(r, b),
+                budget,
+            )
+            .map_err(context)?
         {
             let mut before = BudgetVec::new(budget);
             write::value(&mut before, &value)?;
@@ -1127,9 +1208,20 @@ impl Writer<'_> {
         if let Some(handler) = self.mode.handler()
             && plan.encrypt != Some(index)
         {
-            value = security::encrypt_value(handler, reference, &value, budget)
-                .map_err(|e| context(e.into()))?;
+            let source = Reference::new(
+                info.number,
+                plan.version.generation(info.number).unwrap_or(0),
+            );
+            value = security::encrypt_value_with(
+                handler,
+                (source, reference),
+                &value,
+                &|r, b| plan.version.filter_object(r, b),
+                budget,
+            )
+            .map_err(|e| context(e.into()))?;
         }
+        plan.rewrite(&mut value).map_err(context)?;
         let mut bytes = BudgetVec::new(budget);
         object(&mut bytes, reference.number(), &value)?;
         Ok(bytes)
@@ -1356,5 +1448,91 @@ mod tests {
         let found = first_object(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n12 0 obj\n<<");
         assert_eq!(found, Some(Reference::new(12, 0)));
         assert_eq!(first_object(b"%PDF-1.7\n"), None);
+    }
+
+    #[test]
+    fn first_object_skips_header_comments_containing_obj() {
+        let found = first_object(b"%PDF-1.7\n% comment 99 0 obj here\n12 0 obj\n<<");
+        assert_eq!(found, Some(Reference::new(12, 0)));
+        let cr = first_object(b"%PDF-1.7\r% 88 2 obj\r7 1 obj\r<<");
+        assert_eq!(cr, Some(Reference::new(7, 1)));
+    }
+
+    #[test]
+    fn is_linearized_propagates_budget_limits() {
+        use crate::LimitExceeded;
+        use crate::save::{FileBase, Options, full_with};
+        use crate::version::{Document, MemoryBase};
+
+        let mut base = MemoryBase::new(
+            [(Name::from("Root"), Value::Reference(Reference::new(1, 0)))]
+                .into_iter()
+                .collect(),
+        );
+        base.insert(
+            Reference::new(1, 0),
+            Bytes::new(&b"<</Type/Catalog/Pages 2 0 R>>"[..]),
+        );
+        base.insert(
+            Reference::new(2, 0),
+            Bytes::new(&b"<</Type/Pages/Kids[3 0 R]/Count 1>>"[..]),
+        );
+        base.insert(
+            Reference::new(3, 0),
+            Bytes::new(&b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]>>"[..]),
+        );
+        let doc = Document::new(Arc::new(base), None);
+        let budget = Budget::default();
+        let mut out = Vec::new();
+        full_with(
+            &doc.current(),
+            &mut out,
+            &budget,
+            None,
+            Options {
+                linearize: true,
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        let file = FileBase::open(Bytes::new(out), &budget).unwrap();
+        let reopened = Document::new(Arc::new(file), None);
+        assert!(is_linearized(&reopened.current(), &budget).unwrap());
+
+        let small_parse = Budget::default().with_limit(LimitCode::ObjectParseSize, Some(4));
+        let err = is_linearized(&reopened.current(), &small_parse).unwrap_err();
+        assert_eq!(
+            err.limit().map(LimitExceeded::code),
+            Some(LimitCode::ObjectParseSize)
+        );
+
+        let zero_depth = Budget::default().with_limit(LimitCode::ObjectDepth, Some(0));
+        let err = is_linearized(&reopened.current(), &zero_depth).unwrap_err();
+        assert_eq!(
+            err.limit().map(LimitExceeded::code),
+            Some(LimitCode::ObjectDepth)
+        );
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verifies `bits(value)` computes the exact minimum bit width for all `u64`.
+    #[kani::proof]
+    fn kani_linear_bits_exact() {
+        let value: u64 = kani::any();
+        let count = bits(value);
+        assert!(count <= 64);
+        if value == 0 {
+            assert_eq!(count, 0);
+        } else {
+            assert!(count >= 1);
+            assert!(value >= (1u64 << (count - 1)));
+            if count < 64 {
+                assert!(value < (1u64 << count));
+            }
+        }
     }
 }

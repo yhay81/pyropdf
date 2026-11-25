@@ -76,6 +76,22 @@ pub fn set_pages(
     removed.sort_unstable();
     removed.dedup();
     with_savepoint(transaction, |transaction| {
+        if !removed.is_empty() {
+            for page in index.pages() {
+                budget.poll()?;
+                if page
+                    .object()
+                    .is_some_and(|r| retained.binary_search(&r.number()).is_ok())
+                {
+                    super::require_complete_separations(
+                        transaction.version(),
+                        page.dict(),
+                        &retained,
+                        budget,
+                    )?;
+                }
+            }
+        }
         let added = copy_pages(transaction, &index, &mut order, copies, budget)?;
         for page in &added {
             retained.try_push(page.number())?;
@@ -116,6 +132,15 @@ fn copy_pages(
         let source = *entry;
         let at = index.index_of(source).ok_or_else(|| not_a_page(source))?;
         let page = &index.pages()[at];
+        if page
+            .dict()
+            .get("SeparationInfo")
+            .is_some_and(|entry| !matches!(entry, Value::Null))
+        {
+            return Err(PageError::Value(
+                "detach the separation group before duplicating its page".into(),
+            ));
+        }
         // The edits of the transaction so far, with what the page inherits.
         let mut dict = match resolve(
             transaction.version(),
@@ -164,9 +189,9 @@ struct Pages<'p> {
     added: &'p [Reference],
 }
 
-/// List multimedia targets on pages that leave, so an action on a retained
+/// List print and multimedia targets on pages that leave, so an action on a retained
 /// page cannot keep the target detached from the page tree.
-fn media_targets<'b>(
+fn annotation_targets<'b>(
     before: &Version,
     removed: &[u32],
     budget: &'b Budget,
@@ -188,7 +213,7 @@ fn media_targets<'b>(
             if let Value::Reference(reference) = entry
                 && let Some(target) = target(before, *reference, budget)?
                 && let Value::Dict(dict) = target.as_ref()
-                && crate::annotations::is_media_annotation(dict)
+                && crate::annotations::is_linked_annotation(before, dict, budget)?
             {
                 targets.try_push(reference.number())?;
             }
@@ -252,14 +277,14 @@ fn remove_pages(
     if let Some(labels) = &labels {
         candidates.try_extend_from_slice(labels.nodes())?;
     }
-    let targets = media_targets(&before, removed, budget)?;
+    let targets = annotation_targets(&before, removed, budget)?;
     let freed = refs::free_unreferenced(references, transaction, removed, &candidates, budget)?;
     if targets
         .iter()
         .any(|number| freed.binary_search(number).is_err())
     {
         return Err(PageError::Value(
-            "a retained object still references a multimedia annotation on a removed page".into(),
+            "a retained object still references an annotation on a removed page".into(),
         ));
     }
     Ok(())

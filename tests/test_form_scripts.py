@@ -303,3 +303,60 @@ def test_a_script_write_observes_cancellation() -> None:
     with pytest.raises(pyropdf.LimitError) as caught:
         total.scripts[ScriptTrigger.FORMAT] = "AFNumber_Format(2);"
     assert caught.value.code == "cancelled"
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("indirect", [False, True])
+@pytest.mark.parametrize("incremental", [False, True])
+def test_copy_retargets_calculation_order_to_split_fields(*, nested: bool, indirect: bool, incremental: bool) -> None:
+    parent = "/Parent 6 0 R" if nested else ""
+    widget = "/Type /Annot /Subtype /Widget /FT /Tx /Rect [1 1 50 20] /DA (/Helv 10 Tf)"
+    form = (
+        f"<< /Fields [{'6' if nested else '4'} 0 R 5 0 R 7 0 R] /CO {'9 0 R' if indirect else '[5 0 R 7 0 R 8 0 R]'} >>"
+    )
+    objects = {
+        1: f"<< /Type /Catalog /Pages 2 0 R /AcroForm {'11 0 R' if indirect else form} >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [4 0 R 5 0 R] >>",
+        4: f"<< {widget} {parent} /T (calc) /AA << /C << /S /JavaScript /JS (calculate) >> >> >>",
+        5: f"<< {widget} /T (second) /AA << /C << /S /JavaScript /JS (second) >> >> >>",
+        7: "<< /FT /Tx /T (other) /DA (/Helv 10 Tf) >>",
+        8: "4 0 R",
+    }
+    if nested:
+        objects[6] = "<< /T (group) /Kids [4 0 R] >>"
+    if indirect:
+        objects.update({9: "10 0 R", 10: "[5 0 R 7 0 R 8 0 R]", 11: form})
+    doc = pyropdf.open(build_raw_pdf(objects))
+    doc.pages.extend(doc.pages[0])
+    # A second copy finds a widget with a separate field.
+    doc.pages.extend(doc.pages[0])
+
+    with pyropdf.open(doc.to_bytes(incremental=incremental)) as reopened:
+        field = reopened.form["group.calc" if nested else "calc"]
+        assert field.obj.xref != 4
+        assert field.scripts[ScriptTrigger.CALCULATE] == "calculate"
+        order = reopened.catalog["AcroForm"]["CO"]
+        second = reopened.form["second"]
+        assert second.obj.xref != 5
+        assert [entry.xref for entry in order] == [second.obj.xref, 7, field.obj.xref]
+        if indirect:
+            assert order.xref == 10
+            assert reopened.catalog["AcroForm"].xref == 11
+        assert [widget.obj["Parent"].xref for widget in field.widgets] == [field.obj.xref] * 3
+
+
+@pytest.mark.parametrize("unrelated", [False, True])
+def test_copy_preserves_an_absent_or_unrelated_calculation_order(*, unrelated: bool) -> None:
+    doc = _form()
+    if unrelated:
+        other = doc.pages.new((80, 80)).widgets.add(TextField("other", (1, 1, 50, 20)))
+        doc.form["other"].scripts[ScriptTrigger.CALCULATE] = "keep()"
+        assert doc.catalog["AcroForm"]["CO"][0].xref == other.obj.xref
+    doc.pages.extend(doc.pages[0])
+    with pyropdf.open(doc.to_bytes()) as reopened:
+        form = reopened.catalog["AcroForm"]
+        if unrelated:
+            assert [field.xref for field in form["CO"]] == [reopened.form["other"].obj.xref]
+        else:
+            assert "CO" not in form

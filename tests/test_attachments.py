@@ -7,6 +7,7 @@ difference: pyropdf writes no object streams, so the compressed save of
 
 from __future__ import annotations
 
+import hashlib
 import random
 import zlib
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -611,6 +612,287 @@ def test_deleted_attachment_handles_go_stale() -> None:
     assert len(doc.attachments) == 0
 
 
+def test_attachment_identity_through_replacement_undo_and_redo() -> None:
+    doc = pyropdf.Document()
+    doc.pages.new()
+    original = doc.attachments.add("report", b"first")
+    lookup = {original: "first"}
+    assert lookup[doc.attachments["report"]] == "first"
+
+    with doc.transaction("replace report"):
+        del doc.attachments["report"]
+        replacement = doc.attachments.add("report", b"second")
+    assert replacement not in lookup
+    assert pyropdf.open(doc.to_bytes()).attachments["report"] != replacement
+    for read in (original.read, lambda: original.description, lambda: original.write(b"unexpected")):
+        with pytest.raises(pyropdf.StaleObjectError):
+            read()
+    assert replacement.read() == b"second"
+
+    doc.history.undo()
+    assert lookup[doc.attachments["report"]] == "first"
+    assert original.read() == b"first"
+    with pytest.raises(pyropdf.StaleObjectError):
+        replacement.read()
+    doc.history.redo()
+    assert doc.attachments["report"] == replacement
+    with pytest.raises(pyropdf.StaleObjectError):
+        original.read()
+
+
+def test_indirect_attachment_identity_follows_its_object_across_slots() -> None:
+    doc = pyropdf.open(_shared_stream_pdf())
+    handle = doc.attachments["a"]
+    names = doc.catalog["Names"]["EmbeddedFiles"]["Names"]
+    names[3] = names[1]
+    assert {handle, doc.attachments["b"]} == {handle}
+    doc.attachments.add("0", b"sorts before a")
+    assert handle == doc.attachments["a"]
+    assert handle.read() == b"shared"
+
+
+@pytest.mark.parametrize("indirect_array", [False, True])
+def test_inline_attachment_identity_on_edits_moves_and_replacement(*, indirect_array: bool) -> None:
+    doc = pyropdf.open(_shared_stream_pdf())
+    tree = doc.catalog["Names"]["EmbeddedFiles"]
+    filespec = {"F": "first", "EF": {"F": doc.objects[7]}}
+    pairs = [b"a", filespec]
+    tree["Names"] = doc.objects[doc.objects.add(pairs)] if indirect_array else pairs
+    handle = doc.attachments["a"]
+    peer = doc.attachments["a"]
+    handle.filename = "renamed"
+    handle.description = "edited"
+    assert peer.filename == "renamed"
+    assert {peer, doc.attachments["a"]} == {handle}
+    pairs_array = tree["Names"]
+    with doc.transaction("move inline entry"):
+        pairs_array.insert(0, filespec)
+        pairs_array.insert(0, b"0")
+    assert doc.attachments["a"] != handle
+    with pytest.raises(pyropdf.StaleObjectError):
+        handle.read()
+    doc.history.undo()
+    assert handle.read() == b"shared"
+
+    # A different inline specification in the same slot can refer to the very same stream.
+    pairs_array[1] = filespec
+    replacement = doc.attachments["a"]
+    assert replacement != handle
+    assert replacement.filename == "first"
+    with pytest.raises(pyropdf.StaleObjectError):
+        handle.description = "would edit the replacement"
+    assert replacement.description is None
+    doc.history.undo()
+    assert handle.description == "edited"
+    with pytest.raises(pyropdf.StaleObjectError):
+        replacement.read()
+
+
+def test_inline_handle_survives_a_tree_edit_only_while_its_slot_survives() -> None:
+    doc = pyropdf.open(_shared_stream_pdf())
+    tree = doc.catalog["Names"]["EmbeddedFiles"]
+    filespec = {"F": "original", "EF": {"F": doc.objects[7]}}
+    tree["Names"] = [b"a", filespec]
+    handle = doc.attachments["a"]
+
+    doc.attachments.add("z", b"later")
+    assert handle == doc.attachments["a"]
+    assert handle.read() == b"shared"
+    doc.attachments.add("0", b"earlier")
+    with pytest.raises(pyropdf.StaleObjectError):
+        handle.read()
+    doc.history.undo()
+    assert handle == doc.attachments["a"]
+
+    # Even a byte-for-byte identical explicit replacement starts a new entry.
+    tree["Names"][1] = filespec
+    assert handle != doc.attachments["a"]
+    with pytest.raises(pyropdf.StaleObjectError):
+        handle.write(b"unexpected")
+    assert doc.attachments["a"].read() == b"shared"
+
+
+def test_inline_read_finishes_on_the_version_that_matched_the_handle(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = pyropdf.open(_shared_stream_pdf())
+    names = doc.catalog["Names"]["EmbeddedFiles"]["Names"]
+    names[1] = {"F": "original", "EF": {"F": doc.objects[7]}}
+    handle = doc.attachments["a"]
+    new_file = doc.objects[doc.objects.add_stream(b"replacement", {"Type": pyropdf.Name("EmbeddedFile")})]
+    original_get = pyropdf.Dictionary.get
+    replaced = False
+
+    def replace_before_stream_lookup(dictionary: pyropdf.Dictionary, key: str, default: object = None) -> object:
+        nonlocal replaced
+        if key == "EF" and not replaced:
+            replaced = True
+            names[1] = {"F": "other", "EF": {"F": new_file}}
+        return original_get(dictionary, key, default)
+
+    monkeypatch.setattr(pyropdf.Dictionary, "get", replace_before_stream_lookup)
+    assert handle.read() == b"shared"
+    assert replaced
+    assert doc.attachments["a"].read() == b"replacement"
+    with pytest.raises(pyropdf.StaleObjectError):
+        handle.read()
+
+
+def test_restoring_history_with_an_inline_replacement_keeps_the_base_handle_stale() -> None:
+    source = pyropdf.open(_shared_stream_pdf())
+    source.catalog["Names"]["EmbeddedFiles"]["Names"][1] = {"F": "original", "EF": {"F": source.objects[7]}}
+    data = source.to_bytes()
+    edited = pyropdf.open(data)
+    edited.catalog["Names"]["EmbeddedFiles"]["Names"][1] = {"F": "other", "EF": {"F": edited.objects[7]}}
+
+    reader = pyropdf.open(data)
+    original = reader.attachments["a"]
+    reader.history.restore(edited.history.save())
+    assert reader.attachments["a"].filename == "other"
+    with pytest.raises(pyropdf.StaleObjectError):
+        _ = original.filename
+    reader.history.undo()
+    assert original.filename == "original"
+
+
+def _inline_pair_base(*, indirect_array: bool = False) -> bytes:
+    pairs = "[(a) << /F (first) >> (b) << /F (other) >>]"
+    return build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 4 0 R >> >>",
+            2: "<< /Type /Pages /Kids [] /Count 0 >>",
+            4: f"<< /Names {'5 0 R' if indirect_array else pairs} >>",
+            **({5: pairs} if indirect_array else {}),
+        }
+    )
+
+
+@pytest.mark.parametrize("indirect_array", [False, True])
+def test_restore_distinguishes_inline_metadata_and_identical_replacement(*, indirect_array: bool) -> None:
+    data = _inline_pair_base(indirect_array=indirect_array)
+    source = pyropdf.open(data)
+    with source.transaction("two edits"):
+        source.attachments["a"].description = "edited"
+        pairs = source.catalog["Names"]["EmbeddedFiles"]["Names"]
+        pairs[3] = pairs[3]
+    control = pyropdf.open(data)
+    control.attachments["a"].description = "edited"
+    assert source.to_bytes() == control.to_bytes()
+    journal = source.history.save()
+
+    reader = pyropdf.open(data)
+    first, other = reader.attachments["a"], reader.attachments["b"]
+    reader.history.restore(journal)
+    assert reader.history.save() == journal
+    assert first.description == "edited"
+    assert first == reader.attachments["a"]
+    assert other != reader.attachments["b"]
+    with pytest.raises(pyropdf.StaleObjectError):
+        _ = other.filename
+    current = reader.attachments["b"]
+    reader.history.undo()
+    assert first.description is None
+    assert other.filename == "other"
+    reader.history.redo()
+    assert first.description == "edited"
+    assert current.filename == "other"
+    with pytest.raises(pyropdf.StaleObjectError):
+        _ = other.filename
+
+
+def test_restore_preserves_a_metadata_only_inline_handle() -> None:
+    data = _inline_pair_base()
+    source = pyropdf.open(data)
+    source.attachments["a"].description = "edited"
+    journal = source.history.save()
+
+    reader = pyropdf.open(data)
+    handle = reader.attachments["a"]
+    reader.history.restore(journal)
+    assert handle.description == "edited"
+    assert reader.history.save() == journal
+    reader.history.undo()
+    assert handle.description is None
+    reader.history.redo()
+    assert handle.description == "edited"
+
+
+@pytest.mark.parametrize("flags", [b"", b"\0", b"\0\2", b"\0\1\1"])
+def test_corrupt_mixed_slot_flags_leave_the_base_and_history_unchanged(flags: bytes) -> None:
+    data = _inline_pair_base()
+    source = pyropdf.open(data)
+    pairs = source.catalog["Names"]["EmbeddedFiles"]["Names"]
+    pairs[3] = pairs[3]
+    body = source.history.save()[:-32]
+    # The final object carries two slot flags and the version has no stale marks.
+    assert body[-10:] == (2).to_bytes(4, "little") + b"\0\1" + bytes(4)
+    body = body[:-10] + len(flags).to_bytes(4, "little") + flags + bytes(4)
+    reader = pyropdf.open(data)
+    original = reader.attachments["b"]
+    with pytest.raises(pyropdf.MalformedPdfError, match="name-slot flags"):
+        reader.history.restore(body + hashlib.sha256(body).digest())
+    assert reader.history.steps == ()
+    assert original == reader.attachments["b"]
+
+
+def test_format_one_journal_conservatively_invalidates_rewritten_inline_entries() -> None:
+    # Saved by the format-one writer after editing only attachment a's description.
+    journal = bytes.fromhex(
+        "5059524f5044462d484953544f52590a010000001c7346afadf725128208234330e979491a4e46599f6efb9e"
+        "3ed889032b4f726701000000020000000000000005000000000000000000000000000000000f000000617474"
+        "6163686d656e7420656469740500000000000000000100000004000000000000430000003c3c2f4e616d6573"
+        "205b286129203c3c2f462028666972737429202f446573632028656469746564293e3e20286229203c3c202f"
+        "4620286f7468657229203e3e5d3e3e00000000a14dcb2526549a3a94ccc22e505b37984e344f64879f6528"
+        "68d6261cb6ba322c"
+    )
+    reader = pyropdf.open(_inline_pair_base())
+    original = reader.attachments["a"]
+    reader.history.restore(journal)
+    assert reader.history.save() == journal
+    assert reader.attachments["a"].description == "edited"
+    with pytest.raises(pyropdf.StaleObjectError):
+        _ = original.filename
+    reader.history.undo()
+    assert original.filename == "first"
+
+
+def test_incremental_numeric_appends_keep_the_same_history_size_as_one_array_write() -> None:
+    def retained(*, append: bool) -> int:
+        doc = pyropdf.Document()
+        number = doc.objects.add([])
+        with doc.transaction("fill"):
+            if append:
+                array = doc.objects[number]
+                for value in range(160):
+                    array.append(value)
+            else:
+                doc.objects[number] = list(range(160))
+        doc.objects[number] = []
+        return doc.history.size
+
+    assert retained(append=True) == retained(append=False)
+
+
+def test_indirect_text_file_specification_has_object_identity() -> None:
+    # Author two names referencing the same scalar using raw PDF; reading
+    # a scalar through the public object API deliberately returns its value.
+    pdf = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 4 0 R >> >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+            4: "<< /Names [(a) 5 0 R (b) 5 0 R] >>",
+            5: "(original)",
+        }
+    )
+    doc = pyropdf.open(pdf)
+    original = doc.attachments["a"]
+    assert original == doc.attachments["b"]
+    assert original.filename == "original"
+    doc.catalog["Names"]["EmbeddedFiles"]["Names"][1] = b"inline"
+    with pytest.raises(pyropdf.StaleObjectError):
+        _ = original.filename
+    assert doc.attachments["b"].filename == "original"
+
+
 def test_attachments_require_an_open_document() -> None:
     doc = pyropdf.Document()
     doc.pages.new()
@@ -795,7 +1077,7 @@ def test_a_write_to_a_concurrently_deleted_attachment_leaves_a_shared_stream() -
     assert doc.history.steps == ("concurrent edit",)
 
 
-def test_a_write_waits_for_and_follows_a_concurrent_replacement() -> None:
+def test_a_stale_write_leaves_a_concurrent_replacement_and_shared_stream_untouched() -> None:
     doc = pyropdf.open(_shared_stream_pdf())
     handle = doc.attachments["a"]
 
@@ -803,9 +1085,11 @@ def test_a_write_waits_for_and_follows_a_concurrent_replacement() -> None:
         del doc.attachments["a"]
         doc.attachments.add("a", b"new file")
 
-    _race(doc, lambda: handle.write(b"replaced"), replace).result()
+    with pytest.raises(pyropdf.StaleObjectError):
+        _race(doc, lambda: handle.write(b"replaced"), replace).result()
 
-    assert doc.attachments["a"].read() == b"replaced"
+    assert doc.history.steps == ("concurrent edit",)
+    assert doc.attachments["a"].read() == b"new file"
     assert doc.attachments["b"].read() == b"shared"
 
 

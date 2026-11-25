@@ -1,4 +1,4 @@
-issue	locations	features	dimensions	work	summary
+issue	locations	features	dimensions	work	summary	section_sha256
 1	32000-2-2020/clause12.html#H12.5.1	annotations	interpret		Unknown annotation subtypes and fallback behavior
 3	32000-2-2020/clause08.html#H8.9.7	inline-images	read interpret create edit preserve		Resolving duplicate long and short inline-image keys
 4	32000-2-2020/clause12.html#H12.7.5.5 32000-2-2020/clause12.html#H12.8.1 32000-2-2020/clause12.html#H12.8.3.1	digital-signatures signature-fields	read interpret create edit preserve		Deprecation of legacy signature encodings
@@ -17,7 +17,7 @@ issue	locations	features	dimensions	work	summary
 20	32000-2-2020/clause08.html#H8.9.7	inline-images	read interpret create edit preserve		Separation of ASCII-filtered inline data from surrounding operators
 22	32000-2-2020/clause12.html#H12.5.2	annotations	read interpret create edit preserve		When an annotation needs a stored appearance
 23	32000-2-2020/clause12.html#H12.5.2	annotations	interpret		Presentation of annotations without an appearance
-24	32000-2-2020/clause07.html#H7.6.4.3.3 32000-2-2020/clause07.html#H7.6.4.4.12 32000-2-2020/clause07.html#H7.6.4.4.9	standard-security-handler	read interpret create edit preserve		AES mode used to decrypt the permissions block
+24	32000-2-2020/clause07.html#H7.6.4.3.3 32000-2-2020/clause07.html#H7.6.4.4.12 32000-2-2020/clause07.html#H7.6.4.4.9	standard-security-handler	read interpret create edit preserve		AES mode used to decrypt the permissions block	1a427b3fae6040cd36ad05219220210900a2832019f376e2ab4ba32edf8ee69c
 25	32000-2-2020/clause07.html#H7.6.5.4	public-key-security-handler	read interpret create edit preserve	864	Metadata flag in recipient-key derivation
 28	32000-2-2020/clause12.html#H12.7.4.1	interactive-form	read interpret create edit preserve		Optional partial field names
 29	32000-2-2020/clause07.html#H7.4.9	jpx-filter	read interpret create edit preserve		Interpretation of the CIEJab colour model
@@ -38,7 +38,7 @@ issue	locations	features	dimensions	work	summary
 49	32000-2-2020/clause13.html#H13.6.4.6	3d-artwork	read interpret create edit preserve		Visibility controls in a 3D cross section
 50	32000-2-2020/clause13.html#H13.6.4.6	3d-artwork	read interpret create edit preserve		Default visibility of a 3D intersection
 51	32000-2-2020/clauseAnnexQ.html#HQ.2	annotations page-transparency	interpret		Annotation blend modes during transparency detection
-53	32000-2-2020/clause07.html#H7.6.4.3.2 32000-2-2020/clause07.html#H7.6.4.3.3	standard-security-handler	read interpret create edit preserve		Password algorithm explanation for older revisions
+53	32000-2-2020/clause07.html#H7.6.4.3.2 32000-2-2020/clause07.html#H7.6.4.3.3	standard-security-handler	read interpret create edit preserve		Password algorithm explanation for older revisions	ff441fd24ffb86a06fd0bcaa0a71ad651b38b7c5d146fdb9158bcb12ac356051
 54	32000-2-2020/clause12.html#H12.7.9	non-interactive-forms	read interpret create edit preserve		Non-interactive form wording
 55	32000-2-2020/clause12.html#H12.8.1	digital-signatures	read interpret create edit preserve	849	Ordering certification and timestamp signatures
 56	32000-2-2020/clause12.html#H12.5.2	annotations	read interpret create edit preserve		Widget characteristics with a stored appearance
@@ -54,7 +54,7 @@ issue	locations	features	dimensions	work	summary
 73	32000-2-2020/clause12.html#H12.4.2	page-labels			Heading for page numbering and indices
 74	32000-2-2020/clause07.html#H7.6.6	crypt-filters	read interpret create edit preserve		Crypt filters for encryption version 5
 75	32000-2-2020/clause04.html#H4.1 32000-2-2020/clause12.html#H12.4.4.1 32000-2-2020/clauseAnnexA.html#HA.2 32000-2-2020/clauseAnnexH.html#HH.8.2 32000-2-2020/clauseAnnexH.html#HH.8.3	content-streams presentations tagged-pdf			Editorial corrections to notation and examples
-77	19005-4-2020/clause06.html#H6.2.10.3.1	cid-fonts cmaps pdfa pdfa-4 pdfa-4e pdfa-4f	read interpret create edit preserve		Predefined CMap supplement compatibility
+77	19005-4-2020/clause06.html#H6.2.10.3.1	cid-fonts cmaps pdfa pdfa-4 pdfa-4e pdfa-4f	read interpret create edit preserve		Predefined CMap supplement compatibility	65f06bb53369c81f9e7c072fefd708af6ffb6e9d79a7aa2597e5c7c49d7f9bc8
 79	32000-2-2020/clause08.html#H8.9.5.4	images	interpret		Alternate image selection with optional content
 80	32000-2-2020/clause08.html#H8.2	content-streams shading-patterns			Spelling of the shading operator
 81	32000-2-2020/clause07.html#H7.7.3.3	page-objects page-tree	read interpret create edit preserve		Page resources when a page has no content
@@ -63,7 +63,7 @@ issue	locations	features	dimensions	work	summary
 85	32000-2-2020/clause08.html#H8.2	content-streams shading-patterns			Reference for a category of painting operators
 86	32000-2-2020/clause14.html#H14.12.4.2	document-parts	read interpret create edit preserve		Name values in document-part metadata
 87	32000-2-2020/clause09.html#H9.10.3	text-extraction			Name of a Unicode character
-89	32000-2-2020/clause07.html#H7.6.4.1	standard-security-handler	read interpret create edit preserve		Naming the default standard crypt filter
+89	32000-2-2020/clause07.html#H7.6.4.1	standard-security-handler	read interpret create edit preserve		Naming the default standard crypt filter	4ab433a3c50a594fb3f69ba2a1e28c033dcc78b7440dbb41afb7be52b28e97b9
 90	32000-2-2020/clause12.html#H12.5.6.2	annotations	read interpret create edit preserve		Placement of a requirement for markup annotations
 91	32000-2-2020/clause13.html#H13.6.4.1	3d-artwork	read interpret create edit preserve		Default 3D camera projection
 93	32000-2-2020/clause14.html#H14.7.2	logical-structure	read interpret create edit preserve		Deprecation of structure-element revision numbers
@@ -73,7 +73,7 @@ issue	locations	features	dimensions	work	summary
 98	32000-2-2020/clause07.html#H7.4.3	ascii85-filter	read interpret create edit preserve		Numeric limit for ASCII85 decoding
 101	32000-2-2020/clause07.html#H7.5.4 32000-2-2020/clause07.html#H7.5.5	xref-table	read interpret create edit preserve		Previous-revision offsets in file trailers
 103	32000-2-2020/clause08.html#H8.5.3.1	paths	interpret		Result of filling and stroking a path
-104	19005-4-2020/clause06.html#H6.2.9	page-transparency pdfa pdfa-4 pdfa-4e pdfa-4f	interpret		Using Annex Q to identify page transparency in archival files
+104	19005-4-2020/clause06.html#H6.2.9	page-transparency pdfa pdfa-4 pdfa-4e pdfa-4f	interpret		Using Annex Q to identify page transparency in archival files	d7d1c616cd3a86c5bf80977cf9cae2e3fc9dbc57a0c3da2ee226d9679221b7ca
 105	32000-2-2020/clause07.html#H7.7.2	accessibility document-catalog	read interpret create edit preserve		Invalid catalog language values
 106	32000-2-2020/clause07.html#H7.5.5 32000-2-2020/clause07.html#H7.7.2 32000-2-2020/clause07.html#H7.7.3.3 32000-2-2020/clause09.html#H9.6.2.1 32000-2-2020/clause09.html#H9.6.4 32000-2-2020/clause09.html#H9.7.4.1 32000-2-2020/clause14.html#H14.8.6.1	basic-objects cid-fonts document-catalog page-objects page-tree tagged-pdf type1-fonts type3-fonts xref-table	read interpret create edit preserve		Which dictionary values must be indirect
 108	32000-2-2020/clauseAnnexA.html#HA.2	content-streams			Operator index reference for marked-content sequences
@@ -85,7 +85,7 @@ issue	locations	features	dimensions	work	summary
 117	32000-2-2020/clause12.html#H12.8.1	digital-signatures	read interpret create edit preserve		Deprecated digest declarations in signature references
 121	32000-2-2020/clause12.html#H12.8.1	digital-signatures	read interpret create edit preserve		Inheritance of signature handler names
 122	32000-2-2020/clause12.html#H12.7.6.2	form-actions	read interpret create edit preserve		Inheritance of submission flags and character sets
-123	19005-4-2020/clause06.html#H6.7.3	pdfa pdfa-4 pdfa-4e pdfa-4f xmp-metadata	read interpret create edit preserve	844	PDF/A-4 identification namespace and conformance property
+123	19005-4-2020/clause06.html#H6.7.3	pdfa pdfa-4 pdfa-4e pdfa-4f xmp-metadata	read interpret create edit preserve	844	PDF/A-4 identification namespace and conformance property	ba1add91ac66e69bb3e7b530e1e821838506421cd155d3c0f0ffb6e5658cff52
 124	32000-2-2020/clause12.html#H12.5.2	annotations	read interpret create edit preserve		Coordinate indices in annotation rectangles
 126	32000-2-2020/clause14.html#H14.6.1 32000-2-2020/clause14.html#H14.7.3	logical-structure marked-content			Corrections to examples and typesetting
 127	32000-2-2020/clause13.html#H13.7.2.2.2 32000-2-2020/clause13.html#H13.7.2.3.1	rich-media	read interpret create edit preserve		Selecting a rich-media view during activation
@@ -149,7 +149,7 @@ issue	locations	features	dimensions	work	summary
 226	32000-2-2020/clause14.html#H14.7.6.1 32000-2-2020/clause14.html#H14.8.5 32000-2-2020/clause14.html#H14.8.5.2 32000-2-2020/clause14.html#H14.8.5.4.1 32000-2-2020/clause14.html#H14.8.5.4.3 32000-2-2020/clause14.html#H14.8.5.8	logical-structure tagged-pdf	read interpret create edit preserve		Syntax of structure attribute objects
 228	32000-2-2020/clause08.html#H8.6.5.5	icc-based-color-space	read interpret create edit preserve		Embedding newer ICC profiles within legacy profiles
 229	32000-2-2020/clauseAnnexE.html#HF.3	private-names	read interpret create edit preserve		Registered names and dictionary-specific exceptions
-236	32001-2022/clause05.html#H5.1.3	digital-signatures sha3-hashes	read interpret create edit preserve	867	Removal of the SHA-3 change to signature-reference DigestMethod values
+236	32001-2022/clause05.html#H5.1.3	digital-signatures sha3-hashes	read interpret create edit preserve		Removal of the SHA-3 change to signature-reference DigestMethod values
 239	32000-2-2020/clause07.html#H7.12.5	developer-extensions	read interpret create edit preserve		Meaning of a declared extension level
 242	32000-2-2020/clause07.html#H7.7.2	document-catalog	read interpret create edit preserve		Direct storage of the extension dictionary
 246	32000-2-2020/clause07.html#H7.5.8.2	xref-streams	read interpret create edit preserve		Direct length in cross-reference streams
@@ -208,7 +208,7 @@ issue	locations	features	dimensions	work	summary
 321	32000-2-2020/clause12.html#H12.10.3	geospatial	read interpret create edit preserve		Constraints on geographic coordinate systems
 322	32000-2-2020/clause07.html#H7.9.1	basic-objects text-strings	read interpret create edit preserve		Types used by common PDF structures
 324	32000-2-2020/clause09.html#H9.7.6.1	type0-fonts			Reference for composite font data
-325	32000-2-2020/clause07.html#H7.6.4.3.4	standard-security-handler	read interpret create edit preserve		Sequence of operations in revision 6 key hashing
+325	32000-2-2020/clause07.html#H7.6.4.3.4	standard-security-handler	read interpret create edit preserve		Sequence of operations in revision 6 key hashing	1dd872e18d6932dbb2e0015a55470a7ab3bf9576be0a59ec007150305f9f4c09
 327	32000-2-2020/clause07.html#H7.3.3	basic-objects	read interpret create edit preserve		Boundaries between numeric tokens
 328	32000-2-2020/clause14.html#H14.4	file-identifiers	read interpret create edit preserve		Choosing file identifiers
 330	32000-2-2020/clause14.html#H14.9.2.2	accessibility	read interpret create edit preserve		Type of language values in tagged content
@@ -248,7 +248,7 @@ issue	locations	features	dimensions	work	summary
 384	32000-2-2020/clause09.html#H9.6.2.2	type1-fonts			Names of the standard font set
 386	32000-2-2020/clause12.html#H12.7.5.2.2	button-fields	read interpret create edit preserve		Button field values in interoperable forms
 389	32000-2-2020/clauseAnnexF.html#HF.3.3	linearization			Page-number references in linearization data
-391	32000-2-2020/clause07.html#H7.11.3	associated-files file-specifications pdfa pdfa-4 pdfa-4e pdfa-4f	read interpret create edit preserve	844	Relationships for embedded and associated files
+391	32000-2-2020/clause07.html#H7.11.3	associated-files file-specifications pdfa pdfa-4 pdfa-4e pdfa-4f	read interpret create edit preserve	844	Relationships for embedded and associated files	f2173ddb696b8eebeec249cbd20a1c90a05da81a3139071347b6923fd66ce85d
 392	32000-2-2020/clause12.html#H12.7.5.3	text-fields	read interpret create edit preserve		Presence of a text field value
 393	32000-2-2020/clause12.html#H12.7.4.3	variable-text	read interpret create edit preserve		Restrictions for variable text fields
 396	32000-2-2020/clause14.html#H14.7.2	logical-structure	read interpret create edit preserve		Namespace registration in the structure tree
@@ -257,7 +257,7 @@ issue	locations	features	dimensions	work	summary
 399	32000-2-2020/clause07.html#H7.12.4 32000-2-2020/clause07.html#H7.5.6	developer-extensions incremental-update	read interpret create edit preserve		Applicability of an extension's base PDF version
 402	32000-2-2020/clauseAnnexH.html#HH.2 32000-2-2020/clauseAnnexH.html#HH.7.5	annotations basic-objects xmp-metadata	read interpret create edit preserve		Metadata and trailer document identifiers
 403	32000-2-2020/clause07.html#H7.12.1 32000-2-2020/clause07.html#H7.5.8.2 32000-2-2020/clause12.html#H12.8.1 32000-2-2020/clauseAnnexF.html#HF.3.3 32000-2-2020/clauseAnnexF.html#HF.3.6	associated-files developer-extensions digital-signatures linearization xref-streams	read interpret create edit preserve		Metadata and file-association exceptions by object type
-404	32001-2022/clause05.html#H5.1.4 32002-2022/clause05.html#H5.1.2 32002-2022/clause05.html#H5.1.3	ecc-signatures sha3-hashes	read interpret create edit preserve	867	Digest identifiers for SHAKE256 and the EdDSA signature profiles
+404	32001-2022/clause05.html#H5.1.4 32002-2022/clause05.html#H5.1.2 32002-2022/clause05.html#H5.1.3	ecc-signatures sha3-hashes	read interpret create edit preserve		Digest identifiers for SHAKE256 and the EdDSA signature profiles
 410	32000-2-2020/clause12.html#H12.7.5.5	signature-fields			Typesetting in the seed certificate table
 414	32000-2-2020/clause13.html#H13.2.4.2	renditions	read interpret create edit preserve		Temporary-file policy for media clips
 415	32000-2-2020/clauseAnnexH.html 32000-2-2020/clauseAnnexH.html#HH.8.2	tagged-pdf			Name syntax versus operators in tagging examples
@@ -266,7 +266,7 @@ issue	locations	features	dimensions	work	summary
 422	32000-2-2020/clause12.html#H12.5.5	appearance-streams			Typography of names in an annotation appearance example
 424	32000-2-2020/clause07.html#H7.6.6	crypt-filters			Named filters in a crypt dictionary example
 425	32000-2-2020/clauseAnnexH.html#HH.8.2	tagged-pdf			Content-list structure example
-428	32000-2-2020/clause08.html#H8.7.3.1	pdfa pdfa-4 pdfa-4e pdfa-4f tiling-patterns	read interpret create edit preserve		Renderer-dependent output from overlapping pattern tiles
+428	32000-2-2020/clause08.html#H8.7.3.1	pdfa pdfa-4 pdfa-4e pdfa-4f tiling-patterns	read interpret create edit preserve		Renderer-dependent output from overlapping pattern tiles	3d2cc6195243691da5126829d89b211bce9db59e51a352616380690b1da8857a
 431	32000-2-2020/clause14.html#H14.7.5.2 32000-2-2020/clause14.html#H14.7.5.3	logical-structure	read interpret create edit preserve		Meaning of page references in structural content
 434	32000-2-2020/clause08.html#H8.5.3.1	paths	interpret		Path termination and painting rules
 437	32000-2-2020/clause14.html#H14.8.4.7.2	tagged-pdf	read interpret create edit preserve		Distinguishing interactive roles in tagged content
@@ -317,7 +317,7 @@ issue	locations	features	dimensions	work	summary
 567	32000-2-2020/clause08.html#H8.11.4.4	accessibility optional-content	interpret		Language-dependent visibility versus content language
 568	32000-2-2020/clause14.html#H14.13.1	associated-files xmp-metadata	read interpret create edit preserve		File associations on XML metadata streams
 577	32000-2-2020/clause12.html#H12.5.2	annotations	read interpret create edit preserve		Nonstroking alpha for a form object
-593	32000-2-2020/clause12.html#H12.4.2	page-labels	interpret		Alphabetic numbering in page labels
+593	32000-2-2020/clause12.html#H12.4.2	page-labels	interpret		Alphabetic numbering in page labels	1005f7873c0be0cf44a9211dbdd44cb9f3bf9ad07e2366639616415119525a97
 594	32000-2-2020/clause07.html#H7.5.7	object-streams	read interpret create edit preserve		References to object streams
 598	32000-2-2020/clause07.html#H7.11.4.1	embedded-files	read interpret create edit preserve		Date entries for an embedded file
 602	32002-2022/clause01.html	ecc-signatures			Terminology for elliptic curve signatures
@@ -335,7 +335,7 @@ issue	locations	features	dimensions	work	summary
 637	32000-2-2020/clause14.html#H14.13.10	associated-files	read interpret create edit preserve		MathML media type for an associated file
 638	32000-2-2020/clause07.html#H7.5.7	object-streams			Description of a cross-reference stream example
 640	32000-2-2020/clause10.html#H10.4.2.2 32000-2-2020/clause10.html#H10.4.2.3	device-color-conversion			Device grey terminology
-643	32000-2-2020/clause07.html#H7.6.4.4.2	standard-security-handler	read interpret create edit preserve		Cross-reference for padding a legacy password
+643	32000-2-2020/clause07.html#H7.6.4.4.2	standard-security-handler	read interpret create edit preserve		Cross-reference for padding a legacy password	8bf3a62bc750c1c39c7c3ec9bbb44909ca6f174c19c0de6c1d18b31d14ba34b8
 645	32000-2-2020/clause13.html#H13.6.7.3.3	3d-artwork			Typography in 3D measurement definitions
 649	32000-2-2020/clause12.html#H12.8.3.4.4	digital-signatures			Note numbering for CAdES profiles
 655	32000-2-2020/clause12.html#H12.9.1	measurement			Note numbering in measurement properties
@@ -347,7 +347,7 @@ issue	locations	features	dimensions	work	summary
 670	32000-2-2020/clause07.html#H7.12.6	developer-extensions			Indentation of a developer extension example
 672	32000-2-2020/clause07.html#H7.7.2 32000-2-2020/clause07.html#H7.7.4	document-catalog name-dictionary web-capture	read interpret create edit preserve		Version status of web capture entries
 673	32000-2-2020/clause12.html#H12.3.5.1	collections			Typography in the collection schema table
-674	32000-2-2020/clause07.html#H7.6.4.2	standard-security-handler			Text in the standard security dictionary table
+674	32000-2-2020/clause07.html#H7.6.4.2	standard-security-handler			Text in the standard security dictionary table	804065bc7c5a2b970571193c68af5f50b847174c58bc3580bbb5f5315b4805b9
 676	32000-2-2020/clause12.html#H12.5.6.17	movie-annotations			Typography of a movie annotation field
 677	32000-2-2020/clause12.html#H12.6.4.6	launch-actions			Byte string type for a sound action
 679	32000-2-2020/clause12.html#H12.6.4.18	rich-media-execute-actions	read interpret create edit preserve		Primitive argument types for rich-media commands
@@ -377,12 +377,12 @@ issue	locations	features	dimensions	work	summary
 766	32000-2-2020/clause12.html#H12.8.5.3	document-timestamps	read interpret create edit preserve	849	Signature validity after adding validation material
 783	32000-2-2020/clause07.html#H7.6.2	encryption-dictionary	read interpret create edit preserve		Encryption restrictions on cross-reference streams
 784	32000-2-2020/clause07.html#H7.5.8.2	xref-streams	read interpret create edit preserve		String values exempt from encryption
-792	32000-2-2020/clause04.html##4.1.1	standard-security-handler	read interpret create edit preserve		Revision 6 password hashing and notes for implementers
+792	32000-2-2020/clause04.html##4.1.1	standard-security-handler	read interpret create edit preserve		Revision 6 password hashing and notes for implementers	b8a55505ddbf12f0eb2bd4749b727882190825371c4764f1c6258e39f1d7c967
 800	32000-2-2020/clause07.html#H7.6.2	crypt-filters encryption-dictionary	read interpret create edit preserve		Embedded file encryption selection for version 4
 801	32000-2-2020/clause12.html#H12.8.4.2	digital-signatures	read interpret create edit preserve		Time used to validate an existing timestamp
 802	32000-2-2020/clause12.html#H12.8.6	permissions	read interpret create edit preserve		Reference to the certification transform dictionary
 826	32000-2-2020/clause07.html#H7.3.3	basic-objects	read interpret create edit preserve		Delimiters between successive numeric values
-835	32007-2024/clause04.html#H4.8	developer-extensions gltf-rich-media	read interpret create edit preserve	863	Integer extension level in the glTF example
+835	32007-2024/clause04.html#H4.8	developer-extensions gltf-rich-media	read interpret create edit preserve		Integer extension level in the glTF example
 837	32000-2-2020/clause08.html#H8.9.7 32000-2-2020/clause14.html#H14.11.7	inline-images opi	read interpret create edit preserve		Filter order for ASCII-encoded inline images
 839	32000-2-2020/clause08.html#H8.6.5.5	icc-based-color-space	read interpret create edit preserve		ICC version of a profile used in a PDF colour space
 845	32000-2-2020/clause07.html#H7.9.4	dates	read interpret create edit preserve		Calendar used in PDF dates

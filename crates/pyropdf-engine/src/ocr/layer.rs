@@ -17,10 +17,6 @@ use super::Error;
 /// One word of a layer: its box in display space and its text.
 pub type LayerWord = (f64, f64, f64, f64, String);
 
-/// The most words with text of one layer.
-pub const MAX_LAYER_WORDS: usize = 4_096;
-/// The most UTF-8 bytes of the text of one layer.
-pub const MAX_LAYER_TEXT_BYTES: usize = 1024 * 1024;
 /// The most distinct characters of one layer; CID 0 is `.notdef`.
 const MAX_OCR_CIDS: usize = 65_534;
 

@@ -55,6 +55,9 @@ pub fn import_pages(
             "a page of another document can be inserted once per call".into(),
         ));
     }
+    if selected.is_empty() {
+        return Ok(None);
+    }
 
     let mut links = Links {
         source,
@@ -69,6 +72,15 @@ pub fn import_pages(
     for &(reference, entry) in &selected {
         budget.poll()?;
         let mut dict = page_dict(source.version, reference, budget)?;
+        crate::pages::require_complete_separations(source.version, &dict, &imported, budget)?;
+        for (key, minimum) in [
+            ("SeparationInfo", PdfVersion(1, 3)),
+            ("BoxColorInfo", PdfVersion(1, 4)),
+        ] {
+            if dict.get(key).is_some_and(|v| !matches!(v, Value::Null)) {
+                links.media_version = links.media_version.max(Some(minimum));
+            }
+        }
         materialize(&mut dict, entry, root.dict(), budget)?;
         if let Some(annots) = links.annots(&dict)? {
             if annots.is_empty() {
@@ -318,8 +330,10 @@ impl Links<'_, '_> {
                 kept.try_push(item)?;
                 continue;
             };
-            if crate::annotations::is_media_annotation(&annotation)
-                && let Some(Value::Name(name)) = annotation.get("Subtype")
+            let subtype = self.resolved(annotation.get("Subtype"))?;
+            if let Some(Value::Name(name)) = &subtype
+                && annotation.get("Rect").is_some()
+                && crate::annotations::linked_subtype(name.as_bytes())
             {
                 let minimum = subtype_version(name.as_bytes());
                 // Preserve the edition of a 3D scene: its view, measurement
@@ -331,10 +345,7 @@ impl Links<'_, '_> {
                 };
                 self.media_version = self.media_version.max(Some(required));
             }
-            let link = matches!(
-                self.resolved(annotation.get("Subtype"))?,
-                Some(Value::Name(subtype)) if subtype.as_bytes() == b"Link"
-            );
+            let link = matches!(subtype, Some(Value::Name(name)) if name.as_bytes() == b"Link");
             if !link {
                 kept.try_push(item)?;
                 continue;
@@ -503,5 +514,40 @@ mod tests {
             dest.get(0),
             Some(&Value::Reference(imported.object().unwrap()))
         );
+    }
+
+    #[test]
+    fn empty_import_pages_makes_no_writes() {
+        let budget = Budget::default();
+        let source_doc = crate::pages::test_document(&[
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 100 100] >>",
+            "<< /Type /Page /Parent 2 0 R >>",
+        ]);
+        let destination = crate::pages::test_document(&[
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 200] >>",
+            "<< /Type /Page /Parent 2 0 R >>",
+        ]);
+        let version = source_doc.current();
+        let pages = PageIndex::build(&mut Reads::new(&version, &budget)).unwrap();
+        let source = Source {
+            version: &version,
+            index: &pages,
+            references: &refs::Cache::new(),
+            destinations: &Memo::new(1),
+        };
+        let mut transaction = destination.begin();
+        let result = import_pages(
+            &mut transaction,
+            &Memo::new(1),
+            &source,
+            std::iter::empty(),
+            0,
+            &budget,
+        )
+        .unwrap();
+        assert!(result.is_none());
+        assert_eq!(transaction.version().slots().count(), 0);
     }
 }

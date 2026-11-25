@@ -21,6 +21,99 @@ MarkedContentReference(
 
 A marked-content item of a structure element (`/K` integer or `/Type /MCR` dictionary).
 
+## `MATHML_NAMESPACE`
+
+```python
+MATHML_NAMESPACE: str
+```
+
+Standard structure namespace URI for MathML 3.0 elements (ISO 32000-2 §14.8.6.3).
+
+## `NamespaceRoleMap`
+
+```python
+class NamespaceRoleMap(MutableMapping[str, 'str | tuple[str, StructureNamespace]'])
+NamespaceRoleMap(namespace: StructureNamespace)
+```
+
+Live `MutableMapping` over a `StructureNamespace`'s `/RoleMapNS` dictionary (Table 356).
+
+Values are either a `str` role name in the default standard structure
+namespace (written as `Name(role)`) or `(role, target_namespace)`
+(written as `[Name(role), target_namespace_ref]`). Removing the last entry
+deletes `/RoleMapNS`.
+
+### `__getitem__`
+
+```python
+NamespaceRoleMap.__getitem__(key: str) -> str | tuple[str, StructureNamespace]
+```
+
+Return the mapped role or `(role, StructureNamespace)` for `key`, or raise `KeyError`.
+
+### `__iter__`
+
+```python
+NamespaceRoleMap.__iter__() -> Iterator[str]
+```
+
+Iterate over the custom role names in `/RoleMapNS`.
+
+### `__len__`
+
+```python
+NamespaceRoleMap.__len__() -> int
+```
+
+Return the number of entries in `/RoleMapNS`.
+
+### `__bool__`
+
+```python
+NamespaceRoleMap.__bool__() -> bool
+```
+
+Return whether `/RoleMapNS` has at least one entry.
+
+### `__setitem__`
+
+```python
+NamespaceRoleMap.__setitem__(
+    key: TagRole | str,
+    value: TagRole | str | tuple[TagRole | str, StructureNamespace],
+)
+```
+
+Set one role mapping in one transaction.
+
+### `__delitem__`
+
+```python
+NamespaceRoleMap.__delitem__(key: str)
+```
+
+Delete `key` from `/RoleMapNS`, removing `/RoleMapNS` when empty.
+
+### `update`
+
+```python
+NamespaceRoleMap.update(
+    other: object = (),
+    /,
+    **values: TagRole | str | tuple[TagRole | str, StructureNamespace],
+)
+```
+
+Update multiple `/RoleMapNS` entries in one transaction.
+
+### `clear`
+
+```python
+NamespaceRoleMap.clear()
+```
+
+Remove `/RoleMapNS` from this namespace in one transaction.
+
 ## `ObjectReference`
 
 ```python
@@ -28,6 +121,22 @@ ObjectReference(*, xref: int, page: int | None = None)
 ```
 
 An indirect PDF object item of a structure element (`/Type /OBJR` dictionary).
+
+## `PDF_1_7_NAMESPACE`
+
+```python
+PDF_1_7_NAMESPACE: str
+```
+
+Standard structure namespace URI for PDF 1.7 tags (ISO 32000-2 §14.8.6.1, ISO/TS 32005).
+
+## `PDF_2_0_NAMESPACE`
+
+```python
+PDF_2_0_NAMESPACE: str
+```
+
+Standard structure namespace URI for PDF 2.0 tags (ISO 32000-2 §14.8.6.2, ISO/TS 32005).
 
 ## `RoleMap`
 
@@ -43,7 +152,7 @@ Keys are custom role names and values are the role names they map to
 `/StructTreeRoot` and `/RoleMap` when absent, removing `/RoleMap`
 when the last entry is deleted, and refusing role cycles.
 
-### `RoleMap.__getitem__`
+### `__getitem__`
 
 ```python
 RoleMap.__getitem__(key: str) -> str
@@ -51,7 +160,7 @@ RoleMap.__getitem__(key: str) -> str
 
 Return the mapped role name for `key`, or raise `KeyError`.
 
-### `RoleMap.__iter__`
+### `__iter__`
 
 ```python
 RoleMap.__iter__() -> Iterator[str]
@@ -59,7 +168,7 @@ RoleMap.__iter__() -> Iterator[str]
 
 Iterate over the custom role names in `/RoleMap`.
 
-### `RoleMap.__len__`
+### `__len__`
 
 ```python
 RoleMap.__len__() -> int
@@ -67,7 +176,7 @@ RoleMap.__len__() -> int
 
 Return the number of valid role mappings.
 
-### `RoleMap.__setitem__`
+### `__setitem__`
 
 ```python
 RoleMap.__setitem__(key: TagRole | str, value: TagRole | str)
@@ -75,7 +184,7 @@ RoleMap.__setitem__(key: TagRole | str, value: TagRole | str)
 
 Map custom role `key` to `value` in one transaction.
 
-### `RoleMap.__delitem__`
+### `__delitem__`
 
 ```python
 RoleMap.__delitem__(key: str)
@@ -83,7 +192,7 @@ RoleMap.__delitem__(key: str)
 
 Remove `key` from `/RoleMap`, deleting `/RoleMap` if it becomes empty.
 
-### `RoleMap.update`
+### `update`
 
 ```python
 RoleMap.update(other: object = (), /, **values: TagRole | str)
@@ -91,7 +200,7 @@ RoleMap.update(other: object = (), /, **values: TagRole | str)
 
 Apply every mapping of `other` and `values` in one transaction, or none on error.
 
-### `RoleMap.clear`
+### `clear`
 
 ```python
 RoleMap.clear()
@@ -112,7 +221,7 @@ Supports indexing, slicing, `del`, `add`, and `move`. Non-element
 content items in `/K` (marked-content IDs, `/MCR`, and `/OBJR` dictionaries)
 remain in place when child elements are added, reordered, or deleted.
 
-### `StructureChildren.__getitem__`
+### `__getitem__`
 
 ```python
 StructureChildren.__getitem__(
@@ -122,7 +231,7 @@ StructureChildren.__getitem__(
 
 Return a child element, or a list of child elements for a slice.
 
-### `StructureChildren.__len__`
+### `__len__`
 
 ```python
 StructureChildren.__len__() -> int
@@ -130,7 +239,7 @@ StructureChildren.__len__() -> int
 
 Return the number of child structure elements.
 
-### `StructureChildren.__iter__`
+### `__iter__`
 
 ```python
 StructureChildren.__iter__() -> Iterator[StructureElement]
@@ -138,7 +247,7 @@ StructureChildren.__iter__() -> Iterator[StructureElement]
 
 Iterate over the child structure elements in `/K` order.
 
-### `StructureChildren.__delitem__`
+### `__delitem__`
 
 ```python
 StructureChildren.__delitem__(index: int | slice)
@@ -146,7 +255,7 @@ StructureChildren.__delitem__(index: int | slice)
 
 Remove one or more child elements, cleaning `/ParentTree`, `/IDTree`, and orphaned objects.
 
-### `StructureChildren.add`
+### `add`
 
 ```python
 StructureChildren.add(
@@ -159,18 +268,37 @@ StructureChildren.add(
     alt: str | None = None,
     actual_text: str | None = None,
     expanded: str | None = None,
+    namespace: StructureNamespace | str | None = None,
 ) -> StructureElement
 ```
 
-Create and insert a child `StructureElement` in one transaction.
+Insert a child in one transaction, registering its optional PDF 2.0 namespace URI.
 
-### `StructureChildren.move`
+### `move`
 
 ```python
 StructureChildren.move(index: int, to: int)
 ```
 
 Move child element `index` to child-element position `to` in one transaction.
+
+## `StructureChildRule`
+
+```python
+StructureChildRule(
+    *,
+    parent_xref: int | None,
+    parent_role: str,
+    child_role: str,
+    count: int,
+    rule: str,
+    allowed: bool | None,
+)
+```
+
+An Annex L relationship, its observed count and the applicable occurrence rule.
+
+`allowed` is unknown for namespace or semantic conditions that the table alone cannot decide.
 
 ## `StructureElement`
 
@@ -185,7 +313,7 @@ Properties read the current version of the document, and assigning or deleting
 `page` updates the element in one transaction. A handle whose element was
 deleted raises `StaleObjectError`, and works again if undo restores it.
 
-### `StructureElement.document`
+### `document`
 
 ```python
 StructureElement.document: Document
@@ -193,7 +321,7 @@ StructureElement.document: Document
 
 The document that owns this structure element.
 
-### `StructureElement.xref`
+### `xref`
 
 ```python
 StructureElement.xref: int
@@ -201,7 +329,7 @@ StructureElement.xref: int
 
 The element's indirect object number.
 
-### `StructureElement.obj`
+### `obj`
 
 ```python
 StructureElement.obj: Dictionary
@@ -209,7 +337,7 @@ StructureElement.obj: Dictionary
 
 The element's dictionary in the low-level object model.
 
-### `StructureElement.role`
+### `role`
 
 ```python
 StructureElement.role: str
@@ -219,7 +347,7 @@ The element's structure type name (`/S`).
 
 Settable.
 
-### `StructureElement.standard_role`
+### `standard_role`
 
 ```python
 StructureElement.standard_role: str
@@ -227,7 +355,33 @@ StructureElement.standard_role: str
 
 `role` resolved iteratively through `doc.structure.role_map`.
 
-### `StructureElement.title`
+### `namespace`
+
+```python
+StructureElement.namespace: StructureNamespace | None
+```
+
+Return, set, or delete the element's `StructureNamespace` (`/NS`, PDF 2.0).
+
+Settable.
+
+### `resolved_role`
+
+```python
+StructureElement.resolved_role: tuple[str, str | None]
+```
+
+Resolve `(role, namespace_uri)` iteratively across `/RoleMapNS` and `/RoleMap` (up to 32 hops).
+
+### `associated_files`
+
+```python
+StructureElement.associated_files: AssociatedFiles
+```
+
+The `/AF` associated files of this structure element.
+
+### `title`
 
 ```python
 StructureElement.title: str | None
@@ -237,7 +391,7 @@ The element's title (`/T`), or `None` when absent; `del` removes `/T`.
 
 Settable.
 
-### `StructureElement.language`
+### `language`
 
 ```python
 StructureElement.language: str | None
@@ -247,7 +401,7 @@ The element's BCP 47 language tag (`/Lang`), or `None`; `del` removes `/Lang`.
 
 Settable.
 
-### `StructureElement.alt`
+### `alt`
 
 ```python
 StructureElement.alt: str | None
@@ -257,7 +411,7 @@ The alternate description (`/Alt`), or `None`; `del` removes `/Alt`.
 
 Settable.
 
-### `StructureElement.actual_text`
+### `actual_text`
 
 ```python
 StructureElement.actual_text: str | None
@@ -267,7 +421,7 @@ The replacement text (`/ActualText`), or `None`; `del` removes `/ActualText`.
 
 Settable.
 
-### `StructureElement.expanded`
+### `expanded`
 
 ```python
 StructureElement.expanded: str | None
@@ -277,7 +431,7 @@ The abbreviation expansion (`/E`, ISO 32000-2 §14.9.5), or `None`; `del` remove
 
 Settable.
 
-### `StructureElement.page`
+### `page`
 
 ```python
 StructureElement.page: Page | None
@@ -287,7 +441,7 @@ The element's page (`/Pg`), or `None`; `del` removes `/Pg`.
 
 Settable.
 
-### `StructureElement.parent`
+### `parent`
 
 ```python
 StructureElement.parent: StructureElement | None
@@ -295,7 +449,7 @@ StructureElement.parent: StructureElement | None
 
 The parent `StructureElement`, or `None` for a top-level element.
 
-### `StructureElement.children`
+### `children`
 
 ```python
 StructureElement.children: StructureChildren
@@ -303,7 +457,7 @@ StructureElement.children: StructureChildren
 
 A live sequence of the element's child `StructureElement` handles.
 
-### `StructureElement.items`
+### `items`
 
 ```python
 StructureElement.items: tuple[StructureElement | MarkedContentReference | ObjectReference, ...]
@@ -311,7 +465,59 @@ StructureElement.items: tuple[StructureElement | MarkedContentReference | Object
 
 The child elements, marked-content items, and object references in `/K` reading order.
 
-### `StructureElement.move`
+### `set_attributes`
+
+```python
+StructureElement.set_attributes(
+    owner: str,
+    values: Mapping[str, object],
+    *,
+    namespace: str | None = None,
+)
+```
+
+Set standard or export-format attributes, or supply a registered namespace URI for the NSO owner.
+
+### `add_class`
+
+```python
+StructureElement.add_class(name: str)
+```
+
+Apply a defined attribute class without duplicating it or removing earlier class revisions.
+
+### `set_user_property`
+
+```python
+StructureElement.set_user_property(
+    name: str,
+    value: object,
+    *,
+    formatted: str | None = None,
+    hidden: bool = False,
+)
+```
+
+Create or update a named user property and declare it in the catalog's mark information.
+
+### `set_object_reference`
+
+```python
+StructureElement.set_object_reference(
+    target: Dictionary,
+    *,
+    page: Page | int,
+    replace: Dictionary | None = None,
+) -> ObjectReference
+```
+
+Attach an annotation or a drawn XObject to the specified page and its structure parent.
+
+A whole XObject drawn on several pages can have one reference per page in the same element.
+To retarget a reference, supply an untagged replacement and the page where it is drawn.
+When the old target has several references, this replaces the one on that page.
+
+### `move`
 
 ```python
 StructureElement.move(
@@ -327,6 +533,183 @@ Updates both `/K` containers and this element's `/P` in one transaction,
 refusing moves into another document, into itself or a descendant, or past
 the 256-level depth limit.
 
+## `StructureNamespace`
+
+```python
+StructureNamespace(document: Document, xref: int, generation: int = 0)
+```
+
+Live handle on an indirect `/Type /Namespace` dictionary (ISO 32000-2 §14.7.4, PDF 2.0).
+
+Exposes `uri` (`/NS`), `schema` (`/Schema`), and
+`role_map` (`/RoleMapNS`). A deleted handle raises
+`StaleObjectError` and works again if undo restores it.
+
+### `document`
+
+```python
+StructureNamespace.document: Document
+```
+
+The owning `Document`.
+
+### `xref`
+
+```python
+StructureNamespace.xref: int
+```
+
+The indirect object number of this `Namespace` dictionary.
+
+### `obj`
+
+```python
+StructureNamespace.obj: Dictionary
+```
+
+The `Namespace` dictionary in the low-level object model.
+
+### `uri`
+
+```python
+StructureNamespace.uri: str
+```
+
+The namespace URI text string (`/NS`).
+
+Settable.
+
+### `schema`
+
+```python
+StructureNamespace.schema: AssociatedFile | str | None
+```
+
+Return, set, or delete `/Schema` (`AssociatedFile`, string, or `None`).
+
+Settable.
+
+### `role_map`
+
+```python
+StructureNamespace.role_map: NamespaceRoleMap
+```
+
+`/RoleMapNS` as a live `NamespaceRoleMap`.
+
+Settable.
+
+### `delete`
+
+```python
+StructureNamespace.delete()
+```
+
+Delete this namespace, clearing element `/NS` and `/RoleMapNS` references to it.
+
+## `StructureNamespaces`
+
+```python
+class StructureNamespaces(Sequence[StructureNamespace])
+StructureNamespaces(document: Document)
+```
+
+Live sequence of `StructureNamespace` handles in `StructTreeRoot['Namespaces']` (PDF 2.0).
+
+### `__getitem__`
+
+```python
+StructureNamespaces.__getitem__(
+    index: int | slice,
+) -> StructureNamespace | list[StructureNamespace]
+```
+
+Return one `StructureNamespace`, or a list for a slice.
+
+### `__len__`
+
+```python
+StructureNamespaces.__len__() -> int
+```
+
+Return the number of namespaces in `StructTreeRoot['Namespaces']`.
+
+### `__iter__`
+
+```python
+StructureNamespaces.__iter__() -> Iterator[StructureNamespace]
+```
+
+Iterate over the `StructureNamespace` handles.
+
+### `__bool__`
+
+```python
+StructureNamespaces.__bool__() -> bool
+```
+
+Return whether at least one namespace is declared.
+
+### `__contains__`
+
+```python
+StructureNamespaces.__contains__(item: object) -> bool
+```
+
+Return whether `item` (`StructureNamespace` or URI `str`) is declared.
+
+### `find`
+
+```python
+StructureNamespaces.find(uri: str) -> StructureNamespace | None
+```
+
+Return the first `StructureNamespace` with `ns.uri == uri`, or `None`.
+
+### `add`
+
+```python
+StructureNamespaces.add(
+    uri: str,
+    *,
+    schema: AssociatedFile | str | None = None,
+    role_map: Mapping[str, TagRole | str | tuple[TagRole | str, StructureNamespace]] | None = None,
+) -> StructureNamespace
+```
+
+Create and register an indirect `StructureNamespace` in one transaction (promoting to PDF 2.0).
+
+### `__delitem__`
+
+```python
+StructureNamespaces.__delitem__(index: int | slice)
+```
+
+Delete one or more namespaces, scrubbing `/NS` and `/RoleMapNS` references.
+
+### `clear`
+
+```python
+StructureNamespaces.clear()
+```
+
+Remove all structure namespaces and delete `StructTreeRoot['Namespaces']`.
+
+## `StructureText`
+
+```python
+StructureText(
+    *,
+    element: StructureElement,
+    item: MarkedContentReference | ObjectReference | None,
+    text: str | None,
+)
+```
+
+One piece of logical text and its originating element or content reference.
+
+A missing text value identifies a reference whose text cannot be resolved.
+
 ## `StructureTree`
 
 ```python
@@ -341,7 +724,7 @@ expose the hierarchy and marked-content items, `walk` visits every element
 in pre-order, and `role_map` reads and edits `/RoleMap`. `del doc.structure`
 removes `/StructTreeRoot` and frees unreferenced structure objects.
 
-### `StructureTree.obj`
+### `obj`
 
 ```python
 StructureTree.obj: Dictionary | None
@@ -349,7 +732,7 @@ StructureTree.obj: Dictionary | None
 
 The `/StructTreeRoot` dictionary, or `None` when the document is untagged.
 
-### `StructureTree.role_map`
+### `role_map`
 
 ```python
 StructureTree.role_map: RoleMap
@@ -359,7 +742,15 @@ Or replace `/RoleMap` as a live `RoleMap`; `del` removes `/RoleMap`.
 
 Settable.
 
-### `StructureTree.resolve_role`
+### `namespaces`
+
+```python
+StructureTree.namespaces: StructureNamespaces
+```
+
+The structure tree's `/Namespaces` array as a live `StructureNamespaces` sequence.
+
+### `resolve_role`
 
 ```python
 StructureTree.resolve_role(role: TagRole | str) -> str
@@ -367,7 +758,7 @@ StructureTree.resolve_role(role: TagRole | str) -> str
 
 Resolve `role` iteratively through `/RoleMap` (up to 32 hops, stopping on cycles).
 
-### `StructureTree.__getitem__`
+### `__getitem__`
 
 ```python
 StructureTree.__getitem__(
@@ -377,7 +768,7 @@ StructureTree.__getitem__(
 
 Return a top-level element, or a list of top-level elements for a slice.
 
-### `StructureTree.__len__`
+### `__len__`
 
 ```python
 StructureTree.__len__() -> int
@@ -385,7 +776,7 @@ StructureTree.__len__() -> int
 
 Return the number of top-level structure elements.
 
-### `StructureTree.__iter__`
+### `__iter__`
 
 ```python
 StructureTree.__iter__() -> Iterator[StructureElement]
@@ -393,7 +784,7 @@ StructureTree.__iter__() -> Iterator[StructureElement]
 
 Iterate over the top-level structure elements in `/K` order.
 
-### `StructureTree.__delitem__`
+### `__delitem__`
 
 ```python
 StructureTree.__delitem__(index: int | slice)
@@ -401,7 +792,7 @@ StructureTree.__delitem__(index: int | slice)
 
 Remove one or more top-level elements, cleaning `/ParentTree`, `/IDTree`, and orphaned objects.
 
-### `StructureTree.move`
+### `move`
 
 ```python
 StructureTree.move(index: int, to: int)
@@ -409,7 +800,7 @@ StructureTree.move(index: int, to: int)
 
 Move top-level element `index` to position `to` in one transaction.
 
-### `StructureTree.add`
+### `add`
 
 ```python
 StructureTree.add(
@@ -422,6 +813,7 @@ StructureTree.add(
     alt: str | None = None,
     actual_text: str | None = None,
     expanded: str | None = None,
+    namespace: StructureNamespace | str | None = None,
 ) -> StructureElement
 ```
 
@@ -430,7 +822,66 @@ Create and insert a top-level `StructureElement` in one transaction.
 Creates `/StructTreeRoot` and sets `MarkInfo/Marked` to `True` when
 the document has no structure tree yet.
 
-### `StructureTree.walk`
+### `set_class_attributes`
+
+```python
+StructureTree.set_class_attributes(
+    name: str,
+    owner: str,
+    values: Mapping[str, object],
+    *,
+    namespace: str | None = None,
+)
+```
+
+Define or update an attribute class, keeping existing owners and entries under other names.
+
+### `edit`
+
+```python
+StructureTree.edit() -> Generator[StructureTree]
+```
+
+Group edits and roll back newly invalid determinate PDF 2.0 Annex L relationships.
+
+The final child order and multiplicities are checked together, allowing temporarily
+incomplete groups such as Ruby. Conditional relationships remain available via child_rules().
+
+### `reading_order`
+
+```python
+StructureTree.reading_order(
+    *,
+    expand_abbreviations: bool = False,
+) -> tuple[StructureText, ...]
+```
+
+Extract logical text in mixed structure-child order, including cross-page references.
+
+Use element replacement text, or its expansion when requested. Each item retains
+its structure element. Unattributable text, including a Form stream without
+a replacement, has a missing text value. Untagged documents return an empty
+tuple. Both structure readers visit at most 65,536 child entries and
+256 levels, and reject cycles and malformed children.
+
+### `child_rules`
+
+```python
+StructureTree.child_rules(
+    *,
+    grouping_usage: Mapping[int, bool] | None = None,
+) -> tuple[StructureChildRule, ...]
+```
+
+Read the observed parent/child multiplicities under the PDF 2.0 Annex L rules.
+
+Namespace mappings are followed to the standard role, and transparent
+containers contribute to the enclosing role's counts. Supply a mapping
+of element object numbers to intended grouping use when several uses
+fit the stored children. An indeterminate result retains the condition
+that requires more information. The rules apply to the PDF 2.0 namespace.
+
+### `walk`
 
 ```python
 StructureTree.walk(*, max_elements: int | None = 65536) -> Iterator[StructureElement]

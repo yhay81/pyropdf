@@ -1461,14 +1461,6 @@ def _read_thread_action_dict(
     return ThreadAction(thread_val, bead_val, file=file)
 
 
-def _read_thread_action(document: Document, holder: Dictionary) -> ThreadAction | None:
-    """Return :class:`ThreadAction` when ``holder['A']`` is a ``/S /Thread`` action, else ``None``."""
-    action = holder.get("A")
-    if not _is_dict(action):
-        return None
-    return _read_thread_action_dict(document, cast("Dictionary", action))
-
-
 for _public in (Bead, BeadSpecification, Beads, Thread, ThreadAction, Threads):
     _public.__module__ = "pyropdf"
 

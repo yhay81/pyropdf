@@ -23,7 +23,7 @@ Implements Python's buffer protocol without copying: `memoryview(pixmap)`
 and `numpy.asarray(pixmap)` expose the samples read-only as `uint8` (`"B"`)
 values shaped `(height, width, channels)`.
 
-### `Pixmap.alpha`
+### `alpha`
 
 ```python
 Pixmap.alpha: bool
@@ -31,7 +31,7 @@ Pixmap.alpha: bool
 
 Whether each pixel ends with a straight alpha byte.
 
-### `Pixmap.channels`
+### `channels`
 
 ```python
 Pixmap.channels: int
@@ -39,7 +39,7 @@ Pixmap.channels: int
 
 Bytes per pixel: 1 for gray, 3 for RGB, and one more with alpha.
 
-### `Pixmap.color_count`
+### `color_count`
 
 ```python
 Pixmap.color_count(rect: tuple[int, int, int, int] | None = None) -> int
@@ -49,7 +49,7 @@ Returns the number of distinct pixels, alpha included, inside
 `rect`, or in the whole pixmap when `rect` is `None`; 0 for a rect
 outside it.
 
-### `Pixmap.colors`
+### `colors`
 
 ```python
 Pixmap.colors(
@@ -64,7 +64,7 @@ the whole pixmap when `rect` is `None`, with the number of pixels
 that have it, in ascending order of the channels. More than
 `max_colors` distinct pixels raise `ValueError`; `None` lifts it.
 
-### `Pixmap.colorspace`
+### `colorspace`
 
 ```python
 Pixmap.colorspace: Colorspace
@@ -72,7 +72,7 @@ Pixmap.colorspace: Colorspace
 
 The color space of the samples, a `pyropdf.Colorspace`.
 
-### `Pixmap.crop`
+### `crop`
 
 ```python
 Pixmap.crop(rect: tuple[int, int, int, int]) -> Pixmap
@@ -81,7 +81,7 @@ Pixmap.crop(rect: tuple[int, int, int, int]) -> Pixmap
 Returns the pixels of `rect`, `(x0, y0, x1, y1)` in whole pixels,
 cut to the pixmap; a rect outside it raises `ValueError`.
 
-### `Pixmap.fill`
+### `fill`
 
 ```python
 Pixmap.fill(
@@ -95,7 +95,7 @@ integer of 0 to 255 per channel, alpha included, or every pixel when
 `rect` is `None`. `rect` is `(x0, y0, x1, y1)` in whole pixels, cut
 to the pixmap; one outside it changes nothing.
 
-### `Pixmap.flip`
+### `flip`
 
 ```python
 Pixmap.flip(axis: Literal['horizontal', 'vertical']) -> Pixmap
@@ -104,7 +104,7 @@ Pixmap.flip(axis: Literal['horizontal', 'vertical']) -> Pixmap
 Returns the pixmap mirrored left to right for `"horizontal"`, or top
 to bottom for `"vertical"`.
 
-### `Pixmap.from_bytes`
+### `from_bytes`
 
 ```python
 Pixmap.from_bytes(
@@ -129,7 +129,7 @@ bytes before copying or decoding (default 256 MiB); exceeding it
 raises `LimitError` with code `image_input_size`. Pass `None` to
 remove this input limit for trusted data; the pixel limit remains.
 
-### `Pixmap.gamma`
+### `gamma`
 
 ```python
 Pixmap.gamma(value: float) -> Pixmap
@@ -138,7 +138,7 @@ Pixmap.gamma(value: float) -> Pixmap
 Returns a copy with each color component `c`, from 0 to 1, replaced
 by `c ** value`: a `value` above 1 darkens and one below lightens.
 
-### `Pixmap.height`
+### `height`
 
 ```python
 Pixmap.height: int
@@ -146,7 +146,7 @@ Pixmap.height: int
 
 Height in pixels.
 
-### `Pixmap.invert`
+### `invert`
 
 ```python
 Pixmap.invert(rect: tuple[int, int, int, int] | None = None) -> Pixmap
@@ -156,7 +156,7 @@ Returns a copy with the colors inside `rect` inverted, or all of
 them when `rect` is `None`; alpha is kept. `rect` is
 `(x0, y0, x1, y1)` in whole pixels, cut to the pixmap.
 
-### `Pixmap.open`
+### `open`
 
 ```python
 Pixmap.open(path: str | PathLike[str], *, max_size: int | None = 268435456) -> Pixmap
@@ -169,7 +169,7 @@ is checked. Exceeding it raises `LimitError` with code
 `image_input_size`. Pass `None` to remove this input limit for trusted
 files; the 64,000,000-pixel limit remains. File errors are preserved.
 
-### `Pixmap.pixel`
+### `pixel`
 
 ```python
 Pixmap.pixel(x: int, y: int) -> tuple[int, ...]
@@ -177,7 +177,7 @@ Pixmap.pixel(x: int, y: int) -> tuple[int, ...]
 
 Returns the channels of the pixel at column `x` and row `y`.
 
-### `Pixmap.resolution`
+### `resolution`
 
 ```python
 Pixmap.resolution: tuple[int, int]
@@ -186,7 +186,7 @@ Pixmap.resolution: tuple[int, int]
 The horizontal and vertical resolution in dots per inch, which PNG
 output records.
 
-### `Pixmap.rotate`
+### `rotate`
 
 ```python
 Pixmap.rotate(degrees: int) -> Pixmap
@@ -195,7 +195,7 @@ Pixmap.rotate(degrees: int) -> Pixmap
 Returns the pixmap turned clockwise by `degrees`, a multiple of 90;
 a quarter turn swaps the width, the height, and the resolution.
 
-### `Pixmap.save`
+### `save`
 
 ```python
 Pixmap.save(
@@ -213,7 +213,7 @@ else the format that the extension of `path` names, and replaces
 permissions and a final symlink. A failed save leaves `path` as it
 was.
 
-### `Pixmap.scale`
+### `scale`
 
 ```python
 Pixmap.scale(width: int, height: int) -> Pixmap
@@ -224,7 +224,7 @@ bilinear filter, as Pillow's `Image.resize` with `BILINEAR`; the
 resolution follows, so the image keeps its size in inches. At most
 64,000,000 pixels.
 
-### `Pixmap.stride`
+### `stride`
 
 ```python
 Pixmap.stride: int
@@ -232,7 +232,7 @@ Pixmap.stride: int
 
 Bytes per row: width × channels.
 
-### `Pixmap.tint`
+### `tint`
 
 ```python
 Pixmap.tint(
@@ -245,7 +245,7 @@ Returns a copy whose black becomes `black` and whose white becomes
 `white`, RGB colors of 0 to 255, with the values between mapped
 linearly; a gray pixmap uses their luma. Alpha is kept.
 
-### `Pixmap.to_bytes`
+### `to_bytes`
 
 ```python
 Pixmap.to_bytes(
@@ -267,7 +267,7 @@ pixels, and PostScript is one Level 2 page at the resolution.
 write that would pass it with `LimitError` code
 `pixmap_output_size`; `None` leaves it unbounded.
 
-### `Pixmap.to_gray`
+### `to_gray`
 
 ```python
 Pixmap.to_gray() -> Pixmap
@@ -275,7 +275,7 @@ Pixmap.to_gray() -> Pixmap
 
 Returns the pixmap in gray, with ITU-R BT.601 luma weights, keeping alpha.
 
-### `Pixmap.to_pil`
+### `to_pil`
 
 ```python
 Pixmap.to_pil() -> Any
@@ -284,7 +284,7 @@ Pixmap.to_pil() -> Any
 Returns the pixels as a Pillow image of mode `L`, `LA`, `RGB`, or
 `RGBA`, with the resolution in its `dpi` info; it needs Pillow.
 
-### `Pixmap.to_rgb`
+### `to_rgb`
 
 ```python
 Pixmap.to_rgb() -> Pixmap
@@ -292,7 +292,7 @@ Pixmap.to_rgb() -> Pixmap
 
 Returns the pixmap in RGB, keeping alpha.
 
-### `Pixmap.top_color`
+### `top_color`
 
 ```python
 Pixmap.top_color(
@@ -305,7 +305,7 @@ pixmap when `rect` is `None`, that the most frequent pixel has, and
 that pixel, alpha included; of pixels as frequent, the least in
 ascending order of the channels. `None` for a rect outside it.
 
-### `Pixmap.warp`
+### `warp`
 
 ```python
 Pixmap.warp(quad: Sequence[tuple[float, float]], width: int, height: int) -> Pixmap
@@ -318,7 +318,7 @@ the quadrilateral, where the pixmap is sampled bilinearly between
 pixel centers and clamped to its edge pixels. The quadrilateral must
 be convex; at most 64,000,000 pixels.
 
-### `Pixmap.width`
+### `width`
 
 ```python
 Pixmap.width: int
@@ -326,7 +326,7 @@ Pixmap.width: int
 
 Width in pixels.
 
-### `Pixmap.with_alpha`
+### `with_alpha`
 
 ```python
 Pixmap.with_alpha() -> Pixmap
@@ -334,7 +334,7 @@ Pixmap.with_alpha() -> Pixmap
 
 Returns the pixmap with an alpha channel, opaque where it had none.
 
-### `Pixmap.with_pixel`
+### `with_pixel`
 
 ```python
 Pixmap.with_pixel(x: int, y: int, value: Sequence[int]) -> Pixmap
@@ -343,7 +343,7 @@ Pixmap.with_pixel(x: int, y: int, value: Sequence[int]) -> Pixmap
 Returns a copy with the pixel at column `x` and row `y` set to
 `value`, one integer of 0 to 255 per channel, alpha included.
 
-### `Pixmap.without_alpha`
+### `without_alpha`
 
 ```python
 Pixmap.without_alpha(background: tuple[int, int, int] = (255, 255, 255)) -> Pixmap

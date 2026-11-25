@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import struct
 import subprocess
 from pathlib import Path
 
 import pytest
+from test_attachments import build_raw_pdf
 from test_preservation import EDITS
 
 import pyropdf
@@ -114,7 +116,7 @@ def test_profile_structure_and_edit_reports(profile: str) -> None:
         assert list(saved.pages[0].operations) == content
         assert saved.check().defects == ()
 
-    for edit in ("action_triggers", "ocr_layer", "page_records"):
+    for edit in ("action_triggers", "edit_interaction", "ocr_layer", "page_records"):
         with pyropdf.open(path) as edited:
             case = EDITS[edit]
             case.prepare(edited)
@@ -143,6 +145,117 @@ def test_the_profile_map_names_only_the_matching_parameter_case() -> None:
                 for test in row[dimension]["tests"]
                 if "::test_profile_structure_and_edit_reports" in test
             )
+
+
+@pytest.mark.parametrize("level", ["1b", "2b", "3b", "4", "4e", "4f"])
+def test_archival_appearance_reports_only_the_annotation_with_an_alternate(level: str) -> None:
+    path = ROOT / "tests/assets/pdfa" / f"pdfa-{level}.pdf"
+    with pyropdf.open(path) as doc:
+        note = doc.pages[0].annotations.add(pyropdf.Note((4, 8), contents="Review"))
+        normal = note.appearance_stream()
+        assert normal is not None
+        note.set_appearance("normal", normal)
+        assert doc.changes(incremental=True).claims == ()
+        note.set_appearance("down", normal)
+        for incremental in (False, True):
+            (change,) = doc.changes(incremental=incremental).claims
+            assert change.claim == f"PDF/A-{level.upper()}"
+            assert change.objects == (note.xref,)
+            assert change.reason == "PDF/A permits only the normal annotation appearance"
+        del note.obj["AP"]["D"]
+        assert doc.changes(incremental=True).claims == ()
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_a_normal_line_caption_breaks_archival_font_embedding_on_its_annotation(*, incremental: bool) -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as original:
+        line = original.pages[0].annotations.add(pyropdf.LineAnnotation((16, 20), (80, 20), contents="Measured"))
+        line.line_details = pyropdf.LineDetails(caption=False)
+        baseline = original.to_bytes()
+    with pyropdf.open(baseline) as doc:
+        line = doc.pages[0].annotations[0]
+        assert doc.changes(incremental=incremental).claims == ()
+        line.line_details = pyropdf.LineDetails(caption=True)
+        (change,) = doc.changes(incremental=incremental).claims
+        assert change.claim == "PDF/A-2B"
+        assert change.objects == (line.xref,)
+        assert "font without an embedded program" in change.reason
+        saved = doc.to_bytes(incremental=incremental)
+    with pyropdf.open(saved) as reopened:
+        reopened.pages[0].rotation = 90
+        assert reopened.changes(incremental=incremental).claims == ()
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        (b"BT /F 10 Tf /Other 10 Tf ( ) Tj ET", {"Other"}),
+        (b"BT /F 10 Tf ( ) Tj /Other 10 Tf ( ) Tj ET", {"F", "Other"}),
+        (b"BT /F 10 Tf q /Other 10 Tf Q ( ) Tj ET", {"F"}),
+    ],
+)
+def test_appearance_names_only_embedded_programs_actually_used(content: bytes, expected: set[str]) -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as source:
+        data = VERAPDF.ALTERNATES["prepare"](source, "appearance-selected")
+    with pyropdf.open(data) as doc:
+        widget = doc.pages[0].obj["Annots"][0]
+        del widget["Type"]  # An annotation's Type entry is optional.
+        ink = widget["AP"]["N"]["Yes"]
+        ink["Resources"]["Font"]["Other"] = VERAPDF.ALTERNATES["simple"](doc)
+        ink.write(content)
+        data = doc.to_bytes()
+    with pyropdf.open(data) as doc:
+        widget = doc.pages[0].obj["Annots"][0]
+        fonts = widget["AP"]["N"]["Yes"]["Resources"]["Font"]
+        responsible = {fonts[name]["FontDescriptor"].xref for name in expected}
+        for name in ("F", "Other"):
+            del fonts[name]["FontDescriptor"]["FontFile2"]
+        widget["Contents"] = pyropdf.String(b"Changed label")
+        ink = widget["AP"]["N"]["Yes"]
+        ink["PrivateNote"] = pyropdf.String(b"Unrelated change")
+        ink.write(b"q 0 0 3 3 re f Q " + ink.read())
+        for incremental in (False, True):
+            (change,) = doc.changes(incremental=incremental).claims
+            assert change.claim == "PDF/A-2B"
+            assert set(change.objects) == responsible
+
+
+def test_an_existing_unembedded_font_does_not_hide_a_second_descriptor_loss() -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as source:
+        data = VERAPDF.ALTERNATES["prepare"](source, "appearance-selected")
+    with pyropdf.open(data) as doc:
+        page = doc.pages[0].obj
+        ink = page["Annots"][0]["AP"]["N"]["Yes"]
+        fonts = ink["Resources"]["Font"]
+        fonts["Other"] = VERAPDF.ALTERNATES["simple"](doc)
+        del fonts["F"]["FontDescriptor"]["FontFile2"]
+        page["Resources"]["Font"] = fonts
+        del ink["Resources"]  # The Form inherits these fonts from its page.
+        ink.write(b"BT /F 10 Tf ( ) Tj /Other 10 Tf ( ) Tj ET")
+        data = doc.to_bytes()
+    with pyropdf.open(data) as doc:
+        desc = doc.pages[0].obj["Resources"]["Font"]["Other"]["FontDescriptor"]
+        del desc["FontFile2"]
+        for incremental in (False, True):
+            (change,) = doc.changes(incremental=incremental).claims
+            assert change.objects == (desc.xref,)
+
+
+def test_unrelated_widget_edit_avoids_decoding_an_oversized_appearance() -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as source:
+        data = VERAPDF.ALTERNATES["prepare"](source, "appearance-selected")
+    with pyropdf.open(data) as doc:
+        ink = doc.pages[0].obj["Annots"][0]["AP"]["N"]["Yes"]
+        ink.write(ink.read() + b" " * 5_000)
+        data = doc.to_bytes()
+    with pyropdf.open(data, limits=pyropdf.DocumentLimits(max_page_content_size=2_048)) as doc:
+        widget = doc.pages[0].obj["Annots"][0]
+        widget["Contents"] = pyropdf.String(b"Updated description")
+        assert doc.changes(incremental=True).claims == ()
+        del widget["AP"]["N"]["Yes"]["Resources"]["Font"]["F"]["FontDescriptor"]["FontFile2"]
+        with pytest.raises(pyropdf.LimitError) as refusal:
+            doc.changes(incremental=True)
+        assert refusal.value.code == "page_content_size"
 
 
 @pytest.mark.parametrize("incremental", [False, True])
@@ -191,14 +304,44 @@ def test_verapdf_rules_include_full_iso_table_names_and_model_deviations() -> No
     assert VERAPDF.failed_rules(report) == {"8.2.5.2-1", "Table 5. StructTreeRoot-Document-1", "VRI-OCSP-Array-9"}
 
 
-@pytest.mark.parametrize(("level", "extensions"), [(1, "ISO_19005_3"), (2, "ISO_19005_3,ETSI_PAdES")])
-def test_arlington_selects_the_declared_pades_extension(tmp_path: Path, level: int, extensions: str) -> None:
+@pytest.mark.parametrize(
+    ("prefix", "level", "extensions"),
+    [
+        ("ESIC", 1, "ISO_19005_3"),
+        ("ESIC", 2, "ISO_19005_3,ETSI_PAdES"),
+        ("ESIC", 3, "ISO_19005_3,ETSI_PAdES"),
+        ("ADBE", 7, "ISO_19005_3"),
+        ("ADBE", 8, "ISO_19005_3,ETSI_PAdES"),
+        ("ETSI_PAdES", 2, "ISO_19005_3"),
+    ],
+)
+def test_arlington_selects_the_declared_pades_extension(
+    tmp_path: Path, prefix: str, level: int, extensions: str
+) -> None:
     source = ROOT / "tests/assets/pdfa/pdfa-3b.pdf"
     result = tmp_path / "document with spaces.pdf"
     with pyropdf.open(source) as doc:
-        doc.catalog["Extensions"] = {"ETSI_PAdES": {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": level}}
+        doc.catalog["Extensions"] = {prefix: {"BaseVersion": pyropdf.Name("1.7"), "ExtensionLevel": level}}
         doc.save(result)
     assert VERAPDF.arlington(result, "3b") == f"arlington1.7+{extensions}"
+
+
+def test_arlington_does_not_select_a_pades_level_stored_as_a_reference(tmp_path: Path) -> None:
+    source = tmp_path / "indirect-level.pdf"
+    source.write_bytes(
+        build_raw_pdf(
+            {
+                1: (
+                    "<< /Type /Catalog /Pages 2 0 R /Extensions << /ESIC "
+                    "<< /BaseVersion /1.7 /ExtensionLevel 4 0 R >> >> >>"
+                ),
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>",
+                4: "2",
+            }
+        )
+    )
+    assert VERAPDF.arlington(source, "") == "arlington1.7"
 
 
 def test_supplemental_pades_validation_keeps_native_and_archival_checks_distinct() -> None:
@@ -260,3 +403,284 @@ def test_arlington_summary_and_verbose_reports_retain_paths(
         VERAPDF.validate(jar, flavour, [accepted, rejected, absent])
     with pytest.raises(ValueError, match="incomplete verbose"):
         VERAPDF.detailed_reports(jar, flavour, [accepted, rejected, absent])
+
+
+@pytest.mark.spec("{profile}", "interpret", "edit", "preserve")
+@pytest.mark.parametrize(
+    "profile",
+    [
+        "pdfa-1a",
+        "pdfa-1b",
+        "pdfa-2a",
+        "pdfa-2b",
+        "pdfa-2u",
+        "pdfa-3a",
+        "pdfa-3b",
+        "pdfa-3u",
+        "pdfa-4",
+        "pdfa-4e",
+        "pdfa-4f",
+        "pdfua-1",
+        "pdfua-2",
+    ],
+)
+def test_alternate_profile_representations(profile: str, tmp_path: Path) -> None:
+    source = ROOT / "tests" / "assets" / profile.split("-", maxsplit=1)[0] / f"{profile}.pdf"
+    files = VERAPDF.alternate_saves(source, VERAPDF.FIXTURES[source], tmp_path)
+    assert files
+    for case in VERAPDF.ALTERNATES["cases"](VERAPDF.FIXTURES[source], dual=False):
+        assert tmp_path / f"{source.stem}-{case}-input.pdf" in files
+        for mode in ("full", "incremental"):
+            for operation in ("edit", "valid-control"):
+                assert tmp_path / f"{source.stem}-{case}-{operation}-{mode}.pdf" in files
+
+
+@pytest.mark.spec("pdfa", "interpret", "edit", "preserve")
+@pytest.mark.spec("pdfua", "interpret", "edit", "preserve")
+def test_dual_alternate_resources_report_only_the_claim_that_newly_fails(tmp_path: Path) -> None:
+    source = ROOT / "tests/assets/pdfua/pdfua-2-pdfa-4.pdf"
+    files = VERAPDF.alternate_saves(source, "ua2", tmp_path)
+    assert set(VERAPDF.dual_archival(files)) == set(files)
+    for mode in ("full", "incremental"):
+        for case, profiles in {
+            "page-intent": {"4"},
+            "parent-tree-slot": {"ua2"},
+            "nested-composite-font": {"4", "ua2"},
+            "nested-default-rgb": set(),
+            "appearance-unselected": {"4", "ua2"},
+            "appearance-unused": set(),
+            "appearance-invisible": set(),
+        }.items():
+            name = f"{source.stem}-{case}-edit-{mode}.pdf"
+            assert {f for f in ("ua2", "4") if f"{f} {name}" in VERAPDF.EXPECTED} == profiles
+
+
+@pytest.mark.parametrize("case", ["inherited-default-rgb", "parent-tree-slot", "named-properties"])
+def test_unrelated_rotation_does_not_own_a_resource_failure(case: str) -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfua/pdfua-2-pdfa-4.pdf") as source:
+        data = VERAPDF.ALTERNATES["prepare"](source, case)
+    with pyropdf.open(data) as doc:
+        responsible = VERAPDF.ALTERNATES["edit"](doc, case)
+        doc.pages[0].rotation = 90
+        for incremental in (True, False):
+            (change,) = doc.changes(incremental=incremental).claims
+            assert change.objects == (responsible,)
+
+
+def test_nested_form_reads_use_the_change_reports_operation_budget() -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-4.pdf") as source:
+        data = VERAPDF.ALTERNATES["prepare"](source, "nested-rgb")
+    with pyropdf.open(data) as prepared:
+        outer = prepared.pages[0].obj["Resources"]["XObject"]["Outer"]
+        inner = outer["Resources"]["XObject"]["Inner"]
+        inner.write(inner.read() + b" " * 10_000)
+        data = prepared.to_bytes()
+    with pyropdf.open(data, limits=pyropdf.DocumentLimits(max_page_content_size=5_000)) as doc:
+        del doc.catalog["OutputIntents"]
+        with pytest.raises(pyropdf.LimitError) as failure:
+            doc.changes(incremental=True)
+        assert failure.value.code == "page_content_size"
+        doc.history.undo()
+        assert doc.changes(incremental=True).claims == ()
+
+
+def test_unrelated_catalog_edit_does_not_decode_the_nested_archival_form() -> None:
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-4.pdf") as source:
+        data = VERAPDF.ALTERNATES["prepare"](source, "nested-rgb")
+    with pyropdf.open(data, limits=pyropdf.DocumentLimits(max_page_content_size=1)) as doc:
+        doc.catalog["Unrelated"] = True
+        assert doc.changes(incremental=True).claims == ()
+
+
+@pytest.mark.parametrize("location", ["page", "appearance"])
+@pytest.mark.parametrize("damage", ["bad-filter", "truncated", "format", "descriptor"])
+def test_damaged_program_has_the_exact_claims_and_owner(location: str, damage: str) -> None:
+    a = VERAPDF.ALTERNATES
+    with pyropdf.open(ROOT / "tests/assets/pdfua/pdfua-2-pdfa-4.pdf") as original:
+        data = a["prepare"](original, f"program-{location}-empty")
+    with pyropdf.open(data) as doc:
+        page = doc.pages[0].obj
+        program = a["embedded_program"](page, location)
+        owner = program.xref
+        if damage == "bad-filter":
+            program.write(b"invalid zlib data", filter=None)
+            program["Filter"] = pyropdf.Name("FlateDecode")
+        elif damage == "truncated":
+            program.write(program.read()[:64])
+        else:
+            if location == "page":
+                descriptor, _ = a["nested_font_entry"](page, "nested-simple-font")
+            else:
+                descriptor = page["Annots"][0]["AP"]["N"]["Yes"]["Resources"]["Font"]["F"]["FontDescriptor"]
+            owner = descriptor.xref
+            if damage == "descriptor":
+                descriptor["FontFile2"] = a["stream"](doc, b"fontdata")
+            else:
+                del descriptor["FontFile2"]
+                descriptor["FontFile3"] = program
+                program["Subtype"] = pyropdf.Name("Type1C")
+        page["Rotate"] = 90
+        for incremental in (True, False):
+            changes = doc.changes(incremental=incremental).claims
+            assert {c.claim for c in changes} == {"PDF/A-4", "PDF/UA-2"}
+            for change in changes:
+                assert owner in change.objects
+                assert set(change.objects) <= {owner, program.xref}
+                assert change.reason == "a painted font lost its readable embedded program"
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("nested-unused-font", False),
+        ("nested-empty-show", True),
+        ("appearance-empty", True),
+        ("appearance-select-only", False),
+        ("appearance-invisible", False),
+        ("appearance-graphics-state", True),
+    ],
+)
+def test_program_read_follows_the_text_graphics_state(case: str, *, expected: bool) -> None:
+    a = VERAPDF.ALTERNATES
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as original:
+        data = a["prepare"](original, case)
+    with pyropdf.open(data) as doc:
+        location = "appearance" if case.startswith("appearance") else "page"
+        program = a["embedded_program"](doc.pages[0].obj, location)
+        program.write(b"fontdata")
+        changes = doc.changes(incremental=True).claims
+        assert [c.objects for c in changes] == ([(program.xref,)] if expected else [])
+
+
+def test_reencoding_a_valid_program_and_altering_an_existing_defect() -> None:
+    a = VERAPDF.ALTERNATES
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as original:
+        data = a["prepare"](original, "program-page-empty")
+    with pyropdf.open(data) as doc:
+        program = a["embedded_program"](doc.pages[0].obj, "page")
+        program.write(program.read(), filter=None)
+        assert doc.changes(incremental=True).claims == ()
+        program.write(b"originally bad")
+        already_invalid = doc.to_bytes()
+    with pyropdf.open(already_invalid) as doc:
+        program = a["embedded_program"](doc.pages[0].obj, "page")
+        program.write(b"still bad")
+        doc.catalog["Private"] = True
+        assert doc.changes(incremental=True).claims == ()
+
+
+def test_program_validation_obeys_the_stream_decoding_budget() -> None:
+    a = VERAPDF.ALTERNATES
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as original:
+        data = a["prepare"](original, "program-appearance-empty")
+    with pyropdf.open(data, limits=pyropdf.DocumentLimits(max_decompressed_size=4_500)) as doc:
+        program = a["embedded_program"](doc.pages[0].obj, "appearance")
+        program.write(b"invalid")
+        with pytest.raises(pyropdf.LimitError) as exc:
+            doc.changes(incremental=True)
+        assert exc.value.code == "decompressed_size"
+        doc.history.undo()
+        doc.catalog["Private"] = True
+        assert doc.changes(incremental=True).claims == ()
+
+
+@pytest.mark.parametrize(
+    ("subtype", "slot", "format_", "file"),
+    [
+        ("Type1", "FontFile", None, "usrguide.pdf"),
+        ("Type1", "FontFile3", "Type1C", "bill-hr815.pdf"),
+        ("CIDFontType0", "FontFile3", "CIDFontType0C", "bill-hr815.pdf"),
+        ("CIDFontType0", "FontFile3", "CIDFontType0C", "NotoSansJP-subset.otf"),
+        ("Type1", "FontFile3", "OpenType", "colour-svg-cff.otf"),
+        ("CIDFontType0", "FontFile3", "OpenType", "colour-svg-cff.otf"),
+        ("CIDFontType0", "FontFile3", "OpenType", "NotoSansJP-subset.otf"),
+        ("CIDFontType2", "FontFile3", "OpenType", "NotoSansHebrew-subset.ttf"),
+    ],
+)
+def test_report_opens_embedded_programs_in_their_declared_formats(
+    subtype: str, slot: str, format_: str | None, file: str
+) -> None:
+    if file.endswith(".pdf"):
+        with pyropdf.open(ROOT / "tests/assets/real_world" / file) as doc:
+            embedded = doc.font_program(doc.pages[0].fonts()[0])
+            assert embedded is not None
+            data = embedded.data
+    else:
+        data = (ROOT / "crates/pyropdf-engine/src/fonts/testdata" / file).read_bytes()
+        if format_ == "CIDFontType0C":
+            records = struct.iter_unpack(">4sIII", data[12 : 12 + 16 * int.from_bytes(data[4:6], "big")])
+            _, _, offset, size = next(r for r in records if r[0] == b"CFF ")
+            data = data[offset : offset + size]
+    a = VERAPDF.ALTERNATES
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as original:
+        baseline = a["prepare"](original, "appearance-selected")
+    with pyropdf.open(baseline) as doc:
+        font = doc.pages[0].obj["Annots"][0]["AP"]["N"]["Yes"]["Resources"]["Font"]["F"]
+        desc = font["FontDescriptor"]
+        del desc["FontFile2"]
+        entries = {"Subtype": pyropdf.Name(format_)} if format_ else {}
+        program = a["stream"](doc, data, entries)
+        desc[slot] = program
+        if subtype.startswith("CID"):
+            font["Subtype"] = pyropdf.Name("Type0")
+            font["DescendantFonts"] = [a["indirect"](doc, {"Subtype": pyropdf.Name(subtype), "FontDescriptor": desc})]
+            del font["FontDescriptor"]
+        else:
+            font["Subtype"] = pyropdf.Name(subtype)
+        source = doc.to_bytes()
+        xref = program.xref
+    with pyropdf.open(source) as doc:
+        program = doc.objects[xref]
+        program.write(data, filter=None)
+        assert doc.changes(incremental=True).claims == ()
+        program.write(data[:12])
+        (change,) = doc.changes(incremental=True).claims
+        assert (change.claim, change.objects) == ("PDF/A-2B", (xref,))
+
+
+@pytest.mark.parametrize("indirect_map", [False, True])
+def test_replacing_a_direct_fonts_program_is_attributed_to_the_containing_resource(*, indirect_map: bool) -> None:
+    helpers = VERAPDF.ALTERNATES
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as source:
+        data = helpers["prepare"](source, "nested-simple-font")
+    with pyropdf.open(data) as doc:
+        inner = doc.pages[0].obj["Resources"]["XObject"]["Outer"]["Resources"]["XObject"]["Inner"]
+        font = inner["Resources"]["Font"]["F"]
+        direct = dict(font)
+        direct["FontDescriptor"] = dict(font["FontDescriptor"])
+        entries = {"F": direct}
+        inner["Resources"]["Font"] = helpers["indirect"](doc, entries) if indirect_map else entries
+        baseline = doc.to_bytes()
+    with pyropdf.open(baseline) as doc:
+        inner = doc.pages[0].obj["Resources"]["XObject"]["Outer"]["Resources"]["XObject"]["Inner"]
+        fonts = inner["Resources"]["Font"]
+        fonts["F"]["FontDescriptor"]["FontFile2"] = helpers["stream"](doc, b"broken program")
+        (change,) = doc.changes(incremental=True).claims
+        assert change.objects == (fonts.xref if indirect_map else inner.xref,)
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_page_and_appearance_charge_their_shared_font_once(*, shared: bool) -> None:
+    helpers = VERAPDF.ALTERNATES
+    with pyropdf.open(ROOT / "tests/assets/pdfa/pdfa-2b.pdf") as doc:
+        helpers["prepare_appearance"](doc, "appearance-selected")
+        page = doc.pages[0].obj
+        face = helpers["simple"](doc)
+        if shared:
+            appearance = page["Annots"][0]["AP"]["N"]["Yes"]["Resources"]["Font"]["F"]
+            appearance["FontDescriptor"]["FontFile2"] = face["FontDescriptor"]["FontFile2"]
+        helpers["nest"](doc, b"BT /F 10 Tf ( ) Tj ET", {"Font": {"F": face}})
+        source = doc.to_bytes()
+    # The previously valid program is 6,408 decoded bytes. This budget also
+    # fits page/appearance operators and metadata, and only one such program.
+    with pyropdf.open(source, limits=pyropdf.DocumentLimits(max_total_decompressed_size=10_000)) as doc:
+        program = helpers["embedded_program"](doc.pages[0].obj, "page")
+        program.write(b"invalid")
+        helpers["embedded_program"](doc.pages[0].obj, "appearance").write(b"invalid")
+        if shared:
+            (change,) = doc.changes(incremental=True).claims
+            assert change.objects == (program.xref,)
+        else:
+            with pytest.raises(pyropdf.LimitError) as exc:
+                doc.changes(incremental=True)
+            assert exc.value.code == "total_decompressed_size"

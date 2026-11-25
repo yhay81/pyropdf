@@ -18,6 +18,28 @@ use crate::document::_Document;
 use crate::errors::store_error;
 use crate::history::DEFAULT_HISTORY_LIMIT;
 
+/// Legacy CMS content encryption, after the credential provider has unwrapped
+/// the key. The maximum input is the store's default recipient-envelope bound.
+#[pyfunction]
+#[pyo3(signature = (key, ciphertext, rc2_parameters=None))]
+pub fn decrypt_legacy_cms<'py>(
+    py: Python<'py>,
+    key: &[u8],
+    ciphertext: &[u8],
+    rc2_parameters: Option<(usize, &[u8])>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    crate::errors::boundary(|| {
+        let payload = pyropdf_store::security::decrypt_legacy_cms(
+            key,
+            ciphertext,
+            rc2_parameters,
+            &Budget::default(),
+        )
+        .map_err(|error| store_error(&error))?;
+        Ok(PyBytes::new(py, &payload))
+    })?
+}
+
 fn access_name(access: Access) -> &'static str {
     match access {
         Access::User => "user",
@@ -58,6 +80,32 @@ pub fn security_state(document: &_Document) -> PyResult<State> {
                 Some(handler.description()),
             ),
             None => (encrypted, !encrypted, None, None, None),
+        })
+    })?
+}
+
+/// Verify the MAC over the opened revision, independently of the unlocking
+/// and signature reports. The source bytes stay in the store.
+#[pyfunction]
+pub fn verify_integrity(
+    py: Python<'_>,
+    document: &_Document,
+) -> PyResult<(&'static str, Option<&'static str>, Option<String>)> {
+    crate::errors::boundary(|| {
+        use pyropdf_store::security::integrity::{self, Report};
+        let version = document.current()?;
+        let budget = document.budget();
+        let report = py
+            .detach(|| match version.base().file() {
+                Some(index) => integrity::verify(index, &budget),
+                None => Ok(Report::Absent),
+            })
+            .map_err(|e| store_error(&e))?;
+        Ok(match report {
+            Report::Absent => ("absent", None, None),
+            Report::Locked => ("locked", None, None),
+            Report::Valid(location) => ("valid", Some(location), None),
+            Report::Invalid(reason) => ("invalid", None, Some(reason)),
         })
     })?
 }
@@ -106,6 +154,7 @@ pub fn unlock(
     recipient: Option<Py<PyAny>>,
 ) -> PyResult<&'static str> {
     crate::errors::boundary(|| {
+        crate::history::outside_transaction(document, "unlock")?;
         if password.is_some() == recipient.is_some() {
             return Err(PyTypeError::new_err(
                 "unlock requires one password or recipient credential",
@@ -128,7 +177,14 @@ pub fn unlock(
                 previous.retain_recipient_access(verified);
             }
         } else {
-            document.replace(Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT)));
+            let unlocked = Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT));
+            if document.check_at_open() {
+                py.detach(|| crate::document::check_every_object(&unlocked.current(), &budget))
+                    .map_err(|e| store_error(&e))?;
+            }
+            let _write = py.detach(|| document.history.write_lock());
+            document.document()?;
+            document.replace(unlocked);
         }
         Ok(access_name(access))
     })?
@@ -137,8 +193,8 @@ pub fn unlock(
 /// Returns the version that a save writes and the encryption of a full
 /// save, from `encryption`: `None` decrypts in a full save and keeps the
 /// encryption in an incremental one; `"keep"` keeps it; a tuple of the
-/// user and owner passwords, the permission flags, whether AES-256, and 64
-/// random bytes encrypts anew, in a full save only.
+/// user and owner passwords, the permission flags, the AES method, 64 random
+/// bytes and the document MAC flag encrypts anew, in a full save only.
 pub(crate) fn prepare(
     py: Python<'_>,
     document: &_Document,
@@ -162,12 +218,11 @@ pub(crate) fn prepare(
                 ));
             }
             if value.len()? == 4 {
-                let (seed, id, (encrypt_metadata, aes256), wrapped): (
-                    [u8; 20],
-                    [u8; 16],
-                    (bool, bool),
-                    Bound<'_, PyAny>,
-                ) = value.extract()?;
+                type RecipientRequest<'py> =
+                    ([u8; 20], [u8; 16], (bool, String, bool), Bound<'py, PyAny>);
+                let (seed, id, (encrypt_metadata, method, integrity), wrapped): RecipientRequest<
+                    '_,
+                > = value.extract()?;
                 let budget = document.budget();
                 let mut envelopes = BudgetVec::new(&budget);
                 for item in wrapped.try_iter()? {
@@ -187,29 +242,43 @@ pub(crate) fn prepare(
                         .try_push(der.into())
                         .map_err(|e| crate::errors::limit_error(&e))?;
                 }
-                return Ok((
-                    saved(py, document, false)?,
-                    Some(Encryption::Recipient(RecipientEncryption {
-                        seed,
-                        id,
-                        encrypt_metadata,
-                        aes256,
-                        envelopes: envelopes.into_vec(),
-                    })),
-                ));
+                let request = RecipientEncryption {
+                    seed,
+                    id,
+                    encrypt_metadata,
+                    method: aes_method(&method)?,
+                    envelopes: envelopes.into_vec(),
+                };
+                let encryption = if integrity {
+                    Encryption::RecipientWithMac(request)
+                } else {
+                    Encryption::Recipient(request)
+                };
+                return Ok((saved(py, document, false)?, Some(encryption)));
             }
-            let (user, owner, permissions, aes256, random): (Vec<u8>, Vec<u8>, u32, bool, Vec<u8>) =
-                value.extract()?;
+            let (user, owner, permissions, method, random, integrity): (
+                Vec<u8>,
+                Vec<u8>,
+                u32,
+                String,
+                Vec<u8>,
+                bool,
+            ) = value.extract()?;
             let random: [u8; 64] = random
                 .try_into()
                 .map_err(|_| PyValueError::new_err("encryption needs 64 random bytes"))?;
-            let encryption = Encryption::Password(pyropdf_store::security::PasswordEncryption {
+            let request = pyropdf_store::security::PasswordEncryption {
                 user,
                 owner,
                 permissions,
-                aes256,
+                method: aes_method(&method)?,
                 random,
-            });
+            };
+            let encryption = if integrity {
+                Encryption::PasswordWithMac(request)
+            } else {
+                Encryption::Password(request)
+            };
             return Ok((saved(py, document, false)?, Some(encryption)));
         }
         Some(_) => return Err(PyTypeError::new_err("encryption must be 'keep' or a tuple")),
@@ -241,4 +310,14 @@ fn saved(py: Python<'_>, document: &_Document, decrypt: bool) -> PyResult<Arc<Ve
         }
         Ok(transaction.snapshot())
     })
+}
+
+fn aes_method(name: &str) -> PyResult<pyropdf_store::security::Method> {
+    use pyropdf_store::security::Method;
+    match name {
+        "aes-128" => Ok(Method::Aes128),
+        "aes-256" => Ok(Method::Aes256),
+        "aes-gcm" => Ok(Method::AesGcm),
+        _ => Err(PyValueError::new_err("unknown encryption method")),
+    }
 }

@@ -169,6 +169,7 @@ impl<'b> Tree<'_, 'b> {
             Some(number) if seeds.is_some() => Some(walk.marked(reads, number)?),
             _ => None,
         };
+        let mut parent_tree_full = marked.is_none();
         let mut parent_leaves = match root.get("ParentTree") {
             Some(tree) => leaves(reads, at, "ParentTree", tree, "Nums", marked.as_ref())?,
             None => BudgetVec::new(budget),
@@ -181,11 +182,15 @@ impl<'b> Tree<'_, 'b> {
             ),
             None => false,
         };
+        if single {
+            parent_tree_full = true;
+        }
         if marked.is_some()
             && let Some(tree) = root.get("ParentTree")
             && !holds(&parent_leaves, &dropped, budget)?
         {
             parent_leaves = leaves(reads, at, "ParentTree", tree, "Nums", None)?;
+            parent_tree_full = true;
         }
         let id_leaves = match root.get("IDTree") {
             Some(tree) => leaves(reads, at, "IDTree", tree, "Names", marked.as_ref())?,
@@ -217,8 +222,29 @@ impl<'b> Tree<'_, 'b> {
             })?;
         }
         // A parent tree that would keep no pair leaves the root, as an
-        // empty `/Nums` is no valid number tree.
-        if single && !goes.is_empty() && !goes.contains(&false) {
+        // empty `/Nums` or `/Kids []` is no valid number tree.
+        let remove_parent_tree = if !goes.is_empty() && !goes.contains(&false) {
+            if parent_tree_full {
+                true
+            } else if let Some(tree) = root.get("ParentTree") {
+                let all_leaves = leaves(reads, at, "ParentTree", tree, "Nums", None)?;
+                let mut all_goes = BudgetVec::new(budget);
+                for leaf in all_leaves.iter() {
+                    walk.goes(reads, leaf, &mut all_goes, |reads, walk, key, value| {
+                        if matches!(key, Value::Integer(key) if keys.is_dropped(*key)) {
+                            return Ok(true);
+                        }
+                        walk.names_only_removed(reads, value)
+                    })?;
+                }
+                !all_goes.contains(&false)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if remove_parent_tree {
             at.apply(
                 reads,
                 walk.index,

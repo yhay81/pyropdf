@@ -58,29 +58,34 @@ pub fn used_glyphs(
 /// the glyphs of `keep` with the glyphs that they draw, and the counts of
 /// its glyphs and of those kept; `None` when the program is not one that
 /// the subsetter reads.
-#[pyfunction]
+#[pyfunction(signature = (data, format, keep, lengths=None, document=None))]
 pub fn subset_font_program<'py>(
     py: Python<'py>,
     data: &[u8],
     format: &str,
     keep: Vec<u32>,
+    lengths: Option<(usize, usize)>,
+    document: Option<&_Document>,
 ) -> PyResult<Option<(Bound<'py, PyBytes>, usize, usize)>> {
     crate::errors::boundary(|| {
-        let format = match format {
-            "sfnt" => Format::Sfnt,
-            "cff" => Format::Cff,
+        let subset = match format {
+            "sfnt" | "cff" | "type1" if keep.contains(&u32::MAX) => None,
+            "sfnt" => py.detach(|| fonts::subset(data, Format::Sfnt, &keep)),
+            "cff" => py.detach(|| fonts::subset(data, Format::Cff, &keep)),
+            "type1" => {
+                let Some((clear, encrypted)) = lengths else {
+                    return Ok(None);
+                };
+                let budget = document.map_or_else(|| Budget::default().share(), _Document::budget);
+                py.detach(|| fonts::type1::subset(data, clear, encrypted, &keep, &budget))
+                    .map_err(|e| limit_error(&e))?
+            }
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "unknown font program format {format:?}"
                 )));
             }
         };
-        // An unknown glyph use means the program must stay whole, even when a
-        // caller invokes this internal helper directly instead of subset_fonts.
-        if keep.contains(&u32::MAX) {
-            return Ok(None);
-        }
-        let subset = py.detach(|| fonts::subset(data, format, &keep));
         Ok(subset.map(|subset| (PyBytes::new(py, &subset.data), subset.glyphs, subset.kept)))
     })?
 }
@@ -669,7 +674,12 @@ impl _Font {
                 }
                 Kind::Embedded(face) => {
                     let measure = Measure::new(face);
-                    let character = char::from_u32(codepoint).unwrap_or('\u{FFFD}');
+                    let Some(character) = char::from_u32(codepoint) else {
+                        return Err(PdfError::new_err(format!(
+                            "{} does not contain all glyphs of the text: no glyph for U+{codepoint:04X}",
+                            face.full_name
+                        )));
+                    };
                     let glyph = measure
                         .glyph(character)
                         .ok_or_else(|| embedded_missing(face, character))?;
@@ -1055,7 +1065,8 @@ impl _Font {
                         for line in text.lines() {
                             shaped(face, line, &budget)?;
                         }
-                        standard::layout(
+                        let mut shape_failure: Option<PyErr> = None;
+                        let result = standard::layout(
                             text,
                             (width, height),
                             size,
@@ -1063,10 +1074,22 @@ impl _Font {
                             justify,
                             &budget,
                             |line| {
-                                shaped(face, line, &budget)
-                                    .map_or(f64::INFINITY, |glyphs| advance(&glyphs, size, em))
+                                if shape_failure.is_some() {
+                                    return f64::INFINITY;
+                                }
+                                match shaped(face, line, &budget) {
+                                    Ok(glyphs) => advance(&glyphs, size, em),
+                                    Err(error) => {
+                                        shape_failure = Some(error);
+                                        f64::INFINITY
+                                    }
+                                }
                             },
-                        )
+                        );
+                        if let Some(error) = shape_failure {
+                            return Err(error);
+                        }
+                        result
                     }
                 }
                 .map_err(|error| layout_error(&error, max_lines))?;
@@ -1132,7 +1155,13 @@ impl _Font {
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        crate::errors::boundary(|| format!("_Font({:?})", self.full_name()))
+        crate::errors::boundary(|| {
+            let name = match &self.kind {
+                Kind::Standard(font) => font.pdf_base_name(),
+                Kind::Embedded(face) => &face.full_name,
+            };
+            format!("_Font({name:?})")
+        })
     }
 }
 

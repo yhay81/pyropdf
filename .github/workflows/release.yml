@@ -135,10 +135,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Read native release arguments
+      - name: Prepare the native release build
         id: native
         shell: bash
         run: |
+          # The host replaces the wheel after the manylinux container writes it.
+          mkdir -p dist
           args=$(cat tools/native-wheel-args.txt)
           echo "args=$args" >> "$GITHUB_OUTPUT"
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
@@ -151,6 +153,12 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.9"
+          enable-cache: false
+      - name: Recompress the native abi3 wheel
+        run: uv run --locked --only-group wheel --python 3.14 python tools/repack_wheel.py dist
       - name: Check compressed abi3 wheel size and licenses
         run: python tools/wheel_size.py dist --abi abi3
       - name: Smoke-test installed wheel
@@ -451,6 +459,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          pattern: "{*wheels-*,sdist,release-capabilities,release-comparison,release-sbom}"
           path: release-assets
           merge-multiple: true
       # With assets, gh creates a draft, uploads them, and then publishes it,

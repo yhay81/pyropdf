@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import pikepdf
 import pytest
-from corpus import ASSETS, NAMES
+from corpus import NAMES, SOURCES
 from test_preservation import EDITS
 
 import pyropdf
@@ -30,6 +30,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 QPDF = shutil.which("qpdf")
+
+# Group by source first so the three readers can reuse their original findings.
+# Within each source pytest prepares one saved document for all three checks.
+pytestmark = [
+    pytest.mark.parametrize("source", SOURCES, ids=NAMES, scope="session"),
+    pytest.mark.parametrize("edit", sorted(EDITS), scope="module"),
+    pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"], scope="module"),
+]
 
 #: qpdf 11 reads every object of an object stream into its xref table, so an
 #: object that a later revision frees gets an entry of no type, which
@@ -59,35 +67,55 @@ def qpdf_findings(path: Path) -> set[str]:
     return findings
 
 
-@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
-@pytest.mark.parametrize("edit", sorted(EDITS))
-@pytest.mark.parametrize("name", NAMES)
-def test_an_edit_and_a_save_add_no_structural_defect(name: str, edit: str, *, incremental: bool) -> None:
-    source = (ASSETS / name).read_bytes()
-    doc = EDITS[edit].open(source)
-    EDITS[edit].apply(doc)
-    assert defects(doc.to_bytes(incremental=incremental)) - defects(source) == set()
+@pytest.fixture(scope="module")
+def saved_document(source: Path, edit: str, *, incremental: bool) -> tuple[bytes, int]:
+    """Share the saved bytes and expected page count for just this edit and mode."""
+    with EDITS[edit].open(source) as doc:
+        EDITS[edit].apply(doc)
+        return doc.to_bytes(incremental=incremental), len(doc.pages)
 
 
-@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
-@pytest.mark.parametrize("edit", sorted(EDITS))
-@pytest.mark.parametrize("name", NAMES)
-def test_an_edit_and_a_save_add_no_qpdf_finding(name: str, edit: str, *, incremental: bool, tmp_path: Path) -> None:
-    if QPDF is None:
-        if os.environ.get("PYROPDF_REQUIRE_QPDF") == "1":
-            pytest.fail("PYROPDF_REQUIRE_QPDF=1, but qpdf is not on PATH")
-        pytest.skip("qpdf is not on PATH")
-    doc = EDITS[edit].open(ASSETS / name)
-    EDITS[edit].apply(doc)
+@pytest.fixture(scope="module")
+def original_defects(source: Path) -> set[tuple[int | None, str, str, str]]:
+    return defects(source.read_bytes())
+
+
+@pytest.fixture(scope="module")
+def original_qpdf_findings(source: Path) -> set[str] | None:
+    return qpdf_findings(source) if QPDF is not None else None
+
+
+@pytest.mark.corpus_matrix
+def test_an_edit_and_a_save_add_no_structural_defect(
+    saved_document: tuple[bytes, int],
+    original_defects: set[tuple[int | None, str, str, str]],
+) -> None:
+    data, _ = saved_document
+    assert defects(data) - original_defects == set()
+
+
+@pytest.mark.skipif(QPDF is None and os.environ.get("PYROPDF_REQUIRE_QPDF") != "1", reason="qpdf is not on PATH")
+@pytest.mark.corpus_matrix
+def test_an_edit_and_a_save_add_no_qpdf_finding(
+    saved_document: tuple[bytes, int],
+    original_qpdf_findings: set[str] | None,
+    tmp_path: Path,
+) -> None:
+    assert original_qpdf_findings is not None, "PYROPDF_REQUIRE_QPDF=1, but qpdf is not on PATH"
+    data, _ = saved_document
     saved = tmp_path / "saved.pdf"
-    saved.write_bytes(doc.to_bytes(incremental=incremental))
+    saved.write_bytes(data)
+    assert saved_qpdf_findings(saved) - original_qpdf_findings == set()
+
+
+def saved_qpdf_findings(saved: Path) -> set[str]:
+    """Ignore qpdf 11's stale object-stream entries only when the saved document actually freed them."""
     live = set(pyropdf.open(saved).objects)
-    findings = {
+    return {
         finding
         for finding in qpdf_findings(saved)
         if not ((match := _FREED_IN_STREAM.fullmatch(finding)) and int(match[1]) not in live)
     }
-    assert findings - qpdf_findings(ASSETS / name) == set()
 
 
 def pikepdf_problems(source: Path | io.BytesIO) -> tuple[int, set[str]]:
@@ -98,12 +126,16 @@ def pikepdf_problems(source: Path | io.BytesIO) -> tuple[int, set[str]]:
         return len(pdf.pages), {problem.rsplit(": ", 1)[-1] for problem in pdf.check_pdf_syntax()}
 
 
-@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
-@pytest.mark.parametrize("edit", sorted(EDITS))
-@pytest.mark.parametrize("name", NAMES)
-def test_pikepdf_reads_every_saved_document(name: str, edit: str, *, incremental: bool) -> None:
-    doc = EDITS[edit].open(ASSETS / name)
-    EDITS[edit].apply(doc)
-    pages, problems = pikepdf_problems(io.BytesIO(doc.to_bytes(incremental=incremental)))
-    assert pages == len(doc.pages)
-    assert problems - pikepdf_problems(ASSETS / name)[1] == set()
+@pytest.fixture(scope="module")
+def original_pikepdf_problems(source: Path) -> set[str]:
+    return pikepdf_problems(source)[1]
+
+
+@pytest.mark.corpus_matrix
+def test_pikepdf_reads_every_saved_document(
+    saved_document: tuple[bytes, int], original_pikepdf_problems: set[str]
+) -> None:
+    data, expected_pages = saved_document
+    pages, problems = pikepdf_problems(io.BytesIO(data))
+    assert pages == expected_pages
+    assert problems - original_pikepdf_problems == set()

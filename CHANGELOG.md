@@ -1,8 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-11-24)
 
-### Changed
+A minor release expanding ISO 32000-2 coverage across structure trees,
+accessibility, encryption, signatures, interactive features, prepress, and
+WebAssembly (Pyodide and Cloudflare Python Workers), alongside geometry and
+record API cleanups.
+
+### Breaking
 
 - On `Rect` and `IRect`, use `top_left`, `top_right`, `bottom_left` and
   `bottom_right` for the old `tl`, `tr`, `bl` and `br` corners, and
@@ -21,6 +26,103 @@
   operand, construct a replacement operation and assign the resulting sequence
   to `page.operations`. Directly constructed `Probe` and `SanitizeReport`
   records also own read-only snapshots of their mappings (#850).
+- A retained `Attachment` raises `StaleObjectError` after removal or
+  replacement, including when an inline entry moves to a different slot.
+  Use `doc.attachments[name]` to retrieve the current file. Saved histories
+  distinguish property edits from replacement. With a format-one history,
+  look up inline entries again after restoring a rewritten owner (#942, #1107).
+
+### Added
+
+- **Structure trees and accessible archives:** `Document.structure` exposes the
+  structure tree for reading and accessibility editing (#822, #823), with
+  logical tagged reading order and Annex L child validation (#995, #1021,
+  #1051), structure namespaces (#1120), and complete PDF/A-4 + PDF/UA-2 and
+  PDF/A-2a + PDF/UA-1 archival workflows (#846, #1084).
+- **Revisions, catalog, presentations, threads, and collections:**
+  `Document.revisions` exposes incremental revisions as documents with
+  per-revision object changes (#818, #819). Added catalog viewer preferences,
+  page mode/layout, language, and mark info (#820, #821); page transitions,
+  durations, navigation steps, transition actions, and thumbnails (#824, #825);
+  article threads, beads, and thread actions (#826, #827); and portable
+  collections, collection items, navigators, and named pages (#828, #830).
+- **Actions, triggers, FDF/XFDF, and rich form fields:** interactive actions,
+  document scripts, and additional-action triggers (#831, #832); FDF and XFDF
+  form data export, parsing, and import (#833, #834); rich text fields with
+  bounded XHTML scopes, password appearance masking, embedded font shaping in
+  rich appearances, and XFA packet preservation (#1028, #1038, #1052).
+- **Signatures and encryption:** DocMDP/FieldMDP permissions with pre-save
+  permission reports (#924), DSS, document timestamps, legal attestations, and
+  PDF 2.0 encrypted wrappers (#835, #836, #935); SHA-3, SHAKE256, and
+  elliptic-curve signatures (#978); signature field seeds and build properties
+  (#1008); PAdES declaration and validation in pre-2.0 PDFs (#1089); PDF 2.0
+  AES-GCM authenticated encryption (#972); ISO/TS 32004 document MACs (#979);
+  public-key recipient encryption with RSA-OAEP, ECDH, and legacy RC2/RC4
+  envelopes (#938, #1022, #1053); and per-stream crypt filter selection (#994).
+- **Viewports, measurements, multimedia, Web Capture, prepress, and
+  interchange:** viewports, rectilinear and geospatial measurements, and
+  document requirements (#837, #838, #956, #957, #970); multimedia/RichMedia
+  annotations, 3D scenes, STEP AP242 and glTF assets (#863, #918, #960, #997,
+  #1049); Web Capture sets and URL/source ID indexes (#950); prepress plate
+  groups, output-device resources, print production data, and single-file print
+  jobs (#910, #958, #1003, #1130, #1131); developer extensions, associated and
+  related files, page-piece dictionaries, document parts, resource-level XMP
+  packets, and alternate images/reference forms (#929, #941, #951, #1120).
+- **Rendering, drawing, and fonts:** `Page.pixmap` and `Document.render`
+  pixel-bound scaling (#815), redrawing extracted text runs with their captured
+  font graphs (#952), page transparency/mask/compositing groups (#1026),
+  embedded CMap authoring and Type 1 font subsetting (#1031), lossless stream
+  chains and image encoders (#984), and base PDF header version selection on
+  new documents (#1029).
+- **Pyodide and Cloudflare Python Workers:** builds, smoke-tests, and publishes
+  the `pyemscripten_2026_0_wasm32` wheel verified in Pyodide and local
+  Cloudflare `workerd` (#880, #922).
+
+### Changed
+
+- Native `abi3` release wheels are size-optimized and recompressed with Zopfli
+  to stay within the 9 MiB wheel budget (#923, #1087, #1110).
+- Releases publish reproducible, offline-verifiable capability declarations
+  (`capabilities.zip`, #1040) and automated release comparisons against PyMuPDF
+  (#940).
+- Pre-save change and profile reports trace nested resources, structure
+  associations, PDF/UA-1 language loss, PDF/UA-2 signature widgets, PDF/A-4
+  rules, and output intent device colours (#869, #933, #959, #973, #1039,
+  #1097).
+- Fallback font management is separated from font operations (#805).
+
+### Fixed
+
+- **Store, linearization, and security:** fixed linearized save cycle hang,
+  `ParentTree` and `ParentTreeNextKey` bugs, stale-generation resurrection,
+  store budget leaks, hybrid cross-reference writing, indirect crypt filter
+  resolution, and legacy owner-role rendering (#983, #1044, #1065, #1124,
+  #1129, #1133).
+- **Engine, images, fonts, and layout:** fixed GIF decoding panic, SFNT/CFF
+  overflows, PNG DPI clamping, pixmap budget safety, multi-line dehyphenation
+  word loss, CFF Type 2 glyph widths and PDF/A-1 `CIDSet` on font subsets,
+  damaged embedded font reporting, and Japanese reading order (#799, #811,
+  #840, #1046, #1128).
+- **Structure, annotations, forms, and Python bindings:** fixed unintended
+  structure grafting, page-copy panic, shared field owner and calculation-order
+  retargeting on page copy, unrotation `/MK/R` and measurement coordinate
+  stability, tagged content preservation when flattening, version-legal
+  annotation and form-font entries, interactive annotation and redaction mark
+  appearances, and PyO3/Python concurrency, cycle, signing, canvas, and
+  `LimitError` bugs (#797, #798, #812, #813, #829, #925, #1037, #1105, #1106,
+  #1111, #1127, #1134).
+
+### Documentation
+
+- Redesigned the documentation site with a 30-second overview video, shared
+  external stylesheet, grouped API reference navigation with shortened member
+  headings, localized EN/JA 404 pages, synchronized Japanese guides, updated
+  benchmark ratios, and clause-by-clause ISO 32000-2 specification coverage
+  (#807, #816, #872).
+
+No release claims safety for untrusted input before hayro's bounded
+construction (I2, [#15](https://github.com/yhay81/pyropdf/issues/15)) is
+released.
 
 ## 0.3.1 (2026-11-13)
 

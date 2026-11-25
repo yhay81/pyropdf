@@ -12,6 +12,7 @@ from pyropdf import _core
 from pyropdf._collections import _has_named_pages, _prune_named_pages_for_removed_pages
 from pyropdf._errors import LimitError
 from pyropdf._images import _J2K_SIGNATURE, _JP2_SIGNATURE, _PNG_SIGNATURE, add_image
+from pyropdf._interchange import _has_dparts, _prune_dparts_for_removed_pages
 from pyropdf._page import Page
 from pyropdf._page_labels import _label, _read_page_labels
 from pyropdf._threads import (
@@ -19,6 +20,7 @@ from pyropdf._threads import (
     _prune_threads_for_removed_pages,
     _strip_copied_page_beads,
 )
+from pyropdf._web_capture import _guard_capture_pages, _has_capture_indexes
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PillowImage
@@ -179,13 +181,19 @@ class Pages(Sequence[Page]):
         kept = [obj for at, obj in enumerate(objects) if at not in removed]
         has_threads = _has_catalog_threads(self._document)
         has_named = _has_named_pages(self._document)
-        if has_threads or has_named:
-            removed_pairs = {objects[at] for at in removed}
+        removed_pairs = {objects[at] for at in removed}
+        has_capture = _has_capture_indexes(self._document)
+        has_dparts = _has_dparts(self._document)
+        if has_threads or has_named or has_capture or has_dparts:
             with self._document.transaction("pages"):
+                if has_capture:
+                    _guard_capture_pages(self._document, removed_pairs)
                 if has_threads:
                     _prune_threads_for_removed_pages(self._document, removed_pairs)
                 if has_named:
                     _prune_named_pages_for_removed_pages(self._document, removed_pairs)
+                if has_dparts:
+                    _prune_dparts_for_removed_pages(self._document, objects, removed_pairs)
                 _core.set_pages(doc, kept)
             return
         _core.set_pages(doc, kept)
@@ -282,22 +290,35 @@ class Pages(Sequence[Page]):
         if source is None:
             return
         at = max(0, index + count) if index < 0 else min(index, count)
+        has_capture = _has_capture_indexes(source)
         if source is not self._document:
             from pyropdf._media import finish_media_import  # noqa: PLC0415
 
-            with self._document.transaction("pages"):
-                media = _core.import_pages(doc, source._core(), chosen, at)  # noqa: SLF001
-                if media is not None:
-                    major, minor, first, prc = media
-                    finish_media_import(self._document, major, minor, first, contains_prc=prc)
+            if has_capture:
+                _guard_capture_pages(source, set(chosen))
+            operation = _core.begin_operation(doc, "pages")
+            try:
+                imported = _core.import_pages_with_source(doc, source._core(), chosen, at)  # noqa: SLF001
+                if imported is not None:
+                    media, core = imported
+                    with source._import_source(core) as captured:  # noqa: SLF001
+                        finish_media_import(self._document, captured, range(at, at + len(chosen)), media)
+            except BaseException:
+                _core.abort_canvas(doc, operation)
+                raise
+            _core.end_transaction(doc, True)  # noqa: FBT003 - commit the complete import.
             return
         order = [*objects[:at], *chosen, *objects[at:]]
         copies = [False] * at + [True] * len(chosen) + [False] * (count - at)
-        if _has_catalog_threads(self._document):
+        has_threads = _has_catalog_threads(self._document)
+        if has_threads or has_capture:
             with self._document.transaction("pages"):
+                if has_capture:
+                    _guard_capture_pages(source, set(chosen))
                 _core.set_pages(doc, order, copies)
-                after = _core.page_objects(doc)
-                _strip_copied_page_beads(self._document, after[at : at + len(chosen)])
+                if has_threads:
+                    after = _core.page_objects(doc)
+                    _strip_copied_page_beads(self._document, after[at : at + len(chosen)])
             return
         _core.set_pages(doc, order, copies)
 
@@ -322,14 +343,21 @@ class Pages(Sequence[Page]):
             seen.add(at)
         order = [objects[at] for at in chosen]
         removed_pairs = {obj for at, obj in enumerate(objects) if at not in seen}
+        has_capture = bool(removed_pairs or any(copies)) and _has_capture_indexes(self._document)
         has_threads = _has_catalog_threads(self._document)
         has_named = bool(removed_pairs) and _has_named_pages(self._document)
-        if (has_threads and (removed_pairs or any(copies))) or has_named:
+        has_dparts = bool(removed_pairs) and _has_dparts(self._document)
+        if (has_threads and (removed_pairs or any(copies))) or has_named or has_capture or has_dparts:
             with self._document.transaction("pages"):
+                if has_capture:
+                    affected = removed_pairs.union(obj for obj, copied in zip(order, copies, strict=True) if copied)
+                    _guard_capture_pages(self._document, affected)
                 if removed_pairs and has_threads:
                     _prune_threads_for_removed_pages(self._document, removed_pairs)
                 if has_named:
                     _prune_named_pages_for_removed_pages(self._document, removed_pairs)
+                if has_dparts:
+                    _prune_dparts_for_removed_pages(self._document, objects, removed_pairs)
                 _core.set_pages(doc, order, copies)
                 if has_threads and any(copies):
                     after = _core.page_objects(doc)

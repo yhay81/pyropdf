@@ -660,14 +660,14 @@ def test_document_requirements_lifecycle_versions_and_preservation(tmp_path: Pat
         doc17.history.redo()
         assert doc17.requirements == (js_req,)
 
-    # All 26 standard RequirementType values, single-dict /RH read support,
+    # All standard and published-extension RequirementType values, single-dict /RH read support,
     # indirect object retirement, glTF default /V /2.0, and incremental save.
     all_reqs = tuple(
         DocumentRequirement(
             req_type,
             handlers=(RequirementHandler("NoOp"),) if index % 2 == 0 else (),
             penalty=(index * 3) % 101,
-            version="2.0" if req_type is RequirementType.GLTF else None,
+            version={RequirementType.GLTF: "2.0", RequirementType.STEP: "2020.0"}.get(req_type),
         )
         for index, req_type in enumerate(RequirementType)
     )

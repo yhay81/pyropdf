@@ -55,6 +55,8 @@ pub(super) enum TextFont {
     /// An embedded face's Type0 font that the document has, named
     /// [`FACE_RESOURCE`].
     Embedded(Reference),
+    /// A line can select several Standard 14 faces in rich text.
+    Standards(u16),
 }
 
 /// Returns the `/DA` of a free text: its last `Tf` and colour operator;
@@ -90,7 +92,7 @@ pub fn default_appearance(reader: &Reader<'_>, dict: &Dict) -> Result<DefaultApp
 
 /// Returns the Standard 14 font that `name`, a PostScript name, selects
 /// and the resource name that `/DA` strings give it.
-fn resource(name: &str) -> Option<(Base14Font, FontResource)> {
+pub(super) fn resource(name: &str) -> Option<(Base14Font, FontResource)> {
     let (abbreviation, postscript) = DA_FONTS.iter().find(|(_, font)| *font == name)?;
     Some((font(postscript)?, (abbreviation, postscript)))
 }
@@ -302,7 +304,7 @@ fn face_text(
 }
 
 /// Maps a refusal of text operators to the store's error.
-fn text_error(error: LayoutError) -> Error {
+pub(super) fn text_error(error: LayoutError) -> Error {
     match error {
         LayoutError::Limit(refusal) => refusal.into(),
         _ => Error::malformed("an annotation's text has unusable geometry"),

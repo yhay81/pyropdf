@@ -1,0 +1,146 @@
+{
+  "run": "https://github.com/yhay81/pyropdf/actions/runs/44994564240",
+  "base": "07569871eb9cb0f82809aa06db71b8202fda3c50",
+  "merge": "66977363e21d158b37fdc4bc308564aa5f9462dd",
+  "targets": {
+    "aarch64-apple-darwin": {
+      "clean": {
+        "name": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "members": 88,
+        "size": 8048888,
+        "sha256": "aeaba41f34f0b0498d3f9dedd935d6fdda520f64dacea150270b9e25f93e1249",
+        "normalized_sha256": "df7cc54e194fa7adbb0ca5c2b350596d615df82157a0ef3755487376c32304eb",
+        "native_sha256": "3b39e6ead092d09b63c4da01d613af7d3210737f4460604b655ae54c0f2c7a23"
+      },
+      "paired": {
+        "name": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "members": 88,
+        "size": 8048892,
+        "sha256": "c65f34b6ca48e9f7ed6b0c34c1138098a81801aacecb76f44e626c1864262b24",
+        "normalized_sha256": "df7cc54e194fa7adbb0ca5c2b350596d615df82157a0ef3755487376c32304eb",
+        "native_sha256": "3b39e6ead092d09b63c4da01d613af7d3210737f4460604b655ae54c0f2c7a23"
+      },
+      "changed_members": [
+        "pyropdf-0.3.1.dist-info/RECORD",
+        "pyropdf-0.3.1.dist-info/sboms/pyropdf-python.cyclonedx.json"
+      ]
+    },
+    "aarch64-unknown-linux-gnu": {
+      "clean": {
+        "name": "pyropdf-0.3.1-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+        "members": 88,
+        "size": 8501579,
+        "sha256": "dcc04b1c1aa5adb07dbf557c817c6de72994b5e0b399f24ac9a3e9933961b1bd",
+        "normalized_sha256": "d3f27dbac370f93933e0dbef97aea42a75caf842320df4f4a5c3e6e556b36cb3",
+        "native_sha256": "15a3689affd0563df4091290a570d74061f1cd1b8b8dbd10bb3b75e8ba56cee7"
+      },
+      "paired": {
+        "name": "pyropdf-0.3.1-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+        "members": 88,
+        "size": 8501579,
+        "sha256": "a9fd08dece64b81899d5a0cb708db4a9e5ad5ed5efe36dc86247586eee2e14de",
+        "normalized_sha256": "d3f27dbac370f93933e0dbef97aea42a75caf842320df4f4a5c3e6e556b36cb3",
+        "native_sha256": "15a3689affd0563df4091290a570d74061f1cd1b8b8dbd10bb3b75e8ba56cee7"
+      },
+      "changed_members": [
+        "pyropdf-0.3.1.dist-info/RECORD",
+        "pyropdf-0.3.1.dist-info/sboms/pyropdf-python.cyclonedx.json"
+      ]
+    },
+    "x86_64-apple-darwin": {
+      "clean": {
+        "name": "pyropdf-0.3.1-cp311-abi3-macosx_10_12_x86_64.whl",
+        "members": 88,
+        "size": 8987963,
+        "sha256": "b4b1b6ed0286ddd0176c071859068865c0636d7840ad48feb6e391f783417daa",
+        "normalized_sha256": "ef3c3f9c485298b6a4a6ec75c38d01ac93aae3600251afe3d9e64404ed79083a",
+        "native_sha256": "71fab13a516e55d5ae53f8d920f3ce11ba2d2189db0e693fec8e953e7dd60385"
+      },
+      "paired": {
+        "name": "pyropdf-0.3.1-cp311-abi3-macosx_10_12_x86_64.whl",
+        "members": 88,
+        "size": 8987965,
+        "sha256": "cf17104e1aa4d02cb501d7f3967fcfaba80fd74ba07644d63af308bf8eab3810",
+        "normalized_sha256": "ef3c3f9c485298b6a4a6ec75c38d01ac93aae3600251afe3d9e64404ed79083a",
+        "native_sha256": "71fab13a516e55d5ae53f8d920f3ce11ba2d2189db0e693fec8e953e7dd60385"
+      },
+      "changed_members": [
+        "pyropdf-0.3.1.dist-info/RECORD",
+        "pyropdf-0.3.1.dist-info/sboms/pyropdf-python.cyclonedx.json"
+      ]
+    },
+    "x86_64-pc-windows-msvc": {
+      "clean": {
+        "name": "pyropdf-0.3.1-cp311-abi3-win_amd64.whl",
+        "members": 88,
+        "size": 9372416,
+        "sha256": "9481b518a541213496a2e6bf01a0ec46be12eede6a25e65256a344ea671d989e",
+        "normalized_sha256": "ca1b014d223d42182607be3cc1db27e6e4a2ed77fd07e503cb375e03b88123ac",
+        "native_sha256": "9ec27e412fdb81c75e956d41c16840456acb851be65906413bde4d173cfbf9c8"
+      },
+      "paired": {
+        "name": "pyropdf-0.3.1-cp311-abi3-win_amd64.whl",
+        "members": 88,
+        "size": 9372453,
+        "sha256": "6aae20962a9fd1690f65a0134936c2787e2bcd6d7a397979773a329f55254c75",
+        "normalized_sha256": "9b59e08cfcfd5aace7622141d15ac90c337dbed5388d39cf192662c639865be7",
+        "native_sha256": "77ee2390da7521e5aae73e87c3597b122f1936bfb745376641d8d03af02725d4"
+      },
+      "changed_members": [
+        "pyropdf-0.3.1.dist-info/RECORD",
+        "pyropdf-0.3.1.dist-info/sboms/pyropdf-python.cyclonedx.json",
+        "pyropdf/_core.pyd"
+      ],
+      "linker_identifiers": {
+        "base": {
+          "size": 23255040,
+          "timestamp": 1795330088,
+          "timestamp_offsets": [
+            248,
+            20645332,
+            20645360,
+            20645388
+          ],
+          "pdb_guid": "fef3e573-7d63-4996-b420-f7e8ca4f1426",
+          "pdb_guid_offset": 20645688,
+          "remaining_image_sha256": "250eabb08ca7e7f0a6e030aa45a4b94ac51356a1b093a0a551b838bd4b5c21b5"
+        },
+        "head": {
+          "size": 23255040,
+          "timestamp": 1795330402,
+          "timestamp_offsets": [
+            248,
+            20645332,
+            20645360,
+            20645388
+          ],
+          "pdb_guid": "1d657791-8bc5-4455-941d-b78291604069",
+          "pdb_guid_offset": 20645688,
+          "remaining_image_sha256": "250eabb08ca7e7f0a6e030aa45a4b94ac51356a1b093a0a551b838bd4b5c21b5"
+        }
+      }
+    },
+    "x86_64-unknown-linux-gnu": {
+      "clean": {
+        "name": "pyropdf-0.3.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "members": 88,
+        "size": 9242905,
+        "sha256": "57abf656526554e3a2ba94c682f871cc4eb6f9c2c2015fa5f97f45648751285d",
+        "normalized_sha256": "23a69a5d1a05ce75aa2bef31600edfd1faacc8c3d5c2d3e4276889b03d047346",
+        "native_sha256": "d294307f2d3a0019224724accf28c87c7c9f67b12dc5fa590d9884bb02ab4b52"
+      },
+      "paired": {
+        "name": "pyropdf-0.3.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "members": 88,
+        "size": 9242907,
+        "sha256": "60a319faba2ad3047cc2a18fa9c1f02f93792ba06b4721c0245a6a613d032190",
+        "normalized_sha256": "23a69a5d1a05ce75aa2bef31600edfd1faacc8c3d5c2d3e4276889b03d047346",
+        "native_sha256": "d294307f2d3a0019224724accf28c87c7c9f67b12dc5fa590d9884bb02ab4b52"
+      },
+      "changed_members": [
+        "pyropdf-0.3.1.dist-info/RECORD",
+        "pyropdf-0.3.1.dist-info/sboms/pyropdf-python.cyclonedx.json"
+      ]
+    }
+  }
+}

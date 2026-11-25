@@ -293,11 +293,123 @@ def _xmp_text(key: str, value: str) -> str:
     return value
 
 
-def _register(packet: str) -> None:
-    """Keep the packet's own namespace prefixes when it is written again."""
+def _packet_prefixes(packet: str) -> dict[str, str]:
+    """Return a local URI-to-prefix map from ``packet`` and the standard XMP namespaces."""
+    uri_to_prefix: dict[str, str] = {
+        _XML: "xml",
+        _RDF: "rdf",
+        **{uri: prefix for prefix, uri in _NAMESPACES.items()},
+    }
+    used_prefixes = set(uri_to_prefix.values())
     for prefix, uri in re.findall(r'xmlns:([\w.-]+)\s*=\s*["\']([^"\']*)["\']', packet):
-        if not prefix.lower().startswith(("ns", "xml")):
-            ET.register_namespace(prefix, uri)
+        if prefix.lower().startswith(("ns", "xml")):
+            continue
+        if uri not in uri_to_prefix and prefix not in used_prefixes:
+            uri_to_prefix[uri] = prefix
+            used_prefixes.add(prefix)
+    return uri_to_prefix
+
+
+def _escape_xml_text(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _escape_xml_attrib(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("\r", "&#13;")
+        .replace("\n", "&#10;")
+        .replace("\t", "&#09;")
+    )
+
+
+def _prefix_for_uri(
+    uri: str,
+    uri_to_prefix: Mapping[str, str],
+    declared: dict[str, str],
+    used_prefixes: set[str],
+) -> str:
+    if uri == _XML:
+        return "xml"
+    prefix = declared.get(uri)
+    if prefix is not None:
+        return prefix
+    prefix = uri_to_prefix.get(uri)
+    if prefix is None:
+        index = 0
+        while f"ns{index}" in used_prefixes:
+            index += 1
+        prefix = f"ns{index}"
+        used_prefixes.add(prefix)
+    declared[uri] = prefix
+    return prefix
+
+
+def _collect_xmp_names(root: ET.Element, uri_to_prefix: Mapping[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    """Collect local QNames and root namespace declarations for ``root`` iteratively."""
+    qnames: dict[str, str] = {}
+    declared: dict[str, str] = {}
+    used_prefixes = set(uri_to_prefix.values())
+
+    def resolve(name: str) -> None:
+        if name in qnames:
+            return
+        if not name.startswith("{"):
+            qnames[name] = name
+            return
+        uri, local = name[1:].split("}", 1)
+        prefix = _prefix_for_uri(uri, uri_to_prefix, declared, used_prefixes)
+        qnames[name] = f"{prefix}:{local}" if prefix else local
+
+    walk: list[ET.Element] = [root]
+    while walk:
+        elem = walk.pop()
+        if isinstance(elem.tag, str):
+            resolve(elem.tag)
+        for key in elem.attrib:
+            resolve(key)
+        walk.extend(reversed(elem))
+    return qnames, declared
+
+
+def _open_xmp_tag(elem: ET.Element, root: ET.Element, qnames: Mapping[str, str], declared: Mapping[str, str]) -> str:
+    parts = [f"<{qnames[elem.tag]}"]
+    if elem is root:
+        parts.extend(
+            f' xmlns:{prefix}="{_escape_xml_attrib(uri)}"'
+            for uri, prefix in sorted(declared.items(), key=lambda item: item[1])
+        )
+    parts.extend(f' {qnames[key]}="{_escape_xml_attrib(value)}"' for key, value in elem.attrib.items())
+    return "".join(parts)
+
+
+def _serialize_xmp(root: ET.Element, uri_to_prefix: Mapping[str, str]) -> str:
+    """Serialize ``root`` with local namespace prefixes, never mutating global ``ET._namespace_map``."""
+    qnames, declared = _collect_xmp_names(root, uri_to_prefix)
+    parts: list[str] = []
+    stack: list[tuple[ET.Element, bool]] = [(root, False)]
+    while stack:
+        elem, closing = stack.pop()
+        tag = elem.tag
+        if closing:
+            parts.append(f"</{qnames[tag]}>")
+        elif tag is ET.Comment or tag is ET.ProcessingInstruction:
+            parts.append(f"<!--{elem.text or ''}-->" if tag is ET.Comment else f"<?{elem.text or ''}?>")
+        elif elem.text is not None or len(elem):
+            parts.append(_open_xmp_tag(elem, root, qnames, declared) + ">")
+            if elem.text:
+                parts.append(_escape_xml_text(elem.text))
+            stack.append((elem, True))
+            stack.extend((child, False) for child in reversed(elem))
+            continue
+        else:
+            parts.append(_open_xmp_tag(elem, root, qnames, declared) + " />")
+        if elem.tail:
+            parts.append(_escape_xml_text(elem.tail))
+    return "".join(parts)
 
 
 def _set_property(descriptions: list[ET.Element], key: str, text: str | None) -> None:
@@ -329,10 +441,7 @@ def _updated_xmp(packet: str, values: Mapping[str, str]) -> str | None:
     match = _PACKET.match(packet)
     if match is None:
         return None
-    _register(packet)
-    ET.register_namespace("rdf", _RDF)
-    for prefix, uri in _NAMESPACES.items():
-        ET.register_namespace(prefix, uri)
+    prefixes = _packet_prefixes(packet)
     try:
         root = ET.fromstring(match["body"])  # noqa: S314 - bounded by _MAX_XMP_SIZE; expat caps entity expansion.
     except ET.ParseError:
@@ -345,7 +454,7 @@ def _updated_xmp(packet: str, values: Mapping[str, str]) -> str | None:
         descriptions = [ET.SubElement(rdf, f"{{{_RDF}}}Description", {f"{{{_RDF}}}about": ""})]
     for key, value in values.items():
         _set_property(descriptions, key, _xmp_text(key, value) if value else None)
-    return match["head"] + ET.tostring(root, encoding="unicode") + match["tail"]
+    return match["head"] + _serialize_xmp(root, prefixes) + match["tail"]
 
 
 def write_entries(document: Document, values: Mapping[str, str], *, replace: bool = False) -> None:
@@ -764,6 +873,27 @@ def _require_version(document: Document, catalog: Dictionary, minimum: tuple[int
     if version < minimum:
         target = max(minimum, _CATALOG_VERSION_MIN)
         catalog["Version"] = Name(f"{target[0]}.{target[1]}")
+
+
+def _require_pdf20(document: Document, catalog: Dictionary, feature: str) -> None:
+    """Refuse a PDF 2.0 promotion that introduces structural defects in existing objects."""
+    from pyropdf._attachments import _version  # noqa: PLC0415
+    from pyropdf._collections import _require_collection_version  # noqa: PLC0415
+
+    before = document.check() if _version(document) < (2, 0) else None
+    _require_collection_version(document, catalog, (2, 0))
+    if before is None:
+        return
+    after = document.check()
+    if after.truncated:
+        msg = f"cannot promote the document to PDF 2.0 for {feature}: structural defect report is truncated"
+        raise PdfError(msg)
+    existing = set(before.defects)
+    for defect in after.defects:
+        if defect not in existing:
+            location = "trailer" if defect.xref is None else f"object {defect.xref}"
+            msg = f"cannot promote the document to PDF 2.0 for {feature}: {location}, {defect.clause}: {defect.message}"
+            raise PdfError(msg)
 
 
 def _catalog_enum(kind: type[PageMode | PageLayout], value: object, name: str) -> str:

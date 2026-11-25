@@ -466,7 +466,7 @@ impl<G: Graph> Scope<'_, '_, G> {
                     return Ok(Val::Unknown);
                 };
                 match rest {
-                    [] => match self.extension(ext_name)? {
+                    [] => match self.extension(ext_name, None)? {
                         Some(active) => Val::Bool(active),
                         None => Val::Unknown,
                     },
@@ -475,13 +475,13 @@ impl<G: Graph> Scope<'_, '_, G> {
                             if self.version < gate {
                                 Val::Bool(false)
                             } else {
-                                match self.extension(ext_name)? {
+                                match self.extension(ext_name, None)? {
                                     Some(active) => Val::Bool(active),
                                     None => Val::Unknown,
                                 }
                             }
                         } else {
-                            match self.extension(ext_name)? {
+                            match self.extension(ext_name, None)? {
                                 Some(false) => Val::Bool(false),
                                 Some(true) => match self.eval(second)? {
                                     Val::Bool(value) => Val::Bool(value),
@@ -519,20 +519,44 @@ impl<G: Graph> Scope<'_, '_, G> {
             }
             ("fn:Contains", [_, wanted]) => {
                 let wanted = self.eval(wanted)?;
-                self.path(path().unwrap_or(""), |value| {
+                if matches!(wanted, Val::Unknown | Val::Present) {
+                    return Ok(Val::Unknown);
+                }
+                self.try_path(path().unwrap_or(""), |value| {
                     let Some(value) = value else {
-                        return Val::Absent;
+                        return Ok(Val::Bool(false));
                     };
-                    if !matches!(self.graph.view(value), View::Array(_)) {
-                        return Val::Unknown;
-                    }
-                    let found = self.graph.elements(value).iter().any(|item| {
-                        match (scalar(&self.graph.view(item)), &wanted) {
-                            (Val::Num(a), Val::Num(b)) => (a - b).abs() < 1e-9,
-                            (a, b) => a == *b,
+                    match self.graph.view(value) {
+                        View::Null => Ok(Val::Bool(false)),
+                        View::Array(_) => {
+                            for item in self.graph.elements(value) {
+                                let mut owned = None;
+                                let Some(resolved) = self.deref_once(item, &mut owned)? else {
+                                    continue;
+                                };
+                                let matched = match (scalar(&self.graph.view(resolved)), &wanted) {
+                                    (Val::Num(a), Val::Num(b)) => (a - b).abs() < 1e-9,
+                                    (a, b) => a == *b,
+                                };
+                                if matched {
+                                    return Ok(Val::Bool(true));
+                                }
+                            }
+                            Ok(Val::Bool(false))
                         }
-                    });
-                    Val::Bool(found)
+                        view @ (View::Boolean(_)
+                        | View::Integer(_)
+                        | View::Real(_)
+                        | View::Name(_)
+                        | View::String(_)) => {
+                            let matched = match (scalar(&view), &wanted) {
+                                (Val::Num(a), Val::Num(b)) => (a - b).abs() < 1e-9,
+                                (a, b) => a == *b,
+                            };
+                            Ok(Val::Bool(matched))
+                        }
+                        _ => Ok(Val::Unknown),
+                    }
                 })?
             }
             ("fn:BitSet" | "fn:BitClear", [bit]) => self.bits(bit, bit, name == "fn:BitSet")?,
@@ -596,6 +620,15 @@ impl<G: Graph> Scope<'_, '_, G> {
         path: &str,
         then: impl FnOnce(Option<&G::Value>) -> Val,
     ) -> Result<Val, G::Error> {
+        self.try_path(path, |value| Ok(then(value)))
+    }
+
+    /// Follows `path` and hands its last value, resolved, to a fallible `then`.
+    fn try_path(
+        &self,
+        path: &str,
+        then: impl FnOnce(Option<&G::Value>) -> Result<Val, G::Error>,
+    ) -> Result<Val, G::Error> {
         #[expect(
             clippy::disallowed_methods,
             reason = "the segments of one path in a predicate of the generated model"
@@ -606,7 +639,7 @@ impl<G: Graph> Scope<'_, '_, G> {
             && subject.ends_with('*')
             && let Some(value) = self.subject
         {
-            return Ok(then(Some(value)));
+            return then(Some(value));
         }
         let start = match segments.first() {
             Some(&"trailer") => {
@@ -632,7 +665,7 @@ impl<G: Graph> Scope<'_, '_, G> {
         &self,
         current: &G::Value,
         segments: &[&str],
-        then: impl FnOnce(Option<&G::Value>) -> Val,
+        then: impl FnOnce(Option<&G::Value>) -> Result<Val, G::Error>,
     ) -> Result<Val, G::Error> {
         let Some((segment, rest)) = segments.split_first() else {
             return Ok(Val::Unknown);
@@ -647,17 +680,17 @@ impl<G: Graph> Scope<'_, '_, G> {
             _ => None,
         };
         let Some(child) = child else {
-            return Ok(then(None));
+            return then(None);
         };
         if let View::Reference(_) = self.graph.view(child) {
             let resolved = self.graph.target(child)?;
             return match (&resolved, rest.is_empty()) {
                 (Some(resolved), false) => self.walk(resolved, rest, then),
-                (resolved, _) => Ok(then(resolved.as_deref())),
+                (resolved, _) => then(resolved.as_deref()),
             };
         }
         if rest.is_empty() {
-            Ok(then(Some(child)))
+            then(Some(child))
         } else {
             self.walk(child, rest, then)
         }
@@ -667,7 +700,11 @@ impl<G: Graph> Scope<'_, '_, G> {
     /// `Catalog["Extensions"]`, returning `None` when `/Extensions` does not
     /// declare it (since PDF files may use extension features without a
     /// `/Extensions` dictionary).
-    pub(super) fn extension(&self, name: &str) -> Result<Option<bool>, G::Error> {
+    pub(super) fn extension(
+        &self,
+        name: &str,
+        candidate: Option<&str>,
+    ) -> Result<Option<bool>, G::Error> {
         let Some(root_raw) = self.graph.get(self.graph.trailer(), b"Root") else {
             return Ok(None);
         };
@@ -678,6 +715,22 @@ impl<G: Graph> Scope<'_, '_, G> {
         let Some(ext_raw) = self.graph.get(catalog, b"Extensions") else {
             return Ok(None);
         };
+        // ETSI EN 319 142-1 §5.6 registers these PDF 1.7 declarations for the
+        // CAdES subfilter. ETSI_PAdES is the model name, not a catalog key.
+        if name == "ETSI_PAdES" && candidate == Some("ETSI.CAdES.detached") {
+            let base = Version { major: 1, minor: 7 };
+            let present = self.version >= base
+                && matches!(self.graph.view(ext_raw), View::Dictionary)
+                && [(b"ESIC".as_slice(), 2), (b"ADBE".as_slice(), 8)]
+                    .iter()
+                    .any(|(prefix, level)| {
+                        self.graph.get(ext_raw, prefix).is_some_and(|entry| {
+                            matches!(self.graph.view(entry), View::Dictionary)
+                                && self.matches_dev_dict(entry, Some(base), *level, false)
+                        })
+                    });
+            return Ok(present.then_some(true));
+        }
         let mut ext_owned = None;
         let Some(extensions) = self.deref_once(ext_raw, &mut ext_owned)? else {
             return Ok(None);

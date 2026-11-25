@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING, cast
 
 from pyropdf import _core
 from pyropdf._canvas._text import _font_value
+from pyropdf._errors import LimitError
 from pyropdf._objects import Name, Stream
 
 if TYPE_CHECKING:
     from pyropdf._document import Document
     from pyropdf._fonts import Font
-    from pyropdf._objects import Dictionary, Objects
+    from pyropdf._objects import Array, Dictionary, Objects
     from pyropdf._page import Page
 
 #: Operators that change the graphics state that later content inherits.
@@ -33,7 +35,7 @@ class _Images:
         self.shadings = _core._Shadings()  # noqa: SLF001
         # The faces of the Type0 fonts that free text was drawn in, by font object.
         self.faces: dict[int, Font] = {}
-        self.images: dict[bytes, int] = {}
+        self.images: dict[bytes, tuple[int, tuple[object, ...]]] = {}
         # The Forms of placed pages, with the source objects each depends on.
         self.forms = _core._PageForms()  # noqa: SLF001
 
@@ -56,8 +58,9 @@ def _resources_dict(  # noqa: PLR0913, PLR0917 - the store's objects, and each k
     gstates: dict[tuple[float | None, float | None, str | None], str],
     fonts: dict[str, str | int],
     properties: dict[str, int],
-    patterns: dict[str, int] | None = None,
+    patterns: dict[str, int | Dictionary] | None = None,
     masks: dict[int, str] | None = None,
+    pattern_spaces: dict[str, Array] | None = None,
 ) -> dict[str, dict[str, object]]:
     """Build the resource subdictionaries for a canvas's Form or page merge."""
     resources: dict[str, dict[str, object]] = {}
@@ -69,7 +72,11 @@ def _resources_dict(  # noqa: PLR0913, PLR0917 - the store's objects, and each k
             **{name: objects[xref] for xref, name in (masks or {}).items()},
         }
     if patterns:
-        resources["Pattern"] = {name: objects[xref] for name, xref in patterns.items()}
+        resources["Pattern"] = {
+            name: objects[value] if isinstance(value, int) else value for name, value in patterns.items()
+        }
+    if pattern_spaces:
+        resources["ColorSpace"] = dict(pattern_spaces)
     if fonts:
         resources["Font"] = {name: _font_value(objects, font) for name, font in fonts.items()}
     if properties:
@@ -91,14 +98,42 @@ def _cache(document: Document) -> _Images:
     return cache
 
 
-def _still_image(document: Document, xref: int, size: int) -> bool:
-    """Return whether ``xref`` is still the image object that a canvas stored from ``size`` bytes."""
+def _image_signature(stream: Stream) -> tuple[object, ...]:
+    """Return a content signature for an image XObject stream and any soft mask."""
+    raw = stream.read(decode=False)
+    smask = stream.get("SMask")
+    mask_sig: tuple[object, ...] | None = None
+    if isinstance(smask, Stream):
+        mask_raw = smask.read(decode=False)
+        mask_sig = (
+            smask.xref,
+            smask.get("Width"),
+            smask.get("Height"),
+            smask.get("BitsPerComponent"),
+            str(smask.get("Filter")),
+            len(mask_raw),
+            hashlib.sha256(mask_raw).digest(),
+        )
+    color = stream.get("ColorSpace")
+    color_key: object = str(color) if isinstance(color, Name) else repr(color)
+    return (
+        stream.get("Width"),
+        stream.get("Height"),
+        stream.get("BitsPerComponent"),
+        color_key,
+        str(stream.get("Filter")),
+        len(raw),
+        hashlib.sha256(raw).digest(),
+        mask_sig,
+    )
+
+
+def _still_image(document: Document, xref: int, expected: tuple[object, ...]) -> bool:
+    """Return whether ``xref`` still holds the exact image stream that a canvas cached."""
     stream = document.objects.get(xref) if xref in document.objects else None
     if not isinstance(stream, Stream) or stream.get("Subtype") != "Image":
         return False
-    if stream.get("Filter") in ("DCTDecode", "JPXDecode"):
-        return len(stream.read(decode=False)) == size
-    return True
+    return _image_signature(stream) == expected
 
 
 def _contents(page: Page) -> list[Stream]:
@@ -115,6 +150,8 @@ def _isolated(page: Page) -> bool:
     """Return whether the page's content leaves the graphics state as it found it."""
     try:
         operations = page.operations
+    except LimitError:
+        raise
     except Exception:  # noqa: BLE001 - content that cannot be read is wrapped.
         return False
     depth = 0
@@ -137,15 +174,18 @@ def _merge_resources(  # noqa: PLR0913, PLR0917 - the page, and each kind of res
     gstates: dict[tuple[float | None, float | None, str | None], str],
     fonts: dict[str, str | int],
     properties: dict[str, int],
-    patterns: dict[str, int] | None = None,
+    patterns: dict[str, int | Dictionary] | None = None,
     masks: dict[int, str] | None = None,
+    pattern_spaces: dict[str, Array] | None = None,
 ) -> dict[str, str]:
     """Add the canvas's resources to the page's own, renaming any that collide.
 
     The page gets its own direct ``/Resources`` when it inherits or shares
     them, so no other page changes. Returns the renamed names.
     """
-    added = _resources_dict(page.document.objects, xobjects, gstates, fonts, properties, patterns, masks)
+    added = _resources_dict(
+        page.document.objects, xobjects, gstates, fonts, properties, patterns, masks, pattern_spaces
+    )
     if not added:
         return {}
     own = page.obj.get("Resources")

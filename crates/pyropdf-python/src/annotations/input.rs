@@ -13,7 +13,7 @@ use pyo3::Borrowed;
 use pyo3::exceptions::{PyKeyError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::pybacked::PyBackedBytes;
-use pyo3::types::{PyBytes, PyList, PyString, PyTuple};
+use pyo3::types::{PyByteArray, PyBytes, PyList, PyString, PyTuple};
 use pyropdf_engine::annotations::{AnnotationPatch, AnnotationSpec, CLEARABLE, CalloutPoints};
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
@@ -335,15 +335,23 @@ impl<'a, 'py> Fields<'a, 'py> {
         if let Ok(bytes) = value.cast::<PyBytes>() {
             let len = bytes.as_bytes().len() as u64;
             check_data(max, len)?;
-        } else if let Ok(len) = value.len() {
-            // A bytearray's stored length; another buffer fails to extract.
-            let len = len as u64;
+        } else if let Ok(array) = value.cast::<PyByteArray>() {
+            // PyByteArray::len calls PyByteArray_Size directly, ignoring any
+            // Python subclass's __len__ override.
+            let len = array.len() as u64;
             check_data(max, len)?;
             self.budget
                 .charge(LimitCode::MemorySize, len)
                 .map_err(|e| limit_error(&e))?;
+        } else {
+            return Err(PyTypeError::new_err(format!(
+                "{key} is bytes or bytearray, not {}",
+                value.get_type().name()?
+            )));
         }
-        Ok(Some(value.extract::<PyBackedBytes>()?))
+        let extracted = value.extract::<PyBackedBytes>()?;
+        check_data(max, extracted.len() as u64)?;
+        Ok(Some(extracted))
     }
 
     /// Reads each item of `items` with `read` into a budgeted list, polling

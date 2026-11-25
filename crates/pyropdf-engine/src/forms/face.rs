@@ -100,6 +100,31 @@ impl<'f> FaceText<'f> {
             })
     }
 
+    /// Advance and ink bounds (left, bottom, right, top) of the shaped run.
+    /// Vertical bounds include the face metrics to place empty ink on a baseline.
+    pub(crate) fn line_metrics(
+        &self,
+        text: &str,
+        size: f64,
+    ) -> Result<(f64, [f64; 4]), LayoutError> {
+        let mut pen = 0.0;
+        let mut bounds = [0.0, self.face.descender, 0.0, self.face.ascender];
+        for glyph in &*self.shape(text)? {
+            self.budget.poll()?;
+            if let Some([x0, y0, x1, y1]) = self.measure.ink(GlyphId::new(glyph.glyph)) {
+                let x = pen + f64::from(glyph.x_offset);
+                let y = f64::from(glyph.y_offset);
+                bounds[0] = bounds[0].min(x + x0);
+                bounds[1] = bounds[1].min(y + y0);
+                bounds[2] = bounds[2].max(x + x1);
+                bounds[3] = bounds[3].max(y + y1);
+            }
+            pen += f64::from(glyph.x_advance);
+        }
+        let scale = size / self.em;
+        Ok((pen * scale, bounds.map(|v| v * scale)))
+    }
+
     /// Returns the first character of `value`, other than a control
     /// character, that the face has no glyph for, or else the first whose
     /// glyph is a colour glyph with no outline.

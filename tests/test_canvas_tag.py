@@ -400,3 +400,29 @@ def test_canvas_tags_preserve_multi_level_parent_tree_and_split_at_64_pairs() ->
     assert root["ParentTreeNextKey"] == 66
     _check_consistency(doc)
     assert pyropdf.open(doc.to_bytes()).check().defects == ()
+
+
+def test_placing_page_or_copying_image_from_tagged_pdf_does_not_graft_structure() -> None:
+    source = pyropdf.Document()
+    layer = source.layers.add("Content")
+    page = source.pages.new((200, 200))
+    with page.draw() as canvas, canvas.layer(layer), canvas.tag(TagRole.PARAGRAPH):
+        canvas.text("Tagged", (20, 40))
+
+    # Cross-document page placement must not graft the source structure tree.
+    target = pyropdf.Document()
+    dest = target.pages.new((200, 200))
+    with dest.draw() as canvas:
+        canvas.page(dest.rect, page)
+    assert "StructTreeRoot" not in target.catalog
+
+    # Same-document captured placement with changed layer state must not self-graft structure.
+    captured = page.content()
+    source.layers.switch(layer.xref, on=False)
+    before_next_key = _structure(source)["ParentTreeNextKey"]
+    before_kids = len(_structure(source)["K"])
+    second = source.pages.new((200, 200))
+    with second.draw() as canvas:
+        canvas.page(second.rect, captured)
+    assert _structure(source)["ParentTreeNextKey"] == before_next_key
+    assert len(_structure(source)["K"]) == before_kids

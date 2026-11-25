@@ -29,7 +29,7 @@ With no paths, the engine discovers models from the optional
 compatible RTen-format PP-OCR detector, recognizer, and character
 dictionary.
 
-### `OcrEngine.recognize`
+### `recognize`
 
 ```python
 OcrEngine.recognize(

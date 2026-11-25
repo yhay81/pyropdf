@@ -58,7 +58,7 @@ def upstream_errors(root: Path, record: dict, states: dict) -> list[str]:
     """Check adoption against GitHub issue states and the candidate lockfile."""
     if any(mapping(states.get(str(n))) != {"state": "CLOSED", "stateReason": "COMPLETED"} for n in (15, 243)):
         return ["untrusted inputs require closed adoption #15 and #243"]
-    packages = tomllib.loads((root / "Cargo.lock").read_text())["package"]
+    packages = tomllib.loads((root / "Cargo.lock").read_text(encoding="utf-8"))["package"]
     locks = [p for p in packages if p["name"] == "hayro"]
     if (
         len(locks) != 1
@@ -73,7 +73,12 @@ def upstream_errors(root: Path, record: dict, states: dict) -> list[str]:
 
 def approved_names(root: Path) -> set[str]:
     """Read the approved workflow names from the design table."""
-    design = (root / "DESIGN.md").read_text().partition("### Minimum workflows for 1.0\n")[2].split("\n### ", 1)[0]
+    design = (
+        (root / "DESIGN.md")
+        .read_text(encoding="utf-8")
+        .partition("### Minimum workflows for 1.0\n")[2]
+        .split("\n### ", 1)[0]
+    )
     return {
         line.split("|")[1].strip()
         for line in design.splitlines()
@@ -88,7 +93,7 @@ def guide_exists(root: Path, guide: str) -> bool:
         return False
     headings = [
         line.lstrip("# ").strip().lower().replace(" ", "-")
-        for line in (root / path).read_text().splitlines()
+        for line in (root / path).read_text(encoding="utf-8").splitlines()
         if line.startswith("#")
     ]
     return not anchor or anchor in headings
@@ -233,7 +238,7 @@ def minimum_gate(candidate: Candidate, ci: dict) -> tuple[list[str], str]:
     root, tag, revision = candidate.root, candidate.tag, candidate.revision
     observations, dist, state_path = candidate.observations, candidate.dist, candidate.state_path
     manifest = root / MANIFEST
-    requirements = tomllib.loads(manifest.read_text())
+    requirements = tomllib.loads(manifest.read_text(encoding="utf-8"))
     records = mapping(json.loads(observations.read_bytes())) if observations.is_file() else {}
     states = mapping(json.loads(state_path.read_bytes())) if state_path.is_file() else {}
     specs = requirements["workflows"]

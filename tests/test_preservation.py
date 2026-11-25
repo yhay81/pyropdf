@@ -10,13 +10,18 @@ its text and its rendering. A later editing operation adds its row to
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
-from corpus import ASSETS, NAMES
+from corpus import NAMES, SOURCES
 from test_pages import build_raw_pdf
 from test_preservation_operations import FAMILY_EDITS, NEW_EDITS, Edit, face, first_page, flattened, page_labels
 
 import pyropdf
 from pyropdf import Array, Dictionary, Name, Operation, Real, Stream, typed
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 #: Plain values are compared through this, which nests no deeper.
 _MAX_DEPTH = 64
@@ -409,10 +414,11 @@ def page_state(doc: pyropdf.Document, index: int) -> tuple[str, bytes]:
 
 @pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
 @pytest.mark.parametrize("edit", sorted(EDITS))
-@pytest.mark.parametrize("name", NAMES)
-def test_an_edit_and_a_save_keep_every_untouched_object(name: str, edit: str, *, incremental: bool) -> None:
+@pytest.mark.parametrize("source", SOURCES, ids=NAMES)
+@pytest.mark.corpus_matrix
+def test_an_edit_and_a_save_keep_every_untouched_object(source: Path, edit: str, *, incremental: bool) -> None:
     case = EDITS[edit]
-    doc = case.open(ASSETS / name)
+    doc = case.open(source)
     before = snapshot(doc)
     raw_before = raw_objects(doc)
     # A page outside the declared effect, found by object number after edits

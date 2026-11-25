@@ -9,6 +9,8 @@
 
 mod permissions;
 mod profiles;
+mod programs;
+mod resources;
 
 pub use permissions::SignaturePermission;
 
@@ -629,6 +631,7 @@ fn claims<'b>(
     } else {
         root
     };
+    let mut damaged_programs = None;
     for (index, (old, new)) in original.claims.into_iter().zip(current.claims).enumerate() {
         for claim in old
             .into_iter()
@@ -720,6 +723,19 @@ fn claims<'b>(
                 }
                 if !written.is_empty() {
                     profiles::dependencies(claim, opened, version, written, &mut found, budget)?;
+                    let damaged = match &damaged_programs {
+                        Some(owners) => owners,
+                        None => damaged_programs
+                            .insert(programs::changes(opened, version, written, budget)?),
+                    };
+                    for &owner in damaged.iter() {
+                        record(
+                            &mut found,
+                            "a painted font lost its readable embedded program",
+                            Some(owner),
+                            budget,
+                        )?;
+                    }
                 }
             }
             for (reason, mut breaking) in found.into_vec() {
@@ -925,7 +941,7 @@ fn number(bytes: &[u8]) -> Option<u32> {
 /// 6.1.2, 6.1.11, 6.4, and 6.5.2). PDF/A-2 and PDF/A-3 forbid PDF features
 /// newer than 1.7, and PDF/A-2 and PDF/A-4 (other than PDF/A-4f) restrict
 /// embedded files to allowed PDF/A parts (ISO 19005-2 section 6.8, ISO 19005-4
-/// section 6.9). PDF/UA requires every annotation in the structure tree.
+/// section 6.9). Annotation structure requirements depend on the PDF/UA part.
 fn breaks(claim: Claim, value: &Value, budget: &Budget) -> Result<[Option<&'static str>; 4]> {
     let reasons = match claim {
         Claim::A(1, _) => [
@@ -963,14 +979,7 @@ fn breaks(claim: Claim, value: &Value, budget: &Budget) -> Result<[Option<&'stat
             None,
         ],
         Claim::A(..) => [None, None, None, None],
-        Claim::Ua(_) => [
-            value_dict(value)
-                .is_some_and(is_untagged_annotation)
-                .then_some("the edits add an annotation that is not in the structure tree"),
-            None,
-            None,
-            None,
-        ],
+        Claim::Ua(_) => [None; 4],
     };
     Ok(reasons)
 }

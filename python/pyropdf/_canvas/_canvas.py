@@ -39,16 +39,18 @@ from pyropdf._canvas._path import (
     _unit,
     _user_from_display,
 )
+from pyropdf._canvas._patterns import _pattern_operands
 from pyropdf._canvas._resources import (
     _cache,
     _contents,
+    _image_signature,
     _isolated,
     _merge_resources,
     _page_space,
     _resources_dict,
     _still_image,
 )
-from pyropdf._canvas._tags import _Scope, _tag_scope, _write_structure
+from pyropdf._canvas._tags import _Group, _Scope, _tag_scope, _write_structure
 from pyropdf._canvas._text import (
     _canvas_font,
     _GlyphRun,
@@ -63,6 +65,7 @@ from pyropdf._canvas._text import (
 from pyropdf._content import (
     BlendMode,
     Color,
+    Content,
     FillRule,
     Gradient,
     GradientExtend,
@@ -70,8 +73,10 @@ from pyropdf._content import (
     LinearGradient,
     MoveTo,
     Path,
+    PatternPaint,
     RadialGradient,
     ShadingPattern,
+    SoftMaskType,
     Stroke,
     TextRenderMode,
     TextRun,
@@ -89,7 +94,7 @@ from pyropdf._geometry import Matrix, Point, Rect
 from pyropdf._images import PageImage, _image_stream, add_image
 from pyropdf._layers import Layer, LayerMembership
 from pyropdf._metadata import _require_version
-from pyropdf._objects import Dictionary, Name
+from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, _real
 
 if TYPE_CHECKING:
@@ -122,6 +127,22 @@ def _max_content_size() -> int:
     return cast(
         "int", getattr(sys.modules.get("pyropdf._canvas"), "_DEFAULT_MAX_CONTENT_SIZE", _DEFAULT_MAX_CONTENT_SIZE)
     )
+
+
+def _mask_blending_space(group: Stream, space: object) -> bool:
+    devices = ("DeviceGray", "DeviceRGB", "DeviceCMYK")
+    if isinstance(space, Name) and space not in devices:
+        resources = group.get("Resources")
+        table = resources.get("ColorSpace") if isinstance(resources, Dictionary) else None
+        space = table.get(str(space)) if isinstance(table, Dictionary) else None
+    if isinstance(space, Name):
+        return space in devices
+    if not isinstance(space, Array) or len(space) != 2:  # noqa: PLR2004 - [family, parameters].
+        return False
+    family, parameters = space
+    if family in ("CalGray", "CalRGB"):
+        return isinstance(parameters, Dictionary)
+    return family == "ICCBased" and isinstance(parameters, Stream) and parameters.get("N") in (1, 3, 4)
 
 
 class Canvas:
@@ -179,6 +200,7 @@ class Canvas:
         "_operation",
         "_page",
         "_pattern_names",
+        "_pattern_spaces",
         "_patterns",
         "_points",
         "_properties",
@@ -200,7 +222,7 @@ class Canvas:
         self._page = page
         self._underlay = bool(underlay)
         # One buffer per open opacity group; the first is the page's content.
-        self._layers: list[tuple[list[bytes], float | None]] = [([], None)]
+        self._layers: list[tuple[list[bytes], _Group | None]] = [([], None)]
         self._depth = 0
         self._points = 0
         # The canvas's operation, while its with block runs; the bytes its
@@ -225,7 +247,8 @@ class Canvas:
         # space; and the objects that are written.
         self._masks: dict[int, str] = {}
         self._pattern_names: dict[tuple[int, Matrix, bool], str] = {}
-        self._patterns: dict[str, int] = {}
+        self._patterns: dict[str, int | Dictionary] = {}
+        self._pattern_spaces: dict[str, Array] = {}
         # From the space of what the canvas draws to the default space of the buffer that it goes to: the
         # canvas's own display space, or the opacity group's. Pattern space ignores the CTM.
         self._matrix = _IDENTITY
@@ -373,7 +396,7 @@ class Canvas:
         self._depth += 1
         self._unmark()
 
-    def _push(self, opening: bytes, closing: bytes, *, group: float | None, matrix: Matrix | None) -> None:
+    def _push(self, opening: bytes, closing: bytes, *, group: _Group | None, matrix: Matrix | None) -> None:
         self._enter_scope()
         self._matrices.append(self._matrix)
         if group is not None:
@@ -397,13 +420,14 @@ class Canvas:
         parts, group = self._layers.pop()
         if not parts:
             return
+        assert group is not None  # noqa: S101 - a scope without closing operators owns a group.
         size = sum(len(part) + 1 for part in parts)
         with self._scratch(size):
-            name = self._add_xobject(self._group_form(b"\n".join(parts)))
+            name = self._add_xobject(self._group_form(b"\n".join(parts), group))
         # The group's buffer is written and freed.
         self._buffered -= size
         self._release(size)
-        gstate = self._gstate(fill_alpha=cast("float", group), stroke_alpha=cast("float", group))
+        gstate = self._gstate(fill_alpha=group.alpha, stroke_alpha=group.alpha)
         self._emit(b"q\n/" + gstate.encode() + b" gs\n/" + name.encode() + b" Do\nQ")
 
     def _push_tag(self, element: _Element | None) -> None:
@@ -429,17 +453,18 @@ class Canvas:
         if self._tags.pop() is None:
             self._append(self._layers[-1][0], b"EMC")
 
-    def _group_form(self, content: bytes) -> int:
+    def _group_form(self, content: bytes, group: _Group) -> int:
         """Write ``content`` as a transparency group over the whole page, in display space."""
         _rotation, width, height = self._page._geometry()  # noqa: SLF001
         document = self._page.document
+        _require_version(document, document.catalog, (1, 4))
         return document.objects.add_stream(
             content,
             {
                 "Type": Name("XObject"),
                 "Subtype": Name("Form"),
                 "BBox": [0, 0, width, height],
-                "Group": {"S": Name("Transparency")},
+                "Group": group.attributes(),
                 "Resources": self._resources_value(),
             },
         )
@@ -453,6 +478,7 @@ class Canvas:
             self._properties,
             self._patterns,
             self._masks,
+            self._pattern_spaces,
         )
 
     def _add_font(self, font: Font) -> str:
@@ -554,12 +580,24 @@ class Canvas:
         return name
 
     def _setting(
-        self, paint: Color | Gradient | ShadingPattern, segments: list[Segment], stroke: Stroke | None
+        self, paint: Color | Gradient | PatternPaint | ShadingPattern, segments: list[Segment], stroke: Stroke | None
     ) -> _Painting:
         """Return how to paint ``segments`` with ``paint``, as the fill, or as ``stroke`` if there is one."""
         if isinstance(paint, Color):
             operator = b" rg" if stroke is None else b" RG"
             return _Painting((_numbers(*paint.rgb) + operator,), None if paint.alpha >= 1 else paint.alpha, None)
+        if isinstance(paint, PatternPaint):
+            space, operands = _pattern_operands(self._page.document, paint)
+            name = f"PyroRP{paint.pattern.xref}G{paint.pattern.generation}"
+            if name not in self._patterns:
+                self._charge(len(name) + 64)
+            if paint.space is not None and space not in self._pattern_spaces:
+                self._charge(len(space) + 64)
+                self._pattern_spaces[space] = paint.space
+            self._patterns[name] = paint.pattern
+            colorspace = b"/" + space.encode() + (b" cs" if stroke is None else b" CS")
+            select = operands + b"/" + name.encode() + (b" scn" if stroke is None else b" SCN")
+            return _Painting((colorspace, select), None, None)
         # Past the path by half a line, or by a miter or a square cap, and a thin line's own width.
         pad = 1.0 if stroke is None else max(stroke.width, 1.0) / 2 * max(stroke.miter_limit, math.sqrt(2)) + 1.0
         area = _bounds(segments, pad)
@@ -638,7 +676,14 @@ class Canvas:
             data = b"q\n/" + name.encode() + b" Do\nQ\n"
         else:
             names = _merge_resources(
-                page, self._xobjects, self._gstates, self._fonts, self._properties, self._patterns, self._masks
+                page,
+                self._xobjects,
+                self._gstates,
+                self._fonts,
+                self._properties,
+                self._patterns,
+                self._masks,
+                self._pattern_spaces,
             )
             for old, new in names.items():
                 data = data.replace(b"/" + old.encode() + b" ", b"/" + new.encode() + b" ")
@@ -660,8 +705,8 @@ class Canvas:
         self,
         path: PathInput,
         *,
-        fill: Color | Gradient | ShadingPattern | None = None,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | ShadingPattern | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
         fill_rule: FillRule = FillRule.NONZERO,
     ) -> None:
         """Draw a path: a :class:`PathBuilder`, a :class:`Path` item's geometry, or segments."""
@@ -678,7 +723,7 @@ class Canvas:
         stroking = None
         if painted_stroke is not None:
             stroking = self._setting(
-                cast("Color | Gradient | ShadingPattern", painted_stroke.paint), segments, painted_stroke
+                cast("Color | Gradient | PatternPaint | ShadingPattern", painted_stroke.paint), segments, painted_stroke
             )
         if filling is not None and stroking is not None and (filling.mask is not None or stroking.mask is not None):
             # A soft mask is one graphics state, so each paints in its own.
@@ -720,7 +765,11 @@ class Canvas:
         return b"\n".join(parts)
 
     def line(
-        self, start: Sequence[float], end: Sequence[float], *, stroke: Stroke | Color | Gradient | None = None
+        self,
+        start: Sequence[float],
+        end: Sequence[float],
+        *,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     ) -> None:
         """Draw a straight line, with a 1-point black stroke by default."""
         self.path(PathBuilder().move_to(start).line_to(end), stroke=_BLACK if stroke is None else stroke)
@@ -730,8 +779,8 @@ class Canvas:
         rect: Sequence[float],
         *,
         radius: float = 0,
-        fill: Color | Gradient | None = None,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     ) -> None:
         """Draw a rectangle, with corners rounded by ``radius`` points."""
         self.path(PathBuilder().rect(rect, radius=radius), fill=fill, stroke=stroke)
@@ -741,8 +790,8 @@ class Canvas:
         center: Sequence[float],
         radius: float,
         *,
-        fill: Color | Gradient | None = None,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     ) -> None:
         """Draw a circle."""
         self.path(PathBuilder().circle(center, radius), fill=fill, stroke=stroke)
@@ -751,8 +800,8 @@ class Canvas:
         self,
         rect: Sequence[float],
         *,
-        fill: Color | Gradient | None = None,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     ) -> None:
         """Draw the ellipse inside ``rect``."""
         self.path(PathBuilder().ellipse(rect), fill=fill, stroke=stroke)
@@ -762,8 +811,8 @@ class Canvas:
         points: Iterable[Sequence[float]],
         *,
         close: bool = True,
-        fill: Color | Gradient | None = None,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
         fill_rule: FillRule = FillRule.NONZERO,
     ) -> None:
         """Draw straight segments through ``points``, closed unless ``close`` is false."""
@@ -776,7 +825,7 @@ class Canvas:
         control2: Sequence[float],
         end: Sequence[float],
         *,
-        stroke: Stroke | Color | Gradient | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     ) -> None:
         """Draw a cubic Bézier curve, with a 1-point black stroke by default."""
         builder = PathBuilder().move_to(start).curve_to(control1, control2, end)
@@ -791,8 +840,8 @@ class Canvas:
         *,
         font: Font | None = None,
         size: float = 11,
-        fill: Color | Gradient | None = _BLACK,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | None = _BLACK,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
         line_height: float | None = None,
         rotate: int = 0,
         max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
@@ -855,8 +904,8 @@ class Canvas:
         size: float = 11,
         align: Literal["left", "center", "right", "justify"] = "left",
         line_height: float | None = None,
-        fill: Color | Gradient | None = _BLACK,
-        stroke: Stroke | Color | Gradient | None = None,
+        fill: Color | Gradient | PatternPaint | None = _BLACK,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
         rotate: int = 0,
         max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
     ) -> TextFit:
@@ -904,7 +953,7 @@ class Canvas:
         self,
         font: Font,
         size: float,
-        paint: tuple[Color | Gradient | None, Stroke | None],
+        paint: tuple[Color | Gradient | PatternPaint | None, Stroke | None],
         rotation: int,
         lines: list[tuple[str, float, float, float]],
     ) -> None:
@@ -921,7 +970,11 @@ class Canvas:
             else []
         )
         filling = None if fill is None else self._setting(fill, segments, None)
-        stroking = None if stroke is None else self._setting(cast("Color | Gradient", stroke.paint), segments, stroke)
+        stroking = (
+            None
+            if stroke is None
+            else self._setting(cast("Color | Gradient | PatternPaint", stroke.paint), segments, stroke)
+        )
         split = filling is not None and stroking is not None and (filling.mask is not None or stroking.mask is not None)
         parts: list[bytes] = []
         if font._font.standard_name is None:  # noqa: SLF001
@@ -1166,17 +1219,19 @@ class Canvas:
         document = self._page.document
         cache = _cache(document)
         digest = hashlib.sha256(data).digest()
-        xref = cache.images.get(digest)
-        if xref is not None and _still_image(document, xref, len(data)):
-            return xref
+        cached = cache.images.get(digest)
+        if cached is not None and _still_image(document, cached[0], cached[1]):
+            return cached[0]
         xref = add_image(document, data)
-        cache.images[digest] = xref
+        stream = document.objects[xref]
+        if isinstance(stream, Stream):
+            cache.images[digest] = (xref, _image_signature(stream))
         return xref
 
     def page(
         self,
         rect: Sequence[float],
-        source: Page,
+        source: Page | Content,
         *,
         clip: Sequence[float] | None = None,
         keep_aspect: bool = True,
@@ -1197,13 +1252,20 @@ class Canvas:
         ratio after the turn. A page placed several times, by any canvas of
         this document, is stored once while its content, its geometry and
         every object its resources reach are unchanged.
-        Annotations and form fields of the source page are not drawn.
+        A live page omits annotations and form fields. A complete :class:`Content`
+        uses the geometry, resources and annotation setting captured by
+        :meth:`Page.content`. Visible captured appearances become vector content.
         """
         from pyropdf._page import Page  # noqa: PLC0415 - pyropdf._page imports this module.
 
         self._check_open()
+        appearances = False
+        if isinstance(source, Content):
+            retained = source._retained_page()  # noqa: SLF001 - the capture supplies this placement.
+            source = retained
+            appearances = retained.annotations_included
         if not isinstance(source, Page):
-            msg = f"source must be a pyropdf.Page, not {type(source).__name__}"
+            msg = f"source must be a pyropdf.Page or pyropdf.Content, not {type(source).__name__}"
             raise TypeError(msg)
         box = _rect(rect, "rect")
         rotation = _quarter_turn(rotate)
@@ -1214,7 +1276,13 @@ class Canvas:
         operation = _core.begin_canvas(core)
 
         def read() -> tuple[int, tuple[float, float, float, float], float, Rect, Rect, int]:
-            page = _core.canvas_source_page(source_core, source.xref, source._generation, operation)  # noqa: SLF001
+            page = _core.canvas_source_page(
+                source._reader(),  # noqa: SLF001
+                source.xref,
+                source._generation,  # noqa: SLF001
+                operation,
+                appearances,
+            )
             if page is None:
                 raise source._stale()  # noqa: SLF001
             source_rotation, source_box, source_unit, width, height, _content, snapshot = page
@@ -1426,6 +1494,8 @@ class Canvas:
         self._check_open()
         try:
             m = Matrix(*matrix)
+        except LimitError:
+            raise
         except (TypeError, ValueError, PdfError) as exc:
             msg = f"matrix must be a Matrix or six numbers: {matrix!r}"
             raise ValueError(msg) from exc
@@ -1434,10 +1504,64 @@ class Canvas:
         written = Matrix(*(float(_fmt(value)) for value in values))
         return _Scope(self, b"q\n" + _numbers(*values) + b" cm", b"Q", matrix=written)
 
-    def opacity(self, alpha: float) -> AbstractContextManager[None]:
-        """Composite what the block draws as one group, then draw it at ``alpha``."""
+    def opacity(
+        self,
+        alpha: float,
+        *,
+        isolated: bool = False,
+        knockout: bool = False,
+        colorspace: Literal["gray", "rgb", "cmyk"] | None = None,
+    ) -> AbstractContextManager[None]:
+        """Composite the block as a transparency group and draw it at ``alpha``.
+
+        An isolated group starts with a transparent backdrop. In a knockout group
+        each element replaces earlier elements in its shape. An isolated group
+        may declare its device blending colour space. Other groups inherit it.
+        """
         self._check_open()
-        return _Scope(self, b"", b"", group=_unit(alpha, "alpha"))
+        if type(isolated) is not bool or type(knockout) is not bool:
+            msg = "isolated and knockout must be booleans"
+            raise TypeError(msg)
+        devices = {"gray": "DeviceGray", "rgb": "DeviceRGB", "cmyk": "DeviceCMYK"}
+        if colorspace is not None and (not isolated or colorspace not in devices):
+            msg = "an explicitly selected blending space must be gray, rgb or cmyk on an isolated group"
+            raise ValueError(msg)
+        group = _Group(_unit(alpha, "alpha"), isolated, knockout, devices.get(colorspace) if colorspace else None)
+        return _Scope(self, b"", b"", group=group)
+
+    def soft_mask(
+        self,
+        group: Stream,
+        *,
+        subtype: SoftMaskType | str = SoftMaskType.ALPHA,
+    ) -> AbstractContextManager[None]:
+        """Mask the block with an existing transparency Form XObject from this document.
+
+        Alpha uses the group's computed opacity. Luminosity uses its colour and
+        requires an explicit group blending space. The mask applies inside the
+        block and the enclosing graphics state resumes afterwards.
+        """
+        self._check_open()
+        document = self._page.document
+        if not isinstance(group, Stream) or group._document is not document or group.xref is None:  # noqa: SLF001
+            msg = "soft mask requires a Form stream in this document"
+            raise ValueError(msg)
+        attributes = group.get("Group")
+        if (
+            group.get("Subtype") != "Form"
+            or not isinstance(attributes, Dictionary)
+            or attributes.get("S") != "Transparency"
+        ):
+            msg = "soft mask requires a transparency group Form"
+            raise ValueError(msg)
+        mode = SoftMaskType(subtype)
+        if mode is SoftMaskType.LUMINOSITY and not _mask_blending_space(group, attributes.get("CS")):
+            msg = "a luminosity mask group requires a blending colour space"
+            raise ValueError(msg)
+        _require_version(document, document.catalog, (1, 4))
+        state = document.objects.add({"Type": Name("ExtGState"), "SMask": {"S": Name(mode.value.title()), "G": group}})
+        name = self._masks.setdefault(state, f"PyroM{len(self._masks) + 1}")
+        return _Scope(self, b"q\n/" + name.encode() + b" gs", b"Q")
 
     def blend(self, mode: BlendMode | str) -> AbstractContextManager[None]:
         """Blend what the block draws with the content below it."""

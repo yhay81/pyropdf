@@ -10,13 +10,17 @@ use cms::cert::CertificateChoices;
 use cms::content_info::ContentInfo;
 use cms::signed_data::{SignedData, SignerIdentifier, SignerInfo};
 use der::asn1::{ObjectIdentifier, OctetString};
-use der::{Any, Decode, Encode};
+use der::{Any, Decode, Encode, Sequence};
 use p256::ecdsa::signature::hazmat::PrehashVerifier as _;
 use x509_cert::Certificate;
-use x509_cert::spki::SubjectPublicKeyInfoRef;
+use x509_cert::spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoRef};
 use x509_cert::time::Time;
 
-use super::{EC_PUBLIC_KEY, Error, PRIME256V1, RSA_ENCRYPTION, SECP384R1};
+use super::algorithms::{ED448, ED25519, SHAKE256_LEN};
+use super::{
+    DigestAlgorithm, EC_PUBLIC_KEY, Error, PRIME256V1, RSA_ENCRYPTION, SECP384R1,
+    SignatureAlgorithm,
+};
 
 const ID_SIGNED_DATA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
 const ID_CT_TST_INFO: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.4");
@@ -29,6 +33,60 @@ const RSASSA_PSS: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.11354
 
 /// The most certificates of one SignedData that a verification reads.
 pub const MAX_CERTIFICATES: usize = 64;
+
+/// RSASSA-PSS verification parameters from RFC 4055 section 3.1.
+#[derive(Sequence)]
+struct PssParameters {
+    #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
+    hash: Option<AlgorithmIdentifierOwned>,
+    #[asn1(context_specific = "1", tag_mode = "EXPLICIT", optional = "true")]
+    mask: Option<AlgorithmIdentifierOwned>,
+    #[asn1(context_specific = "2", tag_mode = "EXPLICIT", optional = "true")]
+    salt_length: Option<u32>,
+    #[asn1(context_specific = "3", tag_mode = "EXPLICIT", optional = "true")]
+    trailer: Option<u32>,
+}
+
+fn pss_parameters(
+    algorithm: &AlgorithmIdentifierOwned,
+) -> Result<Option<(String, String, u32)>, Error> {
+    if algorithm.oid != RSASSA_PSS {
+        return Ok(None);
+    }
+    let pss = algorithm
+        .parameters
+        .as_ref()
+        .and_then(|p| p.decode_as::<PssParameters>().ok())
+        .ok_or_else(|| {
+            Error::Invalid("invalid or absent RSA-PSS signature parameters".to_owned())
+        })?;
+    if pss.trailer.unwrap_or(1) != 1 {
+        return Err(Error::Invalid(
+            "unsupported RSA-PSS trailer field".to_owned(),
+        ));
+    }
+    const MGF1: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.8");
+    let mask_hash = match pss.mask {
+        None => "sha1".to_owned(),
+        Some(mask) if mask.oid == MGF1 => mask
+            .parameters
+            .as_ref()
+            .and_then(|p| p.decode_as::<AlgorithmIdentifierOwned>().ok())
+            .map(|hash| digest_name(hash.oid))
+            .ok_or_else(|| Error::Invalid("invalid RSA-PSS MGF1 hash parameters".to_owned()))?,
+        _ => {
+            return Err(Error::Invalid(
+                "unsupported RSA-PSS mask generation function".to_owned(),
+            ));
+        }
+    };
+    Ok(Some((
+        pss.hash
+            .map_or_else(|| "sha1".to_owned(), |hash| digest_name(hash.oid)),
+        mask_hash,
+        pss.salt_length.unwrap_or(20),
+    )))
+}
 
 /// A signature to verify: `signature` by the key of `key` (a DER
 /// SubjectPublicKeyInfo) over `message`, hashed with `digest`.
@@ -46,6 +104,8 @@ pub struct Check {
     /// The bytes signed; `None` when the signature signs the content
     /// itself, which only the caller holds.
     pub message: Option<Vec<u8>>,
+    /// The MGF1 digest and salt length for an RSA-PSS check.
+    pub pss: Option<(String, u32)>,
 }
 
 /// The parts of a CMS SignedData that a verification reads.
@@ -110,12 +170,10 @@ fn invalid(what: &str) -> impl Fn(der::Error) -> Error + '_ {
 
 /// Returns the `hashlib` name of a digest algorithm, or its OID.
 fn digest_name(oid: ObjectIdentifier) -> String {
-    match oid.to_string().as_str() {
-        "1.3.14.3.2.26" => "sha1".to_owned(),
-        "2.16.840.1.101.3.4.2.1" => "sha256".to_owned(),
-        "2.16.840.1.101.3.4.2.2" => "sha384".to_owned(),
-        "2.16.840.1.101.3.4.2.3" => "sha512".to_owned(),
-        other => other.to_owned(),
+    if oid == ObjectIdentifier::new_unwrap("1.3.14.3.2.26") {
+        "sha1".to_owned()
+    } else {
+        DigestAlgorithm::from_oid(oid).map_or_else(|| oid.to_string(), |alg| alg.name().to_owned())
     }
 }
 
@@ -124,10 +182,18 @@ fn digest_name(oid: ObjectIdentifier) -> String {
 fn scheme(algorithm: ObjectIdentifier, digest: &str) -> (String, String) {
     let named = |scheme: &str, digest: &str| (scheme.to_owned(), digest.to_owned());
     match algorithm.to_string().as_str() {
+        "1.3.101.112" => named("ed25519", "sha512"),
+        "1.3.101.113" => named("ed448", "shake256"),
+        "2.16.840.1.101.3.4.3.10" => named("ecdsa", "sha3_256"),
+        "2.16.840.1.101.3.4.3.11" => named("ecdsa", "sha3_384"),
+        "2.16.840.1.101.3.4.3.12" => named("ecdsa", "sha3_512"),
         "1.2.840.10045.4.1" => named("ecdsa", "sha1"),
         "1.2.840.10045.4.3.2" => named("ecdsa", "sha256"),
         "1.2.840.10045.4.3.3" => named("ecdsa", "sha384"),
         "1.2.840.10045.4.3.4" => named("ecdsa", "sha512"),
+        "2.16.840.1.101.3.4.3.14" => named("rsa-pkcs1", "sha3_256"),
+        "2.16.840.1.101.3.4.3.15" => named("rsa-pkcs1", "sha3_384"),
+        "2.16.840.1.101.3.4.3.16" => named("rsa-pkcs1", "sha3_512"),
         "1.2.840.113549.1.1.5" => named("rsa-pkcs1", "sha1"),
         "1.2.840.113549.1.1.11" => named("rsa-pkcs1", "sha256"),
         "1.2.840.113549.1.1.12" => named("rsa-pkcs1", "sha384"),
@@ -172,6 +238,73 @@ fn der_length(data: &[u8]) -> Option<usize> {
     Some(2 + count + length)
 }
 
+/// Checks the algorithm parameters and congruent content and signature digests
+/// for the ISO/TS 32001/32002 signature profiles (including erratum 404).
+fn check_algorithms(info: &SignerInfo, certificate: Option<&Certificate>) -> Result<(), Error> {
+    let alg = &info.signature_algorithm;
+    let digest = &info.digest_alg;
+    if alg.oid == ED25519 || alg.oid == ED448 {
+        let (oid, length) = match (alg.oid == ED448, info.signed_attrs.is_some()) {
+            (false, _) => (DigestAlgorithm::Sha512.oid(), None),
+            (true, true) => (SHAKE256_LEN, Some(512u16)),
+            (true, false) => (DigestAlgorithm::Shake256.oid(), None),
+        };
+        let parameters_ok = match length {
+            None => digest.parameters.is_none(),
+            Some(bits) => {
+                digest
+                    .parameters
+                    .as_ref()
+                    .and_then(|p| p.decode_as::<u16>().ok())
+                    == Some(bits)
+            }
+        };
+        if alg.parameters.is_some() || digest.oid != oid || !parameters_ok {
+            return Err(Error::Invalid(
+                "invalid EdDSA signature or digest algorithm parameters (RFC 8419)".to_owned(),
+            ));
+        }
+    }
+    let Some(key) = certificate.and_then(|cert| SignatureAlgorithm::of(cert).ok()) else {
+        return Ok(());
+    };
+    let hash = DigestAlgorithm::from_oid(digest.oid);
+    let (scheme, attr_digest) = scheme(alg.oid, &digest_name(digest.oid));
+    if key.needs_extension()
+        || hash.is_some_and(DigestAlgorithm::needs_extension)
+        || attr_digest.starts_with("sha3_")
+    {
+        if hash.is_some_and(|hash| hash.needs_extension() && hash != DigestAlgorithm::Shake256)
+            && digest.parameters.is_some()
+        {
+            return Err(Error::Invalid(
+                "a SHA-3 digest identifier must omit algorithm parameters (RFC 9688)".to_owned(),
+            ));
+        }
+        if attr_digest.starts_with("sha3_")
+            && ((scheme == "ecdsa" && alg.parameters.is_some())
+                || (scheme == "rsa-pkcs1"
+                    && !alg.parameters.as_ref().is_some_and(der::Any::is_null)))
+        {
+            return Err(Error::Invalid(
+                "invalid SHA-3 signature algorithm parameters (RFC 9688)".to_owned(),
+            ));
+        }
+        let valid = hash.is_some_and(|hash| key.permits(hash) && attr_digest == hash.name());
+        let expected_scheme = match key {
+            SignatureAlgorithm::Ed25519 => "ed25519",
+            SignatureAlgorithm::Ed448 => "ed448",
+            SignatureAlgorithm::RsaSha256 if scheme == "rsa-pss" => "rsa-pss",
+            SignatureAlgorithm::RsaSha256 => "rsa-pkcs1",
+            _ => "ecdsa",
+        };
+        if !valid || scheme != expected_scheme {
+            return Err(Error::Invalid("the signature scheme, signed-attribute digest and content digest do not match the signing key's PDF profile".to_owned()));
+        }
+    }
+    Ok(())
+}
+
 fn signed_data(data: &[u8], outer: bool) -> Result<Signed, Error> {
     let info = ContentInfo::from_der(data).map_err(invalid("the signature's CMS"))?;
     if info.content_type != ID_SIGNED_DATA {
@@ -211,6 +344,17 @@ fn signed_data(data: &[u8], outer: bool) -> Result<Signed, Error> {
     let signer = parsed
         .iter()
         .position(|certificate| identifies(&signer_info.sid, certificate));
+    check_algorithms(signer_info, signer.map(|index| &parsed[index]))?;
+    if matches!(signer_info.signature_algorithm.oid, ED25519 | ED448)
+        && signed.digest_algorithms.iter().any(|identifier| {
+            identifier.oid == signer_info.digest_alg.oid
+                && identifier.parameters != signer_info.digest_alg.parameters
+        })
+    {
+        return Err(Error::Invalid(
+            "invalid EdDSA digestAlgorithm parameters in SignedData (RFC 8419)".to_owned(),
+        ));
+    }
     let digest = digest_name(signer_info.digest_alg.oid);
     let mut message_digest = None;
     let mut signing_time = None;
@@ -250,6 +394,12 @@ fn signed_data(data: &[u8], outer: bool) -> Result<Signed, Error> {
         reason = "a copy of the signature value of the SignedData, which the caller holds"
     )]
     let signature = signer_info.signature.as_bytes().to_vec();
+    let pss = pss_parameters(&signer_info.signature_algorithm)?;
+    if pss.as_ref().is_some_and(|(hash, _, _)| hash != &digest) {
+        return Err(Error::Invalid(
+            "the RSA-PSS signature hash does not match the content digest".to_owned(),
+        ));
+    }
     let check = signer.map(|index| {
         let (scheme, digest) = scheme(signer_info.signature_algorithm.oid, &digest);
         Check {
@@ -259,6 +409,7 @@ fn signed_data(data: &[u8], outer: bool) -> Result<Signed, Error> {
                 .to_der()
                 .unwrap_or_default(),
             scheme,
+            pss: pss.map(|(_, mgf, salt)| (mgf, salt)),
             digest,
             signature: signature.clone(),
             message,
@@ -411,7 +562,9 @@ fn identifies(sid: &SignerIdentifier, certificate: &Certificate) -> bool {
 pub fn certificate(data: &[u8]) -> Result<CertificateInfo, Error> {
     let certificate = Certificate::from_der(data).map_err(invalid("a certificate"))?;
     let tbs = certificate.tbs_certificate();
-    let (scheme, digest) = scheme(certificate.signature_algorithm().oid, "sha256");
+    let pss = pss_parameters(certificate.signature_algorithm())?;
+    let default_digest = pss.as_ref().map_or("sha256", |(hash, _, _)| hash.as_str());
+    let (scheme, digest) = scheme(certificate.signature_algorithm().oid, default_digest);
     let validity = tbs.validity();
     Ok(CertificateInfo {
         subject: tbs.subject().to_string(),
@@ -422,6 +575,7 @@ pub fn certificate(data: &[u8]) -> Result<CertificateInfo, Error> {
             key: Vec::new(),
             scheme,
             digest,
+            pss: pss.map(|(_, mgf, salt)| (mgf, salt)),
             #[expect(
                 clippy::disallowed_methods,
                 reason = "a copy of the signature value of the certificate, which the caller holds"

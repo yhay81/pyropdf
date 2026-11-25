@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.3.1"
+version = "0.4.0"
 authors = ["Yusuke Hayashi <yusuke8h@gmail.com>"]
 edition = "2024"
 license = "MIT"
@@ -43,8 +43,11 @@ strip = "symbols"
 # PyO3 converts Rust panics into Python exceptions only when they unwind.
 panic = "unwind"
 
-# Size-optimize the PDF engine, font code and RTen operator implementations.
+# Size-optimize the PDF store, engine, font code and RTen operator implementations.
 # The rasterizer, matrix-multiplication kernels and binding retain speed optimization.
+[profile.release.package.pyropdf-store]
+opt-level = "s"
+
 [profile.release.package.pyropdf-engine]
 opt-level = "s"
 

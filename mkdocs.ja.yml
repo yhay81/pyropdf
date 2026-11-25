@@ -66,7 +66,7 @@ nav:
       - 版と保存: versions.md
       - 制限とエラー: limits.md
       - レシピ: recipes.md
-  - API リファレンス（英語）: https://pyropdf.haya.works/api/
+  - API リファレンス（英語）: /api/
   - プロジェクト:
       - pyropdf を選ぶ: choosing.md
       - 状態と安全性: status.md
@@ -156,10 +156,10 @@ extra:
   current_language: ja
   alternate:
     - name: English
-      link: https://pyropdf.haya.works/
+      link: /
       lang: en
     - name: 日本語
-      link: https://pyropdf.haya.works/ja/
+      link: /ja/
       lang: ja
   social:
     - icon: fontawesome/brands/github

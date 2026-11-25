@@ -80,7 +80,7 @@ fields are those of the columns, with one `text` field (`utf8`) for
 `text_offsets` and `text_data`, `is_synthetic` as Arrow
 booleans, and `stream` and `operation` null where they are `None`.
 
-### `Chars.names`
+### `names`
 
 ```python
 Chars.names: tuple[str, ...] = (
@@ -103,25 +103,25 @@ Chars.names: tuple[str, ...] = (
 
 The names of the columns, in the order of the Arrow fields.
 
-### `Chars.__len__`
+### `__len__`
 
 ```python
 Chars.__len__() -> int
 ```
 
-### `Chars.__getitem__`
+### `__getitem__`
 
 ```python
 Chars.__getitem__(index: int | slice) -> Char | Chars
 ```
 
-### `Chars.__iter__`
+### `__iter__`
 
 ```python
 Chars.__iter__() -> Iterator[Char]
 ```
 
-### `Chars.column`
+### `column`
 
 ```python
 Chars.column(name: str) -> memoryview
@@ -129,7 +129,7 @@ Chars.column(name: str) -> memoryview
 
 Return the column `name` of `names` as a read-only `memoryview`, without a copy.
 
-### `Chars.__arrow_c_schema__`
+### `__arrow_c_schema__`
 
 ```python
 Chars.__arrow_c_schema__() -> object
@@ -137,7 +137,7 @@ Chars.__arrow_c_schema__() -> object
 
 Return the Arrow schema of the rows as a PyCapsule.
 
-### `Chars.__arrow_c_array__`
+### `__arrow_c_array__`
 
 ```python
 Chars.__arrow_c_array__(requested_schema: object | None = None) -> tuple[object, object]
@@ -167,7 +167,7 @@ Consecutive elements within one section, joined as Markdown in `text`.
 headings above it from the outermost, and `oversized` whether its one
 indivisible element passes the budget.
 
-### `Chunk.pages`
+### `pages`
 
 ```python
 Chunk.pages: tuple[int, ...]
@@ -175,7 +175,7 @@ Chunk.pages: tuple[int, ...]
 
 The indexes of the pages that the chunk's elements come from, in order.
 
-### `Chunk.to_dict`
+### `to_dict`
 
 ```python
 Chunk.to_dict() -> dict[str, Any]
@@ -210,7 +210,7 @@ A solid paint, as the sRGB color and alpha that hayro converts it to.
 Components range from 0 to 1. The color space and its own components
 are not exposed yet.
 
-### `Color.rgb`
+### `rgb`
 
 ```python
 Color.rgb: tuple[float, float, float]
@@ -235,7 +235,30 @@ Content(*, items: tuple[ContentItem, ...])
 
 The items that a page paints, in paint order.
 
-### `Content.__getitem__`
+### `pixmap`
+
+```python
+Content.pixmap(
+    *,
+    dpi: float | None = None,
+    matrix: Sequence[float] | None = None,
+    fit: int | tuple[int, int] | None = None,
+    clip: Sequence[float] | None = None,
+    alpha: bool = False,
+    background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
+    colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
+    hinting: bool = False,
+    glyph_cache: bool = False,
+) -> Pixmap
+```
+
+Render this complete page capture with the options of `Page.pixmap`.
+
+Geometry, paints, resources and annotation visibility are those of the
+capture. Each call has its own budget. Filtered, constructed or unpickled
+content raises `ValueError`; a closed source raises `PdfError`.
+
+### `__getitem__`
 
 ```python
 Content.__getitem__(index: int | slice) -> ContentItem | tuple[ContentItem, ...]
@@ -243,7 +266,7 @@ Content.__getitem__(index: int | slice) -> ContentItem | tuple[ContentItem, ...]
 
 Return one item, or a tuple of items for a slice.
 
-### `Content.__len__`
+### `__len__`
 
 ```python
 Content.__len__() -> int
@@ -251,7 +274,7 @@ Content.__len__() -> int
 
 Return the number of items.
 
-### `Content.__iter__`
+### `__iter__`
 
 ```python
 Content.__iter__() -> Iterator[ContentItem]
@@ -259,7 +282,7 @@ Content.__iter__() -> Iterator[ContentItem]
 
 Iterate over the items in paint order.
 
-### `Content.text_runs`
+### `text_runs`
 
 ```python
 Content.text_runs: tuple[TextRun, ...]
@@ -267,7 +290,7 @@ Content.text_runs: tuple[TextRun, ...]
 
 The text runs in paint order.
 
-### `Content.paths`
+### `paths`
 
 ```python
 Content.paths: tuple[Path, ...]
@@ -275,7 +298,7 @@ Content.paths: tuple[Path, ...]
 
 The paths in paint order.
 
-### `Content.images`
+### `images`
 
 ```python
 Content.images: tuple[Image, ...]
@@ -283,7 +306,7 @@ Content.images: tuple[Image, ...]
 
 The images in paint order.
 
-### `Content.path_clusters`
+### `path_clusters`
 
 ```python
 Content.path_clusters(*, x_tolerance: float = 3, y_tolerance: float = 3) -> list[Rect]
@@ -305,6 +328,8 @@ outside the page box.
 ```python
 ContentItem: TypeAlias = TextRun | Path | Image
 ```
+
+One painted item yielded by `Page.content`: a `TextRun`, `Path`, or `Image`.
 
 ## `CurveTo`
 
@@ -337,7 +362,7 @@ display space; a paragraph's box spans its lines. `level` is a
 heading's level, 1 through 4, and `rows` a table's cells as
 `Table.rows` holds them.
 
-### `Element.to_dict`
+### `to_dict`
 
 ```python
 Element.to_dict() -> dict[str, Any]
@@ -393,7 +418,7 @@ Glyph(
 
 One glyph of a text run.
 
-### `Glyph.origin`
+### `origin`
 
 ```python
 Glyph.origin: Point
@@ -401,7 +426,7 @@ Glyph.origin: Point
 
 The glyph origin on the baseline.
 
-### `Glyph.size`
+### `size`
 
 ```python
 Glyph.size: float
@@ -414,6 +439,8 @@ The display-space font size.
 ```python
 Gradient: TypeAlias = LinearGradient | RadialGradient
 ```
+
+A linear or radial gradient paint for a `Canvas`.
 
 ## `GradientExtend`
 
@@ -436,7 +463,7 @@ The clips, transparency groups, and marked content around an item.
 
 Each tuple lists its entries outermost first.
 
-### `GraphicsContext.opacity`
+### `opacity`
 
 ```python
 GraphicsContext.opacity: float
@@ -444,7 +471,7 @@ GraphicsContext.opacity: float
 
 The product of the groups' opacities.
 
-### `GraphicsContext.clip_bbox`
+### `clip_bbox`
 
 ```python
 GraphicsContext.clip_bbox: Rect | None
@@ -505,7 +532,7 @@ The text of a page as blocks, lines, spans, and, on request, characters.
 `width` and `height` are those of the page's display box; every box
 is in display space.
 
-### `Layout.to_dict`
+### `to_dict`
 
 ```python
 Layout.to_dict() -> dict[str, Any]
@@ -523,7 +550,7 @@ the layout holds characters, each span has `chars` in place of
 dictionaries; `Char.stream` and `Char.operation` remain on the
 `Char` records.
 
-### `Layout.to_html`
+### `to_html`
 
 ```python
 Layout.to_html() -> str
@@ -537,7 +564,7 @@ box, turned along its baseline, and one `<span>` per span in its
 font family, size, weight, style, and color. Invisible text keeps its
 place with `opacity:0`.
 
-### `Layout.to_xml`
+### `to_xml`
 
 ```python
 Layout.to_xml() -> str
@@ -632,8 +659,10 @@ Start a new subpath at `to`.
 ## `Paint`
 
 ```python
-Paint: TypeAlias = Color | ShadingPattern | TilingPattern | Gradient
+Paint: TypeAlias = Color | PatternPaint | ShadingPattern | TilingPattern | Gradient
 ```
+
+A solid color, pattern, shading, or gradient paint; a canvas also repaints axial/radial `ShadingPattern` values.
 
 ## `Path`
 
@@ -725,7 +754,7 @@ a list of structs of the segment columns whose control points are null
 for verbs other than `c`, and `stroke_dashes`, a list of float64,
 null without a stroke.
 
-### `Paths.names`
+### `names`
 
 ```python
 Paths.names: tuple[str, ...]
@@ -733,25 +762,25 @@ Paths.names: tuple[str, ...]
 
 The names of the columns, in the order of the Arrow fields.
 
-### `Paths.__len__`
+### `__len__`
 
 ```python
 Paths.__len__() -> int
 ```
 
-### `Paths.__getitem__`
+### `__getitem__`
 
 ```python
 Paths.__getitem__(index: int | slice) -> Path | Paths
 ```
 
-### `Paths.__iter__`
+### `__iter__`
 
 ```python
 Paths.__iter__() -> Iterator[Path]
 ```
 
-### `Paths.contexts`
+### `contexts`
 
 ```python
 Paths.contexts: tuple[GraphicsContext, ...]
@@ -759,7 +788,7 @@ Paths.contexts: tuple[GraphicsContext, ...]
 
 The graphics contexts of the page's interpretation, which the `context` column indexes.
 
-### `Paths.patterns`
+### `patterns`
 
 ```python
 Paths.patterns: tuple[ShadingPattern | TilingPattern, ...]
@@ -767,7 +796,7 @@ Paths.patterns: tuple[ShadingPattern | TilingPattern, ...]
 
 The distinct pattern paints, which `fill_pattern` and `stroke_pattern` index.
 
-### `Paths.column`
+### `column`
 
 ```python
 Paths.column(name: str) -> memoryview
@@ -775,7 +804,7 @@ Paths.column(name: str) -> memoryview
 
 Return the column `name` of `names` as a read-only `memoryview`, without a copy.
 
-### `Paths.__arrow_c_schema__`
+### `__arrow_c_schema__`
 
 ```python
 Paths.__arrow_c_schema__() -> object
@@ -783,7 +812,7 @@ Paths.__arrow_c_schema__() -> object
 
 Return the Arrow schema of the rows as a PyCapsule.
 
-### `Paths.__arrow_c_array__`
+### `__arrow_c_array__`
 
 ```python
 Paths.__arrow_c_array__(requested_schema: object | None = None) -> tuple[object, object]
@@ -793,6 +822,25 @@ Return the rows as the PyCapsules of an Arrow schema and struct array.
 
 The array's buffers are the columns; `requested_schema` is ignored,
 as the interface allows.
+
+## `PatternPaint`
+
+```python
+PatternPaint(
+    *,
+    pattern: Dictionary,
+    space: Array | None = None,
+    components: tuple[float, ...] = (),
+)
+```
+
+Paint with an indirect tiling or shading pattern in the canvas document.
+
+Pass the pattern's store handle, for example the `obj` of a
+`typed.PatternType1` or `typed.PatternType2`. Its PDF matrix
+positions it in default user space. For an uncolored tiling pattern,
+supply an indirect `[/Pattern base]` color space and its color components.
+DeviceN bases support up to 32 components, matching the renderer.
 
 ## `RadialGradient`
 
@@ -819,6 +867,8 @@ stops and `extend` are those of a `LinearGradient`.
 ```python
 Segment: TypeAlias = MoveTo | LineTo | CurveTo | ClosePath
 ```
+
+One path construction segment of a `Path` or `PathBuilder`.
 
 ## `ShadingPattern`
 
@@ -925,7 +975,7 @@ A table that `Page.tables` detected, in display space.
 row. A merged cell keeps its text and its spanning box in its top-left
 slot; the slots it covers are `None`.
 
-### `Table.markdown`
+### `markdown`
 
 ```python
 Table.markdown(*, fill_empty: bool = True, max_size: int | None = 67108864) -> str
@@ -988,7 +1038,7 @@ TextRun(
 
 The glyphs that one text-showing operator paints.
 
-### `TextRun.text`
+### `text`
 
 ```python
 TextRun.text: str
@@ -996,7 +1046,7 @@ TextRun.text: str
 
 The Unicode text of the glyphs that map to one.
 
-### `TextRun.size`
+### `size`
 
 ```python
 TextRun.size: float
