@@ -8,7 +8,7 @@ use pyo3::types::PyBytes;
 use pyropdf_engine::bridge::Bridged;
 use pyropdf_engine::extract::{self, DecodedImage, Error};
 use pyropdf_engine::pixmap::images as engine_images;
-use pyropdf_store::budget::Budget;
+use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
 use pyropdf_store::value::{Name, Reference, Stream, Value};
@@ -270,18 +270,34 @@ type Samples<'py> = (
 /// its color space, without converting them to RGB: CMYK as stored, YCCK
 /// as pdf.js turns it into CMYK, and JPEG 2000's palette indexes kept.
 #[pyfunction]
-pub fn image_samples<'py>(py: Python<'py>, data: &[u8], jpx: bool) -> PyResult<Samples<'py>> {
+pub fn image_samples<'py>(
+    py: Python<'py>,
+    document: &_Document,
+    data: &[u8],
+    jpx: bool,
+) -> PyResult<Samples<'py>> {
     crate::errors::boundary(|| {
+        document.document()?;
+        let budget = document.budget();
         let (width, height, components, color, alpha) = py
-            .detach(|| engine_images::image_samples(data, jpx))
-            .map_err(PyValueError::new_err)?;
-        Ok((
+            .detach(|| engine_images::image_samples(data, jpx, &budget))
+            .map_err(decode_error)?;
+        let charged = (color.len() as u64)
+            .saturating_add(alpha.as_ref().map_or(0, |samples| samples.len() as u64));
+        let poll = budget.poll();
+        if let Err(refusal) = poll {
+            budget.release(LimitCode::MemorySize, charged);
+            return Err(limit_error(&refusal));
+        }
+        let result = (
             width,
             height,
             components,
             PyBytes::new(py, &color),
             alpha.map(|alpha| PyBytes::new(py, &alpha)),
-        ))
+        );
+        budget.release(LimitCode::MemorySize, charged);
+        Ok(result)
     })?
 }
 
@@ -289,8 +305,13 @@ pub fn image_samples<'py>(py: Python<'py>, data: &[u8], jpx: bool) -> PyResult<S
 /// JPEG data that decodes to them: four components as CMYK with an Adobe
 /// APP14 marker of transform 0 when `adobe`, and without one otherwise.
 #[pyfunction]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "document budget plus raw sample buffer, dimensions, component count, quality, and Adobe flag"
+)]
 pub fn encode_jpeg_samples<'py>(
     py: Python<'py>,
+    document: &_Document,
     data: &[u8],
     width: u16,
     height: u16,
@@ -299,7 +320,8 @@ pub fn encode_jpeg_samples<'py>(
     adobe: bool,
 ) -> PyResult<Bound<'py, PyBytes>> {
     crate::errors::boundary(|| {
-        let budget = pyropdf_store::budget::Budget::default();
+        document.document()?;
+        let budget = document.budget();
         let out = py
             .detach(|| {
                 engine_images::encode_jpeg_samples(
@@ -312,6 +334,13 @@ pub fn encode_jpeg_samples<'py>(
                     PyValueError::new_err(message)
                 }
             })?;
-        Ok(PyBytes::new(py, &out))
+        let len = out.len() as u64;
+        if let Err(refusal) = budget.poll() {
+            budget.release(LimitCode::MemorySize, len);
+            return Err(limit_error(&refusal));
+        }
+        let bytes = PyBytes::new(py, &out);
+        budget.release(LimitCode::MemorySize, len);
+        Ok(bytes)
     })?
 }

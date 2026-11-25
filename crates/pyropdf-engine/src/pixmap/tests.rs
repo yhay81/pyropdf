@@ -226,7 +226,7 @@ fn jpeg_psd_ps_and_other_ops_behave_as_specified() {
     let without_adobe = images::encode_jpeg_samples(&cmyk, 2, 2, 4, 90, false, &budget).unwrap();
     assert!(with_adobe.windows(5).any(|w| w == b"Adobe"));
     assert!(!without_adobe.windows(5).any(|w| w == b"Adobe"));
-    let (w, h, comps, _, alpha) = images::image_samples(&with_adobe, false).unwrap();
+    let (w, h, comps, _, alpha) = images::image_samples(&with_adobe, false, &budget).unwrap();
     assert_eq!((w, h, comps, alpha), (2, 2, 4, None));
 
     assert_eq!(
@@ -373,5 +373,32 @@ fn recolor_and_encode_jpeg_samples_obey_budget_limits() {
     assert!(matches!(
         images::encode_jpeg_samples(&data, 4, 4, 3, 80, false, &cancelled),
         Err(EncodeError::Limit(refusal)) if refusal.code() == LimitCode::Cancelled
+    ));
+
+    let jpeg = images::encode_jpeg_samples(&cmyk, 4, 4, 4, 80, true, &Budget::default()).unwrap();
+    assert!(matches!(
+        images::image_samples(&jpeg, false, &tight),
+        Err(DecodeError::Limit(refusal)) if refusal.code() == LimitCode::MemorySize
+    ));
+    let tiny_decompressed =
+        Budget::default().with_limit(LimitCode::TotalDecompressedSize, Some(10));
+    assert!(matches!(
+        images::image_samples(&jpeg, false, &tiny_decompressed),
+        Err(DecodeError::Limit(refusal)) if refusal.code() == LimitCode::TotalDecompressedSize
+    ));
+    assert!(matches!(
+        images::image_samples(&jpeg, false, &cancelled),
+        Err(DecodeError::Limit(refusal)) if refusal.code() == LimitCode::Cancelled
+    ));
+    let jp2 = super::jpx::encode_jp2(&data, 4, 4, 3, 1 << 20)
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        images::image_samples(&jp2, true, &tight),
+        Err(DecodeError::Limit(refusal)) if refusal.code() == LimitCode::MemorySize
+    ));
+    assert!(matches!(
+        images::image_samples(&jp2, true, &cancelled),
+        Err(DecodeError::Limit(refusal)) if refusal.code() == LimitCode::Cancelled
     ));
 }
