@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::{IntoPyObjectExt, intern};
 use pyropdf_engine::content::{Operations, PageContent};
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::value::{Bytes, Dict, Reference, Value};
 
@@ -29,33 +29,48 @@ type Content<'py> = (Vec<Bound<'py, PyAny>>, Bound<'py, PyBytes>);
 
 /// Tokenizes decoded content with the GIL released. `max_size` bounds the
 /// content with `content_input_size`, and `max_operations` the operations
-/// with `content_operation_count`; `None` lifts either.
+/// with `content_operation_count`; `None` lifts either. When `document` is
+/// passed, the parse also obeys the document's budget (`max_memory_size`,
+/// `max_duration`, `cancellation`, and any active operation).
 #[pyfunction]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "ContentInputSize checks the borrowed Python buffer once before this copy (DESIGN section 9)"
-)]
+#[pyo3(signature = (data, max_operations, max_size, document = None))]
 pub fn parse_operations<'py>(
     py: Python<'py>,
     data: &[u8],
     max_operations: Option<u64>,
     max_size: Option<u64>,
+    document: Option<&_Document>,
 ) -> PyResult<Content<'py>> {
     crate::errors::boundary(|| {
-        let budget = Budget::default()
-            .with_limit(LimitCode::ContentOperationCount, max_operations)
-            .with_limit(LimitCode::ContentInputSize, max_size);
+        let budget = match document {
+            Some(document) => {
+                document.document()?;
+                document.call_budget(&[
+                    (LimitCode::ContentOperationCount, max_operations),
+                    (LimitCode::ContentInputSize, max_size),
+                ])?
+            }
+            None => Budget::default()
+                .with_limit(LimitCode::ContentOperationCount, max_operations)
+                .with_limit(LimitCode::ContentInputSize, max_size)
+                .share(),
+        };
         budget
             .check(
                 LimitCode::ContentInputSize,
                 u64::try_from(data.len()).unwrap_or(u64::MAX),
             )
             .map_err(|e| limit_error(&e))?;
-        let data = Bytes::new(data.to_vec());
+        let mut copy = BudgetVec::new(&budget);
+        copy.try_reserve_exact(data.len())
+            .map_err(|e| limit_error(&e))?;
+        copy.try_extend_from_slice(data)
+            .map_err(|e| limit_error(&e))?;
+        let data = Bytes::new(copy.into_vec());
         let operations = py
             .detach(|| Operations::parse(data, &budget))
             .map_err(|e| store_error(&e))?;
-        tagged(py, &operations)
+        tagged(py, &operations, &budget)
     })?
 }
 
@@ -78,7 +93,7 @@ pub fn page_operations<'py>(
         let content = py
             .detach(|| PageContent::read(&mut Reads::new(&version, &budget), page))
             .map_err(|e| store_error(&e))?;
-        tagged(py, content.operations()).map(Some)
+        tagged(py, content.operations(), &budget).map(Some)
     })?
 }
 
@@ -87,12 +102,20 @@ pub fn page_operations<'py>(
     clippy::disallowed_methods,
     reason = "one item per budgeted content operation, and one operand per value parsed under that budget"
 )]
-fn tagged<'py>(py: Python<'py>, operations: &Operations) -> PyResult<Content<'py>> {
+fn tagged<'py>(
+    py: Python<'py>,
+    operations: &Operations,
+    budget: &Budget,
+) -> PyResult<Content<'py>> {
+    budget.poll().map_err(|e| limit_error(&e))?;
     let mut items = Vec::new();
     items.try_reserve_exact(operations.len()).map_err(|error| {
         MalformedPdfError::new_err(format!("cannot hold the content's operations: {error}"))
     })?;
-    for operation in operations.operations() {
+    for (index, operation) in operations.operations().iter().enumerate() {
+        if index.is_multiple_of(1024) {
+            budget.poll().map_err(|e| limit_error(&e))?;
+        }
         let bytes = PyBytes::new(py, operations.bytes(operation));
         let item = match (
             operations.image_data(operation),

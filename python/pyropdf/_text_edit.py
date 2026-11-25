@@ -20,10 +20,12 @@ import contextlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from pyropdf import _core
 from pyropdf._errors import LimitError
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Array, Dictionary, Name, Real, Stream, String
 from pyropdf._operations import InlineImage, Operation, Operations
+from pyropdf._xobjects import _parse_stream_operations
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -154,6 +156,11 @@ def replace_text(page: Page, old: str, new: str, *, count: int | None) -> int:
     return editor.replaced
 
 
+def _poll(budget: _core._OperationBudget, index: int = 0) -> None:
+    if index % 256 == 0:
+        budget.poll()
+
+
 class _Editor:
     """One replacement: reads the drawings of the page, then writes the ones that changed."""
 
@@ -167,7 +174,7 @@ class _Editor:
         self.forms = 0
         #: The operations of each Form XObject, parsed once for all its drawings.
         self.parsed: dict[object, Operations] = {}
-        self.root = _Scope(page.operations, _resources(page), None, 0)
+        self.root = _Scope(Operations(), None, None, 0)
         #: The new operations of the page's content, when they changed.
         self.operations: list[Operation | InlineImage] | None = None
         #: The copies that the page draws, by the name that it draws them by.
@@ -177,17 +184,25 @@ class _Editor:
 
     def read(self) -> None:
         """Find the drawings and fonts, read the fonts' codes, and plan the replacements in drawing order."""
-        self._collect(self.root)
+        core = self.page.document._core()  # noqa: SLF001
+
+        def collect(budget: _core._OperationBudget) -> _Scope:
+            root = _Scope(self.page.operations, _resources(self.page), None, 0)
+            self._collect(root, budget)
+            return root
+
+        self.root = _core.read_operation(core, collect)
         self._probe([font for font in self.fonts.values() if font.simple])
         self._refuse_composite()
-        edited = self._edit(self.root, _State())
+        edited = _core.read_operation(core, lambda budget: self._edit(self.root, _State(), budget))
         if edited is not None:
             self.operations, self.drawn = edited
 
-    def _collect(self, scope: _Scope) -> None:
+    def _collect(self, scope: _Scope, budget: _core._OperationBudget) -> None:
         """Add the drawings of the Form XObjects that ``scope`` draws, and the fonts they use."""
         xobjects = _sub(scope.resources, "XObject")
         for index, operation in enumerate(scope.operations):
+            _poll(budget, index)
             if not isinstance(operation, Operation):
                 continue
             if operation.operator in ("Tf", "gs"):
@@ -205,15 +220,16 @@ class _Editor:
                     code = "text_edit_forms"
                     raise LimitError(code, msg)
                 self.forms += 1
+                budget.poll()
                 resources = form.get("Resources")
                 if not isinstance(resources, Dictionary):
                     resources = scope.resources
                 key = _key(form)
                 if key not in self.parsed:
-                    self.parsed[key] = Operations.parse(form.read())
+                    self.parsed[key] = _parse_stream_operations(form)
                 child = _Scope(self.parsed[key], resources, form, scope.depth + 1)
                 scope.forms[index] = child
-                self._collect(child)
+                self._collect(child, budget)
 
     def _font_of(self, resources: Dictionary | None, operation: Operation) -> tuple[_Font | None, float] | None:
         """Return the font and size that a ``Tf``, or a ``gs`` whose graphics state has a ``Font``, sets."""
@@ -260,7 +276,9 @@ class _Editor:
                 msg = f"{self.old!r} is drawn in a composite font, which replace_text does not edit"
                 raise ValueError(msg)
 
-    def _edit(self, scope: _Scope, state: _State) -> tuple[list[Operation | InlineImage], dict[str, int]] | None:
+    def _edit(
+        self, scope: _Scope, state: _State, budget: _core._OperationBudget
+    ) -> tuple[list[Operation | InlineImage], dict[str, int]] | None:
         """Return the drawing's operations with the replacements and the copies they draw, or ``None``.
 
         A Form XObject starts from the state where it is drawn (ISO 32000-2
@@ -274,6 +292,7 @@ class _Editor:
         drawn: dict[str, int] = {}
         changed = False
         for index, operation in enumerate(scope.operations):
+            _poll(budget, index)
             if self.count is not None and self.replaced >= self.count:
                 out.extend(scope.operations[index:])
                 break
@@ -295,7 +314,7 @@ class _Editor:
                     changed = True
                     continue
             form = scope.forms.get(index)
-            copy = None if form is None else self._copy(form, operation, state, taken, drawn)
+            copy = None if form is None else self._copy(form, operation, state, taken, drawn, budget=budget)
             if copy is not None:
                 out.append(copy)
                 changed = True
@@ -303,11 +322,18 @@ class _Editor:
             out.append(operation)
         return (out, drawn) if changed else None
 
-    def _copy(
-        self, form: _Scope, operation: Operation, state: _State, taken: set[str], drawn: dict[str, int]
+    def _copy(  # noqa: PLR0913 - form scope, operation, state, naming sets, and operation budget.
+        self,
+        form: _Scope,
+        operation: Operation,
+        state: _State,
+        taken: set[str],
+        drawn: dict[str, int],
+        *,
+        budget: _core._OperationBudget,
     ) -> Operation | None:
         """Return the ``Do`` that draws a copy of the drawing ``form`` with its replacements, or ``None``."""
-        edited = self._edit(form, state.copy())
+        edited = self._edit(form, state.copy(), budget)
         if edited is None:
             return None
         name = _fresh(str(operation.operands[0]), taken)

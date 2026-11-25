@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
     from pyropdf._content import Image
     from pyropdf._document import Document
+    from pyropdf._limits import DocumentLimits
     from pyropdf._page import Page
     from pyropdf._pixmap import Pixmap
 
@@ -71,6 +72,8 @@ _CMYK = 4
 _MARKER = 0xFF
 #: The APP14 marker of Adobe's JPEGs.
 _APP14 = 0xEE
+#: The most bytes of encoded image data accepted by ``replace_image``, ``add_image``, and ``Canvas.image``.
+_MAX_IMAGE_INPUT = 268_435_456
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -272,18 +275,51 @@ def _write_samples(  # noqa: PLR0913 - the parts of one decoded image
         stream["SMask"] = document.objects[document.objects.add_stream(alpha, mask)]
 
 
-def replace_image(document: Document, xref: int, data: bytes) -> None:
+def _image_input_limit(budget: _core._OperationBudget) -> int:
+    """Return the effective encoded-image byte limit under ``budget``."""
+    configured = budget.limit("image_input_size")
+    return _MAX_IMAGE_INPUT if configured is None else min(_MAX_IMAGE_INPUT, configured)
+
+
+def _checked_image_bytes(document: Document, data: object) -> bytes:
+    """Validate bytes-like image input and enforce ``image_input_size`` and ``memory_size`` before copying."""
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        msg = f"data must be bytes, bytearray, or memoryview, not {type(data).__name__}"
+        raise TypeError(msg)
+    size = data.nbytes if isinstance(data, memoryview) else len(data)
+
+    def check(budget: _core._OperationBudget) -> bytes:
+        limit = _image_input_limit(budget)
+        if size > limit:
+            code = "image_input_size"
+            msg = f"the image data is larger than {limit} bytes"
+            raise LimitError(code, msg)
+        budget.check("image_input_size", size)
+        budget.check("memory_size", size)
+        if isinstance(data, bytes):
+            return data
+        budget.charge("memory_size", size)
+        try:
+            return bytes(data)
+        finally:
+            budget.release("memory_size", size)
+
+    return _core.read_operation(document._core(), check)  # noqa: SLF001
+
+
+def replace_image(document: Document, xref: int, data: bytes | bytearray | memoryview) -> None:
     """Replace image object ``xref`` with JPEG, JPEG 2000, or PNG ``data`` in one transaction."""
     stream = _image_stream(document, xref)
+    checked = _checked_image_bytes(document, data)
     with document.transaction("replace image"):
-        _store_image(document, stream, bytes(data))
+        _store_image(document, stream, checked)
 
 
-def add_image(document: Document, data: bytes) -> int:
+def add_image(document: Document, data: bytes | bytearray | memoryview) -> int:
     """Add JPEG, JPEG 2000, or PNG ``data`` as a new image object, in the current transaction, and return its number."""
-    data = bytes(data)
+    checked = _checked_image_bytes(document, data)
     xref = document.objects.add_stream(b"", {"Type": Name("XObject"), "Subtype": Name("Image")}, filter=None)
-    _store_image(document, document.objects[xref], data)
+    _store_image(document, document.objects[xref], checked)
     return xref
 
 
@@ -452,6 +488,11 @@ class _Options:
     set_to_gray: bool
     lossless_format: str
     bitonal_format: str
+    budget: _core._OperationBudget | None = None
+
+    def poll(self) -> None:
+        if self.budget is not None:
+            self.budget.poll()
 
     def jpeg(self, kind: str) -> bool:
         return kind in ("lossy", "jpx") or (kind == "lossless" and self.lossless_format == "jpeg")
@@ -747,15 +788,33 @@ def _bitonal(pixels: _Pixels) -> bytes:
     return pbm.split(b"\n", 2)[2].translate(_INVERT)
 
 
+def _compress(data: bytes, budget: _core._OperationBudget | None) -> bytes:
+    """Flate-compress ``data``, enforcing ``memory_size`` and polling under ``budget``."""
+    if budget is None:
+        return zlib.compress(data, 9)
+    budget.charge("memory_size", len(data))
+    try:
+        return zlib.compress(data, 9)
+    finally:
+        budget.release("memory_size", len(data))
+
+
 def _encode(  # noqa: PLR0913 - image layout, encoder settings, and the document budget.
-    document: Document, pixels: _Pixels, form: str, quality: int, limit: int, *, adobe: bool = False
+    document: Document,
+    pixels: _Pixels,
+    form: str,
+    quality: int,
+    limit: int,
+    *,
+    adobe: bool = False,
+    budget: _core._OperationBudget | None = None,
 ) -> bytes | None:
     """Encode color or bitonal samples in the selected representation.
 
     CMYK JPEG data carries an Adobe marker when ``adobe``, as its source did.
     """
     if form == "fax":
-        return _core.encode_ccitt_g4(_bitonal(pixels), pixels.width, pixels.height, limit)
+        return _core.encode_ccitt_g4(document._core(), _bitonal(pixels), pixels.width, pixels.height, limit)  # noqa: SLF001
     if form in ("fax-g3", "fax-g3-2d", "jbig2", "jpx"):
         samples = pixels.color if form == "jpx" else _bitonal(pixels)
         return _core.encode_image_samples(
@@ -767,10 +826,18 @@ def _encode(  # noqa: PLR0913 - image layout, encoder settings, and the document
             limit,
         )
     if form == "flate1":
-        return zlib.compress(_bitonal(pixels), 9)
+        return _compress(_bitonal(pixels), budget)
     if form == "jpeg":
-        return _core.encode_jpeg_samples(pixels.color, pixels.width, pixels.height, pixels.components, quality, adobe)
-    return zlib.compress(pixels.color, 9)
+        return _core.encode_jpeg_samples(
+            document._core(),  # noqa: SLF001
+            pixels.color,
+            pixels.width,
+            pixels.height,
+            pixels.components,
+            quality,
+            adobe,
+        )
+    return _compress(pixels.color, budget)
 
 
 def _form(kind: str, components: int, options: _Options, *, indexed: bool = False, stored_samples: bool = False) -> str:
@@ -796,7 +863,11 @@ def _source(candidate: _Candidate, stream: Stream) -> _Pixels:
         raise PdfError(msg)
     stored = candidate.image.stored()
     if stored is not None and stored.filter in _LOSSY_FILTERS:
-        width, height, components, color, _ = _core.image_samples(stored.data, stored.filter == "JPXDecode")
+        width, height, components, color, _ = _core.image_samples(
+            candidate.image.page.document._core(),  # noqa: SLF001
+            stored.data,
+            stored.filter == "JPXDecode",
+        )
         if (width, height, components) != (item.width, item.height, item.components):
             msg = f"image object {item.xref} stores {components}-component data of {width} by {height} pixels"
             raise PdfError(msg)
@@ -923,7 +994,7 @@ def _rewrite(
         candidate.kind, pixels.components, options, indexed=candidate.indexed, stored_samples=candidate.samples
     )
     data = _encode_candidate(candidate, pixels, form, options, limit)
-    alpha = None if pixels.alpha is None else zlib.compress(pixels.alpha, 9)
+    alpha = None if pixels.alpha is None else _compress(pixels.alpha, options.budget)
     resampled = [
         (key, mask_size, _encode_mask(mask, mask_size, options, limit, stencil=key == "Mask"))
         for key, mask, mask_size in masks
@@ -963,16 +1034,16 @@ def _encode_candidate(candidate: _Candidate, pixels: _Pixels, form: str, options
     """Encode a candidate's resampled pixels: palette indexes at their bits, and CMYK JPEG with its source's marker."""
     bits = candidate.image.item.bits
     if candidate.indexed:
-        return zlib.compress(_pack(pixels.color, pixels.width * pixels.components, bits), 9)
+        return _compress(_pack(pixels.color, pixels.width * pixels.components, bits), options.budget)
     if candidate.samples and bits < _BITS and form == "flate":
         # Resampled samples round to the nearest of their depth's levels.
         top = (1 << bits) - 1
         levels = bytes((value * top + 127) // 255 for value in range(256))
-        return zlib.compress(_pack(pixels.color.translate(levels), pixels.width * pixels.components, bits), 9)
+        return _compress(_pack(pixels.color.translate(levels), pixels.width * pixels.components, bits), options.budget)
     stored = candidate.image.stored() if candidate.samples and form == "jpeg" else None
     adobe = stored is not None and stored.filter == "DCTDecode" and _jpeg_frame(stored.data)[3]
     quality = _DEFAULT_QUALITY if options.quality is None else options.quality
-    return _encode(options.document, pixels, form, quality, limit, adobe=adobe)
+    return _encode(options.document, pixels, form, quality, limit, adobe=adobe, budget=options.budget)
 
 
 def _depth(candidate: _Candidate, form: str) -> int:
@@ -990,11 +1061,12 @@ def _encode_mask(
     mask: Stream, size: tuple[int, int], options: _Options, limit: int, *, stencil: bool
 ) -> tuple[bytes, str, dict[str, object] | None] | None:
     """Return a mask resampled to ``size``: its data, filter, and parameters, or ``None`` when larger than ``limit``."""
-    pixels = _resized(_mask_pixels(mask, stencil=stencil), size)
+    options.poll()
+    pixels = _resized(_mask_pixels(mask, limits=options.document.limits, stencil=stencil), size)
     if not stencil:
-        return zlib.compress(pixels.color, 9), "FlateDecode", None
+        return _compress(pixels.color, options.budget), "FlateDecode", None
     form = _form("bitonal", 1, options)
-    data = _encode(options.document, pixels, form, 0, limit)
+    data = _encode(options.document, pixels, form, 0, limit, budget=options.budget)
     if data is None:
         return None
     return data, _IMAGE_FILTERS[form], _fax_parameters(form, size)
@@ -1024,13 +1096,13 @@ def _add_mask(
     return added
 
 
-def _mask_pixels(mask: Stream, *, stencil: bool) -> _Pixels:
+def _mask_pixels(mask: Stream, *, limits: DocumentLimits | None = None, stencil: bool) -> _Pixels:
     """Return a mask's pixels at its own size, black where a stencil paints, as hayro decodes it alone.
 
     hayro decodes a mask of another size than its image only to paint it,
     so a scratch document paints the mask, its data copied as stored.
     """
-    with _new_document() as scratch:
+    with _new_document(limits) as scratch:
         entries = {str(key): _transfer(scratch, value, 0) for key, value in mask.items() if key not in _STREAM_KEYS}
         entries.setdefault("Subtype", Name("Image"))
         number = scratch.objects.add_stream(b"", entries, filter=None)
@@ -1054,10 +1126,10 @@ def _mask_pixels(mask: Stream, *, stencil: bool) -> _Pixels:
     return _Pixels(painted.width, painted.height, 1, painted.color, None)
 
 
-def _new_document() -> Document:
+def _new_document(limits: DocumentLimits | None = None) -> Document:
     from pyropdf._document import Document  # noqa: PLC0415 - the document module imports this one.
 
-    return Document()
+    return Document(limits=limits)
 
 
 def _transfer(scratch: Document, value: object, depth: int) -> object:
@@ -1171,7 +1243,7 @@ def _rewrite_inline(image: InlineImage, lengths: tuple[float, float], options: _
         form = "flate1" if kind == "bitonal" else "flate"
     limit = int(len(image.data) * (1 - _MIN_SAVING))
     quality = _DEFAULT_QUALITY if options.quality is None else options.quality
-    data = _encode(options.document, pixels, form, quality, limit)
+    data = _encode(options.document, pixels, form, quality, limit, budget=options.budget)
     if data is None or len(data) > limit:
         return image
     dictionary: dict[str, object] = {"W": size[0], "H": size[1], "BPC": 1 if kind == "bitonal" else 8}
@@ -1511,41 +1583,49 @@ def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments, and pyropdf'
     """Downsample and recompress the images that the pages place, each object once, in one transaction."""
     threshold, target = _rewrite_options(dpi_threshold, dpi_target, quality, {**selected, "set_to_gray": set_to_gray})
     _check_formats(lossless_format, bitonal_format)
-    if threshold is None and quality is None and not set_to_gray:
-        return ImageRewriteReport(considered=0, rewritten=0, bytes_before=0, bytes_after=0)
-    options = _Options(document, threshold, target, quality, selected, set_to_gray, lossless_format, bitonal_format)
-    tally = _Tally()
-    inline: list[int] = []
-    candidates = _candidates(document, options, tally, inline)
-    tally.considered = len(candidates)
-    with document.transaction("rewrite images"):
-        for xref, candidate in candidates.items():
-            if candidate is None:
-                continue
-            item = candidate.image.item
-            size = _target_size((item.width, item.height), (candidate.width, candidate.height), threshold, target)
-            recolor = set_to_gray and not candidate.gray
-            if size == (item.width, item.height) and not recolor and quality is None:
-                continue
-            if recolor:
-                candidate.gray, candidate.samples = True, False
-            before, after = _rewrite(document, xref, candidate, size, options)
-            tally.kept(before, after)
-        nested = _Nested(tally)
-        for index, (page, count) in enumerate(zip(document.pages, inline, strict=False)):
-            missed = count - (_rewrite_page_inline(page, options, tally, nested) if count else 0)
-            if missed > 0:
-                tally.report(
-                    f"page {index}: {missed} inline or stencil images that a rewrite does not reach, as in patterns"
-                )
-        nested.write(document, options)
-    return ImageRewriteReport(
-        considered=tally.considered,
-        rewritten=tally.rewritten,
-        bytes_before=tally.before,
-        bytes_after=tally.after,
-        unsupported=tuple(tally.unsupported or ()),
-    )
+
+    def run(budget: _core._OperationBudget) -> ImageRewriteReport:
+        if threshold is None and quality is None and not set_to_gray:
+            return ImageRewriteReport(considered=0, rewritten=0, bytes_before=0, bytes_after=0)
+        options = _Options(
+            document, threshold, target, quality, selected, set_to_gray, lossless_format, bitonal_format, budget
+        )
+        tally = _Tally()
+        inline: list[int] = []
+        candidates = _candidates(document, options, tally, inline)
+        tally.considered = len(candidates)
+        with document.transaction("rewrite images"):
+            for xref, candidate in candidates.items():
+                budget.poll()
+                if candidate is None:
+                    continue
+                item = candidate.image.item
+                size = _target_size((item.width, item.height), (candidate.width, candidate.height), threshold, target)
+                recolor = set_to_gray and not candidate.gray
+                if size == (item.width, item.height) and not recolor and quality is None:
+                    continue
+                if recolor:
+                    candidate.gray, candidate.samples = True, False
+                before, after = _rewrite(document, xref, candidate, size, options)
+                tally.kept(before, after)
+            nested = _Nested(tally)
+            for index, (page, count) in enumerate(zip(document.pages, inline, strict=False)):
+                budget.poll()
+                missed = count - (_rewrite_page_inline(page, options, tally, nested) if count else 0)
+                if missed > 0:
+                    tally.report(
+                        f"page {index}: {missed} inline or stencil images that a rewrite does not reach, as in patterns"
+                    )
+            nested.write(document, options)
+        return ImageRewriteReport(
+            considered=tally.considered,
+            rewritten=tally.rewritten,
+            bytes_before=tally.before,
+            bytes_after=tally.after,
+            unsupported=tuple(tally.unsupported or ()),
+        )
+
+    return _core.read_operation(document._core(), run)  # noqa: SLF001
 
 
 # The package re-exports these names; reprs, pickles, and documentation name them.

@@ -250,21 +250,25 @@ pub type RawSamples = (u32, u32, u8, Vec<u8>, Option<Vec<u8>>);
 /// hayro-syntax's `DCTDecode` and `JPXDecode` filters give its color space,
 /// without converting them to RGB: CMYK as stored, YCCK as pdf.js turns it
 /// into CMYK, and JPEG 2000's palette indexes kept.
-pub fn image_samples(data: &[u8], jpx: bool) -> Result<RawSamples, String> {
+pub fn image_samples(data: &[u8], jpx: bool, budget: &Budget) -> Result<RawSamples, DecodeError> {
+    budget.poll()?;
     if jpx {
-        jpx_samples(data)
+        jpx_samples(data, budget)
     } else {
-        jpeg_samples(data)
+        jpeg_samples(data, budget)
     }
 }
 
-fn jpeg_samples(data: &[u8]) -> Result<RawSamples, String> {
+fn jpeg_samples(data: &[u8], budget: &Budget) -> Result<RawSamples, DecodeError> {
     use zune_jpeg::JpegDecoder;
     use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::zune_core::colorspace::ColorSpace;
     use zune_jpeg::zune_core::options::DecoderOptions;
 
-    let invalid = |error: zune_jpeg::errors::DecodeErrors| format!("not a JPEG image: {error}");
+    budget.poll()?;
+    let invalid = |error: zune_jpeg::errors::DecodeErrors| {
+        DecodeError::Invalid(format!("not a JPEG image: {error}"))
+    };
     let options = DecoderOptions::default()
         .set_max_width(usize::from(u16::MAX))
         .set_max_height(usize::from(u16::MAX));
@@ -272,7 +276,7 @@ fn jpeg_samples(data: &[u8]) -> Result<RawSamples, String> {
     decoder.decode_headers().map_err(invalid)?;
     let (width, height) = decoder
         .dimensions()
-        .ok_or_else(|| "the JPEG image has no size".to_owned())?;
+        .ok_or_else(|| DecodeError::Invalid("the JPEG image has no size".to_owned()))?;
     check_size(width as u32, height as u32)?;
     let three = decoder.info().is_some_and(|info| info.components == 3);
     let (out, components) = match decoder.input_colorspace() {
@@ -281,35 +285,53 @@ fn jpeg_samples(data: &[u8]) -> Result<RawSamples, String> {
         Some(ColorSpace::YCCK) => (ColorSpace::YCCK, 4),
         _ => (ColorSpace::RGB, 3),
     };
+    let expected = u64::from(width as u32) * u64::from(height as u32) * u64::from(components);
+    budget.charge(LimitCode::TotalDecompressedSize, expected)?;
+    budget.charge(LimitCode::MemorySize, expected)?;
     decoder.set_options(options.jpeg_set_out_colorspace(out));
-    let mut samples = decoder.decode().map_err(invalid)?;
-    if out == ColorSpace::YCCK {
-        // As hayro-syntax, after pdf.js's jpg.js.
-        for pixel in samples.as_chunks_mut::<4>().0 {
-            let (y, cb, cr) = (
-                f32::from(pixel[0]),
-                f32::from(pixel[1]),
-                f32::from(pixel[2]),
-            );
-            pixel[0] = (434.456 - y - 1.402 * cr) as u8;
-            pixel[1] = (119.541 - y + 0.344 * cb + 0.714 * cr) as u8;
-            pixel[2] = (481.816 - y - 1.772 * cb) as u8;
+    let decoded = (|| -> Result<Vec<u8>, DecodeError> {
+        let mut samples = decoder.decode().map_err(invalid)?;
+        if out == ColorSpace::YCCK {
+            // As hayro-syntax, after pdf.js's jpg.js.
+            for (index, pixel) in samples.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                if index.is_multiple_of(16_384) {
+                    budget.poll()?;
+                }
+                let (y, cb, cr) = (
+                    f32::from(pixel[0]),
+                    f32::from(pixel[1]),
+                    f32::from(pixel[2]),
+                );
+                pixel[0] = (434.456 - y - 1.402 * cr) as u8;
+                pixel[1] = (119.541 - y + 0.344 * cb + 0.714 * cr) as u8;
+                pixel[2] = (481.816 - y - 1.772 * cb) as u8;
+            }
+        }
+        if samples.len() as u64 != expected {
+            return Err(DecodeError::Invalid(
+                "the JPEG image decoded to the wrong number of samples".to_owned(),
+            ));
+        }
+        Ok(samples)
+    })();
+    match decoded {
+        Ok(samples) => Ok((width as u32, height as u32, components, samples, None)),
+        Err(error) => {
+            budget.release(LimitCode::MemorySize, expected);
+            Err(error)
         }
     }
-    if samples.len() != width * height * usize::from(components) {
-        return Err("the JPEG image decoded to the wrong number of samples".to_owned());
-    }
-    Ok((width as u32, height as u32, components, samples, None))
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "check_size bounds the raster to MAX_PIXELS; the output copies the decoded samples one-for-one with the u8 component count"
-)]
-fn jpx_samples(data: &[u8]) -> Result<RawSamples, String> {
+fn jpx_samples(data: &[u8], budget: &Budget) -> Result<RawSamples, DecodeError> {
     use hayro_jpeg2000::{DecodeSettings, DecoderContext, Image};
 
-    let invalid = |error| format!("not a JPEG 2000 image the decoder reads: {error:?}");
+    budget.poll()?;
+    let invalid = |error| {
+        DecodeError::Invalid(format!(
+            "not a JPEG 2000 image the decoder reads: {error:?}"
+        ))
+    };
     let settings = DecodeSettings {
         resolve_palette_indices: false,
         strict: false,
@@ -320,30 +342,71 @@ fn jpx_samples(data: &[u8]) -> Result<RawSamples, String> {
     check_size(width, height)?;
     let components = image.color_space().num_channels();
     let alpha = image.has_alpha();
-    let mut context = DecoderContext::default();
-    let samples = image.decode(&mut context).map_err(invalid)?.data_u8();
     let channels = u64::from(components) + u64::from(alpha);
-    let expected = (u64::from(width) * u64::from(height)).checked_mul(channels);
-    if components == 0 || expected != Some(samples.len() as u64) {
-        return Err("the JPEG 2000 image decodes to an unexpected number of samples".to_owned());
+    let unexpected = || {
+        DecodeError::Invalid(
+            "the JPEG 2000 image decodes to an unexpected number of samples".to_owned(),
+        )
+    };
+    let expected = (u64::from(width) * u64::from(height))
+        .checked_mul(channels)
+        .ok_or_else(unexpected)?;
+    if components == 0 {
+        return Err(unexpected());
     }
-    if !alpha {
-        return Ok((width, height, components, samples, None));
+    budget.charge(LimitCode::TotalDecompressedSize, expected)?;
+    budget.charge(LimitCode::MemorySize, expected)?;
+    let decoded = (|| -> Result<RawSamples, DecodeError> {
+        let mut context = DecoderContext::default();
+        let samples = image.decode(&mut context).map_err(invalid)?.data_u8();
+        budget.poll()?;
+        if samples.len() as u64 != expected {
+            return Err(unexpected());
+        }
+        if !alpha {
+            return Ok((width, height, components, samples, None));
+        }
+        let channels = usize::try_from(channels).map_err(|_| unexpected())?;
+        let pixels = usize::try_from(width)
+            .ok()
+            .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)))
+            .ok_or_else(unexpected)?;
+        let color_len = pixels
+            .checked_mul(usize::from(components))
+            .ok_or_else(unexpected)?;
+        let mut color = BudgetVec::new(budget);
+        let mut opacity = BudgetVec::new(budget);
+        color.try_reserve_exact(color_len)?;
+        opacity.try_reserve_exact(pixels)?;
+        for chunk in samples.chunks(channels * 4096) {
+            budget.poll()?;
+            for pixel in chunk.chunks_exact(channels) {
+                let (last, rest) = pixel.split_last().expect("a pixel has channels");
+                color.try_extend_from_slice(rest)?;
+                opacity.try_push(*last)?;
+            }
+        }
+        drop(samples);
+        Ok((
+            width,
+            height,
+            components,
+            color.into_vec(),
+            Some(opacity.into_vec()),
+        ))
+    })();
+    match decoded {
+        Ok((width, height, components, color, opacity)) => {
+            if opacity.is_some() {
+                budget.release(LimitCode::MemorySize, expected);
+            }
+            Ok((width, height, components, color, opacity))
+        }
+        Err(error) => {
+            budget.release(LimitCode::MemorySize, expected);
+            Err(error)
+        }
     }
-    let channels = usize::try_from(channels)
-        .map_err(|_| "the JPEG 2000 image decodes to an unexpected number of samples".to_owned())?;
-    let pixels = width as usize * height as usize;
-    let color_len = pixels.checked_mul(usize::from(components)).ok_or_else(|| {
-        "the JPEG 2000 image decodes to an unexpected number of samples".to_owned()
-    })?;
-    let mut color = Vec::with_capacity(color_len);
-    let mut opacity = Vec::with_capacity(pixels);
-    for pixel in samples.chunks_exact(channels) {
-        let (last, rest) = pixel.split_last().expect("a pixel has channels");
-        color.extend_from_slice(rest);
-        opacity.push(*last);
-    }
-    Ok((width, height, components, color, Some(opacity)))
 }
 
 /// Encodes interleaved 8-bit samples of one, three, or four components as

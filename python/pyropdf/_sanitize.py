@@ -13,9 +13,11 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from pyropdf import _core
 from pyropdf._errors import LimitError
 from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import Operation, Operations
+from pyropdf._xobjects import _parse_stream_operations
 
 if TYPE_CHECKING:
     import os
@@ -82,14 +84,21 @@ class SanitizeReport:
         object.__setattr__(self, "removed", MappingProxyType(dict(self.removed)))
 
 
-def _dictionaries(document: Document) -> Iterator[Dictionary]:
+def _poll(budget: _core._OperationBudget | None, index: int = 0) -> None:
+    if budget is not None and index % 256 == 0:
+        budget.poll()
+
+
+def _dictionaries(document: Document, budget: _core._OperationBudget | None = None) -> Iterator[Dictionary]:
     """Yield every indirect dictionary and stream of the document's current version, then each direct annotation."""
     objects = document.objects
     for number in objects:
+        _poll(budget)
         value = objects.get(number)
         if isinstance(value, Dictionary):
             yield value
     for page in document.pages:
+        _poll(budget)
         annotations = page.obj.get("Annots")
         if isinstance(annotations, Array):
             yield from (item for item in annotations if isinstance(item, Dictionary) and item.xref is None)
@@ -157,7 +166,7 @@ def _non_action_a(dictionary: Dictionary) -> bool:
     return dictionary.get("Subtype") == "Movie"
 
 
-def _remove_actions(document: Document, *, javascript_only: bool) -> int:
+def _remove_actions(document: Document, *, javascript_only: bool, budget: _core._OperationBudget | None = None) -> int:
     """Remove ``/A``, ``/OpenAction``, and ``/AA`` entries, or only those whose chain runs JavaScript."""
 
     def doomed(action: object) -> bool:
@@ -167,7 +176,7 @@ def _remove_actions(document: Document, *, javascript_only: bool) -> int:
         return isinstance(action, Dictionary)
 
     removed = 0
-    for dictionary in _dictionaries(document):
+    for dictionary in _dictionaries(document, budget):
         keys = ("OpenAction",) if _non_action_a(dictionary) else ("A", "OpenAction")
         for key in keys:
             if key in dictionary and doomed(dictionary[key]):
@@ -187,7 +196,7 @@ def _remove_actions(document: Document, *, javascript_only: bool) -> int:
     return removed
 
 
-def _remove_attachments(document: Document) -> int:
+def _remove_attachments(document: Document, budget: _core._OperationBudget | None = None) -> int:
     removed = 0
     catalog = document.catalog
     names = catalog.get("Names")
@@ -197,20 +206,20 @@ def _remove_attachments(document: Document) -> int:
     if "Collection" in catalog:
         del catalog["Collection"]
         removed += 1
-    for dictionary in _dictionaries(document):
+    for dictionary in _dictionaries(document, budget):
         if "AF" in dictionary:
             del dictionary["AF"]
             removed += 1
-    return removed + _remove_annotations(document, frozenset({"FileAttachment"}))
+    return removed + _remove_annotations(document, frozenset({"FileAttachment"}), budget)
 
 
-def _remove_metadata(document: Document) -> int:
+def _remove_metadata(document: Document, budget: _core._OperationBudget | None = None) -> int:
     removed = 0
     trailer = document.trailer
     if "Info" in trailer:
         del trailer["Info"]
         removed += 1
-    for dictionary in _dictionaries(document):
+    for dictionary in _dictionaries(document, budget):
         for key in ("Metadata", "PieceInfo"):
             if key in dictionary:
                 del dictionary[key]
@@ -218,9 +227,13 @@ def _remove_metadata(document: Document) -> int:
     return removed
 
 
-def _remove_annotations(document: Document, subtypes: frozenset[str]) -> int:
+def _remove_annotations(
+    document: Document, subtypes: frozenset[str], budget: _core._OperationBudget | None = None
+) -> int:
     removed = 0
     for page in document.pages:
+        if budget is not None:
+            budget.poll()
         annotations = page.obj.get("Annots")
         if not isinstance(annotations, Array):
             continue
@@ -236,7 +249,9 @@ def _remove_annotations(document: Document, subtypes: frozenset[str]) -> int:
 
 
 def _visible_operations(
-    operations: Operations, mode: int | None
+    operations: Operations,
+    mode: int | None,
+    budget: _core._OperationBudget | None = None,
 ) -> tuple[list[Operation | InlineImage], int, list[tuple[str, int | None]]]:
     """Return ``operations`` without those that show text in rendering mode 3, how many went, and each ``Do``.
 
@@ -248,7 +263,8 @@ def _visible_operations(
     removed = 0
     painted: list[tuple[str, int | None]] = []
     saved: list[int | None] = []
-    for operation in operations:
+    for index, operation in enumerate(operations):
+        _poll(budget, index)
         operator = operation.operator
         if operator == "q":
             saved.append(mode)
@@ -293,7 +309,8 @@ class _Forms:
     (``None``), so a form is read at most three times and cycles end.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, budget: _core._OperationBudget | None = None) -> None:
+        self.budget = budget
         self.streams: dict[int, Stream] = {}
         self.entries: dict[int, int | None] = {}
         # A form without resources of its own uses those of the stream that paints it.
@@ -309,6 +326,8 @@ class _Forms:
                 msg = f"hidden text removal reaches more than {_MAX_FORMS} form XObjects"
                 code: LimitCode = "sanitize_forms"
                 raise LimitError(code, msg)
+            if self.budget is not None:
+                self.budget.charge("memory_size", 256)
             self.streams[xref] = form
             self.entries[xref] = _UNSEEN
             own = form.get("Resources")
@@ -343,13 +362,14 @@ def _appearances(annotation: object) -> Iterator[Stream]:
             yield from (state for key in value if isinstance(state := value[key], Stream))
 
 
-def _remove_hidden_text(document: Document) -> int:
+def _remove_hidden_text(document: Document, budget: _core._OperationBudget | None = None) -> int:
     """Remove text shown in rendering mode 3 from pages and from the forms that pages and appearances paint."""
     removed = 0
-    forms = _Forms()
+    forms = _Forms(budget)
     for page in document.pages:
+        _poll(budget)
         operations = page.operations
-        kept, count, painted = _visible_operations(operations, 0)
+        kept, count, painted = _visible_operations(operations, 0, budget)
         if count:
             page.operations = Operations(kept, tail=operations.tail)
             removed += count
@@ -359,14 +379,16 @@ def _remove_hidden_text(document: Document) -> int:
             for stream in _appearances(annotation):
                 forms.enter(stream, 0, None)
     while forms.pending:
+        _poll(budget)
         xref = forms.pending.pop()
-        operations = Operations.parse(forms.streams[xref].read())
-        _, _, painted = _visible_operations(operations, forms.entries[xref])
+        operations = _parse_stream_operations(forms.streams[xref])
+        _, _, painted = _visible_operations(operations, forms.entries[xref], budget)
         forms.paint(painted, forms.resources[xref])
     # Every entry mode is final now: rewrite each form once.
     for xref, stream in forms.streams.items():
-        operations = Operations.parse(stream.read())
-        kept, count, _ = _visible_operations(operations, forms.entries[xref])
+        _poll(budget)
+        operations = _parse_stream_operations(stream)
+        kept, count, _ = _visible_operations(operations, forms.entries[xref], budget)
         if count:
             stream.write(Operations(kept, tail=operations.tail).to_bytes())
             removed += count
@@ -399,21 +421,26 @@ def sanitize(  # noqa: PLR0913 - one switch per kind
         if not isinstance(value, bool):
             msg = f"{name} must be a bool: {value!r}"
             raise TypeError(msg)
-    removed: dict[str, int] = {}
-    claims = _claims(document)
-    with document.transaction("sanitize"):
-        if javascript:
-            removed["javascript"] = _remove_actions(document, javascript_only=True)
-        if actions:
-            removed["actions"] = _remove_actions(document, javascript_only=False)
-        if attachments:
-            removed["attachments"] = _remove_attachments(document)
-        if metadata:
-            removed["metadata"] = _remove_metadata(document)
-        if comments:
-            removed["comments"] = _remove_annotations(document, _COMMENTS)
-        if hidden_text:
-            removed["hidden_text"] = _remove_hidden_text(document)
+
+    def run(budget: _core._OperationBudget) -> tuple[dict[str, int], tuple[str, ...]]:
+        removed: dict[str, int] = {}
+        claims = _claims(document)
+        with document.transaction("sanitize"):
+            if javascript:
+                removed["javascript"] = _remove_actions(document, javascript_only=True, budget=budget)
+            if actions:
+                removed["actions"] = _remove_actions(document, javascript_only=False, budget=budget)
+            if attachments:
+                removed["attachments"] = _remove_attachments(document, budget)
+            if metadata:
+                removed["metadata"] = _remove_metadata(document, budget)
+            if comments:
+                removed["comments"] = _remove_annotations(document, _COMMENTS, budget)
+            if hidden_text:
+                removed["hidden_text"] = _remove_hidden_text(document, budget)
+        return removed, claims
+
+    removed, claims = _core.read_operation(document._core(), run)  # noqa: SLF001
     kept = set(_claims(document))
     report = SanitizeReport(
         removed=removed,

@@ -7,9 +7,10 @@ import binascii
 import zlib
 from typing import TYPE_CHECKING
 
+from pyropdf import _core
 from pyropdf._errors import LimitError, PdfError
 from pyropdf._objects import Dictionary, Name, Stream
-from pyropdf._operations import Operations
+from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, _DEFAULT_MAX_OPERATIONS, Operations, _from_core
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -81,10 +82,21 @@ def _sub(resources: Dictionary | None, key: str) -> Dictionary | None:
     return value if isinstance(value, Dictionary) else None
 
 
+def _parse_stream_operations(
+    stream: Stream,
+    *,
+    max_operations: int | None = _DEFAULT_MAX_OPERATIONS,
+    max_size: int | None = _DEFAULT_MAX_CONTENT_SIZE,
+) -> Operations:
+    """Parse ``stream``'s decoded content into :class:`Operations` under its document's budget."""
+    data = stream.read()
+    return _from_core(_core.parse_operations(data, max_operations, max_size, stream._core()))  # noqa: SLF001
+
+
 def _parse_form(form: Stream) -> Operations | None:
     """Parse ``form``'s content stream into :class:`Operations`, or return ``None`` when unreadable."""
     try:
-        return Operations.parse(form.read())
+        return _parse_stream_operations(form)
     except LimitError:
         raise
     except (PdfError, ValueError):

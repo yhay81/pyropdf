@@ -91,7 +91,7 @@ from pyropdf._fonts import (
     embedded_font,
 )
 from pyropdf._geometry import Matrix, Point, Rect
-from pyropdf._images import PageImage, _image_stream, add_image
+from pyropdf._images import PageImage, _image_input_limit, _image_stream, add_image
 from pyropdf._layers import Layer, LayerMembership
 from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, Stream
@@ -117,6 +117,8 @@ if TYPE_CHECKING:
 
 #: The deepest nesting of clip, transform, opacity, and blend scopes.
 _MAX_SCOPES = 16
+#: Chunk size used when reading encoded image files into a canvas.
+_IMAGE_READ_CHUNK = 65_536
 
 
 def _max_points() -> int:
@@ -1180,6 +1182,7 @@ class Canvas:
         from pyropdf._core import Pixmap  # noqa: PLC0415 - the stub names the extension's class.
 
         self._check_open()
+        self._active.poll()
         box = _rect(rect, "rect")
         rotation = _quarter_turn(rotate)
         document = self._page.document
@@ -1198,18 +1201,17 @@ class Canvas:
         else:
             if isinstance(source, Pixmap):
                 data = _core.pixmap_png(document._core(), source)  # noqa: SLF001
+                xref = self._stored_image(data)
             elif isinstance(source, (bytes, bytearray, memoryview)):
-                data = bytes(source)
+                xref = self._store_image_buffer(source)
             elif isinstance(source, (str, os.PathLike)):
-                with open(source, "rb") as file:  # noqa: PTH123 - os.PathLike and str alike.
-                    data = file.read()
+                xref = self._store_image_file(source)
             else:
                 msg = (
                     "source must be a path, bytes, a Pixmap, a PageImage, or an object number, "
                     f"not {type(source).__name__}"
                 )
                 raise TypeError(msg)
-            xref = self._stored_image(data)
             stream = document.objects[xref]
         width, height = _number(stream.get("Width", 0), "Width"), _number(stream.get("Height", 0), "Height")
         if not (width > 0 and height > 0):
@@ -1220,6 +1222,58 @@ class Canvas:
         matrix = _affine(lambda u, v: place(u * width, (1 - v) * height))
         name = self._add_xobject(xref)
         self._emit(b"q\n" + _numbers(*matrix) + b" cm\n/" + name.encode() + b" Do\nQ")
+
+    def _store_image_buffer(self, source: bytes | bytearray | memoryview) -> int:
+        """Enforce ``image_input_size`` and ``memory_size`` before copying a buffer image source."""
+        size = source.nbytes if isinstance(source, memoryview) else len(source)
+        limit = _image_input_limit(self._active)
+        if size > limit:
+            code = "image_input_size"
+            msg = f"the image data is larger than {limit} bytes"
+            raise LimitError(code, msg)
+        self._active.check("image_input_size", size)
+        with self._scratch(size):
+            data = source if isinstance(source, bytes) else bytes(source)
+            return self._stored_image(data)
+
+    def _store_image_file(self, source: str | os.PathLike[str]) -> int:
+        """Read an encoded image file in bounded chunks under ``image_input_size`` and ``memory_size``."""
+        limit = _image_input_limit(self._active)
+        code = "image_input_size"
+        parts: list[bytes] = []
+        total = 0
+        try:
+            with open(source, "rb") as file:  # noqa: PTH123 - os.PathLike and str alike.
+                file_size = os.fstat(file.fileno()).st_size
+                if file_size > limit:
+                    msg = f"the image data is larger than {limit} bytes"
+                    raise LimitError(code, msg)
+                if file_size > 0:
+                    self._active.check("image_input_size", file_size)
+                    self._active.check("memory_size", file_size)
+                while True:
+                    self._active.poll()
+                    remaining = limit - total
+                    chunk = file.read(min(_IMAGE_READ_CHUNK, remaining + 1))
+                    if not chunk:
+                        break
+                    if total + len(chunk) > limit:
+                        msg = f"the image data is larger than {limit} bytes"
+                        raise LimitError(code, msg)
+                    self._charge(len(chunk))
+                    total += len(chunk)
+                    parts.append(chunk)
+            if not parts:
+                data = b""
+            elif len(parts) == 1:
+                data = parts[0]
+            else:
+                with self._scratch(total):
+                    data = b"".join(parts)
+            parts.clear()
+            return self._stored_image(data)
+        finally:
+            self._release(total)
 
     def _stored_image(self, data: bytes) -> int:
         """Return the image object holding ``data``, written once per document."""

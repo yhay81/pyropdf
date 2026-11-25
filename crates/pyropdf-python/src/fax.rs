@@ -15,16 +15,37 @@ use crate::errors::limit_error;
 #[pyfunction]
 pub fn encode_ccitt_g4<'py>(
     py: Python<'py>,
+    document: &_Document,
     data: &[u8],
     width: usize,
     height: usize,
     limit: usize,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
     crate::errors::boundary(|| {
+        document.document()?;
+        let budget = document.budget();
+        let input = data.len() as u64;
+        // Reserve for the two working rows, input bytes, and bounded output.
+        let scratch = (width as u64).saturating_mul(2);
+        let output = (limit as u64).min(
+            input
+                .saturating_mul(16)
+                .saturating_add((height as u64).saturating_mul(16))
+                .saturating_add(512),
+        );
+        let reservation = scratch
+            .saturating_add(input)
+            .saturating_add(output.saturating_mul(3));
+        budget
+            .charge(LimitCode::MemorySize, reservation)
+            .map_err(|error| limit_error(&error))?;
         let encoded = py
             .detach(|| fax::encode_checked(data, width, height, limit))
-            .map_err(PyValueError::new_err)?;
-        Ok(encoded.map(|bytes| PyBytes::new(py, &bytes)))
+            .map_err(PyValueError::new_err);
+        let result = encoded.map(|data| data.map(|bytes| PyBytes::new(py, &bytes)));
+        budget.release(LimitCode::MemorySize, reservation);
+        budget.poll().map_err(|error| limit_error(&error))?;
+        result
     })?
 }
 
