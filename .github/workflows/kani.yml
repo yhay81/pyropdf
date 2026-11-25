@@ -1,6 +1,7 @@
 # Kani bit-precise bounded model checking for pyropdf-store's unsafe memory
-# routines, budget accounting, and indexing invariants, plus pyropdf-engine's
-# CFF and SFNT binary codecs (DESIGN.md F6 and F9).
+# routines, budget accounting, indexing, encryption/padding, and journal framing
+# invariants, plus pyropdf-engine's CFF/SFNT/Type1/CMap/pixmap/fax/JPX codecs
+# and pure-Rust buffer-math invariants (DESIGN.md F6 and F9).
 name: Kani
 
 on:

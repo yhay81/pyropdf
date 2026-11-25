@@ -223,7 +223,7 @@ pub(super) fn deflate_with(
         match encoder.compress(input, output, flush) {
             Ok(Status::StreamEnd) => break,
             Ok(Status::Ok) => poll()?,
-            Ok(Status::BufError) if encoder.total_out() as usize > written => poll()?,
+            Ok(Status::BufError) if encoder.total_out() > written as u64 => poll()?,
             Ok(Status::BufError) | Err(_) => return Ok(None),
         }
     }

@@ -205,9 +205,9 @@ fn decrypt(data: &EncryptedData, password: &str) -> Result<Vec<u8>, Error> {
 }
 
 fn verify_mac(mac: &MacData, password: &str, content: &[u8]) -> Result<(), Error> {
-    if mac.iterations > MAX_ITERATIONS {
+    if mac.iterations == 0 || mac.iterations > MAX_ITERATIONS {
         return Err(Error::Invalid(format!(
-            "the PKCS#12 MAC takes {} iterations, more than {MAX_ITERATIONS}",
+            "the PKCS#12 MAC takes {} iterations, outside 1..={MAX_ITERATIONS}",
             mac.iterations
         )));
     }
@@ -341,4 +341,29 @@ fn legacy() -> Error {
 
 fn wrong_password() -> Error {
     Error::Invalid("the PKCS#12 file does not open with this password".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_mac(iterations: u32) -> MacData {
+        MacData {
+            mac: DigestInfo {
+                algorithm: AlgorithmIdentifierOwned {
+                    oid: SHA256,
+                    parameters: None,
+                },
+                digest: OctetString::new(&[0u8; 32][..]).expect("32 bytes fit OctetString"),
+            },
+            mac_salt: OctetString::new(&[1u8; 8][..]).expect("8 bytes fit OctetString"),
+            iterations,
+        }
+    }
+
+    #[test]
+    fn verify_mac_rejects_zero_and_excessive_iterations() {
+        assert!(verify_mac(&dummy_mac(0), "secret", b"payload").is_err());
+        assert!(verify_mac(&dummy_mac(MAX_ITERATIONS + 1), "secret", b"payload").is_err());
+    }
 }

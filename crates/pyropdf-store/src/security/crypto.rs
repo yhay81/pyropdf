@@ -61,6 +61,9 @@ pub(super) fn gcm_decrypt(key: &[u8], input: &[u8], budget: &Budget) -> Result<V
 /// RC4 (ISO 32000-2 section 7.6.3.2), which is its own inverse. RC4 is
 /// read but never written.
 pub(super) fn rc4(key: &[u8], data: &[u8], budget: &Budget) -> Result<Vec<u8>> {
+    if key.is_empty() {
+        return Err(Error::malformed("RC4 key must not be empty"));
+    }
     let mut state: [u8; 256] = core::array::from_fn(|i| i as u8);
     let mut j: u8 = 0;
     for i in 0..256 {
@@ -133,6 +136,35 @@ impl Aes {
     }
 }
 
+/// Returns the PKCS#7 padding byte count (`1..=16` when `pad`, `0` otherwise)
+/// and the checked padded total length for `data_len`.
+const fn pkcs7_padded_len(data_len: usize, pad: bool) -> Option<(usize, usize)> {
+    let padding = if pad { 16 - data_len % 16 } else { 0 };
+    if !pad && !data_len.is_multiple_of(16) {
+        return None;
+    }
+    match data_len.checked_add(padding) {
+        Some(total) => Some((padding, total)),
+        None => None,
+    }
+}
+
+/// Returns the length of `data` after stripping valid 16-byte PKCS#7 padding,
+/// leaving invalid padding untouched as PDF readers do.
+fn pkcs7_unpadded_len(data: &[u8]) -> usize {
+    if let Some(&last) = data.last()
+        && (1..=16).contains(&last)
+        && data.len() >= usize::from(last)
+        && data[data.len() - usize::from(last)..]
+            .iter()
+            .all(|&b| b == last)
+    {
+        data.len() - usize::from(last)
+    } else {
+        data.len()
+    }
+}
+
 /// Encrypts `data` with AES in CBC mode from `iv`, appending the ciphertext
 /// to `out`, without padding when `pad` is false (`data` must then be whole blocks).
 pub(super) fn aes_cbc_encrypt_into(
@@ -144,11 +176,12 @@ pub(super) fn aes_cbc_encrypt_into(
     budget: &Budget,
 ) -> Result<()> {
     let cipher = Aes::new(key)?;
-    let padding = if pad { 16 - data.len() % 16 } else { 0 };
     if !pad && !data.len().is_multiple_of(16) {
         return Err(Error::malformed("unpadded AES data is not whole blocks"));
     }
-    out.try_reserve_exact(data.len() + padding)?;
+    let (padding, total) = pkcs7_padded_len(data.len(), pad)
+        .ok_or_else(|| Error::malformed("AES-CBC data is too large"))?;
+    out.try_reserve_exact(total)?;
     let mut previous = *iv;
     let mut chunks = data.chunks(16);
     let mut pending: Option<[u8; 16]> = None;
@@ -230,15 +263,8 @@ pub(super) fn aes_cbc_decrypt(
         out.try_extend(plain.iter().zip(previous).map(|(a, b)| a ^ b))?;
         previous = current;
     }
-    if pad
-        && let Some(&last) = out.last()
-        && (1..=16).contains(&last)
-        && out.len() >= usize::from(last)
-        && out[out.len() - usize::from(last)..]
-            .iter()
-            .all(|&b| b == last)
-    {
-        let len = out.len() - usize::from(last);
+    if pad {
+        let len = pkcs7_unpadded_len(out.as_slice());
         out.truncate(len);
     }
     Ok(out.into_vec())
@@ -301,4 +327,79 @@ pub(super) fn hash(
         }
     }
     Ok(k[..32].try_into().expect("32 bytes"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rc4_rejects_empty_key_instead_of_panicking() {
+        let err = rc4(&[], b"hello", &Budget::default()).unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn pkcs7_padded_len_rejects_overflow_and_unpadded_blocks() {
+        assert_eq!(pkcs7_padded_len(usize::MAX, true), None);
+        assert_eq!(pkcs7_padded_len(usize::MAX - 15, true), None);
+        assert_eq!(pkcs7_padded_len(15, false), None);
+        assert_eq!(pkcs7_padded_len(16, false), Some((0, 16)));
+        assert_eq!(pkcs7_padded_len(16, true), Some((16, 32)));
+        assert_eq!(pkcs7_padded_len(0, true), Some((16, 16)));
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// `pkcs7_padded_len` is overflow-free across all `usize` lengths and always
+    /// yields a 16-byte-aligned total with `1..=16` padding bytes when padded.
+    #[kani::proof]
+    fn kani_crypto_pkcs7_padded_len_bounds() {
+        let data_len: usize = kani::any();
+        let pad: bool = kani::any();
+        match pkcs7_padded_len(data_len, pad) {
+            Some((padding, total)) => {
+                assert_eq!(total % 16, 0);
+                assert_eq!(total - data_len, padding);
+                if pad {
+                    assert!((1..=16).contains(&padding));
+                } else {
+                    assert_eq!(padding, 0);
+                    assert_eq!(data_len % 16, 0);
+                }
+            }
+            None => {
+                if pad {
+                    assert!(data_len.checked_add(16 - data_len % 16).is_none());
+                } else {
+                    assert!(data_len % 16 != 0);
+                }
+            }
+        }
+    }
+
+    /// Valid PKCS#7 padding round-trips `pkcs7_unpadded_len` for every length
+    /// `0..=16`, and arbitrary buffers never panic.
+    #[kani::proof]
+    #[kani::unwind(34)]
+    fn kani_crypto_pkcs7_unpad_roundtrip_and_safety() {
+        let mut buf: [u8; 32] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= 16);
+        let (padding, total) = pkcs7_padded_len(len, true).unwrap();
+        for b in &mut buf[len..total] {
+            *b = padding as u8;
+        }
+        assert_eq!(pkcs7_unpadded_len(&buf[..total]), len);
+
+        // Arbitrary byte slice never panics and never returns > slice len.
+        let raw: [u8; 20] = kani::any();
+        let raw_len: usize = kani::any();
+        kani::assume(raw_len <= raw.len());
+        let stripped = pkcs7_unpadded_len(&raw[..raw_len]);
+        assert!(stripped <= raw_len);
+    }
 }

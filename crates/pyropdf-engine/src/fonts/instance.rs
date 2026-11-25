@@ -249,7 +249,7 @@ fn too_large() -> InstanceError {
 
 /// Returns the bytes that a table of `len` bytes takes in an sfnt.
 fn padded(len: usize) -> u64 {
-    len.next_multiple_of(4) as u64
+    (len as u64).next_multiple_of(4)
 }
 
 /// Returns the table of `tag`, which [`Face::read`] made sure of.
@@ -746,7 +746,11 @@ fn encode(pen: &Pen, overlaps: bool, out: &mut Vec<u8>) -> Result<Option<Encoded
     }
     out.append(&mut xs);
     out.append(&mut ys);
-    out.resize(out.len().next_multiple_of(4), 0);
+    let aligned = out
+        .len()
+        .checked_next_multiple_of(4)
+        .ok_or("the glyph is too large")?;
+    out.resize(aligned, 0);
     Ok(Some(Encoded {
         bounds,
         points: points.len() as u16,

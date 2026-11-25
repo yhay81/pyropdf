@@ -391,3 +391,59 @@ mod tests {
         assert!(stream.data().is_empty());
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// `write_sample` followed by `read_sample` recovers the low `bits` of
+    /// `value` for every valid TIFF predictor depth `{1, 2, 4, 8, 16}` without
+    /// panicking or corrupting neighboring samples in the row.
+    #[kani::proof]
+    fn kani_predictor_sample_bit_packing_roundtrip() {
+        let mut row: [u8; 4] = kani::any();
+        let depth_idx: u8 = kani::any();
+        kani::assume(depth_idx < 5);
+        let bits: usize = match depth_idx {
+            0 => 1,
+            1 => 2,
+            2 => 4,
+            3 => 8,
+            _ => 16,
+        };
+        let samples = (row.len() * 8) / bits;
+        let i: usize = kani::any();
+        let other: usize = kani::any();
+        kani::assume(i < samples && other < samples && other != i);
+        let value: u16 = kani::any();
+
+        let other_before = read_sample(&row, other, bits);
+        write_sample(&mut row, i, bits, value);
+        let mask: u16 = if bits == 16 {
+            u16::MAX
+        } else {
+            (1_u16 << bits) - 1
+        };
+        assert_eq!(read_sample(&row, i, bits), value & mask);
+        assert_eq!(read_sample(&row, other, bits), other_before);
+    }
+
+    /// `paeth` never overflows `i16`, always returns one of `{left, up, last}`,
+    /// and selects the neighbor closest to `left + up - last` with RFC 2083
+    /// tie-breaking.
+    #[kani::proof]
+    fn kani_predictor_paeth_exact() {
+        let left: u8 = kani::any();
+        let up: u8 = kani::any();
+        let last: u8 = kani::any();
+        let chosen = paeth(left, up, last);
+        let p = i32::from(left) + i32::from(up) - i32::from(last);
+        let da = (p - i32::from(left)).unsigned_abs();
+        let db = (p - i32::from(up)).unsigned_abs();
+        let dc = (p - i32::from(last)).unsigned_abs();
+        let min_d = da.min(db).min(dc);
+        let chosen_d = (p - i32::from(chosen)).unsigned_abs();
+        assert_eq!(chosen_d, min_d);
+        assert!(chosen == left || chosen == up || chosen == last);
+    }
+}

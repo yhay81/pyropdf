@@ -124,7 +124,7 @@ impl Profile {
                     Self {
                         subfilter,
                         version: v as u8,
-                        length: bits as usize / 8,
+                        length: usize::try_from(bits / 8).expect("validated RC4 key length"),
                         strings: Method::Rc4,
                         streams: Method::Rc4,
                         metadata: true,
@@ -191,7 +191,7 @@ impl Profile {
         Ok(Self {
             subfilter: "adbe.pkcs7.s5",
             version,
-            length: bits as usize / 8,
+            length: usize::try_from(bits / 8).expect("validated crypt filter key length"),
             strings: cipher,
             streams: cipher,
             metadata,

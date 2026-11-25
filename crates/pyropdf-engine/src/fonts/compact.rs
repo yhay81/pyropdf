@@ -345,33 +345,8 @@ impl Charstring {
             self.overflow = true;
             return;
         };
-        if value % 65536 != 0 {
-            let [b1, b2, b3, b4] = value.to_be_bytes();
-            self.put(&[255, b1, b2, b3, b4]);
-            return;
-        }
-        let integer = value / 65536;
-        match integer {
-            -107..=107 => self.put(&[u8::try_from(integer + 139).unwrap_or(139)]),
-            108..=1131 => {
-                let rest = integer - 108;
-                self.put(&[
-                    u8::try_from(rest / 256 + 247).unwrap_or(247),
-                    u8::try_from(rest % 256).unwrap_or(0),
-                ]);
-            }
-            -1131..=-108 => {
-                let rest = -integer - 108;
-                self.put(&[
-                    u8::try_from(rest / 256 + 251).unwrap_or(251),
-                    u8::try_from(rest % 256).unwrap_or(0),
-                ]);
-            }
-            _ => {
-                let [b1, b2] = i16::try_from(integer).unwrap_or(0).to_be_bytes();
-                self.put(&[28, b1, b2]);
-            }
-        }
+        let (buf, len) = encode_type2_number(value);
+        self.put(&buf[..len]);
     }
 
     fn points(&mut self, points: &[(Fixed, Fixed)], op: u8) {
@@ -516,5 +491,68 @@ impl CommandSink for Charstring {
     }
 }
 
+/// Encodes a 16.16 fixed-point Type 2 charstring operand into `1..=5` bytes
+/// (Adobe Technical Note #5177 section 3.2).
+fn encode_type2_number(value: i32) -> ([u8; 5], usize) {
+    if value % 65536 != 0 {
+        let [b1, b2, b3, b4] = value.to_be_bytes();
+        return ([255, b1, b2, b3, b4], 5);
+    }
+    let integer = value / 65536;
+    match integer {
+        -107..=107 => ([(integer + 139) as u8, 0, 0, 0, 0], 1),
+        108..=1131 => {
+            let rest = integer - 108;
+            ([(rest / 256 + 247) as u8, (rest % 256) as u8, 0, 0, 0], 2)
+        }
+        -1131..=-108 => {
+            let rest = -integer - 108;
+            ([(rest / 256 + 251) as u8, (rest % 256) as u8, 0, 0, 0], 2)
+        }
+        _ => {
+            let [b1, b2] = (integer as i16).to_be_bytes();
+            ([28, b1, b2, 0, 0], 3)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Every 16.16 fixed-point `i32` encoded by `encode_type2_number` decodes
+    /// back identically under Adobe Type 2 charstring number rules.
+    #[kani::proof]
+    fn kani_type2_charstring_number_roundtrip() {
+        let value: i32 = kani::any();
+        let (buf, len) = encode_type2_number(value);
+        assert!((1..=5).contains(&len));
+        let decoded: i32 = match buf[0] {
+            32..=246 => {
+                assert_eq!(len, 1);
+                (i32::from(buf[0]) - 139) * 65536
+            }
+            247..=250 => {
+                assert_eq!(len, 2);
+                ((i32::from(buf[0]) - 247) * 256 + i32::from(buf[1]) + 108) * 65536
+            }
+            251..=254 => {
+                assert_eq!(len, 2);
+                (-((i32::from(buf[0]) - 251) * 256) - i32::from(buf[1]) - 108) * 65536
+            }
+            28 => {
+                assert_eq!(len, 3);
+                i32::from(i16::from_be_bytes([buf[1], buf[2]])) * 65536
+            }
+            255 => {
+                assert_eq!(len, 5);
+                i32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]])
+            }
+            _ => panic!("invalid Type 2 number prefix"),
+        };
+        assert_eq!(decoded, value);
+    }
+}

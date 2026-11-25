@@ -124,6 +124,20 @@ impl GlyphMap<'_> {
     }
 }
 
+/// Validates a CMap `cidrange` interval `[start..=stop]` starting at `cid`,
+/// returning the exact code count (`1..=65536`) if neither `Code::value` nor
+/// `cid` overflows.
+const fn checked_cid_range(start: Code, stop: Code, cid: u16) -> Option<u32> {
+    if start.length != stop.length || stop.value < start.value {
+        return None;
+    }
+    let span = stop.value - start.value;
+    if span > (u16::MAX - cid) as u32 {
+        return None;
+    }
+    Some(span + 1)
+}
+
 fn range(
     entries: &mut BudgetVec<'_, (u32, Code)>,
     glyphs: &GlyphMap<'_>,
@@ -132,15 +146,11 @@ fn range(
     cid: u16,
     expanded: &mut u64,
 ) -> Result<(), WidgetError> {
-    if start.length != stop.length
-        || stop.value < start.value
-        || stop.value - start.value > u32::from(u16::MAX - cid)
-    {
+    let Some(count) = checked_cid_range(start, stop, cid) else {
         return Err(malformed(
             "invalid character range in the form font's encoding",
         ));
-    }
-    let count = stop.value - start.value + 1;
+    };
     // A small CMap can repeat a 65,536-code range many times. Charge even
     // codes absent from the font, before considering the first element.
     const MAX_EXPANDED_CODES: u64 = 1 << 20;
@@ -473,4 +483,43 @@ pub(super) fn simple(
         by_glyph: result.into_vec(),
         unicode: None,
     }))
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// `checked_cid_range` never overflows `u32` or `u16` across the full domain
+    /// of `(start, stop, cid)` and guarantees every index `i in 0..count` yields
+    /// in-range `cid + i as u16` and `start.value + i`.
+    #[kani::proof]
+    fn kani_cmap_checked_cid_range_bounds() {
+        let start = Code {
+            length: kani::any(),
+            value: kani::any(),
+        };
+        let stop = Code {
+            length: kani::any(),
+            value: kani::any(),
+        };
+        let cid: u16 = kani::any();
+        match checked_cid_range(start, stop, cid) {
+            Some(count) => {
+                assert_eq!(start.length, stop.length);
+                assert!((1..=65536).contains(&count));
+                let i: u32 = kani::any();
+                kani::assume(i < count);
+                assert!(i <= u32::from(u16::MAX));
+                assert!(cid.checked_add(i as u16).is_some());
+                assert!(start.value.checked_add(i).is_some_and(|v| v <= stop.value));
+            }
+            None => {
+                assert!(
+                    start.length != stop.length
+                        || stop.value < start.value
+                        || stop.value - start.value > u32::from(u16::MAX - cid)
+                );
+            }
+        }
+    }
 }

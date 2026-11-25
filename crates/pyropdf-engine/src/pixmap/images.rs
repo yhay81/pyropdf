@@ -46,8 +46,12 @@ pub fn interleave_image(image: DecodedImage) -> Result<(Layout, Vec<u8>), String
         ));
     };
     let channels = if gray { 1 } else { 3 };
+    let total = color
+        .len()
+        .checked_add(alpha.len())
+        .ok_or_else(|| "cannot hold the image: byte length overflow".to_owned())?;
     let mut data = Vec::new();
-    data.try_reserve_exact(color.len() + alpha.len())
+    data.try_reserve_exact(total)
         .map_err(|error| format!("cannot hold the image: {error}"))?;
     for (pixel, opacity) in color.chunks_exact(channels).zip(alpha) {
         data.extend_from_slice(pixel);
@@ -213,7 +217,7 @@ pub fn decode_png_buffers<'b>(
             }
         }
     }
-    buffer.truncate(line * height as usize);
+    buffer.truncate(line.saturating_mul(height as usize));
     let (gray, alpha) = match color_type {
         png::ColorType::Grayscale => (true, false),
         png::ColorType::GrayscaleAlpha => (true, true),
@@ -318,15 +322,21 @@ fn jpx_samples(data: &[u8]) -> Result<RawSamples, String> {
     let alpha = image.has_alpha();
     let mut context = DecoderContext::default();
     let samples = image.decode(&mut context).map_err(invalid)?.data_u8();
-    let channels = usize::from(components) + usize::from(alpha);
-    if components == 0 || samples.len() != width as usize * height as usize * channels {
+    let channels = u64::from(components) + u64::from(alpha);
+    let expected = (u64::from(width) * u64::from(height)).checked_mul(channels);
+    if components == 0 || expected != Some(samples.len() as u64) {
         return Err("the JPEG 2000 image decodes to an unexpected number of samples".to_owned());
     }
     if !alpha {
         return Ok((width, height, components, samples, None));
     }
+    let channels = usize::try_from(channels)
+        .map_err(|_| "the JPEG 2000 image decodes to an unexpected number of samples".to_owned())?;
     let pixels = width as usize * height as usize;
-    let mut color = Vec::with_capacity(pixels * usize::from(components));
+    let color_len = pixels.checked_mul(usize::from(components)).ok_or_else(|| {
+        "the JPEG 2000 image decodes to an unexpected number of samples".to_owned()
+    })?;
+    let mut color = Vec::with_capacity(color_len);
     let mut opacity = Vec::with_capacity(pixels);
     for pixel in samples.chunks_exact(channels) {
         let (last, rest) = pixel.split_last().expect("a pixel has channels");
@@ -361,10 +371,8 @@ pub fn encode_jpeg_samples(
             )));
         }
     };
-    if width == 0
-        || height == 0
-        || data.len() != usize::from(width) * usize::from(height) * usize::from(components)
-    {
+    let expected = u64::from(width) * u64::from(height) * u64::from(components);
+    if width == 0 || height == 0 || data.len() as u64 != expected {
         return Err(super::EncodeError::Other(format!(
             "{} bytes are not the samples of a {width} by {height} image of {components} components",
             data.len()
@@ -407,17 +415,67 @@ pub fn encode_jpeg_samples(
 
 /// Removes the Adobe APP14 segment before the first frame of JPEG `data`.
 fn strip_app14(data: &mut Vec<u8>) {
-    let mut at = 2;
-    while at + 4 <= data.len() && data[at] == 0xFF {
+    let mut at = 2_usize;
+    while at
+        .checked_add(4)
+        .is_some_and(|header_end| header_end <= data.len())
+        && data[at] == 0xFF
+    {
         let marker = data[at + 1];
         let length = usize::from(u16::from_be_bytes([data[at + 2], data[at + 3]]));
+        let Some(end) = at
+            .checked_add(2)
+            .and_then(|start| start.checked_add(length))
+            .filter(|&end| length >= 2 && end <= data.len())
+        else {
+            return;
+        };
         if marker == 0xEE && data.get(at + 4..at + 9) == Some(b"Adobe") {
-            data.drain(at..at + 2 + length);
+            data.drain(at..end);
             return;
         }
         if (0xC0..=0xCF).contains(&marker) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
             return;
         }
-        at += 2 + length;
+        at = end;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_jpeg_samples_checks_expected_length_in_u64_without_32_bit_overflow() {
+        // 65535 * 65535 * 4 = 17_179_344_900 > u32::MAX; must return an error
+        // rather than overflowing 32-bit usize multiplication.
+        let err = encode_jpeg_samples(&[], u16::MAX, u16::MAX, 4, 90, true, &Budget::default())
+            .unwrap_err();
+        assert!(matches!(err, super::super::EncodeError::Other(_)));
+    }
+
+    #[test]
+    fn strip_app14_handles_truncated_and_zero_length_segments_without_panicking() {
+        // Truncated APP14 segment whose declared length passes EOF.
+        let mut truncated = vec![
+            0xff, 0xd8, 0xff, 0xee, 0x00, 0x20, b'A', b'd', b'o', b'b', b'e',
+        ];
+        let before = truncated.clone();
+        strip_app14(&mut truncated);
+        assert_eq!(truncated, before);
+
+        // Zero-length segment would loop or underflow if not checked for length >= 2.
+        let mut zero_len = vec![0xff, 0xd8, 0xff, 0xe0, 0x00, 0x00, 0xff, 0xd9];
+        let before = zero_len.clone();
+        strip_app14(&mut zero_len);
+        assert_eq!(zero_len, before);
+
+        // Well-formed APP14 segment is stripped cleanly.
+        let mut valid = vec![
+            0xff, 0xd8, 0xff, 0xee, 0x00, 0x0e, b'A', b'd', b'o', b'b', b'e', 0, 100, 0, 0, 0, 0,
+            0, 0xff, 0xd9,
+        ];
+        strip_app14(&mut valid);
+        assert_eq!(valid, vec![0xff, 0xd8, 0xff, 0xd9]);
     }
 }

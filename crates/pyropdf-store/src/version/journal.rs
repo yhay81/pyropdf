@@ -429,3 +429,74 @@ impl<'a> In<'a> {
         self.take(length)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn framing_reader_rejects_truncated_and_oversized_blobs() {
+        let mut reader = In(&[0xff, 0xff, 0xff, 0xff, 1, 2]);
+        assert!(reader.blob().is_err());
+
+        let mut reader = In(&[2, 0, 0, 0, 0xaa, 0xbb, 0xcc]);
+        assert_eq!(reader.blob().unwrap(), &[0xaa, 0xbb]);
+        assert_eq!(reader.0, &[0xcc]);
+        assert!(reader.u32().is_err());
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[allow(dead_code)]
+    fn kani_stub_corrupt(_what: &str) -> Error {
+        Error::malformed("")
+    }
+
+    /// The binary history reader `In` never panics on arbitrary length prefixes
+    /// (including `u32::MAX`) and strictly consumes from its slice.
+    #[kani::proof]
+    #[kani::stub(corrupt, kani_stub_corrupt)]
+    #[kani::unwind(12)]
+    fn kani_journal_framing_reader_never_panics() {
+        let data: [u8; 10] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= data.len());
+        let mut reader = In(&data[..len]);
+        let before = reader.0.len();
+        if let Ok(blob) = reader.blob() {
+            assert_eq!(blob.len() + 4 + reader.0.len(), before);
+        }
+        let req: usize = kani::any();
+        let before_take = reader.0.len();
+        match reader.take(req) {
+            Ok(slice) => {
+                assert_eq!(slice.len(), req);
+                assert_eq!(slice.len() + reader.0.len(), before_take);
+            }
+            Err(_) => {
+                assert!(req > before_take);
+                assert_eq!(reader.0.len(), before_take);
+            }
+        }
+    }
+
+    /// `structure_from_tag` and `structure_tag` round-trip all valid tags and
+    /// reject every unknown or retired tag.
+    #[kani::proof]
+    #[kani::stub(corrupt, kani_stub_corrupt)]
+    fn kani_journal_structure_tag_bijection() {
+        let tag: u8 = kani::any();
+        match structure_from_tag(tag) {
+            Ok(structure) => {
+                assert!(tag == APPEARANCE_TAG || tag == FONT_SUBSET_TAG);
+                assert_eq!(structure_tag(structure).unwrap(), tag);
+            }
+            Err(_) => {
+                assert!(tag != APPEARANCE_TAG && tag != FONT_SUBSET_TAG);
+            }
+        }
+    }
+}

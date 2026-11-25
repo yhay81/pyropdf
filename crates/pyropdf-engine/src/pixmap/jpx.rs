@@ -131,7 +131,13 @@ fn codestream(
                 block.missing_bit_planes,
                 block.data.len(),
             );
-            if out.len() + header.len() + block.data.len() + 2 > limit {
+            if out
+                .len()
+                .checked_add(header.len())
+                .and_then(|n| n.checked_add(block.data.len()))
+                .and_then(|n| n.checked_add(2))
+                .is_none_or(|n| n > limit)
+            {
                 return Ok(None);
             }
             out.extend_from_slice(&header);
@@ -144,25 +150,26 @@ fn codestream(
     Ok(Some(out))
 }
 
-/// Encodes one first-layer packet header (B.10.5 through B.10.7). With one
-/// code block the inclusion and zero-bitplane tag trees each have one leaf.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "an eight-bit block needs at most eight header bytes"
-)]
-fn packet_header(passes: u8, missing: u8, length: usize) -> Vec<u8> {
+/// Encodes one first-layer packet header (B.10.5 through B.10.7) into a fixed
+/// 64-byte stack buffer, returning `(buffer, len)`. Any `(passes: u8,
+/// missing: u8, length: usize)` produces at most 57 bytes even under worst-case
+/// `0xFF` byte-stuffing.
+fn packet_header_bytes(passes: u8, missing: u8, length: usize) -> ([u8; 64], usize) {
+    let mut buf = [0_u8; 64];
     if passes == 0 {
-        return vec![0];
+        return (buf, 1);
     }
-    let mut bytes = Vec::with_capacity(8);
+    let mut len = 0_usize;
     let mut byte = 0_u8;
-    let mut free = 8;
+    let mut free = 8_u8;
     let mut write = |value: usize, count: u32| {
         for bit in (0..count).rev() {
             free -= 1;
-            byte |= (((value >> bit) & 1) as u8) << free;
+            let bit_val = value.checked_shr(bit).unwrap_or(0) & 1;
+            byte |= (bit_val as u8) << free;
             if free == 0 {
-                bytes.push(byte);
+                buf[len] = byte;
+                len += 1;
                 free = if byte == 0xff { 7 } else { 8 };
                 byte = 0;
             }
@@ -177,14 +184,75 @@ fn packet_header(passes: u8, missing: u8, length: usize) -> Vec<u8> {
         _ => write(480 + usize::from(passes - 6), 9),
     }
     let initial = 3 + passes.ilog2();
-    let bits = (length.ilog2() + 1).max(initial);
+    let bits = length.checked_ilog2().map_or(0, |n| n + 1).max(initial);
     for _ in initial..bits {
         write(1, 1);
     }
     write(0, 1);
     write(length, bits);
     if free != 8 {
-        bytes.push(byte);
+        buf[len] = byte;
+        len += 1;
     }
-    bytes
+    (buf, len)
+}
+
+/// Encodes one first-layer packet header (B.10.5 through B.10.7). With one
+/// code block the inclusion and zero-bitplane tag trees each have one leaf.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "packet_header_bytes produces at most 64 header bytes"
+)]
+fn packet_header(passes: u8, missing: u8, length: usize) -> Vec<u8> {
+    let (buf, len) = packet_header_bytes(passes, missing, length);
+    buf[..len].to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn packet_header_handles_zero_length_and_large_missing_bitplanes_without_panicking() {
+        assert_eq!(packet_header(0, 0, 0), vec![0]);
+        assert!(!packet_header(1, 0, 0).is_empty());
+        // missing >= 32 previously panicked with shift overflow on 32-bit usize.
+        let header = packet_header(1, 64, 1);
+        assert!(!header.is_empty());
+        // Verify 0xFF bit-stuffing invariant: a byte after 0xFF has MSB clear.
+        for pair in header.windows(2) {
+            if pair[0] == 0xff {
+                assert_eq!(pair[1] & 0x80, 0);
+            }
+        }
+        // Extreme u8/usize values stay within the 64-byte stack buffer.
+        let max_header = packet_header(u8::MAX, u8::MAX, usize::MAX);
+        assert!(max_header.len() <= 64);
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// `packet_header_bytes` never panics (no shift overflow on `missing >= 32`
+    /// and no `ilog2(0)` panic), stays within the 64-byte buffer, and preserves
+    /// JPEG 2000 `0xFF` byte-stuffing.
+    #[kani::proof]
+    #[kani::unwind(36)]
+    fn kani_jpx_packet_header_bit_stuffing_and_safety() {
+        let passes: u8 = kani::any();
+        let missing: u8 = kani::any();
+        let length: usize = kani::any();
+        kani::assume(passes <= 36);
+        kani::assume(missing <= 34);
+        kani::assume(length <= 15);
+        let (buf, len) = packet_header_bytes(passes, missing, length);
+        assert!((1..=buf.len()).contains(&len));
+        for i in 1..len {
+            if buf[i - 1] == 0xff {
+                assert_eq!(buf[i] & 0x80, 0);
+            }
+        }
+    }
 }

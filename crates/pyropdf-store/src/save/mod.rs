@@ -1163,6 +1163,14 @@ fn fields(row: &Row) -> (u8, u64, u64) {
     }
 }
 
+/// Returns the fewest bytes (`1..=8`) required to store an xref stream field
+/// whose largest value is `max`.
+const fn xref_field_width(max: u64) -> usize {
+    let bits = u64::BITS - max.leading_zeros();
+    let bytes = bits.div_ceil(8);
+    if bytes == 0 { 1 } else { bytes as usize }
+}
+
 /// Writes the entries of a cross-reference stream that describe its data,
 /// which lists the rows and then the stream itself, `own`, and then the
 /// data and the end of the stream's object.
@@ -1174,13 +1182,11 @@ fn stream<'a>(
 ) -> Result<()> {
     let budget = out.budget;
     let all = || rows.clone().chain(std::iter::once(own));
-    // The fewest bytes that hold each field, and at least one.
-    let width = |max: u64| (u64::BITS - max.leading_zeros()).div_ceil(8).max(1) as usize;
     let (second, third) = all().fold((0, 0), |(second, third), row| {
         let (_, two, three) = fields(row);
         (two.max(second), three.max(third))
     });
-    let (second, third) = (width(second), width(third));
+    let (second, third) = (xref_field_width(second), xref_field_width(third));
     let mut data = BudgetVec::new(budget);
     for row in all() {
         budget.poll()?;
@@ -1379,5 +1385,34 @@ impl<'a> Output<'a> {
         // Call sites format fixed numbers and keywords only (under 128
         // bytes), never an input-sized string or object.
         self.bytes(fmt::format(args).as_bytes())
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// `xref_field_width` selects the minimal byte width in `1..=8` so that
+    /// `&value.to_be_bytes()[8 - w..]` preserves every bit of `value` for all `u64`.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn kani_save_xref_field_width_roundtrip() {
+        let value: u64 = kani::any();
+        let w = xref_field_width(value);
+        assert!((1..=8).contains(&w));
+        let bytes = value.to_be_bytes();
+        // Every dropped high byte must be zero.
+        for &b in &bytes[..8 - w] {
+            assert_eq!(b, 0);
+        }
+        // Width is minimal: if w > 1, the leading kept byte is non-zero.
+        if w > 1 {
+            assert_ne!(bytes[8 - w], 0);
+        }
+        // Big-endian decoding recovers `value` identically.
+        let decoded = bytes[8 - w..]
+            .iter()
+            .fold(0_u64, |acc, &b| (acc << 8) | u64::from(b));
+        assert_eq!(decoded, value);
     }
 }

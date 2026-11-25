@@ -178,6 +178,30 @@ struct Bits {
     limit: usize,
 }
 
+/// Decomposes a run of `length` pixels of one color into the count of 2560-pixel
+/// extended make-up codes, an optional make-up code for `64..=2559`, and the
+/// terminating code for `0..=63`.
+fn run_codes(length: usize, white: bool) -> (usize, Option<&'static str>, &'static str) {
+    let chunks = length / 2560;
+    let rem = length % 2560;
+    let makeup = (rem >= 64).then(|| {
+        let index = rem / 64 - 1;
+        if index >= 27 {
+            EXTENDED_MAKEUP[index - 27]
+        } else if white {
+            WHITE_MAKEUP[index]
+        } else {
+            BLACK_MAKEUP[index]
+        }
+    });
+    let terminating = if white {
+        WHITE_TERMINATING[rem % 64]
+    } else {
+        BLACK_TERMINATING[rem % 64]
+    };
+    (chunks, makeup, terminating)
+}
+
 impl Bits {
     #[expect(
         clippy::disallowed_methods,
@@ -212,31 +236,18 @@ impl Bits {
 
     /// Writes a run of `length` pixels of one color: make-up codes, then a
     /// terminating code.
-    fn run(&mut self, mut length: usize, white: bool) {
-        while length >= 2560 {
+    fn run(&mut self, length: usize, white: bool) {
+        let (chunks, makeup, terminating) = run_codes(length, white);
+        for _ in 0..chunks {
             if self.over() {
                 return;
             }
             self.put(EXTENDED_MAKEUP[12]);
-            length -= 2560;
         }
-        if length >= 64 {
-            let index = length / 64 - 1;
-            let code = if index >= 27 {
-                EXTENDED_MAKEUP[index - 27]
-            } else if white {
-                WHITE_MAKEUP[index]
-            } else {
-                BLACK_MAKEUP[index]
-            };
+        if let Some(code) = makeup {
             self.put(code);
-            length %= 64;
         }
-        self.put(if white {
-            WHITE_TERMINATING[length]
-        } else {
-            BLACK_TERMINATING[length]
-        });
+        self.put(terminating);
     }
 }
 
@@ -288,7 +299,7 @@ fn encode_line(bits: &mut Bits, line: &[bool], reference: &[bool]) {
             bits.put(PASS);
             a0 = Some(b2);
         } else if a1.abs_diff(b1) <= 3 {
-            bits.put(VERTICAL[(a1 as isize - b1 as isize + 3) as usize]);
+            bits.put(VERTICAL[a1 + 3 - b1]);
             a0 = Some(a1);
             white = !white;
         } else {
@@ -313,6 +324,14 @@ fn encode_line(bits: &mut Bits, line: &[bool], reference: &[bool]) {
 )]
 pub fn encode_g4(data: &[u8], width: usize, height: usize, limit: usize) -> Option<Vec<u8>> {
     let stride = width.div_ceil(8);
+    if width == 0
+        || height == 0
+        || stride
+            .checked_mul(height)
+            .is_none_or(|need| data.len() < need)
+    {
+        return None;
+    }
     let mut bits = Bits {
         out: Vec::new(),
         byte: 0,
@@ -509,5 +528,51 @@ mod tests {
         let data = vec![0b1010_1010; 64 * 64 / 8];
         assert!(encode_g4(&data, 64, 64, 16).is_none());
         assert!(encode_g4(&data, 64, 64, 1 << 20).is_some());
+    }
+
+    #[test]
+    fn encode_g4_rejects_zero_dimensions_and_truncated_data() {
+        assert_eq!(encode_g4(&[], 0, 1, 100), None);
+        assert_eq!(encode_g4(&[], 8, 0, 100), None);
+        assert_eq!(encode_g4(&[0xff], 16, 1, 100), None);
+        assert_eq!(encode_g4(&[0xff], 8, 2, 100), None);
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// `run_codes` never indexes out of bounds for any `length: usize` and
+    /// color, and `Bits::put` + `Bits::finish` pack vertical codes without
+    /// panicking or overflowing bit shifts.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn kani_fax_run_table_indexing_no_panic() {
+        let length: usize = kani::any();
+        let white: bool = kani::any();
+        let (chunks, makeup, terminating) = run_codes(length, white);
+        assert_eq!(chunks, length / 2560);
+        assert_eq!(makeup.is_some(), (length % 2560) >= 64);
+        assert!(!terminating.is_empty());
+        if let Some(code) = makeup {
+            assert!(!code.is_empty());
+        }
+
+        // Also verify vertical-code bit packing and the `a1 + 3 - b1` index.
+        let a1: usize = kani::any();
+        let b1: usize = kani::any();
+        kani::assume(a1 <= 1_000_000 && a1.abs_diff(b1) <= 3);
+        let idx = a1 + 3 - b1;
+        assert!(idx < VERTICAL.len());
+        let mut bits = Bits {
+            out: Vec::with_capacity(4),
+            byte: 0,
+            used: 0,
+            limit: 4,
+        };
+        bits.put(VERTICAL[idx]);
+        let out = bits.finish();
+        assert!(!out.is_empty());
     }
 }
