@@ -339,10 +339,6 @@ fn jpx_samples(data: &[u8]) -> Result<RawSamples, String> {
 /// Encodes interleaved 8-bit samples of one, three, or four components as
 /// JPEG data that decodes to them: four components as CMYK with an Adobe
 /// APP14 marker of transform 0 when `adobe`, and without one otherwise.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the borrowed input is checked once against the nonzero u16 dimensions and 1, 3, or 4 components before its sole inverted copy"
-)]
 pub fn encode_jpeg_samples(
     data: &[u8],
     width: u16,
@@ -350,37 +346,59 @@ pub fn encode_jpeg_samples(
     components: u8,
     quality: u8,
     adobe: bool,
-) -> Result<Vec<u8>, String> {
+    budget: &Budget,
+) -> Result<Vec<u8>, super::EncodeError> {
     use jpeg_encoder::{ColorType, Encoder};
 
+    budget.poll().map_err(super::EncodeError::Limit)?;
     let color = match components {
         1 => ColorType::Luma,
         3 => ColorType::Rgb,
         4 => ColorType::Cmyk,
-        _ => return Err(format!("no {components}-component samples in JPEG")),
+        _ => {
+            return Err(super::EncodeError::Other(format!(
+                "no {components}-component samples in JPEG"
+            )));
+        }
     };
     if width == 0
         || height == 0
         || data.len() != usize::from(width) * usize::from(height) * usize::from(components)
     {
-        return Err(format!(
+        return Err(super::EncodeError::Other(format!(
             "{} bytes are not the samples of a {width} by {height} image of {components} components",
             data.len()
-        ));
+        )));
     }
     // jpeg-encoder stores each CMYK sample inverted, as Adobe's
     // JPEGs do, so it is given the inverse of the sample to store.
-    let inverted;
+    let mut inverted = BudgetVec::new(budget);
     let samples = if components == 4 {
-        inverted = data.iter().map(|sample| 255 - sample).collect::<Vec<_>>();
-        &inverted[..]
+        inverted
+            .try_reserve_exact(data.len())
+            .map_err(super::EncodeError::Limit)?;
+        for (index, &sample) in data.iter().enumerate() {
+            if index % 65_536 == 0 {
+                budget.poll().map_err(super::EncodeError::Limit)?;
+            }
+            inverted
+                .try_push(255 - sample)
+                .map_err(super::EncodeError::Limit)?;
+        }
+        inverted.as_slice()
     } else {
         data
     };
-    let mut out = Vec::new();
-    Encoder::new(&mut out, quality.clamp(1, 100))
-        .encode(samples, width, height, color)
-        .map_err(|e| e.to_string())?;
+    let mut out = super::BudgetedPngOutput::new(budget);
+    if let Err(error) =
+        Encoder::new(&mut out, quality.clamp(1, 100)).encode(samples, width, height, color)
+    {
+        if let Some(refusal) = out.take_refusal() {
+            return Err(super::EncodeError::Limit(refusal));
+        }
+        return Err(super::EncodeError::Other(error.to_string()));
+    }
+    let mut out = out.into_vec();
     if components == 4 && !adobe {
         strip_app14(&mut out);
     }

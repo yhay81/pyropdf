@@ -194,9 +194,7 @@ pub use geometry::{
     NOTE_ICONS, RECT_SUBTYPES, Rect, STAMP_ICONS, TEXT_KEYS, annotation_geometry, border_style,
     rgb,
 };
-pub use missing::{
-    MAX_SYNTHESIZED_APPEARANCES, MAX_SYNTHESIZED_POINTS, synthesized, synthesized_for,
-};
+pub use missing::{synthesized, synthesized_for};
 pub use popup::{annotation_open, annotation_popup, annotation_reply};
 pub use read::{
     AnnotationRecord, IsolatedAnnotation, PageAnnots, RecordTuple, annotation_face,
@@ -684,7 +682,7 @@ impl<'b> Reader<'b> {
     }
 
     /// Reads text-markup quadrilaterals, rejecting excessive geometry.
-    fn quads(&self, dict: &Dict, subtype: &[u8]) -> Result<Option<BudgetVec<'b, Quad>>> {
+    fn quad_geometry(&self, dict: &Dict, subtype: &[u8]) -> Result<Option<Geometry>> {
         let Some(value) = self.entry(dict, "QuadPoints")? else {
             return Ok(None);
         };
@@ -710,7 +708,7 @@ impl<'b> Reader<'b> {
                 zigzag_points(&quads) as u64,
             )?;
         }
-        Ok(Some(quads))
+        Ok(Some(Geometry::Quads(quads.into_vec())))
     }
 
     /// Reads the border that `/BS`, else `/Border`, describes, or `None`
@@ -1145,9 +1143,7 @@ enum Geometry {
 /// missing or malformed.
 fn geometry(reader: &Reader<'_>, dict: &Dict, subtype: &[u8]) -> Result<Option<Geometry>> {
     Ok(if is_text_markup(subtype) {
-        reader
-            .quads(dict, subtype)?
-            .map(|quads| Geometry::Quads(quads.into_vec()))
+        reader.quad_geometry(dict, subtype)?
     } else if has_points(subtype) {
         reader.point_lists(dict, subtype)?.map(Geometry::Points)
     } else {
@@ -1282,10 +1278,18 @@ fn appearance_with(
     let Some(subtype) = reader.name(dict, "Subtype")? else {
         return Ok(None);
     };
-    if !draws(&subtype) {
+    // Authored redaction marks have their own stored normal appearances.
+    // Only the virtual render path supplies an outline for a missing one.
+    let redaction = aggregate && &*subtype == b"Redact";
+    if !draws(&subtype) && !redaction {
         return Ok(None);
     }
-    let Some(geometry) = geometry(reader, dict, &subtype)? else {
+    let geometry = if redaction && dict.get("QuadPoints").is_some() {
+        reader.quad_geometry(dict, &subtype)?
+    } else {
+        geometry(reader, dict, &subtype)?
+    };
+    let Some(geometry) = geometry else {
         return Ok(None);
     };
     let dimension = read_dimension(reader, dict, &subtype, &geometry, face.as_deref())?;
@@ -1394,6 +1398,14 @@ fn appearance_with(
                 insets,
                 intensity,
             )?;
+        }
+        (b"Redact", _) => {
+            let area = [[(x0, y1), (x1, y1), (x0, y0), (x1, y0)]];
+            let quads = match &geometry {
+                Geometry::Quads(quads) => quads.as_slice(),
+                _ => &area,
+            };
+            shapes::redaction(&mut canvas, &paint, size, quads, to_canvas);
         }
         (b"Highlight", Geometry::Quads(quads)) => {
             if let Some(color) = paint.stroke {

@@ -31,7 +31,7 @@ to `/A` and the rest to `/AA` while keeping field-level `/K`, `/F`,
 `Annotation.action`; non-`Screen` annotations read empty and refuse
 mutations with `ValueError`.
 
-### `ActionTriggers.__getitem__`
+### `__getitem__`
 
 ```python
 ActionTriggers.__getitem__(trigger: AnnotationTrigger) -> Target
@@ -39,7 +39,7 @@ ActionTriggers.__getitem__(trigger: AnnotationTrigger) -> Target
 
 Return the action for `trigger`, or raise `KeyError`.
 
-### `ActionTriggers.__setitem__`
+### `__setitem__`
 
 ```python
 ActionTriggers.__setitem__(trigger: AnnotationTrigger, target: Target)
@@ -47,7 +47,7 @@ ActionTriggers.__setitem__(trigger: AnnotationTrigger, target: Target)
 
 Set the action for `trigger` in one transaction.
 
-### `ActionTriggers.__delitem__`
+### `__delitem__`
 
 ```python
 ActionTriggers.__delitem__(trigger: AnnotationTrigger)
@@ -55,7 +55,7 @@ ActionTriggers.__delitem__(trigger: AnnotationTrigger)
 
 Remove `trigger` in one transaction, or raise `KeyError`.
 
-### `ActionTriggers.__iter__`
+### `__iter__`
 
 ```python
 ActionTriggers.__iter__() -> Iterator[AnnotationTrigger]
@@ -63,7 +63,7 @@ ActionTriggers.__iter__() -> Iterator[AnnotationTrigger]
 
 Iterate triggers that currently resolve to an action.
 
-### `ActionTriggers.__len__`
+### `__len__`
 
 ```python
 ActionTriggers.__len__() -> int
@@ -71,7 +71,7 @@ ActionTriggers.__len__() -> int
 
 Return the number of triggers.
 
-### `ActionTriggers.__contains__`
+### `__contains__`
 
 ```python
 ActionTriggers.__contains__(trigger: object) -> bool
@@ -79,7 +79,7 @@ ActionTriggers.__contains__(trigger: object) -> bool
 
 Return whether `trigger` has a resolved action.
 
-### `ActionTriggers.update`
+### `update`
 
 ```python
 ActionTriggers.update(other: object = (), /, **values: Target)
@@ -87,7 +87,7 @@ ActionTriggers.update(other: object = (), /, **values: Target)
 
 Set every `(trigger, target)` pair in one transaction.
 
-### `ActionTriggers.clear`
+### `clear`
 
 ```python
 ActionTriggers.clear()
@@ -115,7 +115,7 @@ ECMAScript source strings. pyropdf never runs the scripts. Reads and writes
 are bounded to 32 tree levels, 4,096 entries, and 1 MiB of UTF-8 across the
 mapping (`LimitError.code == "script_size"`).
 
-### `DocumentScripts.__getitem__`
+### `__getitem__`
 
 ```python
 DocumentScripts.__getitem__(name: str) -> str
@@ -123,7 +123,7 @@ DocumentScripts.__getitem__(name: str) -> str
 
 Return the script named `name`, or raise `KeyError`.
 
-### `DocumentScripts.__iter__`
+### `__iter__`
 
 ```python
 DocumentScripts.__iter__() -> Iterator[str]
@@ -131,7 +131,7 @@ DocumentScripts.__iter__() -> Iterator[str]
 
 Iterate document script names in name-tree order.
 
-### `DocumentScripts.__len__`
+### `__len__`
 
 ```python
 DocumentScripts.__len__() -> int
@@ -139,7 +139,7 @@ DocumentScripts.__len__() -> int
 
 Return the number of document scripts.
 
-### `DocumentScripts.__contains__`
+### `__contains__`
 
 ```python
 DocumentScripts.__contains__(name: object) -> bool
@@ -147,7 +147,7 @@ DocumentScripts.__contains__(name: object) -> bool
 
 Return whether `name` is in `/Names /JavaScript`.
 
-### `DocumentScripts.__setitem__`
+### `__setitem__`
 
 ```python
 DocumentScripts.__setitem__(name: str, script: str)
@@ -155,7 +155,7 @@ DocumentScripts.__setitem__(name: str, script: str)
 
 Set the document script named `name` in one transaction.
 
-### `DocumentScripts.__delitem__`
+### `__delitem__`
 
 ```python
 DocumentScripts.__delitem__(name: str)
@@ -163,7 +163,7 @@ DocumentScripts.__delitem__(name: str)
 
 Remove `name` from `/Names /JavaScript` in one transaction, or raise `KeyError`.
 
-### `DocumentScripts.update`
+### `update`
 
 ```python
 DocumentScripts.update(other: object = (), /, **values: str)
@@ -171,7 +171,7 @@ DocumentScripts.update(other: object = (), /, **values: str)
 
 Insert or replace every named script of `other` and `values` in one transaction.
 
-### `DocumentScripts.clear`
+### `clear`
 
 ```python
 DocumentScripts.clear()
@@ -198,7 +198,7 @@ Values are ECMAScript source strings written as `ActionECMAScript`
 dictionaries (PDF 1.4), capped individually and together at 1 MiB of UTF-8
 (`LimitError.code == "script_size"`).
 
-### `DocumentTriggers.__getitem__`
+### `__getitem__`
 
 ```python
 DocumentTriggers.__getitem__(trigger: DocumentTrigger) -> str
@@ -206,7 +206,7 @@ DocumentTriggers.__getitem__(trigger: DocumentTrigger) -> str
 
 Return the script for `trigger`, or raise `KeyError`.
 
-### `DocumentTriggers.__setitem__`
+### `__setitem__`
 
 ```python
 DocumentTriggers.__setitem__(trigger: DocumentTrigger, script: str)
@@ -214,7 +214,7 @@ DocumentTriggers.__setitem__(trigger: DocumentTrigger, script: str)
 
 Set the script for `trigger` in one transaction.
 
-### `DocumentTriggers.__delitem__`
+### `__delitem__`
 
 ```python
 DocumentTriggers.__delitem__(trigger: DocumentTrigger)
@@ -222,7 +222,7 @@ DocumentTriggers.__delitem__(trigger: DocumentTrigger)
 
 Remove `trigger` from `Catalog['AA']` in one transaction, or raise `KeyError`.
 
-### `DocumentTriggers.__iter__`
+### `__iter__`
 
 ```python
 DocumentTriggers.__iter__() -> Iterator[DocumentTrigger]
@@ -230,7 +230,7 @@ DocumentTriggers.__iter__() -> Iterator[DocumentTrigger]
 
 Iterate triggers that currently have a script.
 
-### `DocumentTriggers.__len__`
+### `__len__`
 
 ```python
 DocumentTriggers.__len__() -> int
@@ -238,7 +238,7 @@ DocumentTriggers.__len__() -> int
 
 Return the number of configured document triggers.
 
-### `DocumentTriggers.__contains__`
+### `__contains__`
 
 ```python
 DocumentTriggers.__contains__(trigger: object) -> bool
@@ -246,7 +246,7 @@ DocumentTriggers.__contains__(trigger: object) -> bool
 
 Return whether `trigger` has a script.
 
-### `DocumentTriggers.update`
+### `update`
 
 ```python
 DocumentTriggers.update(other: object = (), /, **values: str)
@@ -254,7 +254,7 @@ DocumentTriggers.update(other: object = (), /, **values: str)
 
 Set every `(trigger, script)` pair in one transaction.
 
-### `DocumentTriggers.clear`
+### `clear`
 
 ```python
 DocumentTriggers.clear()
@@ -368,7 +368,7 @@ An existing Movie action interpreted on its destination page (ISO 32000-1 §12.6
 Pass the destination page of the link or outline, or the page associated
 with the action. Titles identify movie annotations on that page.
 
-### `MovieAction.target`
+### `target`
 
 ```python
 MovieAction.target: typed.AnnotMovie
@@ -382,7 +382,7 @@ target in one transaction.
 
 Settable.
 
-### `MovieAction.start`
+### `start`
 
 ```python
 MovieAction.start: tuple[int, int | None]
@@ -394,7 +394,7 @@ Assign a pair to override the annotation or None to inherit its setting.
 
 Settable.
 
-### `MovieAction.duration`
+### `duration`
 
 ```python
 MovieAction.duration: tuple[int, int | None] | None
@@ -419,7 +419,7 @@ PageTriggers(page: Page)
 
 Page additional actions by `PageTrigger` (`Page["AA"]`, ISO 32000-2 Table 198).
 
-### `PageTriggers.__getitem__`
+### `__getitem__`
 
 ```python
 PageTriggers.__getitem__(trigger: PageTrigger) -> Target
@@ -427,7 +427,7 @@ PageTriggers.__getitem__(trigger: PageTrigger) -> Target
 
 Return the action for `trigger`, or raise `KeyError`.
 
-### `PageTriggers.__setitem__`
+### `__setitem__`
 
 ```python
 PageTriggers.__setitem__(trigger: PageTrigger, target: Target)
@@ -435,7 +435,7 @@ PageTriggers.__setitem__(trigger: PageTrigger, target: Target)
 
 Set the action for `trigger` in one transaction.
 
-### `PageTriggers.__delitem__`
+### `__delitem__`
 
 ```python
 PageTriggers.__delitem__(trigger: PageTrigger)
@@ -443,7 +443,7 @@ PageTriggers.__delitem__(trigger: PageTrigger)
 
 Remove `trigger` from `Page['AA']` in one transaction, or raise `KeyError`.
 
-### `PageTriggers.__iter__`
+### `__iter__`
 
 ```python
 PageTriggers.__iter__() -> Iterator[PageTrigger]
@@ -451,7 +451,7 @@ PageTriggers.__iter__() -> Iterator[PageTrigger]
 
 Iterate triggers that currently resolve to an action.
 
-### `PageTriggers.__len__`
+### `__len__`
 
 ```python
 PageTriggers.__len__() -> int
@@ -459,7 +459,7 @@ PageTriggers.__len__() -> int
 
 Return the number of page triggers.
 
-### `PageTriggers.__contains__`
+### `__contains__`
 
 ```python
 PageTriggers.__contains__(trigger: object) -> bool
@@ -467,7 +467,7 @@ PageTriggers.__contains__(trigger: object) -> bool
 
 Return whether `trigger` has a resolved action.
 
-### `PageTriggers.update`
+### `update`
 
 ```python
 PageTriggers.update(other: object = (), /, **values: Target)
@@ -475,7 +475,7 @@ PageTriggers.update(other: object = (), /, **values: Target)
 
 Set every `(trigger, target)` pair in one transaction.
 
-### `PageTriggers.clear`
+### `clear`
 
 ```python
 PageTriggers.clear()
@@ -497,7 +497,7 @@ RenditionAction(
 
 A Screen target, optional rendition, operation and inert script.
 
-### `RenditionAction.media_candidates`
+### `media_candidates`
 
 ```python
 RenditionAction.media_candidates: tuple[typed.RenditionMedia, ...]
@@ -508,7 +508,7 @@ Media renditions in depth-first selector preference order.
 Shared candidates keep their positions. Player capabilities and playback
 conditions are available on the typed dictionaries and are not evaluated.
 
-### `RenditionAction.edit_rendition`
+### `edit_rendition`
 
 ```python
 RenditionAction.edit_rendition() -> AbstractContextManager[typed.RenditionMedia | typed.RenditionSelector]

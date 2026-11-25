@@ -177,11 +177,18 @@ def _jpx_size(data: bytes) -> tuple[int, int]:
     at = data.find(b"ihdr") if data.startswith(_JP2_SIGNATURE) else -1
     if at >= 0 and at + 12 <= len(data):
         height, width = struct.unpack(">II", data[at + 4 : at + 12])
-        return width, height
+        if width > 0 and height > 0:
+            return width, height
+        msg = "the JPEG 2000 image header has non-positive dimensions"
+        raise ValueError(msg)
     at = data.find(_J2K_SIGNATURE)
     if at >= 0 and at + 24 <= len(data):
-        width, height, x, y = struct.unpack(">IIII", data[at + 8 : at + 24])
-        return width - x, height - y
+        xsiz, ysiz, xosiz, yosiz = struct.unpack(">IIII", data[at + 8 : at + 24])
+        width, height = xsiz - xosiz, ysiz - yosiz
+        if width > 0 and height > 0:
+            return width, height
+        msg = "the JPEG 2000 codestream header has non-positive dimensions"
+        raise ValueError(msg)
     msg = "the JPEG 2000 data has no image header"
     raise ValueError(msg)
 
@@ -889,8 +896,8 @@ def _unmatte(color: bytes, alpha: bytes, matte: Array, components: int) -> bytes
 
 def _rewrite(
     document: Document, xref: int, candidate: _Candidate, size: tuple[int, int], options: _Options
-) -> int | None:
-    """Re-encode one image at ``size`` and store it when it is smaller enough; return its new stored length.
+) -> tuple[int, int | None]:
+    """Re-encode one image at ``size`` and store it when it is smaller enough; return its old and new stored lengths.
 
     A mask of another size than the image is resampled at its own
     resolution and stays a stencil ``/Mask`` or a soft mask; one that keeps
@@ -926,7 +933,7 @@ def _rewrite(
     for _, _, encoded in resampled:
         after = None if after is None or encoded is None else after + len(encoded[0])
     if after is None or after > limit:
-        return None
+        return before, None
     # Resampled stored samples keep the color space and the /Decode array, which stay in place.
     for key in _DATA_KEYS:
         if key in stream and key not in kept and not (candidate.samples and key in ("ColorSpace", "Decode")):
@@ -949,7 +956,7 @@ def _rewrite(
     for key, mask_size, encoded in resampled:
         if encoded is not None:
             stream[key] = _add_mask(document, mask_size, encoded, stencil=key == "Mask")
-    return after
+    return before, after
 
 
 def _encode_candidate(candidate: _Candidate, pixels: _Pixels, form: str, options: _Options, limit: int) -> bytes | None:
@@ -1023,21 +1030,21 @@ def _mask_pixels(mask: Stream, *, stencil: bool) -> _Pixels:
     hayro decodes a mask of another size than its image only to paint it,
     so a scratch document paints the mask, its data copied as stored.
     """
-    scratch = _new_document()
-    entries = {str(key): _transfer(scratch, value, 0) for key, value in mask.items() if key not in _STREAM_KEYS}
-    entries.setdefault("Subtype", Name("Image"))
-    number = scratch.objects.add_stream(b"", entries, filter=None)
-    copy = scratch.objects[number]
-    copy.write(mask.read(decode=False), filter=None)
-    for key in ("Filter", "DecodeParms"):
-        if key in mask:
-            copy[key] = _transfer(scratch, mask[key], 0)
-    scratch.pages.new((1, 1))
-    page = scratch.pages[0]
-    page.obj["Resources"] = {"XObject": {"M": copy}}
-    page.operations = Operations([Operation("Do", (Name("M"),))])
-    (image,) = page.images()
-    painted = _from_pixmap(image.pixmap())
+    with _new_document() as scratch:
+        entries = {str(key): _transfer(scratch, value, 0) for key, value in mask.items() if key not in _STREAM_KEYS}
+        entries.setdefault("Subtype", Name("Image"))
+        number = scratch.objects.add_stream(b"", entries, filter=None)
+        copy = scratch.objects[number]
+        copy.write(mask.read(decode=False), filter=None)
+        for key in ("Filter", "DecodeParms"):
+            if key in mask:
+                copy[key] = _transfer(scratch, mask[key], 0)
+        scratch.pages.new((1, 1))
+        page = scratch.pages[0]
+        page.obj["Resources"] = {"XObject": {"M": copy}}
+        page.operations = Operations([Operation("Do", (Name("M"),))])
+        (image,) = page.images()
+        painted = _from_pixmap(image.pixmap())
     if stencil:
         size = painted.width * painted.height
         color = b"\x00" * size if painted.alpha is None else painted.alpha.translate(_INVERT)
@@ -1522,7 +1529,8 @@ def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments, and pyropdf'
                 continue
             if recolor:
                 candidate.gray, candidate.samples = True, False
-            tally.kept(item.encoded_size, _rewrite(document, xref, candidate, size, options))
+            before, after = _rewrite(document, xref, candidate, size, options)
+            tally.kept(before, after)
         nested = _Nested(tally)
         for index, (page, count) in enumerate(zip(document.pages, inline, strict=False)):
             missed = count - (_rewrite_page_inline(page, options, tally, nested) if count else 0)

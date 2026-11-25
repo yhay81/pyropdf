@@ -45,7 +45,7 @@ decrypted, and an incremental save keeps its encryption.
 With `integrity=True`, a 256-bit method creates an ISO/TS 32004:2024
 document MAC. Subsequent edits renew it when the encryption is kept.
 
-### `Encryption.KEEP`
+### `KEEP`
 
 ```python
 Encryption.KEEP: Encryption

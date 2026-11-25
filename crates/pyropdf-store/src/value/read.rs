@@ -179,7 +179,11 @@ impl Stream {
             return Err(Error::malformed("the stream's data is in an external file"));
         }
         match self.dict.get("Filter") {
-            None => return copy(&self.data, budget).map(Vec::from).map_err(Into::into),
+            None => {
+                let size = u64::try_from(self.data.len()).unwrap_or(u64::MAX);
+                budget.decode(kind).charge(size)?;
+                return copy(&self.data, budget).map(Vec::from).map_err(Into::into);
+            }
             Some(Value::Array(filters)) => {
                 budget.check(
                     LimitCode::StreamFilterCount,
@@ -189,7 +193,7 @@ impl Stream {
             Some(_) => {}
         }
         let mut source = BudgetVec::new(budget);
-        crate::write::value(&mut source, &Value::Stream(Box::new(self.clone())))?;
+        crate::write::stream(&mut source, self)?;
         let data = panic::catch_unwind(AssertUnwindSafe(|| {
             match Object::from_bytes(source.as_slice())? {
                 Object::Stream(stream) => stream.decoded().ok().map(|data| data.into_owned()),

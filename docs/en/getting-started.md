@@ -53,10 +53,11 @@ Japanese, Korean, and Chinese fonts that a document does not embed; see
 
 ## Pyodide
 
-The release workflow builds the core wheel for Pyodide 314.0.6 (CPython
-3.14, Emscripten 5.0.3, `pyemscripten_2026_0_wasm32`). Download
-`wheels-pyodide` from a successful release dry run, extract its wheel,
-and install the wheel in a matching Pyodide virtual environment:
+The release workflow builds and publishes the core wheel for Pyodide 314.0.6
+(CPython 3.14, Emscripten 5.0.3, `pyemscripten_2026_0_wasm32`) to PyPI and
+GitHub Releases. Install it directly with `pip install pyropdf`, or download
+the `.whl` asset from a release and install it in a matching Pyodide virtual
+environment:
 
 ```bash
 path/to/pyodide-venv/bin/pip install ./pyropdf-*-pyemscripten_2026_0_wasm32.whl

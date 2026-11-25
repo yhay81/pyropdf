@@ -69,9 +69,10 @@ impl Target {
         {
             pdf = pdf.max(parsed);
         }
-        let cid_set = match catalog.as_ref().filter(|_| pdf < (2, 0)) {
-            Some(catalog) => claims_pdfa1(version, catalog, budget)?,
-            None => false,
+        let cid_set = if pdf < (2, 0) && catalog.is_some() {
+            crate::changes::pdfa_part(version, budget)? == Some(1)
+        } else {
+            false
         };
         Ok(Self {
             cid_set,
@@ -388,76 +389,6 @@ fn parse_version(bytes: &[u8]) -> Option<(u8, u8)> {
     let text = std::str::from_utf8(&bytes[..end]).ok()?;
     let (major, minor) = text.split_once('.')?;
     Some((major.parse().ok()?, minor.parse().ok()?))
-}
-
-fn claims_pdfa1(version: &Version, catalog: &Dict, budget: &Budget) -> Result<bool> {
-    let metadata = match catalog.get("Metadata") {
-        Some(&Value::Reference(reference)) => {
-            let Some(object) = version
-                .get(reference.number(), budget)?
-                .filter(|object| object.generation() == reference.generation())
-            else {
-                return Ok(false);
-            };
-            match &**object.value() {
-                Value::Stream(stream) => Some(stream.decoded(budget)?),
-                _ => None,
-            }
-        }
-        Some(Value::Stream(stream)) => Some(stream.decoded(budget)?),
-        _ => None,
-    };
-    Ok(metadata
-        .as_deref()
-        .and_then(|xmp| xmp_property(xmp, b"pdfaid:part"))
-        == Some(b"1"))
-}
-
-/// Returns the value of an XMP property written as `name="value"` or
-/// `<name>value</name>`, trimmed.
-fn xmp_property<'a>(xmp: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
-    let trim_start = |bytes: &'a [u8]| {
-        let start = bytes
-            .iter()
-            .position(|byte| !byte.is_ascii_whitespace())
-            .unwrap_or(bytes.len());
-        &bytes[start..]
-    };
-    let trim = |bytes: &'a [u8]| {
-        let trimmed = trim_start(bytes);
-        let end = trimmed
-            .iter()
-            .rposition(|byte| !byte.is_ascii_whitespace())
-            .map_or(0, |at| at + 1);
-        &trimmed[..end]
-    };
-    let mut at = 0;
-    while let Some(found) = xmp[at..].windows(name.len()).position(|w| w == name) {
-        let start = at + found;
-        at = start + name.len();
-        if start > 0 && (xmp[start - 1].is_ascii_alphanumeric() || xmp[start - 1] == b':') {
-            continue;
-        }
-        let rest = trim_start(&xmp[at..]);
-        if let Some(rest) = rest.strip_prefix(b"=") {
-            let rest = trim_start(rest);
-            let Some((&quote, rest)) = rest.split_first() else {
-                continue;
-            };
-            if (quote == b'"' || quote == b'\'')
-                && let Some(end) = rest.iter().position(|&byte| byte == quote)
-            {
-                return Some(trim(&rest[..end]));
-            }
-        } else if start > 0
-            && xmp[start - 1] == b'<'
-            && let Some(rest) = rest.strip_prefix(b">")
-            && let Some(end) = rest.iter().position(|&byte| byte == b'<')
-        {
-            return Some(trim(&rest[..end]));
-        }
-    }
-    None
 }
 
 /// Returns the CIDToGIDMap of a compacted TrueType program: for each CID,

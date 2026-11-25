@@ -6,6 +6,10 @@ import os
 import stat
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Self
 
 import pytest
 from corpus import ASSETS, NAMES
@@ -74,6 +78,26 @@ def test_a_bytearray_changed_after_opening_does_not_change_the_document() -> Non
     doc = pyropdf.open(data)
     data[:] = b"\0" * len(data)
     assert doc.to_bytes(incremental=True) == SIMPLE
+
+
+class _MutableBytes(bytes):
+    backing: bytearray
+
+    def __new__(cls, data: bytes) -> Self:
+        obj = super().__new__(cls, data)
+        obj.backing = bytearray(data)
+        return obj
+
+    def __buffer__(self, flags: int) -> memoryview:
+        return memoryview(self.backing)
+
+
+def test_a_bytes_subclass_changed_after_opening_does_not_change_the_document() -> None:
+    for wrap in (lambda data: data, memoryview, lambda data: memoryview(data).toreadonly()):
+        source = _MutableBytes(SIMPLE)
+        with pyropdf.open(wrap(source)) as doc:
+            source.backing[:] = b"\0" * len(source.backing)
+            assert doc.to_bytes(incremental=True) == SIMPLE
 
 
 @pytest.mark.parametrize("as_path", [str, Path], ids=["str", "pathlike"])

@@ -4,7 +4,7 @@
 //! `doc.render` through the hayro bridge, with the GIL released while
 //! rendering.
 
-use std::ffi::{CString, c_int, c_void};
+use std::ffi::{c_int, c_void};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -808,7 +808,7 @@ impl Pixmap {
             if out.exceeded() {
                 let limit = max_size.unwrap_or_default();
                 return Err(LimitError::new_err((
-                    "pixmap_output_size",
+                    LimitCode::PixmapOutputSize.as_str(),
                     format!(
                         "the encoded {} exceeds the {limit}-byte output limit",
                         encoding.name()
@@ -862,13 +862,14 @@ impl Pixmap {
                 let mut out = BufWriter::new(file);
                 let result = self
                     .encode(&mut out, encoding, &Budget::default())
-                    .map_err(|e| match e {
-                        EncodeError::Limit(refusal) => refusal.to_string(),
-                        EncodeError::Other(message) => message,
+                    .map_err(|e| {
+                        encode_error(
+                            e,
+                            &format!("failed to save the image to {}", path.display()),
+                        )
                     })
-                    .and_then(|()| out.flush().map_err(|e| e.to_string()))
-                    .and_then(|()| out.get_ref().sync_all().map_err(|e| e.to_string()))
-                    .map_err(|e| error(&e));
+                    .and_then(|()| out.flush().map_err(|e| error(&e)))
+                    .and_then(|()| out.get_ref().sync_all().map_err(|e| error(&e)));
                 drop(out);
                 let result = result.and_then(|()| {
                     if let Some(permissions) = permissions {
@@ -914,12 +915,29 @@ impl Pixmap {
             let data = &pixmap.data;
             let length = isize::try_from(data.len())
                 .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
-            let channels = pixmap.channels() as isize;
-            let width = pixmap.width as isize;
-            let height = pixmap.height as isize;
+            let channels = isize::try_from(pixmap.channels())
+                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let width = isize::try_from(pixmap.width)
+                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let height = isize::try_from(pixmap.height)
+                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let row_stride = width
+                .checked_mul(channels)
+                .ok_or_else(|| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let f_contiguous = length == 0
+                || [height, width, channels]
+                    .into_iter()
+                    .filter(|&dim| dim > 1)
+                    .count()
+                    <= 1;
+            if (flags & ffi::PyBUF_F_CONTIGUOUS) == ffi::PyBUF_F_CONTIGUOUS && !f_contiguous {
+                return Err(PyBufferError::new_err(
+                    "Pixmap buffer is not Fortran-contiguous",
+                ));
+            }
             // Shape and strides live in one allocation that `internal` owns
             // until `__releasebuffer__`.
-            let mut dimensions = Box::new([height, width, channels, width * channels, channels, 1]);
+            let mut dimensions = Box::new([height, width, channels, row_stride, channels, 1]);
             let dimensions_ptr = dimensions.as_mut_ptr();
             let nd = (flags & ffi::PyBUF_ND) == ffi::PyBUF_ND;
             let strides = (flags & ffi::PyBUF_STRIDES) == ffi::PyBUF_STRIDES;
@@ -933,9 +951,7 @@ impl Pixmap {
                 (*view).readonly = 1;
                 (*view).itemsize = 1;
                 (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
-                    CString::new("B")
-                        .expect("the format has no null byte")
-                        .into_raw()
+                    c"B".as_ptr().cast_mut()
                 } else {
                     ptr::null_mut()
                 };
@@ -959,16 +975,12 @@ impl Pixmap {
             if view.is_null() {
                 return;
             }
-            // SAFETY: `__getbuffer__` made every non-null format with
-            // `CString::into_raw` and stored a boxed `[isize; 6]` in
-            // `internal`, once for this view.
+            // SAFETY: `__getbuffer__` stored a boxed `[isize; 6]` in
+            // `internal`, once for this view; `format` is a static C string.
             unsafe {
-                let format = (*view).format;
-                if !format.is_null() {
-                    drop(CString::from_raw(format));
-                }
                 let internal = (*view).internal;
                 if !internal.is_null() {
+                    (*view).internal = ptr::null_mut();
                     drop(Box::from_raw(internal.cast::<[isize; 6]>()));
                 }
             }
@@ -1255,27 +1267,31 @@ pub fn recolor_samples<'py>(
     crate::errors::boundary(|| {
         let layout = pixmap.layout();
         let budget = document.budget();
-        if tables.is_some() {
-            if components != 4 || quality.is_some() {
-                return Err(PyValueError::new_err(
-                    "device curves require raw CMYK output",
-                ));
-            }
-            // The native sample buffer and the new Python bytes coexist.
-            let pixels = u64::from(layout.width) * u64::from(layout.height);
-            budget
-                .charge(LimitCode::MemorySize, pixels.saturating_mul(8))
-                .map_err(|e| limit_error(&e))?;
+        if tables.is_some() && (components != 4 || quality.is_some()) {
+            return Err(PyValueError::new_err(
+                "device curves require raw CMYK output",
+            ));
         }
         let out = py.detach(|| -> PyResult<_> {
-            let mut data = pixel_ops::recolor_samples(&pixmap.data, layout, components, quality)
-                .map_err(PyValueError::new_err)?;
+            let mut data =
+                pixel_ops::recolor_samples(&pixmap.data, layout, components, quality, &budget)
+                    .map_err(|e| match e {
+                        EncodeError::Limit(refusal) => limit_error(&refusal),
+                        EncodeError::Other(message) => PyValueError::new_err(message),
+                    })?;
             if let Some((black, removal)) = tables {
                 pixel_ops::apply_black_tables(&mut data, &black, &removal, &budget)
                     .map_err(|e| limit_error(&e))?;
             }
             Ok(data)
         })?;
+        // The native buffer and the new Python bytes coexist briefly.
+        budget
+            .charge(
+                LimitCode::MemorySize,
+                u64::try_from(out.len()).unwrap_or(u64::MAX),
+            )
+            .map_err(|e| limit_error(&e))?;
         Ok(PyBytes::new(py, &out))
     })?
 }
@@ -1448,7 +1464,7 @@ pub fn render_pages(
                 if out.exceeded() {
                     let limit = max_size.unwrap_or_default();
                     return Err(Failed(LimitError::new_err((
-                        "render_output_size",
+                        LimitCode::RenderOutputSize.as_str(),
                         format!("the rendered batch exceeds the {limit}-byte encoded-output limit"),
                     ))));
                 }
@@ -1468,9 +1484,10 @@ pub fn render_pages(
 pub fn bridge_error(error: &BridgeError) -> PyErr {
     match error {
         BridgeError::Store(error) => store_error(error),
-        BridgeError::EncryptionChanged | BridgeError::PasswordNotUtf8 | BridgeError::AesGcm => {
-            EncryptedDocumentError::new_err(error.to_string())
-        }
+        BridgeError::EncryptionChanged
+        | BridgeError::PasswordNotUtf8
+        | BridgeError::AesGcm
+        | BridgeError::LegacyRecipientKey => EncryptedDocumentError::new_err(error.to_string()),
         _ => PdfError::new_err(error.to_string()),
     }
 }

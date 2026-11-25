@@ -1,0 +1,93 @@
+# Miri undefined-behavior and leak checks on the unsafe store and render-cache
+# paths (DESIGN.md sections 4, 9, and 12, F6 and F9).
+name: Miri
+
+on:
+  pull_request:
+    paths:
+      - "crates/pyropdf-store/**"
+      - "crates/pyropdf-engine/src/render/**"
+      - ".github/workflows/miri.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/pyropdf-store/**"
+      - "crates/pyropdf-engine/src/render/**"
+      - ".github/workflows/miri.yml"
+  schedule:
+    # Mondays at 04:17 UTC.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: miri-${{ github.ref }}
+  # A push to a pull request supersedes its earlier run; every run on main finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Match fuzz.yml's pinned nightly so nightly toolchains stay aligned.
+  NIGHTLY: nightly-2026-11-19
+  # Tests using Instant::now() and threads need isolation disabled; Stacked
+  # Borrows, alignment, provenance, and leak checks remain enabled.
+  MIRIFLAGS: "-Zmiri-disable-isolation"
+  PROPTEST_CASES: "2"
+
+jobs:
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the nightly toolchain and Miri
+        run: rustup toolchain install "$NIGHTLY" --profile minimal --component miri,rust-src
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: miri
+          cache-bin: false
+      - name: Run Miri on pyropdf-store unsafe and core tests
+        # Skip intentional `isize::MAX` allocator-refusal tests (which abort
+        # Miri with resource exhaustion) and long stress/proptest loops.
+        run: >-
+          cargo +"$NIGHTLY" miri test --locked -p pyropdf-store --lib --
+          value::bytes::written_tests
+          refs::tests::edit_cop
+          settle::tests
+          memo::tests
+          budget::tests
+          version::table::tests
+          version::tests::stamps
+          version::tests::undo_and_redo
+          version::tests::undo_waits_for
+          version::tests::a_rollback
+          version::tests::a_transaction_reads
+          version::tests::generations_follow
+          version::tests::a_dropped_or_refused
+          version::tests::allocations_never_repeat
+          version::tests::allocation_exhaustion
+          version::tests::an_oversized_redo
+          version::tests::derived_anchor
+          version::tests::a_refused_write
+          version::tests::a_refused_trailer
+          version::tests::change_sets_are_the_union
+          version::tests::writes_respect_free_entries
+          --skip a_refused_allocation_releases_its_charge
+          --skip set_and_map_refused_allocations
+          --skip threads_never_charge_beyond_a_limit
+          --skip a_vector_changes_only
+          --skip meters_follow_a_model
+          --skip a_memoized_result_equals_a_fresh_computation
+          --skip dependencies::
+          --skip one_write_copies_one_chunk_and_the_branches_above_it
+          --skip removals_preserve
+          --skip every_clone_keeps_what_it_held
+          --skip a_diff_finds_exactly_the_numbers_that_differ
+          --skip a_write_charges_what_it_allocates
+      - name: Run Miri on pyropdf-engine render cache lifetime handling
+        run: >-
+          cargo +"$NIGHTLY" miri test --locked -p pyropdf-engine --lib --
+          render::tests::with_cache_replaces_bridged_entry_and_drops_on_thread_exit

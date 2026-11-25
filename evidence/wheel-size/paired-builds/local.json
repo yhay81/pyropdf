@@ -1,0 +1,221 @@
+{
+  "environment": {
+    "os": "macOS 27.2 (26B123)",
+    "cpu": "Apple M2 Pro",
+    "rustc": "1.100.0 (0ef1bc386)",
+    "maturin": "1.16.0",
+    "interpreter": "CPython 3.14.10",
+    "zopflipy": "1.14",
+    "target": "aarch64-apple-darwin",
+    "cargo_build_jobs": 2,
+    "maturin_args": "--release --locked --compression-level 9 --out dist",
+    "compiler_source_downloads": "already populated"
+  },
+  "builds": {
+    "warm-base-cold": {
+      "git": "6a2d2e1c2613ea651656218d82c8e230f1f31527",
+      "target_state": "empty",
+      "compiled_crates": 197,
+      "workspace_crates_compiled": [
+        "pyropdf-engine",
+        "pyropdf-python",
+        "pyropdf-schema",
+        "pyropdf-store"
+      ],
+      "maturin_s": 259.01,
+      "postprocess_and_capture_s": 21.262,
+      "raw_bytes": 8229027,
+      "raw_sha256": "26c28f64a09c84740ca80473990cdf29f712f6556109a8f8b9b3c092dc835481",
+      "name": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+      "size": 8032136,
+      "sha256": "49ab7a4a86b23ef5ad5a2ee94294a73d5c00fbadfe873a51e7a7ce6756a81f1b",
+      "normalized_sha256": "c7b1ac2f2a89f49050e938961b56abd966530948c78e19fdce58ed6f26dadbfd",
+      "native_sha256": "0f80afc0fe2ad3f414d1208de31ece200b5d08875795846460692b4ee0c2be1f",
+      "native_compressed_size": 7414844,
+      "members": 88,
+      "_attachments.py_sha256": "730cb70cbe739d814b22a7ccbb40ecfd4737bd9dc15fbf11b64958a34e3a2510",
+      "_core.pyi_sha256": "4b8a568cdfb3fb38006703014aa3645cb468bdea95ff3643d6dbf3edcc28c0f9"
+    },
+    "warm-head": {
+      "git": "bbb76da7853899239a3710fd8325d7fa13acaeb9",
+      "target_state": "shared from warm-base-cold",
+      "compiled_crates": 4,
+      "workspace_crates_compiled": [
+        "pyropdf-engine",
+        "pyropdf-python",
+        "pyropdf-schema",
+        "pyropdf-store"
+      ],
+      "maturin_s": 132.692,
+      "postprocess_and_capture_s": 20.877,
+      "raw_bytes": 8243427,
+      "raw_sha256": "53b3f6681773281fe6dc5d8514ebac6f78fbe6d0364d28779f96cd95b3642003",
+      "name": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+      "size": 8048641,
+      "sha256": "4cc409fd07cc5c5730da4fe892bd41478384d32da79a2078388f5b2910b9ee6e",
+      "normalized_sha256": "fbd3888873f58a5d8ee40b948403fa4c58a8e814c81aac47a2e3ace211873058",
+      "native_sha256": "60846eb5575ad10a45a97796cabca82ad514007a269c63b41cf1d428741171d1",
+      "native_compressed_size": 7430673,
+      "members": 88,
+      "_attachments.py_sha256": "45e7c5515a64a2fc4d4ec46bef348fbda339d965dc67f58f9585e38b9afc4d0c",
+      "_core.pyi_sha256": "6bfbbbc47c1193434ada97dea3811f2c68d692dd94743893c58d84a0865cf9a7"
+    },
+    "clean-head": {
+      "git": "bbb76da7853899239a3710fd8325d7fa13acaeb9",
+      "target_state": "empty",
+      "compiled_crates": 197,
+      "workspace_crates_compiled": [
+        "pyropdf-engine",
+        "pyropdf-python",
+        "pyropdf-schema",
+        "pyropdf-store"
+      ],
+      "maturin_s": 230.314,
+      "postprocess_and_capture_s": 21.037,
+      "raw_bytes": 8243427,
+      "raw_sha256": "97df9832baf20f499876c98a2561efed510ebe8c23265ae415da72f46f2f8398",
+      "name": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+      "size": 8048641,
+      "sha256": "303fabf07540fa103f11c6463ec1d0ebd57897626be146cc6a0cef329ea44cb9",
+      "normalized_sha256": "fbd3888873f58a5d8ee40b948403fa4c58a8e814c81aac47a2e3ace211873058",
+      "native_sha256": "60846eb5575ad10a45a97796cabca82ad514007a269c63b41cf1d428741171d1",
+      "native_compressed_size": 7430673,
+      "members": 88,
+      "_attachments.py_sha256": "45e7c5515a64a2fc4d4ec46bef348fbda339d965dc67f58f9585e38b9afc4d0c",
+      "_core.pyi_sha256": "6bfbbbc47c1193434ada97dea3811f2c68d692dd94743893c58d84a0865cf9a7"
+    },
+    "fallback-base": {
+      "git": "26134041fc1afd50a3ae701a3e590f93e111e89c",
+      "target_state": "empty",
+      "compiled_crates": 191,
+      "workspace_crates_compiled": [
+        "pyropdf-engine",
+        "pyropdf-python",
+        "pyropdf-schema",
+        "pyropdf-store"
+      ],
+      "maturin_s": 229.95,
+      "postprocess_and_capture_s": 0.002,
+      "raw_bytes": 7999049,
+      "raw_sha256": "c2fdcee77364b50f37aafe0b1cc9cc4b4efc4d6ca94b6734ad795c8ad86add15",
+      "name": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+      "size": 7999049,
+      "sha256": "c2fdcee77364b50f37aafe0b1cc9cc4b4efc4d6ca94b6734ad795c8ad86add15",
+      "normalized_sha256": "ec9a9a4651feeeef91d8d82167e67bb4a85a8a6155717ec830b529ba9175ce8a",
+      "native_sha256": "ddc3c79e5212e720209358bac2b0fa843debc24f42c84d298831576da136ba16",
+      "native_compressed_size": 7455349,
+      "members": 71,
+      "new_locked_dependencies_in_sbom": {}
+    },
+    "fallback-head": {
+      "git": "a538de34a20d623cd9d3a680fee33b8c965c3fc1",
+      "target_state": "empty",
+      "compiled_crates": 195,
+      "workspace_crates_compiled": [
+        "pyropdf-engine",
+        "pyropdf-python",
+        "pyropdf-schema",
+        "pyropdf-store"
+      ],
+      "maturin_s": 235.318,
+      "postprocess_and_capture_s": 20.033,
+      "raw_bytes": 8104478,
+      "raw_sha256": "e5fe9ee137d884af734334f966ac35c8f57ba9d8639095e3db05220aeea47cfd",
+      "name": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+      "size": 7913973,
+      "sha256": "b3a0aea4e8cad4faf3a0815706958c6efda97066c9b9d0aa68f3ae27f50f280f",
+      "normalized_sha256": "2f3940ec977e3195419338b150f2573bce1235fd81f14d8d884f7263627236a6",
+      "native_sha256": "b49b831b7f234e3984992b08b1f58b8b3e4d27bc375f26dec7713ec464b8ceff",
+      "native_compressed_size": 7391658,
+      "members": 71,
+      "new_locked_dependencies_in_sbom": {
+        "aes-kw": "0.3.1",
+        "hkdf": "0.13.0",
+        "keccak": "0.2.2",
+        "sha3": "0.11.0"
+      }
+    },
+    "fallback-reference": {
+      "git": "a538de34a20d623cd9d3a680fee33b8c965c3fc1",
+      "target_state": "empty",
+      "compiled_crates": 195,
+      "workspace_crates_compiled": [
+        "pyropdf-engine",
+        "pyropdf-python",
+        "pyropdf-schema",
+        "pyropdf-store"
+      ],
+      "maturin_s": 234.192,
+      "postprocess_and_capture_s": 19.635,
+      "raw_bytes": 8104478,
+      "raw_sha256": "579febb1fe147749bb0a382572804fad593a6b669f629a9a0dbce906b4505174",
+      "name": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+      "size": 7913983,
+      "sha256": "7f839d8c936c1d7a396359e38cc9c3b46453511ab5d2245ac6d6a7c4234fa72a",
+      "normalized_sha256": "2f3940ec977e3195419338b150f2573bce1235fd81f14d8d884f7263627236a6",
+      "native_sha256": "b49b831b7f234e3984992b08b1f58b8b3e4d27bc375f26dec7713ec464b8ceff",
+      "native_compressed_size": 7391658,
+      "members": 71,
+      "new_locked_dependencies_in_sbom": {
+        "aes-kw": "0.3.1",
+        "hkdf": "0.13.0",
+        "keccak": "0.2.2",
+        "sha3": "0.11.0"
+      }
+    }
+  },
+  "comparison": {
+    "warm-head": {
+      "different_raw_members_from_clean": [
+        "pyropdf-0.3.1.dist-info/sboms/pyropdf-python.cyclonedx.json",
+        "pyropdf-0.3.1.dist-info/RECORD"
+      ],
+      "candidate_minus_base_bytes": 16505,
+      "clean_minus_base_bytes": 16505,
+      "candidate_minus_clean_bytes": 0,
+      "native_sha256_equal_to_clean": true,
+      "normalized_equal_to_clean": true,
+      "both_gates_passed": true
+    },
+    "fallback-head": {
+      "different_raw_members_from_clean": [
+        "pyropdf-0.3.1.dist-info/sboms/pyropdf-python.cyclonedx.json",
+        "pyropdf-0.3.1.dist-info/RECORD"
+      ],
+      "candidate_minus_base_bytes": -85076,
+      "clean_minus_base_bytes": -85066,
+      "candidate_minus_clean_bytes": -10,
+      "native_sha256_equal_to_clean": true,
+      "normalized_equal_to_clean": true,
+      "both_gates_passed": true
+    }
+  },
+  "packaging": {
+    "before": {
+      "git": "23e08a1a2a9214e717da93ec08f18780ceecfc51",
+      "candidate": {
+        "name": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "size": 8243427,
+        "sha256": "53b3f6681773281fe6dc5d8514ebac6f78fbe6d0364d28779f96cd95b3642003",
+        "normalized_sha256": "fbd3888873f58a5d8ee40b948403fa4c58a8e814c81aac47a2e3ace211873058",
+        "native_sha256": "60846eb5575ad10a45a97796cabca82ad514007a269c63b41cf1d428741171d1",
+        "native_compressed_size": 7599279,
+        "members": 88
+      },
+      "independent_control_sha256": "53b3f6681773281fe6dc5d8514ebac6f78fbe6d0364d28779f96cd95b3642003"
+    },
+    "after": {
+      "git": "3c2aedaf96f4af353097e7607d5d26c91c097930",
+      "candidate": {
+        "name": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "size": 8048641,
+        "sha256": "4cc409fd07cc5c5730da4fe892bd41478384d32da79a2078388f5b2910b9ee6e",
+        "normalized_sha256": "fbd3888873f58a5d8ee40b948403fa4c58a8e814c81aac47a2e3ace211873058",
+        "native_sha256": "60846eb5575ad10a45a97796cabca82ad514007a269c63b41cf1d428741171d1",
+        "native_compressed_size": 7430673,
+        "members": 88
+      },
+      "independent_control_sha256": "4cc409fd07cc5c5730da4fe892bd41478384d32da79a2078388f5b2910b9ee6e"
+    }
+  }
+}

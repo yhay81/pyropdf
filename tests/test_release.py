@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import base64
+import fnmatch
 import hashlib
 import json
+import os
 import re
 import runpy
+import shlex
+import shutil
 import struct
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from textwrap import dedent
 from urllib.parse import unquote_plus
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
@@ -20,20 +26,81 @@ import pyropdf
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+CI = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
 
-def test_ci_gives_the_floor_interpreter_time_to_collect_release_evidence() -> None:
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    (python_job,) = re.findall(r"\n  python:\n(.*?)(?=\n  \S|\Z)", workflow, flags=re.DOTALL)
-    assert 'python: ["3.11", "3.15", "3.15t"]' in python_job
-    assert "timeout-minutes: ${{ matrix.python == '3.11' && 30 || 20 }}" in python_job
-    assert "uv run --no-sync pytest" in python_job
-    floor_guard = "        if: matrix.python == '3.11'"
-    floor_steps = [step for step in python_job.split("\n      - ") if floor_guard in step.splitlines()]
-    assert any("tools/verapdf.py" in step and "--arlington" in step for step in floor_steps)
-    assert any("tools/oracles.py --readers pdfjs" in step for step in floor_steps)
-    assert any("tools/spec_map/release_evidence.py" in step for step in floor_steps)
-    assert any("actions/upload-artifact@" in step and "target/release-evidence.json" in step for step in floor_steps)
+def ci_job(name: str) -> str:
+    """Extract one top-level job from the CI workflow."""
+    (job,) = re.findall(rf"\n  {name}:\n(.*?)(?=\n  \S|\Z)", CI, flags=re.DOTALL)
+    return job
+
+
+def test_ci_runs_the_exhaustive_grid_on_the_floor_and_quick_corpus_on_other_interpreters() -> None:
+    job = ci_job("python")
+    assert 'python: ["3.11", "3.15", "3.15t"]' in job
+    steps = job.split("\n      - ")
+    (full,) = [step for step in steps if "--junitxml=" in step]
+    (quick,) = [step for step in steps if "--quick-corpus" in step]
+    assert "if: matrix.python == '3.11'" in full
+    assert "--quick-corpus" not in full
+    assert "--junitxml=target/ci-evidence/pytest.xml" in full
+    assert "junit_suite_name=pyropdf-${GITHUB_SHA}" in full
+    assert "if: matrix.python != '3.11'" in quick
+    (upload,) = [step for step in steps if "actions/upload-artifact@" in step]
+    assert "name: python-evidence-${{ matrix.python }}" in upload
+    assert "path: target/ci-evidence/" in upload
+    assert "needs: python" in ci_job("evidence")
+
+
+@pytest.mark.parametrize(
+    ("reader", "python", "command"),
+    [("verapdf", "3.15", "--arlington target/verapdf/"), ("pdfjs", "3.15t", "tools/oracles.py --readers pdfjs")],
+)
+def test_ci_records_the_checkout_after_its_reader_finishes(reader: str, python: str, command: str) -> None:
+    (step,) = [step for step in ci_job("python").split("\n      - ") if command in step]
+    assert f"if: matrix.python == '{python}'" in step
+    assert step.index(command) < step.index(f"git rev-parse HEAD > target/ci-evidence/{reader}-revision")
+
+
+@pytest.mark.parametrize("fault", [None, "missing-verapdf", "missing-pdfjs", "stale-reader", "stale-junit"])
+def test_ci_requires_both_readers_and_the_floor_suite_at_the_same_revision(fault: str | None, tmp_path: Path) -> None:
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("the Linux workflow runs its commands with Bash")
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()  # noqa: S607
+    target = tmp_path / "target"
+    for reader, version in (("verapdf", "3.15"), ("pdfjs", "3.15t")):
+        lane = target / f"python-evidence-{version}"
+        lane.mkdir(parents=True)
+        if fault != f"missing-{reader}":
+            value = "stale" if reader == "pdfjs" and fault == "stale-reader" else revision
+            (lane / f"{reader}-revision").write_text(value + "\n", encoding="utf-8", newline="\n")
+    floor = target / "python-evidence-3.11"
+    floor.mkdir()
+    suite = "stale" if fault == "stale-junit" else revision
+    (floor / "pytest.xml").write_text(
+        f'<testsuite name="pyropdf-{suite}"><testcase classname="tests.test_verify" '
+        'name="test_pyhanko_signatures_verify"/></testsuite>',
+        encoding="utf-8",
+    )
+
+    collector = "tools/spec_map/release_evidence.py"
+    (step,) = [s for s in ci_job("evidence").split("\n      - ") if collector in s]
+    command = dedent(step.split("        run: |\n")[1])
+    # Run the workflow's commands from the temporary download directory with this checkout's real collector.
+    command = command.replace(f"python3 {collector}", shlex.join([sys.executable, str(ROOT / collector)]))
+    result = subprocess.run(  # noqa: S603 - the repository's Linux workflow.
+        [bash, "-e", "-c", command],
+        cwd=tmp_path,
+        env={**os.environ, "GITHUB_SHA": revision},
+        check=False,
+    )
+    output = target / "release-evidence.json"
+    assert (result.returncode == 0) == (fault is None)
+    assert output.exists() == (fault is None)
+    if fault is None:
+        checks = json.loads(output.read_bytes())["checks"]
+        assert {checks[reader] for reader in ("verapdf", "arlington", "pdfjs", "pyhanko")} == {"passed"}
 
 
 def test_the_release_builds_with_the_pinned_toolchain() -> None:
@@ -92,6 +159,53 @@ def test_the_github_release_is_checked_to_be_immutable() -> None:
     assert job.index("gh release create") < checked
     assert 'if [ "${immutable}" != true ]; then' in job[checked:]
     assert "exit 1" in job[checked:]
+
+
+def _expand_braces(pattern: str) -> list[str]:
+    match = re.search(r"\{([^{}]+)\}", pattern)
+    if match is None:
+        return [pattern]
+    prefix, suffix = pattern[: match.start()], pattern[match.end() :]
+    return [expanded for part in match.group(1).split(",") for expanded in _expand_braces(prefix + part + suffix)]
+
+
+def test_github_release_downloads_only_release_assets() -> None:
+    (job,) = re.findall(r"\n  github-release:\n(.*?)(?=\n  \S|\Z)", WORKFLOW, flags=re.DOTALL)
+    (download,) = [step for step in job.split("\n      - ") if "actions/download-artifact@" in step]
+    (pattern,) = re.findall(r'pattern:\s*"?([^"\n]+)"?', download)
+    globs = _expand_braces(pattern.strip())
+    uploaded = [
+        name.strip()
+        for match in re.finditer(r"actions/upload-artifact@\S+.*?\n((?:[ \t]{8,}.*\n?)+)", WORKFLOW)
+        for name in re.findall(r"^[ \t]+name:\s*(\S+)", match.group(1), flags=re.MULTILINE)
+    ]
+    assert len(uploaded) == 8
+    assert "minimum-workflows" in uploaded
+    internal = {"minimum-workflows"}
+    for template in uploaded:
+        concrete = re.sub(r"\$\{\{[^}]+\}\}", "sample", template)
+        matched = any(fnmatch.fnmatchcase(concrete, glob) for glob in globs)
+        assert matched == (template not in internal), f"unexpected match={matched} for {template!r} with {pattern!r}"
+
+
+def test_every_setup_uv_step_pins_the_same_version() -> None:
+    workflows = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+    assert workflows
+    pins: dict[str, list[str]] = {}
+    for path in workflows:
+        text = path.read_text(encoding="utf-8")
+        steps = re.split(r"\n(?=\s*- )", text)
+        for step in steps:
+            if "astral-sh/setup-uv@" not in step:
+                continue
+            found = re.findall(r'version:\s*"([^"]+)"', step)
+            assert len(found) == 1, f"{path.name} has an unpinned astral-sh/setup-uv step:\n{step}"
+            pins.setdefault(path.name, []).extend(found)
+    assert pins
+    all_versions = {version for versions in pins.values() for version in versions}
+    assert len(all_versions) == 1, f"mismatched setup-uv pins across workflows: {pins}"
+    (pinned,) = all_versions
+    assert re.fullmatch(r"\d+\.\d+\.\d+", pinned)
 
 
 def test_the_readme_links_to_available_good_first_issues() -> None:
@@ -333,13 +447,22 @@ def test_pr_wheels_match_the_native_release_builds() -> None:
         if setting.startswith(("uses: PyO3/", "rust-toolchain:", "maturin-version:", "manylinux:")):
             assert comparison.count(setting) == 2
     assert native.index("mkdir -p dist") < native.index("uses: PyO3/maturin-action")
-    assert comparison.index("mkdir -p base/dist head/dist") < comparison.index("uses: PyO3/maturin-action")
+    assert (
+        comparison.index("path: base")
+        < comparison.index("mkdir -p base/dist")
+        < comparison.index("- name: Build base release wheel")
+        < comparison.index("path: head")
+        < comparison.index("mkdir -p head/dist")
+        < comparison.index("- name: Build head release wheel")
+    )
+    assert "CARGO_TARGET_DIR: ${{ github.workspace }}/paired-target" in comparison
+    assert "CARGO_TARGET_DIR: ${{ github.workspace }}/${{ steps.base.outputs.head-target }}" in comparison
     assert "cat tools/native-wheel-args.txt" in native
     assert "args: ${{ steps.native.outputs.args }}" in native
-    assert "ref: ${{ github.sha }}" in comparison
-    assert "git -C head rev-parse HEAD^1" in comparison
-    assert "args: ${{ steps.native.outputs.base }}" in comparison
-    assert "args: ${{ steps.native.outputs.head }}" in comparison
+    assert comparison.count("ref: ${{ github.sha }}") == 2
+    assert "git -C base rev-parse HEAD^1" in comparison
+    assert "args: ${{ steps.base.outputs.args }}" in comparison
+    assert "args: ${{ steps.head.outputs.args }}" in comparison
     packaging = "uv run --locked --only-group wheel --python 3.14 python tools/repack_wheel.py dist"
     assert native.count(packaging) == comparison.count(packaging) == 1
     assert "for checkout in base head; do" in comparison[: comparison.index(packaging)].rsplit("      - name:", 1)[1]
@@ -352,6 +475,69 @@ def test_pr_wheels_match_the_native_release_builds() -> None:
         < native.index("actions/attest@")
         < native.index("actions/upload-artifact")
     )
+
+
+@pytest.mark.parametrize(
+    ("change", "target"),
+    [
+        ("crates/lib/src/lib.rs", "paired-target"),
+        ("python/pkg/__init__.py", "paired-target"),
+        ("tools/repack_wheel.py", "paired-target"),
+        ("Cargo.toml", "head/target"),
+        ("Cargo.lock", "head/target"),
+        ("crates/lib/Cargo.toml", "head/target"),
+        (".cargo/config.toml", "head/target"),
+        ("rust-toolchain.toml", "head/target"),
+        ("pyproject.toml", "head/target"),
+        ("tools/native-wheel-args.txt", "head/target"),
+    ],
+)
+def test_paired_wheels_select_the_base_and_compiler_directory(tmp_path: Path, change: str, target: str) -> None:
+    """Execute the workflow decision on a checkout of the tested source, before its first-parent build."""
+    bash = shutil.which("bash")
+    git = shutil.which("git")
+    if not bash or not git:
+        pytest.skip("the native wheel workflow runs with Bash and Git")
+    base = tmp_path / "base"
+    base.mkdir()
+    output = tmp_path / "outputs"
+    env = os.environ | {"GITHUB_OUTPUT": str(output), "GIT_CONFIG_GLOBAL": os.devnull}
+
+    def checked_git(*args: str) -> str:
+        return subprocess.check_output([git, *args], cwd=base, env=env, text=True).strip()  # noqa: S603 - fixed test repository.
+
+    checked_git("init", "-q", "--initial-branch=main")
+    checked_git("config", "user.email", "test@example.invalid")
+    checked_git("config", "user.name", "Test")
+    checked_git("commit", "--allow-empty", "-qm", "common ancestor")
+    checked_git("switch", "-qc", "contribution")
+    changed = base / change
+    changed.parent.mkdir(parents=True, exist_ok=True)
+    changed.write_text("changed\n", encoding="utf-8")
+    checked_git("add", "--", change)
+    checked_git("commit", "-qm", "contribution")
+    checked_git("switch", "-q", "main")
+    args = "--release --locked --out dist"
+    if change != "tools/native-wheel-args.txt":
+        args = "--release --locked --compression-level 9 --out dist"
+        flags = base / "tools/native-wheel-args.txt"
+        flags.parent.mkdir(exist_ok=True)
+        flags.write_text(args + "\n", encoding="utf-8")
+        checked_git("add", "--", "tools/native-wheel-args.txt")
+    checked_git("commit", "--allow-empty", "-qm", "advanced base")
+    revision = checked_git("rev-parse", "HEAD")
+    checked_git("merge", "--no-ff", "-qm", "tested merge", "contribution")
+
+    workflow = (ROOT / ".github/workflows/wheel-size.yml").read_text(encoding="utf-8")
+    step = workflow.split("      - name: Prepare the exact base", 1)[1].split("\n      - ", 1)[0]
+    script = dedent(step.split("        run: |\n", 1)[1])
+    subprocess.run([bash, "-eo", "pipefail", "-c", script], cwd=tmp_path, env=env, check=True)  # noqa: S603 - checked-in workflow.
+    assert checked_git("rev-parse", "HEAD") == revision
+    assert output.read_text(encoding="utf-8").splitlines() == [
+        f"revision={revision}",
+        f"head-target={target}",
+        f"args={args}",
+    ]
 
 
 @pytest.mark.parametrize("action", ["opened", "reopened", "synchronize"])

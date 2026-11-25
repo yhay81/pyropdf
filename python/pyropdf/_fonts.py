@@ -345,23 +345,33 @@ def _direct_fonts(document: Document) -> Iterator[Dictionary]:
                 pending.extend((item, depth + 1) for item in value)
 
 
+def _track_appearance(seen: set[int], xref: int, kind: str) -> bool:
+    if xref in seen:
+        return False
+    seen.add(xref)
+    if len(seen) > _MAX_APPEARANCE_FORMS:
+        msg = f"the appearances reach more than {_MAX_APPEARANCE_FORMS} {kind}"
+        code: LimitCode = "font_subset_appearances"
+        raise LimitError(code, msg)
+    return True
+
+
 def _resource_fonts(roots: list[object]) -> Iterator[Dictionary]:
     """Yield the fonts that the resources of streams ``roots`` reach, through their form XObjects."""
     pending = list(roots)
-    seen: set[int] = set()
+    seen_streams: set[int] = set()
+    seen_dicts: set[int] = set()
     while pending:
         value = pending.pop()
         if isinstance(value, Dictionary) and not isinstance(value, Stream):
             # An appearance dictionary, or one of its state dictionaries.
-            pending.extend(value[key] for key in value)
+            if value.xref is None or _track_appearance(seen_dicts, value.xref, "appearance dictionaries"):
+                pending.extend(value[key] for key in value)
             continue
-        if not isinstance(value, Stream) or value.xref is None or value.xref in seen:
+        if not isinstance(value, Stream) or value.xref is None:
             continue
-        seen.add(value.xref)
-        if len(seen) > _MAX_APPEARANCE_FORMS:
-            msg = f"the appearances reach more than {_MAX_APPEARANCE_FORMS} form XObjects"
-            code: LimitCode = "font_subset_appearances"
-            raise LimitError(code, msg)
+        if not _track_appearance(seen_streams, value.xref, "form XObjects"):
+            continue
         resources = value.get("Resources")
         if not isinstance(resources, Dictionary):
             continue

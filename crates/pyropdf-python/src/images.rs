@@ -299,11 +299,19 @@ pub fn encode_jpeg_samples<'py>(
     adobe: bool,
 ) -> PyResult<Bound<'py, PyBytes>> {
     crate::errors::boundary(|| {
+        let budget = pyropdf_store::budget::Budget::default();
         let out = py
             .detach(|| {
-                engine_images::encode_jpeg_samples(data, width, height, components, quality, adobe)
+                engine_images::encode_jpeg_samples(
+                    data, width, height, components, quality, adobe, &budget,
+                )
             })
-            .map_err(PyValueError::new_err)?;
+            .map_err(|e| match e {
+                pyropdf_engine::pixmap::EncodeError::Limit(refusal) => limit_error(&refusal),
+                pyropdf_engine::pixmap::EncodeError::Other(message) => {
+                    PyValueError::new_err(message)
+                }
+            })?;
         Ok(PyBytes::new(py, &out))
     })?
 }

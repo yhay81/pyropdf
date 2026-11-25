@@ -65,6 +65,18 @@ from pyropdf._fonts import (
 from pyropdf._form import Form
 from pyropdf._history import History, Transaction
 from pyropdf._images import ImageRewriteReport, image_for_output, remove_image, replace_image, rewrite_images
+from pyropdf._interchange import (
+    AssociatedFiles,
+    DeveloperExtension,
+    DocumentParts,
+    Extensions,
+    PieceData,
+    PieceInfo,
+    _delete_extensions,
+    _delete_piece_info,
+    _replace_extensions,
+    _replace_piece_info,
+)
 from pyropdf._layers import Layers
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._links import Destinations
@@ -346,6 +358,55 @@ class Document:
         _delete_document_triggers(self)
 
     @property
+    def extensions(self) -> Extensions:
+        """Return, replace, or delete ``Catalog['Extensions']`` as a live :class:`Extensions` container."""
+        self._ensure_open()
+        return Extensions(self)
+
+    @extensions.setter
+    def extensions(self, extensions: Iterable[DeveloperExtension]) -> None:
+        self._ensure_open()
+        _replace_extensions(self, extensions)
+
+    @extensions.deleter
+    def extensions(self) -> None:
+        self._ensure_open()
+        _delete_extensions(self)
+
+    @property
+    def associated_files(self) -> AssociatedFiles:
+        """Return the document catalog's ``/AF`` associated files as a live :class:`AssociatedFiles` sequence."""
+        self._ensure_open()
+        return AssociatedFiles(self, lambda: _catalog(self))
+
+    @property
+    def piece_info(self) -> PieceInfo:
+        """Return, replace, or delete ``Catalog['PieceInfo']`` as a live :class:`PieceInfo` mutable mapping."""
+        self._ensure_open()
+        return PieceInfo(self, lambda: _catalog(self), is_page=False)
+
+    @piece_info.setter
+    def piece_info(self, values: Mapping[str, PieceData] | Iterable[tuple[str, PieceData]]) -> None:
+        self._ensure_open()
+        _replace_piece_info(self, lambda: _catalog(self), values, is_page=False)
+
+    @piece_info.deleter
+    def piece_info(self) -> None:
+        self._ensure_open()
+        _delete_piece_info(self, lambda: _catalog(self), is_page=False)
+
+    @property
+    def parts(self) -> DocumentParts:
+        """Return or delete the document part hierarchy (``Catalog['DPartRoot']``) as :class:`DocumentParts`."""
+        self._ensure_open()
+        return DocumentParts(self)
+
+    @parts.deleter
+    def parts(self) -> None:
+        self._ensure_open()
+        DocumentParts(self).clear()
+
+    @property
     def objects(self) -> Objects:
         """Return the indirect objects, a mapping by object number.
 
@@ -359,7 +420,7 @@ class Document:
     @property
     def base_uri(self) -> str | None:
         """Return the base URI for relative URI actions in this document."""
-        from pyropdf._objects import Dictionary, String, _catalog  # noqa: PLC0415
+        from pyropdf._objects import String  # noqa: PLC0415
 
         uri = _catalog(self).get("URI")
         value = uri.get("Base") if isinstance(uri, Dictionary) else None
@@ -369,7 +430,6 @@ class Document:
     def base_uri(self, value: str) -> None:
         from pyropdf._actions import _check_text_budget, _non_empty_str  # noqa: PLC0415
         from pyropdf._metadata import _require_version  # noqa: PLC0415
-        from pyropdf._objects import Dictionary, _catalog  # noqa: PLC0415
 
         _check_text_budget((_non_empty_str(value, "base_uri"),), "base URI")
         with self.transaction("set catalog base URI"):
@@ -383,8 +443,6 @@ class Document:
 
     @base_uri.deleter
     def base_uri(self) -> None:
-        from pyropdf._objects import Dictionary, _catalog  # noqa: PLC0415
-
         with self.transaction("remove catalog base URI"):
             catalog = _catalog(self)
             uri = catalog.get("URI")
@@ -542,8 +600,8 @@ class Document:
         value direct where it must be indirect or the reverse, and value
         outside the key's possible values. It also reports the ``invariant``
         defects of page, name, number, and structure trees, references, and
-        appearance states, and the ``profile`` defects of a claimed PDF/A or
-        PDF/UA profile that need no rendering. Each defect names its object
+        appearance states, and the ``profile`` defects of a claimed PDF/A,
+        PDF/UA, PDF/X-4, or PDF/VT-1 profile that need no rendering. Each defect names its object
         and its clause. The walk runs under the document's limits.
         """
         self._ensure_open()

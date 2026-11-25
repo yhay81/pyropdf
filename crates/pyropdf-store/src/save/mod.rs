@@ -375,7 +375,7 @@ pub fn full_with(
             referrers: BudgetVec::new(budget),
         }
     };
-    for &(number, _) in plan.merged.iter() {
+    for &(number, _, _) in plan.merged.iter() {
         budget.poll()?;
         if let Ok(at) = rows.binary_search_by_key(&number, |row| row.number) {
             rows[at].offset = None;

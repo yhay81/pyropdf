@@ -232,8 +232,8 @@ def _validate_step_action(action: object, name: str, page_count: int) -> int:
         spec = _target_to_core(action, page_count)
     except TypeError as error:
         msg = (
-            f"{name} must be a Destination, RemoteDestination, Launch, NamedAction, "
-            f"TransitionAction, ThreadAction, URI string, or None: {type(action).__name__}"
+            f"{name} must be a Destination, RemoteDestination, DocumentPartAction, Launch, "
+            f"NamedAction, TransitionAction, ThreadAction, URI string, or None: {type(action).__name__}"
         )
         raise TypeError(msg) from error
     utf8_bytes = sum(len(text.encode("utf-8")) for text in spec[4:] if text is not None)
@@ -378,18 +378,6 @@ def _read_transition(obj: object) -> Transition | None:
         scale=scale,
         rectangular=rectangular,
     )
-
-
-def _read_transition_action(holder: Dictionary) -> TransitionAction | None:
-    """Return ``TransitionAction`` when ``holder['A']`` is a ``/S /Trans`` action, else ``None``."""
-    action = holder.get("A")
-    if not _is_dict(action):
-        return None
-    action_dict = cast("Dictionary", action)
-    if action_dict.get("S") != "Trans":
-        return None
-    trans = _read_transition(action_dict.get("Trans"))
-    return None if trans is None else TransitionAction(trans)
 
 
 def _to_display(

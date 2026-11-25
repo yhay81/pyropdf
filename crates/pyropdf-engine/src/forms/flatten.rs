@@ -375,8 +375,9 @@ pub fn draw(
     }
     if !struct_parents.is_empty() {
         let reader = Reader::new(transaction.version(), budget);
+        drawn_refs.as_mut_slice().sort_unstable();
         for &removed_ref in &plan.removed {
-            if drawn_refs.as_slice().contains(&removed_ref) {
+            if drawn_refs.as_slice().binary_search(&removed_ref).is_ok() {
                 continue;
             }
             let removed_val = Value::Reference(removed_ref);

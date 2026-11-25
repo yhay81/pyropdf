@@ -7,7 +7,7 @@ import binascii
 import zlib
 from typing import TYPE_CHECKING
 
-from pyropdf._errors import PdfError
+from pyropdf._errors import LimitError, PdfError
 from pyropdf._objects import Dictionary, Name, Stream
 from pyropdf._operations import Operations
 
@@ -85,6 +85,8 @@ def _parse_form(form: Stream) -> Operations | None:
     """Parse ``form``'s content stream into :class:`Operations`, or return ``None`` when unreadable."""
     try:
         return Operations.parse(form.read())
+    except LimitError:
+        raise
     except (PdfError, ValueError):
         return None
 

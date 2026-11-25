@@ -77,6 +77,8 @@ _IDENTIFIERS = {
     f"{_PDFA_ID} part": "pdfaid:part",
     f"{_PDFA_ID} conformance": "pdfaid:conformance",
     f"{_PDFUA_ID} part": "pdfuaid:part",
+    "http://www.npes.org/pdfx/ns/id/ GTS_PDFXVersion": "pdfxid:GTS_PDFXVersion",
+    "http://www.npes.org/pdfvt/ns/id/ GTS_PDFVTVersion": "pdfvtid:GTS_PDFVTVersion",
 }
 
 
@@ -121,7 +123,7 @@ class _IdentifierReader:
 
 
 def _identifiers(packet: str) -> dict[str, str]:
-    """Read the three archival/accessibility scalars by their expanded XML names."""
+    """Read the document profile identification scalars by their expanded XML names."""
 
     def refuse_doctype(*_args: object) -> None:
         msg = "XMP contains a document type declaration"
@@ -197,15 +199,13 @@ def profiles(document: Document, max_size: int | None = _DEFAULT_MAX_XMP_SIZE) -
     claim = _pdfa_parts(fields)
     pdfa = f"PDF/A-{claim[0]}{claim[1].upper()}" if claim else None
     ua = fields.get("pdfuaid:part")
-    pdfx = _property(xmp, "pdfxid:GTS_PDFXVersion")
-    pdfvt = _property(xmp, "pdfvtid:GTS_PDFVTVersion")
     intents = _catalog(document).get("OutputIntents")
     entries = tuple(intents) if isinstance(intents, Array) else ()
     return Profiles(
         pdfa=pdfa,
         pdfua=f"PDF/UA-{ua}" if ua and ua.isdigit() else None,
-        pdfx=pdfx or None,
-        pdfvt=pdfvt or None,
+        pdfx=fields.get("pdfxid:GTS_PDFXVersion") or None,
+        pdfvt=fields.get("pdfvtid:GTS_PDFVTVersion") or None,
         output_intents=tuple(_output_intent(entry) for entry in entries if isinstance(entry, Dictionary)),
     )
 

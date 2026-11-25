@@ -18,11 +18,16 @@ A handle on one embedded file of a document, as `doc.attachments[name]` returns 
 
 Properties read the document on every access, and assigning
 `filename`, `description`, `created`, or `modified` edits the
-file specification at once; `del` removes all but the file name. A
-handle raises
-`StaleObjectError` once its attachment has been deleted.
+file specification at once; `del` removes all but the file name.
+A handle identifies the original file specification. An inline entry
+also has to remain in its original array slot. Removing or replacing
+the entry, or moving an inline entry, makes access raise
+`StaleObjectError`. Look up `doc.attachments[name]` again
+to access the current entry. Undo can restore the original handle.
+When restoring an older, format-one saved history, look up inline
+entries again if the history rewrote their containing object.
 
-### `Attachment.name`
+### `name`
 
 ```python
 Attachment.name: str
@@ -30,7 +35,7 @@ Attachment.name: str
 
 The key under which the document lists the attachment.
 
-### `Attachment.filename`
+### `filename`
 
 ```python
 Attachment.filename: str
@@ -40,7 +45,7 @@ The viewer-facing file name (`/UF`, else `/F`), or `""`; assignable, never empty
 
 Settable.
 
-### `Attachment.description`
+### `description`
 
 ```python
 Attachment.description: str | None
@@ -50,7 +55,7 @@ The description (`/Desc`), or `None`; assignable, and `del` removes it.
 
 Settable.
 
-### `Attachment.size`
+### `size`
 
 ```python
 Attachment.size: int
@@ -58,7 +63,7 @@ Attachment.size: int
 
 The uncompressed size that the file declares (`/Params /Size`), or -1 when absent.
 
-### `Attachment.created`
+### `created`
 
 ```python
 Attachment.created: str | None
@@ -71,7 +76,7 @@ printable ASCII characters, and need an embedded file stream.
 
 Settable.
 
-### `Attachment.modified`
+### `modified`
 
 ```python
 Attachment.modified: str | None
@@ -83,7 +88,7 @@ The modification date (`/Params /ModDate`) as stored, or `None`; assignable and 
 
 Settable.
 
-### `Attachment.related_files`
+### `related_files`
 
 ```python
 Attachment.related_files: Mapping[str, tuple[RelatedFile, ...]]
@@ -99,7 +104,7 @@ raises `LimitError` with code `embedded_file_input_size`.
 
 Settable.
 
-### `Attachment.collection_item`
+### `collection_item`
 
 ```python
 Attachment.collection_item: Mapping[str, str | int | float | CollectionSubitem] | None
@@ -113,7 +118,7 @@ removes `/CI` and frees unreferenced retired objects.
 
 Settable.
 
-### `Attachment.read`
+### `read`
 
 ```python
 Attachment.read(*, max_size: int | None = 67108864) -> bytes
@@ -127,7 +132,7 @@ for a known large attachment, or `None` only when intentionally
 accepting unbounded materialization. Oversized content raises
 `LimitError` with code `embedded_file_size`.
 
-### `Attachment.write`
+### `write`
 
 ```python
 Attachment.write(data: bytes, /, *, max_size: int | None = 67108864)
@@ -153,7 +158,7 @@ Iterate this live view for the sorted names, index it for an
 `Attachment`, `add` a file, and `del` one. The
 `/EmbeddedFiles` name tree is read within its bounds on every access.
 
-### `Attachments.__getitem__`
+### `__getitem__`
 
 ```python
 Attachments.__getitem__(name: str) -> Attachment
@@ -161,7 +166,7 @@ Attachments.__getitem__(name: str) -> Attachment
 
 Return the handle of the attachment called `name`; raise `KeyError` when absent.
 
-### `Attachments.__iter__`
+### `__iter__`
 
 ```python
 Attachments.__iter__() -> Iterator[str]
@@ -169,7 +174,7 @@ Attachments.__iter__() -> Iterator[str]
 
 Iterate the attachment names in sorted order.
 
-### `Attachments.__len__`
+### `__len__`
 
 ```python
 Attachments.__len__() -> int
@@ -177,7 +182,7 @@ Attachments.__len__() -> int
 
 Return the number of attachments.
 
-### `Attachments.__contains__`
+### `__contains__`
 
 ```python
 Attachments.__contains__(name: object) -> bool
@@ -185,7 +190,7 @@ Attachments.__contains__(name: object) -> bool
 
 Return whether an attachment is called `name`.
 
-### `Attachments.__delitem__`
+### `__delitem__`
 
 ```python
 Attachments.__delitem__(name: str)
@@ -193,7 +198,7 @@ Attachments.__delitem__(name: str)
 
 Delete the attachment called `name`; raise `KeyError` when absent.
 
-### `Attachments.add`
+### `add`
 
 ```python
 Attachments.add(

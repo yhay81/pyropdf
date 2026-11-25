@@ -11,18 +11,6 @@ use crate::{Error, Result, write};
 /// most.
 const MAX_DEPTH: usize = 256;
 
-/// Returns `value`, of the object that `reference` names, with its strings
-/// and stream data decrypted. A cross-reference stream, and a metadata
-/// stream when the handler leaves metadata unencrypted, keep their data.
-pub fn decrypt_value(
-    handler: &Handler,
-    reference: Reference,
-    value: &Value,
-    budget: &Budget,
-) -> Result<Value> {
-    decrypt_value_with(handler, reference, value, &|_, _| Ok(None), budget)
-}
-
 /// Decrypt an object using the filter entries from its sealed revision.
 pub(crate) fn decrypt_value_with(
     handler: &Handler,
@@ -42,7 +30,7 @@ pub(crate) fn decrypt_value_with(
 }
 
 /// Returns `value`, of the object that `reference` names, with its strings
-/// and stream data encrypted, as [`decrypt_value`] decrypts them.
+/// and stream data encrypted, as [`decrypt_value_with`] decrypts them.
 pub fn encrypt_value(
     handler: &Handler,
     reference: Reference,

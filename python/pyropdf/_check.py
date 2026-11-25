@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pyropdf import _core
 from pyropdf._archival_colour import archival_colour
-from pyropdf._objects import Dictionary, _catalog, _trailer
+from pyropdf._objects import Array, Dictionary, Name, Stream, String, _catalog, _trailer
+from pyropdf._print_profiles import hierarchy_problem, icc_problem
 from pyropdf._profiles import profiles
 
 if TYPE_CHECKING:
@@ -126,8 +127,68 @@ def _pdfua_defects(claim: str, catalog: Dictionary) -> list[StructuralDefect]:
     ]
 
 
+def _pdfx4_defects(catalog: Dictionary) -> list[StructuralDefect]:
+    """Check the single embedded PDF/X output intent shared by PDF/X-4 and PDF/VT-1."""
+    spec = "ISO 15930-7:2010 6.4.2.1"
+    intents = catalog.get("OutputIntents")
+    match = None
+    if isinstance(intents, Array):
+        for index, entry in enumerate(intents):
+            if isinstance(entry, Dictionary) and entry.get("S") == Name("GTS_PDFX"):
+                if match is not None:
+                    message = "PDF/X-4 requires exactly one /GTS_PDFX output intent"
+                    return [_defect("PDF/X-4", catalog.xref, "OutputIntents", spec, message)]
+                match = (index, entry)
+    if match is None:
+        return [_defect("PDF/X-4", catalog.xref, "OutputIntents", spec, "PDF/X-4 requires a /GTS_PDFX output intent")]
+
+    index, entry = match
+    rules = (
+        (isinstance(entry.get("OutputConditionIdentifier"), String), "OutputConditionIdentifier", "a text identifier"),
+        (isinstance(entry.get("DestOutputProfile"), Stream), "DestOutputProfile", "an embedded output profile stream"),
+        ("DestOutputProfileRef" not in entry, "DestOutputProfileRef", "an output intent without an external profile"),
+    )
+    out = [
+        _defect("PDF/X-4", catalog.xref, f"OutputIntents/{index}/{key}", spec, f"PDF/X-4 requires {needed}")
+        for holds, key, needed in rules
+        if not holds
+    ]
+    profile = entry.get("DestOutputProfile")
+    if isinstance(profile, Stream) and (problem := icc_problem(profile)) is not None:
+        path, message = problem
+        out.append(
+            StructuralDefect(
+                xref=profile.xref,
+                path=path,
+                clause="PDF/X-4/OutputIntents",
+                spec=spec,
+                kind="profile",
+                message=message,
+            )
+        )
+    return out
+
+
+def _pdfvt1_defects(document: Document, pdfx: str | None, catalog: Dictionary) -> list[StructuralDefect]:
+    """Check the PDF/X-4 basis, hierarchy root, and page-to-leaf links of a PDF/VT-1 file."""
+    claim = "PDF/VT-1"
+    structure = "ISO 16612-2:2010 6.5"
+    out = []
+    if pdfx != "PDF/X-4":
+        message = "PDF/VT-1 requires a PDF/X-4 claim"
+        out.append(_defect(claim, catalog.xref, "Metadata", "ISO 16612-2:2010 6.2.1", message))
+    root = catalog.get("DPartRoot")
+    if not isinstance(root, Dictionary) or isinstance(root, Stream) or root.xref is None:
+        out.append(_defect(claim, catalog.xref, "DPartRoot", structure, "PDF/VT-1 requires an indirect /DPartRoot"))
+        return out
+    if problem := hierarchy_problem(document, root):
+        xref, path, message = problem
+        out.append(_defect(claim, xref, path, structure, message))
+    return out
+
+
 def _profile_defects(document: Document) -> tuple[list[StructuralDefect], bool]:
-    """Return the document-level rules of the claimed PDF/A and PDF/UA profiles that it breaks."""
+    """Return the structural rules of the declared profiles that the document breaks."""
     claimed = profiles(document)
     catalog = _catalog(document)
     out = []
@@ -136,6 +197,10 @@ def _profile_defects(document: Document) -> tuple[list[StructuralDefect], bool]:
         out, unsolved = _pdfa_defects(document, claimed.pdfa, catalog)
     if claimed.pdfua is not None:
         out += _pdfua_defects(claimed.pdfua, catalog)
+    if claimed.pdfx == "PDF/X-4" or claimed.pdfvt == "PDF/VT-1":
+        out += _pdfx4_defects(catalog)
+    if claimed.pdfvt == "PDF/VT-1":
+        out += _pdfvt1_defects(document, claimed.pdfx, catalog)
     return out, unsolved
 
 

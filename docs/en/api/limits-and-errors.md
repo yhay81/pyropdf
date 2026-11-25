@@ -22,7 +22,7 @@ operation runs with the GIL released: the operation then refuses with
 cannot be undone, so a document whose token is cancelled refuses every
 later operation too; open it again with another token to go on.
 
-### `CancellationToken.cancel`
+### `cancel`
 
 ```python
 CancellationToken.cancel()
@@ -30,7 +30,7 @@ CancellationToken.cancel()
 
 Cancels every operation whose limits carry this token.
 
-### `CancellationToken.cancelled`
+### `cancelled`
 
 ```python
 CancellationToken.cancelled: bool
@@ -90,7 +90,7 @@ pyropdf polls the budget. A call into hayro can run past that deadline.
 For documents from outside your application, see
 [Reading a PDF in a worker](../limits.md#reading-a-pdf-in-a-worker).
 
-### `DocumentLimits.web`
+### `web`
 
 ```python
 DocumentLimits.web() -> DocumentLimits
@@ -325,7 +325,7 @@ class LimitError(PdfError)
 
 A refusal by a limit, whose `code` names the limit.
 
-### `LimitError.code`
+### `code`
 
 ```python
 LimitError.code: str

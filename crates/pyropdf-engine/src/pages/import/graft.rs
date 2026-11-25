@@ -189,7 +189,7 @@ impl<'b> Graft<'b> {
         let smallest = pairs.iter().map(|&(key, _)| key).min().unwrap_or(0);
         let shift = receiving
             .next_key
-            .checked_sub(smallest)
+            .checked_sub(smallest.min(0))
             .ok_or_else(|| LimitExceeded::new(LimitCode::StructureTreeCount))?;
         for (key, _) in pairs.iter_mut() {
             *key = key
@@ -213,6 +213,14 @@ impl<'b> Graft<'b> {
         }
         walk.keys = Keys::Shift(shift);
 
+        // Read the pre-import receiving state once so cross-document equality
+        // never compares raw object numbers across different documents.
+        let target_version = transaction.snapshot();
+        let target = Target {
+            version: &target_version,
+            budget,
+        };
+
         // Classes that the receiving tree defines otherwise take a suffix.
         let mut classes = receiving.classes.take().unwrap_or_default();
         let mut classes_changed = false;
@@ -223,7 +231,9 @@ impl<'b> Graft<'b> {
                 taken.insert(copy_bytes(name.as_bytes(), budget)?, (), 0)?;
             }
             for (name, value) in source_classes.iter() {
-                if classes.get(name.as_bytes()) == Some(value) {
+                if let Some(existing) = classes.get(name.as_bytes())
+                    && same_cross_doc(walk, &target, value, existing, budget)?
+                {
                     continue;
                 }
                 let new = unused(name.as_bytes(), &taken, b'_', budget)?;
@@ -253,10 +263,6 @@ impl<'b> Graft<'b> {
         let mut roles_changed = false;
         let mut ids = BudgetVec::new(budget);
         let mut taken_ids = Charged::new(budget);
-        let target = Target {
-            version: transaction.version(),
-            budget,
-        };
         if let Some(tree) = receiving.root_dict.get("IDTree") {
             tree_pairs(&target, tree, "Names", budget, |name, value| {
                 if let Value::String(name) = name {
@@ -270,12 +276,22 @@ impl<'b> Graft<'b> {
         let mut ids_changed = false;
         let mut visited: Charged<'b, Reference, ()> = Charged::new(budget);
         let mut stack = BudgetVec::new(budget);
-        for kid in kids.iter().rev() {
-            if let &Value::Reference(kid) = kid {
-                stack.try_push(kid)?;
-            }
+        let mut nodes = 0_usize;
+        let mut planner = ElementPlanner {
+            target: &target,
+            source_roles: source_roles.as_ref(),
+            roles: &mut roles,
+            roles_changed: &mut roles_changed,
+            renames: &renames,
+            visited: &mut visited,
+            stack: &mut stack,
+            nodes: &mut nodes,
+            budget,
+        };
+        for kid in kids.iter_mut().rev() {
+            planner.visit_kid(transaction, walk, kid, 1)?;
         }
-        while let Some(reference) = stack.pop() {
+        while let Some(reference) = planner.stack.pop() {
             budget.poll()?;
             if skipped.contains(&reference) {
                 continue;
@@ -285,14 +301,15 @@ impl<'b> Graft<'b> {
             else {
                 continue;
             };
-            if skipped.contains(&reference) || visited.insert(reference, (), 0)?.is_some() {
+            if skipped.contains(&reference) || planner.visited.insert(reference, (), 0)?.is_some() {
                 continue;
             }
-            if visited.len() > MAX_NODES {
+            *planner.nodes += 1;
+            if *planner.nodes > MAX_NODES {
                 return Err(LimitExceeded::over(
                     LimitCode::StructureTreeCount,
                     MAX_NODES as u64,
-                    visited.len() as u64,
+                    *planner.nodes as u64,
                 )
                 .into());
             }
@@ -300,65 +317,9 @@ impl<'b> Graft<'b> {
             if !is_element(&element) {
                 continue;
             }
-            for kid in kids_of(walk, element.get("K"))?.iter().rev() {
-                if let &Value::Reference(kid) = kid {
-                    stack.try_push(kid)?;
-                }
-            }
-            let mut changed = false;
-            if let Some(Value::Name(role)) = element.get("S") {
-                let ours = source_roles
-                    .as_ref()
-                    .and_then(|map| map.get(role.as_bytes()));
-                let theirs = roles.get(role.as_bytes());
-                match (ours, theirs) {
-                    (Some(ours), Some(theirs)) if ours != theirs => {
-                        let standard = resolved_role(walk, source_roles.as_ref(), role)?;
-                        #[expect(
-                            clippy::disallowed_methods,
-                            reason = "the element already has an /S, which this replaces"
-                        )]
-                        element.insert(Name::from("S"), Value::Name(standard));
-                        changed = true;
-                    }
-                    (Some(ours), None) => {
-                        budget.charge(LimitCode::MemorySize, role.as_bytes().len() as u64)?;
-                        budget.charge(
-                            LimitCode::MemorySize,
-                            (2 * size_of::<(Name, Value)>()) as u64,
-                        )?;
-                        #[expect(
-                            clippy::disallowed_methods,
-                            reason = "the entry is charged to the budget above"
-                        )]
-                        roles.insert(role.clone(), copy_for_edit(ours, budget)?);
-                        roles_changed = true;
-                    }
-                    _ => {}
-                }
-            }
-            if renames.len() > 0
-                && let Some(classes) = element.get_mut("C")
-            {
-                let mut rename = |class: &mut Value| -> Result<()> {
-                    budget.poll()?;
-                    if let Value::Name(name) = class
-                        && let Some(new) = renames.get(name)
-                    {
-                        budget.charge(LimitCode::MemorySize, new.as_bytes().len() as u64)?;
-                        *name = new.clone();
-                        changed = true;
-                    }
-                    Ok(())
-                };
-                match classes {
-                    Value::Array(items) => {
-                        for item in items.iter_mut() {
-                            rename(item)?;
-                        }
-                    }
-                    other => rename(other)?,
-                }
+            let mut changed = planner.rewrite_fields(transaction, walk, &mut element)?;
+            if let Some(k) = element.get_mut("K") {
+                changed |= planner.visit_k(transaction, walk, k, 1)?;
             }
             if let Some(Value::String(identifier)) = element.get("ID") {
                 let new = unused(identifier.as_bytes(), &taken_ids, b'+', budget)?;
@@ -614,7 +575,8 @@ impl Receiving {
             Some(Value::Integer(next)) => next,
             _ => 0,
         }
-        .max(largest.map_or(0, |largest: i64| largest.saturating_add(1)));
+        .max(largest.map_or(0, |largest: i64| largest.saturating_add(1)))
+        .max(0);
         let root_kids = kids_of(&target, root_dict.get("K"))?;
         let document = match root_kids.as_slice() {
             [Value::Reference(element)] => {
@@ -656,6 +618,223 @@ fn new_root() -> Dict {
         Value::Name(Name::from("StructTreeRoot")),
     );
     root
+}
+
+/// Returns whether `value` contains any indirect reference within direct nesting.
+fn contains_reference(value: &Value, budget: &Budget) -> Result<bool> {
+    let mut pending = BudgetVec::new(budget);
+    pending.try_push((value, 1_usize))?;
+    while let Some((current, depth)) = pending.pop() {
+        budget.poll()?;
+        if depth > super::MAX_DEPTH
+            && matches!(current, Value::Array(_) | Value::Dict(_) | Value::Stream(_))
+        {
+            return Err(LimitExceeded::new(LimitCode::ObjectDepth).into());
+        }
+        match current {
+            Value::Reference(_) => return Ok(true),
+            Value::Array(array) => {
+                for item in array.iter() {
+                    pending.try_push((item, depth + 1))?;
+                }
+            }
+            Value::Dict(dict) => {
+                for (_, item) in dict.iter() {
+                    pending.try_push((item, depth + 1))?;
+                }
+            }
+            Value::Stream(stream) => {
+                for (_, item) in stream.dict().iter() {
+                    pending.try_push((item, depth + 1))?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(false)
+}
+
+/// Returns whether a source and receiving value resolve to identical direct values.
+fn same_cross_doc(
+    walk: &Walk<'_, '_>,
+    target: &Target<'_>,
+    source_val: &Value,
+    target_val: &Value,
+    budget: &Budget,
+) -> Result<bool> {
+    let Some(src) = follow(walk, Some(source_val))? else {
+        return Ok(false);
+    };
+    let Some(dst) = follow(target, Some(target_val))? else {
+        return Ok(false);
+    };
+    Ok(!contains_reference(&src, budget)? && !contains_reference(&dst, budget)? && src == dst)
+}
+
+struct ElementPlanner<'a, 'b> {
+    target: &'a Target<'a>,
+    source_roles: Option<&'a Dict>,
+    roles: &'a mut Dict,
+    roles_changed: &'a mut bool,
+    renames: &'a Charged<'b, Name, Name>,
+    visited: &'a mut Charged<'b, Reference, ()>,
+    stack: &'a mut BudgetVec<'b, Reference>,
+    nodes: &'a mut usize,
+    budget: &'b Budget,
+}
+
+impl<'b> ElementPlanner<'_, 'b> {
+    fn rewrite_fields(
+        &mut self,
+        transaction: &mut Transaction,
+        walk: &mut Walk<'_, 'b>,
+        element: &mut Dict,
+    ) -> Result<bool> {
+        let mut changed = false;
+        if let Some(Value::Name(role)) = element.get("S") {
+            let ours = follow(
+                walk,
+                self.source_roles.and_then(|map| map.get(role.as_bytes())),
+            )?;
+            let theirs = follow(self.target, self.roles.get(role.as_bytes()))?;
+            match (ours, theirs) {
+                (Some(ours), Some(theirs))
+                    if contains_reference(&ours, self.budget)?
+                        || contains_reference(&theirs, self.budget)?
+                        || ours != theirs =>
+                {
+                    let standard = resolved_role(walk, self.source_roles, role)?;
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "the element already has an /S, which this replaces"
+                    )]
+                    element.insert(Name::from("S"), Value::Name(standard));
+                    changed = true;
+                }
+                (Some(mut ours), None) => {
+                    walk.value(transaction, &mut ours, 1)?;
+                    self.budget
+                        .charge(LimitCode::MemorySize, role.as_bytes().len() as u64)?;
+                    self.budget.charge(
+                        LimitCode::MemorySize,
+                        (2 * size_of::<(Name, Value)>()) as u64,
+                    )?;
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "the entry is charged to the budget above"
+                    )]
+                    self.roles.insert(role.clone(), ours);
+                    *self.roles_changed = true;
+                }
+                _ => {}
+            }
+        }
+        if self.renames.len() > 0
+            && let Some(classes) = element.get_mut("C")
+        {
+            let mut rename = |class: &mut Value| -> Result<()> {
+                self.budget.poll()?;
+                if let Value::Name(name) = class
+                    && let Some(new) = self.renames.get(name)
+                {
+                    self.budget
+                        .charge(LimitCode::MemorySize, new.as_bytes().len() as u64)?;
+                    *name = new.clone();
+                    changed = true;
+                }
+                Ok(())
+            };
+            match classes {
+                Value::Array(items) => {
+                    for item in items.iter_mut() {
+                        rename(item)?;
+                    }
+                }
+                other => rename(other)?,
+            }
+        }
+        Ok(changed)
+    }
+
+    fn visit_k(
+        &mut self,
+        transaction: &mut Transaction,
+        walk: &mut Walk<'_, 'b>,
+        value: &mut Value,
+        depth: usize,
+    ) -> Result<bool> {
+        match value {
+            Value::Reference(reference) => {
+                match located(walk, Some(&Value::Reference(*reference)))? {
+                    Some((Value::Array(mut items), Some(arr_ref))) => {
+                        if self.visited.insert(arr_ref, (), 0)?.is_some() {
+                            return Ok(false);
+                        }
+                        let mut arr_changed = false;
+                        for item in items.iter_mut().rev() {
+                            arr_changed |= self.visit_kid(transaction, walk, item, depth + 1)?;
+                        }
+                        if arr_changed {
+                            walk.edited.try_push((arr_ref, Value::Array(items)))?;
+                        }
+                    }
+                    Some((_, Some(actual))) => {
+                        self.stack.try_push(actual)?;
+                    }
+                    _ => {}
+                }
+                Ok(false)
+            }
+            _ => self.visit_kid(transaction, walk, value, depth),
+        }
+    }
+
+    fn visit_kid(
+        &mut self,
+        transaction: &mut Transaction,
+        walk: &mut Walk<'_, 'b>,
+        value: &mut Value,
+        depth: usize,
+    ) -> Result<bool> {
+        self.budget.poll()?;
+        if depth > super::MAX_DEPTH {
+            return Err(LimitExceeded::new(LimitCode::ObjectDepth).into());
+        }
+        match value {
+            Value::Reference(reference) => {
+                self.stack.try_push(*reference)?;
+                Ok(false)
+            }
+            Value::Array(items) => {
+                let mut changed = false;
+                for item in items.iter_mut().rev() {
+                    changed |= self.visit_kid(transaction, walk, item, depth + 1)?;
+                }
+                Ok(changed)
+            }
+            Value::Dict(dict) => {
+                if !is_element(dict) {
+                    return Ok(false);
+                }
+                editable(dict)?;
+                *self.nodes += 1;
+                if *self.nodes > MAX_NODES {
+                    return Err(LimitExceeded::over(
+                        LimitCode::StructureTreeCount,
+                        MAX_NODES as u64,
+                        *self.nodes as u64,
+                    )
+                    .into());
+                }
+                let mut changed = self.rewrite_fields(transaction, walk, dict)?;
+                if let Some(k) = dict.get_mut("K") {
+                    changed |= self.visit_k(transaction, walk, k, depth + 1)?;
+                }
+                Ok(changed)
+            }
+            _ => Ok(false),
+        }
+    }
 }
 
 /// Resolve aliases while retaining the identity of the final owning object.

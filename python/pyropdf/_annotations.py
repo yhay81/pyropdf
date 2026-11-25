@@ -31,6 +31,7 @@ from pyropdf._content import BlendMode, Color
 from pyropdf._errors import LimitError, MalformedPdfError, PdfError, StaleObjectError, StalePageError
 from pyropdf._fonts import Font, add_glyphs, embedded_font
 from pyropdf._geometry import Point, Quad, Rect, _rect_components
+from pyropdf._interchange import AssociatedFiles
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._media import (
     MediaAnnotation,
@@ -39,6 +40,7 @@ from pyropdf._media import (
     MediaSpecification,
     ProjectionAnnotation,
     RichMedia,
+    RichMediaModel,
     Screen,
     ThreeD,
     add_media,
@@ -1001,9 +1003,14 @@ class Annotation(_AppearanceOwner):
             self._changed(_core.annotation_edit(*self._location(), edit))
             return
         editable = self.type == AnnotationType.LINE
-        with self._page._document.transaction():  # noqa: SLF001
-            self._changed(_core.annotation_edit(*self._location(), edit, face=True))
-            _draw_face(self._page, self._index, self._id, font, editable=editable)
+        previous_id = self._id
+        try:
+            with self._page._document.transaction():  # noqa: SLF001
+                self._changed(_core.annotation_edit(*self._location(), edit, face=True))
+                _draw_face(self._page, self._index, self._id, font, editable=editable)
+        except BaseException:
+            self._id = previous_id
+            raise
 
     def _face(self) -> Font | None:
         """Recover the font referenced by a caption appearance, including after reopening."""
@@ -1413,6 +1420,8 @@ class Annotation(_AppearanceOwner):
                 rich_text=_line_markup(obj.get("RC")),
                 font=self._face(),
             )
+        except LimitError:
+            raise
         except (TypeError, ValueError, PdfError) as exc:
             raise MalformedPdfError(str(exc)) from exc
 
@@ -1496,6 +1505,12 @@ class Annotation(_AppearanceOwner):
             modified=_string_text(source.get("M")),
             color=_color(list(raw)) if raw is not None else None,
         )
+
+    @property
+    def associated_files(self) -> AssociatedFiles:
+        """Return the annotation's ``/AF`` associated files as a live :class:`AssociatedFiles` sequence."""
+        self._read()
+        return AssociatedFiles(self._page._document, lambda: self.obj)  # noqa: SLF001
 
     @property
     def popup_rect(self) -> Rect | None:
@@ -1684,6 +1699,16 @@ class Annotation(_AppearanceOwner):
     def rich_media_assets(self) -> Mapping[str, typed.FileSpecification]:
         """Return a snapshot of the named file specifications in this RichMedia annotation."""
         return _rich_media.assets(self)
+
+    @property
+    def rich_media_models(self) -> tuple[RichMediaModel, ...]:
+        """Resolve declared STEP and glTF models in configuration and instance order.
+
+        Read the shared file, external resources and selected glTF scene. Inconsistent
+        declarations or asset references raise TypeError or ValueError. To replace a payload
+        while retaining all references, write its stream inside `edit_rich_media()`.
+        """
+        return _rich_media.models(self)
 
     @property
     def rich_media_configuration(self) -> typed.RichMediaConfiguration:

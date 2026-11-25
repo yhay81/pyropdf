@@ -40,7 +40,7 @@ named-destination limits: 65,536 entries or nodes, 131,072 edges
 (`named_destination_count`), 32 levels, and 16 MiB of names
 (`named_destination_text_size`).
 
-### `Destinations.__getitem__`
+### `__getitem__`
 
 ```python
 Destinations.__getitem__(name: str) -> Destination | None
@@ -48,7 +48,7 @@ Destinations.__getitem__(name: str) -> Destination | None
 
 Return where `name` leads; an unknown name raises `KeyError`.
 
-### `Destinations.structure`
+### `structure`
 
 ```python
 Destinations.structure(name: str) -> StructureDestination | None
@@ -56,7 +56,7 @@ Destinations.structure(name: str) -> StructureDestination | None
 
 Return the optional PDF 2.0 structure destination of a named page destination.
 
-### `Destinations.set_structure`
+### `set_structure`
 
 ```python
 Destinations.set_structure(name: str, target: StructureDestination)
@@ -64,7 +64,7 @@ Destinations.set_structure(name: str, target: StructureDestination)
 
 Write a named PDF 2.0 destination with its structure and fallback page views.
 
-### `Destinations.__iter__`
+### `__iter__`
 
 ```python
 Destinations.__iter__() -> Iterator[str]
@@ -72,7 +72,7 @@ Destinations.__iter__() -> Iterator[str]
 
 Iterate over the names, tree entries first.
 
-### `Destinations.__len__`
+### `__len__`
 
 ```python
 Destinations.__len__() -> int
@@ -121,7 +121,7 @@ its position. A handle raises `StaleObjectError` while the link is
 not on its page, and `StalePageError` while the page is gone; it
 works again if undo restores them.
 
-### `Link.page`
+### `page`
 
 ```python
 Link.page: Page
@@ -129,7 +129,7 @@ Link.page: Page
 
 The page that holds the link.
 
-### `Link.xref`
+### `xref`
 
 ```python
 Link.xref: int
@@ -137,7 +137,7 @@ Link.xref: int
 
 The annotation's object number, or 0 for a dictionary stored in `/Annots` itself.
 
-### `Link.obj`
+### `obj`
 
 ```python
 Link.obj: Dictionary
@@ -145,7 +145,7 @@ Link.obj: Dictionary
 
 The annotation dictionary as a live low-level handle.
 
-### `Link.rect`
+### `rect`
 
 ```python
 Link.rect: Rect
@@ -155,7 +155,7 @@ The area that follows the link, in display coordinates.
 
 Settable.
 
-### `Link.target`
+### `target`
 
 ```python
 Link.target: Target | None
@@ -183,7 +183,7 @@ which is indexed once until an edit changes what indexing it read, or
 the legacy `/Dests` dictionary; a tree beyond 65,536 entries, 16 MiB of
 names, or 32 levels raises rather than leaving the link unresolved.
 
-### `Links.__getitem__`
+### `__getitem__`
 
 ```python
 Links.__getitem__(index: int | slice) -> Link | list[Link]
@@ -191,7 +191,7 @@ Links.__getitem__(index: int | slice) -> Link | list[Link]
 
 Return one link, or a list of them for a slice.
 
-### `Links.__len__`
+### `__len__`
 
 ```python
 Links.__len__() -> int
@@ -199,7 +199,7 @@ Links.__len__() -> int
 
 Return the number of links on the page.
 
-### `Links.__iter__`
+### `__iter__`
 
 ```python
 Links.__iter__() -> Iterator[Link]
@@ -207,7 +207,7 @@ Links.__iter__() -> Iterator[Link]
 
 Iterate over the links that the page lists now.
 
-### `Links.__delitem__`
+### `__delitem__`
 
 ```python
 Links.__delitem__(index: int | slice)
@@ -215,7 +215,7 @@ Links.__delitem__(index: int | slice)
 
 Remove links from the page, in one transaction.
 
-### `Links.add`
+### `add`
 
 ```python
 Links.add(rect: Sequence[float], target: Target) -> Link
@@ -238,7 +238,7 @@ A viewer action by name (ISO 32000-2 Table 213).
 The standard names are `"NextPage"`, `"PrevPage"`, `"FirstPage"`,
 and `"LastPage"`; viewers may know others.
 
-### `NamedAction.resolve`
+### `resolve`
 
 ```python
 NamedAction.resolve(document: Document, *, current_page: int) -> Destination | None
@@ -261,7 +261,7 @@ Values use the document's object model. An `IDS` or `URLS` value
 can also be an array of Web Capture page and image sets. Reading a target
 has no viewer side effects. Malformed or cyclic trees raise `MalformedPdfError`.
 
-### `NamedResources.__iter__`
+### `__iter__`
 
 ```python
 NamedResources.__iter__() -> Iterator[bytes]
@@ -269,7 +269,7 @@ NamedResources.__iter__() -> Iterator[bytes]
 
 Return the raw keys in PDF byte order.
 
-### `NamedResources.__len__`
+### `__len__`
 
 ```python
 NamedResources.__len__() -> int
@@ -277,7 +277,7 @@ NamedResources.__len__() -> int
 
 Return the number of entries.
 
-### `NamedResources.__getitem__`
+### `__getitem__`
 
 ```python
 NamedResources.__getitem__(key: bytes) -> object
@@ -285,7 +285,7 @@ NamedResources.__getitem__(key: bytes) -> object
 
 Return the referenced PDF object; a missing key raises `KeyError`.
 
-### `NamedResources.__setitem__`
+### `__setitem__`
 
 ```python
 NamedResources.__setitem__(key: bytes, value: object)
@@ -293,7 +293,7 @@ NamedResources.__setitem__(key: bytes, value: object)
 
 Insert or replace one resource, preserving the other names and trees.
 
-### `NamedResources.__delitem__`
+### `__delitem__`
 
 ```python
 NamedResources.__delitem__(key: bytes)
@@ -309,7 +309,7 @@ PdfFragment(*, text: str)
 
 Ordered content selectors and viewer parameters from a PDF URI's fragment.
 
-### `PdfFragment.parse`
+### `parse`
 
 ```python
 PdfFragment.parse(text: str, /) -> PdfFragment
@@ -317,7 +317,7 @@ PdfFragment.parse(text: str, /) -> PdfFragment
 
 Read the fragment portion of a URI, optionally including its leading hash.
 
-### `PdfFragment.with_parameter`
+### `with_parameter`
 
 ```python
 PdfFragment.with_parameter(name: str, value: str | bytes, /) -> PdfFragment
@@ -328,7 +328,7 @@ Replace the last occurrence of a parameter, or insert it before an embedded file
 Supply the decoded value. For example, pass `"125,0,50"` for a zoom or raw
 bytes for a structure ID. Other parameters keep their original spelling and escapes.
 
-### `PdfFragment.resolve`
+### `resolve`
 
 ```python
 PdfFragment.resolve(document: Document, /) -> tuple[FragmentParameter, ...]
@@ -356,7 +356,7 @@ RemoteDestination(
 
 A place in another PDF file: a zero-based page or a named destination.
 
-### `RemoteDestination.resolve_structure`
+### `resolve_structure`
 
 ```python
 RemoteDestination.resolve_structure(document: Document) -> StructureElement | None
@@ -364,7 +364,7 @@ RemoteDestination.resolve_structure(document: Document) -> StructureElement | No
 
 Resolve the optional structure ID in the supplied remote PDF without opening a file.
 
-### `RemoteDestination.resolve`
+### `resolve`
 
 ```python
 RemoteDestination.resolve(document: Document) -> Destination | None
@@ -390,7 +390,7 @@ A PDF 2.0 structure destination and its page-based fallback.
 name object or a byte-string destination key. Fit operands are preserved in
 the PDF coordinate system, including explicit nulls.
 
-### `StructureDestination.resolve`
+### `resolve`
 
 ```python
 StructureDestination.resolve(document: Document) -> StructureElement | None
@@ -411,6 +411,7 @@ Target: TypeAlias = (
     | GoTo3DView
     | RenditionAction
     | RichMediaExecute
+    | DocumentPartAction
     | Launch
     | NamedAction
     | TransitionAction
@@ -436,7 +437,7 @@ UriAction(*, uri: str, is_map: bool = False)
 
 A URI reference and the optional image-map click flag of a PDF URI action.
 
-### `UriAction.resolve`
+### `resolve`
 
 ```python
 UriAction.resolve(
@@ -470,7 +471,7 @@ WindowsLaunch(
 
 Windows-specific fields in a launch action, retained as data (PDF 1.1 through 1.7).
 
-### `WindowsLaunch.effective_operation`
+### `effective_operation`
 
 ```python
 WindowsLaunch.effective_operation: str

@@ -99,7 +99,7 @@ P=1 forbids a form fill, P=2 allows filling and signing, and P=3 also
 allows markup annotation changes. A FieldMDP lock can still forbid a fill
 that DocMDP permits. The report is advisory. Validators can apply a stricter
 policy. For example, pyHanko's default diff policy flags markup changes at
-P=3. [pyHanko difference analysis](https://docs.pyhanko.eu/en/latest/api-docs/pyhanko.sign.diff_analysis.html)
+P=3 (see [pyHanko difference analysis](https://docs.pyhanko.eu/en/latest/api-docs/pyhanko.sign.diff_analysis.html)).
 
 `report.claims` lists PDF/A and PDF/UA claims that the edits may break.
 
@@ -129,7 +129,7 @@ tag raises `MalformedPdfError`. Both an incremental update and a full
 `Encryption.KEEP` save preserve the ciphertext of untouched objects.
 Selecting a new method requires a full save. Direct page rendering and text
 extraction from an AES-GCM file await the authenticated object source in
-hayro. [Engine integration #968](https://github.com/yhay81/pyropdf/issues/968)
+hayro (tracked in [engine integration #968](https://github.com/yhay81/pyropdf/issues/968)).
 
 A 256-bit password or recipient encryption option accepts `integrity=True`
 to add an ISO/TS 32004:2024 document MAC. Open the output and call
@@ -172,8 +172,8 @@ The byte reader accepts UTF-8 credentials. For revisions 2 through 4,
 owner access also works when the effective user password can be supplied
 as UTF-8. An older file with a non-UTF-8 user password can still be edited
 and saved after owner authentication. Direct rendering and text extraction
-raise `EncryptedDocumentError` for that encoding.
-[Byte-encoded credentials](https://github.com/yhay81/pyropdf/issues/1043)
+raise `EncryptedDocumentError` for that encoding (tracked in
+[byte-encoded credentials #1043](https://github.com/yhay81/pyropdf/issues/1043)).
 
 ## Signing
 

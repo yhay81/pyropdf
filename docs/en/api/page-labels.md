@@ -25,7 +25,7 @@ A page is labeled `prefix` followed by its number in `style`,
 counting from `first` at `start`; `style=None` labels it with the
 prefix alone.
 
-### `PageLabelRange.label`
+### `label`
 
 ```python
 PageLabelRange.label(page: int) -> str

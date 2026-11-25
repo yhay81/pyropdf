@@ -117,6 +117,8 @@ for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
     if part in "12" or profile == "4":
         attachment_rules = {"1": {"6.1.11-1", "6.1.11-2"}, "2": {"6.8-5"}, "4": {"6.9-3"}}[part]
         expect(source, profile, dict.fromkeys(ATTACHMENT_EDITS, attachment_rules), "#301")
+        interchange_rules = {"1": {"6.1.11-1"}, "2": {"6.8-5"}, "4": {"6.9-3"}}[part]
+        expect(source, profile, {"interchange": interchange_rules}, "#839")
     if part in "23":
         expect(
             source,
@@ -934,6 +936,21 @@ def controls(jar: Path, directory: Path) -> list[tuple[str, Path]]:
     return failures
 
 
+def accessible_archive_workflows(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Force both claimed flavours for the executable guide, its edits and its missing-Alt controls."""
+    cases = runpy.run_path(str(ROOT / "tests/test_accessible_archive.py"))
+    archival, accessible = {}, {}
+    for edition, (pdfa, pdfua) in cases["PROFILES"].items():
+        for path in cases["archive_saves"](directory, edition):
+            archival[path] = pdfa
+            accessible[path] = pdfua
+    return run(jar, archival) + run(jar, accessible)
+
+
+expect("authored-modern", "ua2", {"without-alt": {"8.2.5.28.2-1"}}, "#846")
+expect("authored-earlier", "ua1", {"without-alt": {"7.3-1"}}, "#846")
+
+
 def source_matrix(jar: Path, directory: Path) -> list[tuple[str, Path]]:
     """Validate independent sources, negative controls and newly authored files in both save modes."""
     fixtures = runpy.run_path(str(ROOT / "tests/test_profile_sources.py"))
@@ -1015,6 +1032,7 @@ def main() -> int:
         for source, flavour in FIXTURES.items():
             targeted.update(alternate_saves(source, flavour, Path(directory)))
         failures = source_failures + archival_colour_controls(args.jar.resolve(), Path(directory))
+        failures += accessible_archive_workflows(args.jar.resolve(), Path(directory))
         failures += run(args.jar.resolve(), targeted)
         failures += run(args.jar.resolve(), dual_archival(targeted))
         failures += run(args.jar.resolve(), files)

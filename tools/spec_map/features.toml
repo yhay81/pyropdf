@@ -1150,7 +1150,6 @@ objects = []
 clause = "14.5"
 description = "Page-piece dictionaries: private data of applications."
 objects = ["PagePiece", "Data"]
-edit = { status = "partial", missing = "Sanitize removes `/PieceInfo` dictionaries, without a high-level API for reading or writing application data.", milestone = "Phase 4: Specification" }
 
 [features.marked-content]
 clause = "14.6"
@@ -1227,9 +1226,6 @@ objects = ["DPart", "DPartRoot", "DPM"]
 clause = "14.13"
 description = "Associated files of the document, its pages, and its objects."
 objects = ["AFFileSpecification", "AFEmbeddedFileStream", "AFEmbeddedFileParameter", "AFFileSpecEF"]
-read = { status = "partial", missing = "Catalog `/AF` entries are read and checked, without high-level readers for page or object associated files.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Attachments on PDF/A-3 and PDF/A-4 documents write catalog `/AF` entries and `/AFRelationship`, without page or object associated files.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Attachment deletion and sanitize update or remove `/AF` entries, without high-level APIs for page or object associated files.", milestone = "Phase 4: Specification" }
 
 [features.linearization]
 clause = "Annex F"
@@ -1339,15 +1335,13 @@ objects = []
 
 [features.pdfx]
 clause = "ISO 15930"
-description = "PDF/X: graphic exchange documents, read and kept."
+description = "PDF/X graphic exchange documents, with production round-trip evidence for PDF/X-4."
 objects = []
-read = { status = "partial", missing = "`Document.profiles` reads PDF/X claims and `GTS_PDFX` output intents, without structural checks for PDF/X.", milestone = "Phase 4: Specification" }
 
 [features.pdfvt]
 clause = "ISO 16612"
-description = "PDF/VT: variable and transactional printing documents, read and kept."
+description = "PDF/VT variable and transactional printing documents, with production round-trip evidence for PDF/VT-1."
 objects = []
-read = { status = "partial", missing = "`Document.profiles` reads PDF/VT claims, without structural checks for PDF/VT.", milestone = "Phase 4: Specification" }
 
 [features.unencrypted-wrapper]
 clause = "7.6.7"
@@ -1433,10 +1427,10 @@ objects = []
 
 [features.step-rich-media]
 clause = "ISO/TS 24064"
-description = "Connect the STEP AP242 payload, configuration and view to its RichMedia annotation."
+description = "Read the STEP AP 242 edition, ISO extension, shared file and named 3D view. The geometry stays opaque."
 objects = []
 
 [features.gltf-rich-media]
 clause = "ISO/TS 32007"
-description = "Connect a glTF asset and its resources to a RichMedia configuration and view."
+description = "Resolve the glTF scene, embedded buffer and image references, 3D configuration and view. The viewer renders the geometry."
 objects = []

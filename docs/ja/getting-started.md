@@ -53,9 +53,9 @@ wheel は Linux・macOS・Windows の CPython 3.11〜3.15 に対応し、free-th
 ## Pyodide
 
 リリースワークフローは Pyodide 314.0.6（CPython 3.14、Emscripten 5.0.3、
-`pyemscripten_2026_0_wasm32`）向けの wheel をビルドします。
-リリースのドライランが成功したら、成果物 `wheels-pyodide` をダウンロードして展開し、
-同じバージョンの Pyodide 仮想環境にインストールできます。
+`pyemscripten_2026_0_wasm32`）向けのコア wheel をビルドし、PyPI と
+GitHub リリースへ公開します。対応する Pyodide 仮想環境では `pip install pyropdf`
+またはリリース資産の `.whl` からインストールできます。
 
 ```bash
 path/to/pyodide-venv/bin/pip install ./pyropdf-*-pyemscripten_2026_0_wasm32.whl

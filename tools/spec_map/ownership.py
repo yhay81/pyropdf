@@ -86,8 +86,10 @@ def assignments(
             msg = f"{family} needs a specification tracker and concrete task"
             raise OwnerError(msg)
         cells = assign_family(family, task, names, dims, features)
-        if cells:
-            active[family] = {**task, "cells": cells}
+        if not cells:
+            msg = f"{family} has no unfinished cells; remove the obsolete scope from families.toml"
+            raise OwnerError(msg)
+        active[family] = {**task, "cells": cells}
     for name, row in features.items():
         for dim in dimensions:
             if row[dim]["status"] in UNFINISHED and "family" not in row[dim]:

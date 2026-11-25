@@ -146,18 +146,22 @@ def _issuer_matches(leaf: x509.Certificate, chain: Sequence[bytes], allowed: Seq
 
 def _subject_dn(leaf: x509.Certificate, cert: Dictionary, budget: _Budget) -> bool:
     expected = budget.values(cert, "SubjectDN", Dictionary)
+    matched = False
     for group in expected:
         budget.charge(len(group))
+        group_matched = True
         for key, value in group.items():
             if not isinstance(value, String):
                 _refuse("SubjectDN")
             budget.charge(0, len(key) + len(value))
-            if not any(
+            if group_matched and not any(
                 key in (attr.oid.dotted_string, attr.rfc4514_attribute_name) and attr.value == value.text
                 for attr in leaf.subject
             ):
-                return False
-    return bool(expected)
+                group_matched = False
+        if group_matched:
+            matched = True
+    return matched
 
 
 def _key_usage(leaf: x509.Certificate, cert: Dictionary, budget: _Budget) -> bool:

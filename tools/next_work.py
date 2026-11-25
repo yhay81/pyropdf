@@ -216,12 +216,24 @@ def report(items: list[Item], ci: CI, branch: str) -> dict[str, Any]:
 def link_pull_requests(items: list[Item]) -> list[Item]:
     """Exclude an issue already covered by an open PR, even without its claim label."""
     links: dict[int, list[int]] = {}
-    for item in items:
-        if item.pull_request:
-            details = gh_json("pr", "view", str(item.number), "--repo", REPO, "--json", "closingIssuesReferences")
-            for issue in details["closingIssuesReferences"]:
+    open_prs = sum(item.pull_request for item in items)
+    if open_prs:
+        prs = gh_json(
+            "pr",
+            "list",
+            "--repo",
+            REPO,
+            "--state",
+            "open",
+            "--limit",
+            str(max(100, open_prs)),
+            "--json",
+            "number,closingIssuesReferences",
+        )
+        for pr in prs:
+            for issue in pr.get("closingIssuesReferences") or ():
                 if issue["url"] == f"https://github.com/{REPO}/issues/{issue['number']}":
-                    links.setdefault(issue["number"], []).append(item.number)
+                    links.setdefault(issue["number"], []).append(pr["number"])
     return [replace(item, linked_prs=tuple(sorted(links.get(item.number, [])))) for item in items]
 
 

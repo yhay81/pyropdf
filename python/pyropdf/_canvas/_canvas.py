@@ -43,6 +43,7 @@ from pyropdf._canvas._patterns import _pattern_operands
 from pyropdf._canvas._resources import (
     _cache,
     _contents,
+    _image_signature,
     _isolated,
     _merge_resources,
     _page_space,
@@ -1218,11 +1219,13 @@ class Canvas:
         document = self._page.document
         cache = _cache(document)
         digest = hashlib.sha256(data).digest()
-        xref = cache.images.get(digest)
-        if xref is not None and _still_image(document, xref, len(data)):
-            return xref
+        cached = cache.images.get(digest)
+        if cached is not None and _still_image(document, cached[0], cached[1]):
+            return cached[0]
         xref = add_image(document, data)
-        cache.images[digest] = xref
+        stream = document.objects[xref]
+        if isinstance(stream, Stream):
+            cache.images[digest] = (xref, _image_signature(stream))
         return xref
 
     def page(
@@ -1491,6 +1494,8 @@ class Canvas:
         self._check_open()
         try:
             m = Matrix(*matrix)
+        except LimitError:
+            raise
         except (TypeError, ValueError, PdfError) as exc:
             msg = f"matrix must be a Matrix or six numbers: {matrix!r}"
             raise ValueError(msg) from exc

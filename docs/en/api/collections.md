@@ -154,7 +154,7 @@ Keys are strings sorted in PDF name-tree byte order, and values read as live
 indexes count from the end). Deleting or selecting pages in `doc.pages`
 prunes entries whose target page was removed in the same transaction.
 
-### `NamedPages.__getitem__`
+### `__getitem__`
 
 ```python
 NamedPages.__getitem__(name: str) -> Page
@@ -162,7 +162,7 @@ NamedPages.__getitem__(name: str) -> Page
 
 Return the `Page` named `name`, or raise `KeyError`.
 
-### `NamedPages.__iter__`
+### `__iter__`
 
 ```python
 NamedPages.__iter__() -> Iterator[str]
@@ -170,7 +170,7 @@ NamedPages.__iter__() -> Iterator[str]
 
 Iterate named-page keys in tree order.
 
-### `NamedPages.__len__`
+### `__len__`
 
 ```python
 NamedPages.__len__() -> int
@@ -178,7 +178,7 @@ NamedPages.__len__() -> int
 
 Return the number of named pages.
 
-### `NamedPages.__contains__`
+### `__contains__`
 
 ```python
 NamedPages.__contains__(name: object) -> bool
@@ -186,7 +186,7 @@ NamedPages.__contains__(name: object) -> bool
 
 Return whether `name` names a live page of the document.
 
-### `NamedPages.__setitem__`
+### `__setitem__`
 
 ```python
 NamedPages.__setitem__(name: str, page: Page | int)
@@ -194,7 +194,7 @@ NamedPages.__setitem__(name: str, page: Page | int)
 
 Bind `name` to `page` (a `Page` or zero-based page index) in one transaction.
 
-### `NamedPages.__delitem__`
+### `__delitem__`
 
 ```python
 NamedPages.__delitem__(name: str)
@@ -202,7 +202,7 @@ NamedPages.__delitem__(name: str)
 
 Remove `name` from `/Names /Pages` in one transaction, or raise `KeyError`.
 
-### `NamedPages.update`
+### `update`
 
 ```python
 NamedPages.update(other: object = (), /, **values: Page | int)
@@ -210,7 +210,7 @@ NamedPages.update(other: object = (), /, **values: Page | int)
 
 Insert or replace every named page of `other` and `values` in one transaction.
 
-### `NamedPages.clear`
+### `clear`
 
 ```python
 NamedPages.clear()
@@ -240,7 +240,7 @@ WebCapture(document: Document)
 
 The stored Web Capture database. Index lookups return writable Arlington content-set views.
 
-### `WebCapture.info`
+### `info`
 
 ```python
 WebCapture.info: typed.WebCaptureInfo | None
@@ -248,7 +248,7 @@ WebCapture.info: typed.WebCaptureInfo | None
 
 The catalog's capture information, including its stored command dictionaries.
 
-### `WebCapture.by_id`
+### `by_id`
 
 ```python
 WebCapture.by_id(
@@ -259,7 +259,7 @@ WebCapture.by_id(
 
 Resolve a binary source identifier, keeping the order of sets sharing the key.
 
-### `WebCapture.by_url`
+### `by_url`
 
 ```python
 WebCapture.by_url(
@@ -270,7 +270,7 @@ WebCapture.by_url(
 
 Resolve an absolute source URL through the stored URLS index.
 
-### `WebCapture.add`
+### `add`
 
 ```python
 WebCapture.add(content: typed.WebCapturePageSet | typed.WebCaptureImageSet, /)
@@ -281,7 +281,7 @@ Register an indirect page or image set, its sources and its members in a PDF bef
 Construct the set and its source dictionaries with the object API. Its ID is the 16-byte
 source digest defined in ISO 32000-1, 14.10.3.3. Image sets supply their page reference counts.
 
-### `WebCapture.remove`
+### `remove`
 
 ```python
 WebCapture.remove(content: typed.WebCapturePageSet | typed.WebCaptureImageSet, /)
@@ -289,7 +289,7 @@ WebCapture.remove(content: typed.WebCapturePageSet | typed.WebCaptureImageSet, /
 
 Remove the set from both indexes and clear its members' matching parent identifiers.
 
-### `WebCapture.set_sources`
+### `set_sources`
 
 ```python
 WebCapture.set_sources(

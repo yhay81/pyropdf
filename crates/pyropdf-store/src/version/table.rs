@@ -871,3 +871,30 @@ mod tests {
         assert_eq!(Table::<u64>::new().iter().next(), None);
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verifies the radix-table indexing arithmetic (`height_for`, `capacity`,
+    /// `shift`, `child`, `slot`) is panic-free and bijective across all `u32`.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn kani_table_indexing_bijection() {
+        let number: u32 = kani::any();
+        let h = height_for(number);
+        assert!((1..=MAX_HEIGHT).contains(&h));
+        assert!(u64::from(number) < capacity(h));
+        if h > 1 {
+            assert!(u64::from(number) >= capacity(h - 1));
+        }
+        let mut reconstructed = u64::from(slot(number) as u32);
+        assert!(slot(number) < CHUNK);
+        for level in 1..=h {
+            let c = child(number, level);
+            assert!(c < FANOUT);
+            reconstructed |= (c as u64) << shift(level);
+        }
+        assert_eq!(reconstructed, u64::from(number));
+    }
+}

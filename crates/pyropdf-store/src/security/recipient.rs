@@ -58,7 +58,7 @@ pub(super) struct RecipientAccess {
 
 impl RecipientAccess {
     pub(super) fn owner(&self) -> bool {
-        self.owner.load(Ordering::Relaxed)
+        self.owner.load(Ordering::Acquire)
     }
 }
 
@@ -257,7 +257,7 @@ impl Handler {
         {
             self.filters.retain_keys(&verified.filters);
             if verified.access() == Access::Owner {
-                recipient.owner.store(true, Ordering::Relaxed);
+                recipient.owner.store(true, Ordering::Release);
             }
         }
     }
@@ -683,7 +683,7 @@ fn open_filters(
             .map(|bytes| crypto::sha256(&[bytes.as_slice()]));
         access
             .owner
-            .store(handler.access == Access::Owner, Ordering::Relaxed);
+            .store(handler.access == Access::Owner, Ordering::Release);
     }
     handler.strings = selection.method(strings)?;
     handler.streams = selection.method(streams)?;

@@ -50,8 +50,8 @@ pub use read::{
     form_fields, widget_list, widget_read,
 };
 pub use settle::{
-    Drawing, WidgetAppearance, has_normal_stream, has_state, has_state_stream, is_widget, settle,
-    settle_in_unit, with_normal_states, write,
+    Drawing, WidgetAppearance, has_normal_stream, has_state, is_widget, settle, settle_in_unit,
+    with_normal_states, write,
 };
 pub use text::text_string;
 pub use traversal::{Form, walk};

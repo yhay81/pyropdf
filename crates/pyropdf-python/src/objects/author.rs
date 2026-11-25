@@ -146,7 +146,12 @@ pub fn schema_change(
             let original = transaction.snapshot();
             if let Some(value) = proposed.as_ref() {
                 transaction
-                    .write(root.0, value, budget)
+                    .write_with_name_edit(
+                        root.0,
+                        value,
+                        pyropdf_store::version::NameEdit::Set(&[]),
+                        budget,
+                    )
                     .map_err(|e| store_error(&e))?;
                 let current = transaction.snapshot();
                 incoming(

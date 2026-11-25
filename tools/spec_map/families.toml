@@ -91,16 +91,6 @@ features = ["public-key-security-handler"]
 dimensions = ["interpret"]
 behavior = "Render authenticated pre-V5 recipient files through the engine object-source interface."
 
-[families.signature-dictionaries]
-tracker = 252
-issue = 905
-title = "Resolve signature seed constraints and build properties through signing and editing"
-features = [
-    "signature-fields", "digital-signatures",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read, enforce and round-trip seed-value and field lock constraints when signing. Exercise Prop_Build dictionaries, hand-built and existing unsigned fields and independent signature verification."
-
 [families.crypt-filter-rendering]
 tracker = 252
 issue = 993
@@ -124,91 +114,6 @@ title = "Resolve tagged form text using the originating content stream"
 features = ["logical-structure", "tagged-pdf"]
 dimensions = ["interpret"]
 behavior = "Resolve external Form stream MCIDs and text enclosed by page-level Form invocations once hayro supplies stream provenance."
-
-[families.display-space]
-tracker = 254
-issue = 851
-title = "Verify display-space coordinates across reading, editing and rendering on the same page"
-features = [
-    "coordinate-systems",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Verify display-space transformations at the reading, rendering and editing boundaries, including rotated, offset and scaled pages."
-
-[families.accessible-archival-authoring]
-tracker = 255
-issue = 846
-title = "Create accessible archival PDFs from a new Document through the public API"
-features = [
-    "pdfa-4", "pdfua-2",
-]
-dimensions = ["create"]
-behavior = "Create an accessible archival document with a valid claim and have an independent validator verify the result."
-
-[families.print-profiles]
-tracker = 255
-issue = 910
-title = "Validate PDF/X and PDF/VT profile rules through a print exchange round trip"
-features = [
-    "pdfx", "pdfvt", "output-intents",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour."
-
-[families.interchange]
-tracker = 256
-issue = 839
-title = "Expose developer extensions, associated files, page-piece dictionaries, document parts, and structure namespaces"
-features = [
-    "developer-extensions", "page-piece", "associated-files", "document-parts", "goto-dpart-actions",
-    "structure-namespaces", "namespace-inclusion",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations."
-
-
-[families.legacy-media]
-tracker = 256
-issue = 915
-title = "Complete existing legacy movie, sound and alternate-presentation relationship editing"
-features = [
-    "sound-annotations", "movie-annotations", "sound-actions", "movie-actions", "sounds", "movies",
-    "alternate-presentations",
-]
-dimensions = ["read", "interpret", "edit", "preserve"]
-behavior = "Resolve external sound parameters, movie posters, timing, title-based action targets and alternate-presentation name trees. Verify reference-safe edits in existing files."
-
-[families.prepress]
-tracker = 256
-issue = 861
-title = "Complete prepress dictionaries and print annotation relationships"
-features = [
-    "page-boundaries", "separation-dictionaries", "trapping", "opi", "printer-mark-annotations",
-    "trap-network-annotations", "watermark-annotations",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Resolve box colour, separations, trapping, OPI and print annotation relationships and preserve or edit them under the edition policy."
-
-[families.related-files]
-tracker = 256
-issue = 859
-title = "Expose and preserve related-file arrays on file specifications"
-features = [
-    "related-files",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Resolve and preserve RF arrays on file specifications, including edits to related targets."
-
-[families.richmedia-extensions]
-tracker = 256
-issue = 863
-title = "Support STEP and glTF assets in RichMedia annotations under the published PDF 2.0 extensions"
-features = [
-    "step-rich-media", "gltf-rich-media",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read, author and verify STEP and glTF asset relationships against the published extensions."
-
 
 [families.standard-byte-credential-interpretation]
 tracker = 252
