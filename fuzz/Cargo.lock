@@ -1215,7 +1215,7 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "pyropdf-engine"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "cms",
  "der",
@@ -1268,11 +1268,11 @@ dependencies = [
 
 [[package]]
 name = "pyropdf-schema"
-version = "0.4.0"
+version = "0.4.1"
 
 [[package]]
 name = "pyropdf-store"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "aes",
  "aes-gcm",

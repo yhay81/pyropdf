@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.4.1 (2026-11-25)
+
+A patch release hardening FFI and concurrency soundness, binary font and
+layout edge cases, Arlington schema validation, table extraction, and
+`DocumentLimits` enforcement, while reclaiming native wheel-size headroom and
+expanding documentation and verification. No public names are removed.
+
+### Changed
+
+- Native `abi3` release wheels size-optimize `pyropdf-schema` and cold-path
+  codec, crypto, and non-GEMM inference crates while keeping the root cdylib
+  and hot rendering, parsing, and GEMM crates speed-optimized, reclaiming
+  503.8 KiB on `win_amd64` and 390.5 KiB on `macosx_arm64` with no hot-path
+  rendering regression (#1164).
+- Updated compatible patch dependencies in `Cargo.lock`, `fuzz/Cargo.lock`,
+  and `uv.lock`, including `harfrust 0.16.1`, `zlib-rs 0.6.9`, and
+  `pyHanko 0.38.2` (#1150).
+
+### Fixed
+
+- **Soundness, concurrency, and 32-bit `wasm32` safety:** fixed Python buffer
+  protocol lifetime/alignment soundness in source, pixmap, and Arrow exports
+  (#1140); fixed concurrent history step-name corruption and recipient owner
+  atomic ordering (#1142); fixed concurrent `unlock()`, `sign()`, and
+  `timestamp()` races against `Document.close()` and made
+  `Document.fallback_fonts` and `Revision.open()` thread-safe (#1159); and
+  resolved 32-bit `usize` and buffer-math overflows across store, engine, and
+  Python bindings under Miri and Kani verification (#1135, #1136, #1147).
+- **Fonts, rich text, OCR, linearization, and engine edge cases:** fixed CFF
+  and SFNT binary codec overflow, aliasing, and real-encoding bugs (#1144);
+  fixed an infinite loop and non-finite operator emission in rich-text layout
+  on tiny `/UserUnit` pages, linearized save failures on spec-valid PDF 2.0
+  direct catalog `/Outlines`, non-finite `Tm`/`Tf` transforms in OCR layers,
+  indirect inner `/InkList`/`/Path` arrays in `Page.remove_rotation()`,
+  singular pattern matrix inversion in `PathTable::sample_shading`, and stale
+  cached shading reuse in `Shadings::shared` (#1157).
+- **Text and table extraction:** fixed leading-superscript line clustering in
+  text extraction (#1149) and added rotation-invariant borderless multi-line
+  body row extraction under bordered double-rule headers (#1153).
+- **Arlington schema validation:** fixed `FilterFlateDecode` and
+  `FilterLZWDecode` `/Colors` version-gating on PDF 1.3 and newer,
+  `OptContentZoom` validation when only `/min` or `/max` is present, and `/P`
+  backlink validation for indirect `/K` arrays in structure trees (#1158).
+- **Python API and caches:** fixed `Page.replace_text()` and `_recolor` lookup
+  on direct font and inherited resource dictionaries (including
+  `Canvas.text(..., font=Font.standard(...))`), `Canvas.__enter__`
+  transaction/lock cleanup on setup error, `operations.tail` preservation in
+  `Document.sanitize(..., hidden_text=True)`, full Rust and Python cache
+  release on `Document.close()` and `replace()`, shared `Budget` tracking in
+  `open_buffer`, and `_core.pyi` / API reference stub accuracy (#1159).
+- **`DocumentLimits` enforcement:** threaded document budgets through
+  `rewrite_images()` (JPEG, JPX, CCITT G4, Flate, and mask decoding),
+  enforced strict bytes-like checks and `image_input_size`/`memory_size`
+  bounds on `replace_image()`, `add_image()`, and `Canvas.image()`, and
+  bounded Form/appearance `Operations.parse()` across `clean_page()`,
+  `sanitize()`, and `replace_text()` (#1160).
+
+### Documentation
+
+- Added English and Japanese canonical workflow guides (`workflows.md`) backed
+  by end-to-end tests (#1148), refreshed `reading.md` (`to_json()`,
+  `to_chunks()`, `structure.reading_order()`, and `page.chars()` columnar/Arrow
+  export), `choosing.md` (with verified `v0.4.0` Linux x86-64 release
+  comparison ratios), and `versions.md` (`pyHanko 0.38.2`) (#1161), and
+  expanded fuzzing to 13 targets and the ground-truth quality corpus to 11
+  pages (#1146, #1149).
+
+No release claims safety for untrusted input before hayro's bounded
+construction (I2, [#15](https://github.com/yhay81/pyropdf/issues/15)) is
+released.
+
 ## 0.4.0 (2026-11-24)
 
 A minor release expanding ISO 32000-2 coverage across structure trees,

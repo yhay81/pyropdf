@@ -1274,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "pyropdf-engine"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "cms",
  "der",
@@ -1313,7 +1313,7 @@ dependencies = [
 
 [[package]]
 name = "pyropdf-python"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "pyo3",
  "pyropdf-engine",
@@ -1324,11 +1324,11 @@ dependencies = [
 
 [[package]]
 name = "pyropdf-schema"
-version = "0.4.0"
+version = "0.4.1"
 
 [[package]]
 name = "pyropdf-store"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "aes",
  "aes-gcm",

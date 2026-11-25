@@ -19,7 +19,7 @@ processor role, the tested operations, exclusions and limitations. Input profile
 engines and optional runtimes are identified separately. Version 0.3.1 predates these
 archives and has no published verified scope.
 
-Not yet in 0.4.0:
+Not yet in 0.4.1:
 
 - redaction, and removing the content outside a rectangle, which need the
   content provenance of a hayro change under review;
