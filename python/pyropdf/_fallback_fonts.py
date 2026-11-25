@@ -136,8 +136,9 @@ def _fallback_state(document: Document) -> dict[str, FallbackFont | _FontPackage
     return _installed_state() if state is None else state
 
 
-def _set_fallback(document: Document, state: dict[str, FallbackFont | _FontPackage] | None) -> None:
-    """Render ``document`` with the fonts of ``state``, ``None`` for the installed font packages, and keep it."""
+def _set_fallback_locked(document: Document, state: dict[str, FallbackFont | _FontPackage] | None) -> None:
+    """Render ``document`` with the fonts of ``state`` while holding ``document._lock``."""
+    document._ensure_open()  # noqa: SLF001 - the package's own document.
     faces: list[tuple[str, bool, _core._Font | _FontFile]] = []
     for language, value in (_installed_state() if state is None else state).items():
         pair = _package_files(value) if isinstance(value, _FontPackage) else (value.sans, value.serif)
@@ -148,6 +149,12 @@ def _set_fallback(document: Document, state: dict[str, FallbackFont | _FontPacka
                 faces.append((language, serif, face))
     _core.set_fallback_faces(document._core(), faces)  # noqa: SLF001 - the package's own document.
     document._fallback = state  # noqa: SLF001
+
+
+def _set_fallback(document: Document, state: dict[str, FallbackFont | _FontPackage] | None) -> None:
+    """Render ``document`` with the fonts of ``state``, ``None`` for the installed font packages, and keep it."""
+    with document._lock:  # noqa: SLF001 - the package's own document.
+        _set_fallback_locked(document, state)
 
 
 def _replace_fallback_fonts(document: Document, fonts: Mapping[str, FallbackFont]) -> None:
@@ -182,9 +189,13 @@ class FallbackFonts(MutableMapping[str, FallbackFont]):
         """Wrap a document; use :attr:`Document.fallback_fonts`."""
         self._document = document
 
-    def _state(self) -> dict[str, FallbackFont | _FontPackage]:
+    def _state_locked(self) -> dict[str, FallbackFont | _FontPackage]:
         self._document._ensure_open()  # noqa: SLF001 - the package's own document.
         return _fallback_state(self._document)
+
+    def _state(self) -> dict[str, FallbackFont | _FontPackage]:
+        with self._document._lock:  # noqa: SLF001 - the package's own document.
+            return dict(self._state_locked())
 
     def __getitem__(self, language: str) -> FallbackFont:
         """Return the faces that render ``language``, loading an installed extra's once per process."""
@@ -197,15 +208,17 @@ class FallbackFonts(MutableMapping[str, FallbackFont]):
         if not isinstance(value, FallbackFont):
             msg = f"a fallback font is a FallbackFont: {value!r}"
             raise TypeError(msg)
-        state = dict(self._state())
-        state[key] = value
-        _set_fallback(self._document, state)
+        with self._document._lock:  # noqa: SLF001 - the package's own document.
+            state = dict(self._state_locked())
+            state[key] = value
+            _set_fallback_locked(self._document, state)
 
     def __delitem__(self, language: str) -> None:
         """Render ``language`` without a fallback font, as a Standard 14 font draws it: without CJK glyphs."""
-        state = dict(self._state())
-        del state[_fallback_language(language)]
-        _set_fallback(self._document, state)
+        with self._document._lock:  # noqa: SLF001 - the package's own document.
+            state = dict(self._state_locked())
+            del state[_fallback_language(language)]
+            _set_fallback_locked(self._document, state)
 
     def __contains__(self, language: object) -> bool:
         """Return whether ``language`` has a fallback font."""

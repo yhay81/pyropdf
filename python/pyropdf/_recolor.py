@@ -367,7 +367,7 @@ class _Recoloring:
         self.pending: list[_Pending] = []
         self.forms = 0
         #: The copy of each drawing of a Form XObject, by the form, its inherited resources, and spaces.
-        self.copies: dict[tuple[object, ...], tuple[int | None, Any, tuple[tuple[str, str], ...]]] = {}
+        self.copies: dict[tuple[object, ...], tuple[int | None, tuple[tuple[str, str], ...]]] = {}
         #: The conversion of each image object, and what it leaves as it was.
         self.curves: dict[Dictionary, _core._DeviceCurve | Literal[False]] = {}
         self.tables: dict[_Black, tuple[list[int], list[int]] | None] = {}
@@ -661,7 +661,7 @@ class _Recoloring:
         )
         cached = self.copies.get(key)
         if cached is not None:
-            self._replay(cached[2])
+            self._replay(cached[1])
             return cached[0]
         if depth > _MAX_FORM_DEPTH:
             self.report("form", f"Form XObjects nested deeper than {_MAX_FORM_DEPTH}")
@@ -689,8 +689,7 @@ class _Recoloring:
             data = Operations(out, tail=operations.tail).to_bytes()
             self.pending.append(_Pending(form, data, resources, drawn))
             copy = len(self.pending) - 1
-        # The cache holds the inherited resources, so that their handle stays theirs.
-        self.copies[key] = (copy, inherited, tuple(notes))
+        self.copies[key] = (copy, tuple(notes))
         return copy
 
     def _replay(self, notes: tuple[tuple[str, str], ...]) -> None:
@@ -948,7 +947,7 @@ def _fresh(name: str, xobjects: Dictionary | None, bound: dict[str, int | Stream
 def _key(dictionary: Dictionary | None) -> object:
     if dictionary is None:
         return None
-    return dictionary.xref if dictionary.is_indirect else ("direct", id(dictionary))
+    return dictionary.xref if dictionary.is_indirect else dictionary
 
 
 for _public in (RecolorReport, Unconverted):

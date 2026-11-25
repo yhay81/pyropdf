@@ -172,8 +172,12 @@ impl _Document {
     }
 
     /// Replaces the faces that render the CJK fonts that the document does
-    /// not embed.
+    /// not embed, unless the document has already been closed.
     pub(crate) fn set_fallback(&self, fallback: Fallback) {
+        let document = self.document.read().unwrap_or_else(PoisonError::into_inner);
+        if document.is_none() {
+            return;
+        }
         *self
             .fallback
             .write()
@@ -193,14 +197,7 @@ impl _Document {
         Ok(self.document()?.current())
     }
 
-    /// Replaces the store's document, as unlocking does, and forgets what
-    /// was derived from the old one.
-    pub(crate) fn replace(&self, document: Document) {
-        let document = with_settlers(document);
-        *self
-            .document
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(document));
+    fn clear_caches(&self) {
         self.pages.clear();
         self.draft_pages.clear();
         self.results.clear();
@@ -214,7 +211,28 @@ impl _Document {
         self.draft_form.clear();
         self.fill_index.clear();
         self.draft_fill_index.clear();
+        self.bridge.clear();
+        self.references.clear();
+    }
+
+    /// Replaces the store's document, as unlocking or signing does, and
+    /// forgets what was derived from the old one. Refuses if the document
+    /// has already been closed.
+    pub(crate) fn replace(&self, document: Document) -> PyResult<()> {
+        let document = with_settlers(document);
+        {
+            let mut guard = self
+                .document
+                .write()
+                .unwrap_or_else(PoisonError::into_inner);
+            if guard.is_none() {
+                return Err(DocumentClosedError::new_err("document closed"));
+            }
+            *guard = Some(Arc::new(document));
+        }
+        self.clear_caches();
         self.history.clear();
+        Ok(())
     }
 
     /// Returns the budget of what this thread runs now: its innermost
@@ -344,7 +362,8 @@ impl _Document {
     ) -> PyResult<Self> {
         crate::errors::boundary(|| {
             let (limits, complete) = (document_limits(limits)?, complete_checks(limits)?);
-            let bytes = source::buffer(data, &Budget::new(&limits))?;
+            let budget = Budget::new(&limits);
+            let bytes = source::buffer(data, &budget)?;
             py.detach(|| {
                 open(
                     bytes,
@@ -352,7 +371,7 @@ impl _Document {
                     recipient.as_ref(),
                     limits.clone(),
                     complete,
-                    &Budget::new(&limits),
+                    &budget,
                 )
             })
         })?
@@ -524,25 +543,25 @@ impl _Document {
     }
 
     /// Releases the document. Later operations raise `DocumentClosedError`.
-    fn close(&self) -> PyResult<()> {
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
         crate::errors::boundary(|| {
-            self.document
-                .write()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take();
-            self.pages.clear();
-            self.draft_pages.clear();
-            self.results.clear();
-            self.draft_results.clear();
-            self.destinations.clear();
-            self.draft_destinations.clear();
-            self.outline.clear();
-            self.draft_outline.clear();
-            self.outline_counts.clear();
-            self.form.clear();
-            self.draft_form.clear();
-            self.fill_index.clear();
-            self.draft_fill_index.clear();
+            let _write = if self.in_transaction() {
+                None
+            } else {
+                Some(py.detach(|| self.history.write_lock()))
+            };
+            {
+                let mut guard = self
+                    .document
+                    .write()
+                    .unwrap_or_else(PoisonError::into_inner);
+                guard.take();
+                *self
+                    .fallback
+                    .write()
+                    .unwrap_or_else(PoisonError::into_inner) = Fallback::default();
+            }
+            self.clear_caches();
             self.history.clear();
         })
     }
