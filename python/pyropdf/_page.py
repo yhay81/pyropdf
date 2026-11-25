@@ -1531,7 +1531,7 @@ class Page:
         ``max_operations=None`` on ``page.obj["Contents"].read()`` for larger
         trusted content. The GIL is released while the content is read.
         """
-        raw = _core.page_operations(self._document._core(), self._number, self._generation)  # noqa: SLF001
+        raw = _core.page_operations(self._reader(), self._number, self._generation)
         if raw is None:
             raise self._stale()
         return _from_core(raw)

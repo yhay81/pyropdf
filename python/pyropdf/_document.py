@@ -1647,12 +1647,16 @@ class Document:
         self,
         pages: Iterable[int] | None = None,
         *,
+        provenance: bool = False,
         table_strategy: Literal["lines", "text"] | None = "lines",
         max_size: int | None = _chunks._DEFAULT_MAX_EXPORT_SIZE,  # noqa: SLF001
     ) -> str:
         """Return the given pages of the current version as JSON: each page's size and its elements.
 
         Page selection and extraction use one version even while another thread edits the document.
+        With ``provenance=True``, each element includes its contributing display locations and known
+        PDF stream/operation indexes. The export charges 256 bytes plus UTF-8 text per source record
+        against ``max_size``. :meth:`to_chunks` also returns a reader for the captured version.
 
         The document is ``{"pages": [...]}``, each page ``{"index",
         "width", "height", "elements"}``, and each element as
@@ -1664,20 +1668,26 @@ class Document:
         raise :class:`LimitError` with code ``export_output_size`` without a
         partial result; ``max_size=None`` lifts the limit.
         """
-        _chunks.validate_options(table_strategy, max_size)
-        return _chunks.export_json(self._export_pages(pages), table_strategy=table_strategy, max_size=max_size)
+        _chunks.validate_options(table_strategy, max_size, provenance)
+        return _chunks.export_json(
+            self._export_pages(pages), table_strategy=table_strategy, max_size=max_size, provenance=provenance
+        )
 
     def to_chunks(
         self,
         pages: Iterable[int] | None = None,
         *,
         max_chars: int = _chunks._DEFAULT_MAX_CHARS,  # noqa: SLF001
+        provenance: bool = False,
         table_strategy: Literal["lines", "text"] | None = "lines",
         max_size: int | None = _chunks._DEFAULT_MAX_EXPORT_SIZE,  # noqa: SLF001
     ) -> list[Chunk]:
         """Return the elements of :meth:`to_json` grouped into retrieval chunks of at most ``max_chars`` characters.
 
         Page selection and extraction use one version even while another thread edits the document.
+        With ``provenance=True``, each element supplies :attr:`Element.sources`. Their
+        :meth:`RetrievalSource.resolve` reads the original content operator from the captured version.
+        A split element keeps the contributors intersecting its own text.
 
         A chunk is a run of consecutive elements joined as Markdown, headings
         marked with ``#``; each heading starts a chunk, and
@@ -1690,10 +1700,11 @@ class Document:
         ``table_strategy``, and ``max_size`` are as for :meth:`to_json`.
         """
         _chunks.validate_max_chars(max_chars)
-        _chunks.validate_options(table_strategy, max_size)
+        _chunks.validate_options(table_strategy, max_size, provenance)
         return _chunks.export_chunks(
             self._export_pages(pages),
             max_chars=max_chars,
+            provenance=provenance,
             table_strategy=table_strategy,
             max_size=max_size,
         )

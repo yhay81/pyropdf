@@ -194,3 +194,112 @@ def test_redraw_refuses_a_declared_program_that_only_loads_with_a_substitute() -
     with blank.draw() as canvas, pytest.raises(ValueError, match="substitute"):
         canvas.draw(run)
     assert (target.to_bytes(), target.history.steps) == before
+
+
+def test_retrieved_synthetic_space_has_its_gap_box_and_no_painted_operator() -> None:
+    with pyropdf.open(build_provenance_pdf("BT /F1 20 Tf 20 250 Td [(C) -2000 (D)] TJ ET")) as document:
+        chars = _chars(document.pages[0])
+        (gap,) = [char for char in chars if char.is_synthetic]
+        sources = [
+            s for c in document.to_chunks(provenance=True, table_strategy=None) for e in c.elements for s in e.sources
+        ]
+        (space,) = [s for s in sources if s.kind == "inferred" and s.bbox == gap.bbox]
+        assert space.text == " "
+        assert space.stream is space.operation is space.operation_sha256 is space.resolve() is None
+        real = [s for s in sources if s.text in {"C", "D"}]
+        assert len(real) == 2
+        assert real[0].operation_sha256 == real[1].operation_sha256
+        assert real[0].operation_sha256 is not None
+
+
+def test_identical_stored_operators_keep_their_distinct_streams_indexes_and_placements() -> None:
+    import hashlib  # noqa: PLC0415
+
+    with pyropdf.open(
+        build_provenance_pdf("BT /F1 12 Tf 10 250 Td (Twin) Tj ET", "BT /F1 12 Tf 80 160 Td (Twin) Tj ET")
+    ) as document:
+        locations = [
+            s
+            for c in document.to_chunks(provenance=True, table_strategy=None, max_chars=2)
+            for e in c.elements
+            for s in e.sources
+            if s.text == "T"
+        ]
+        expected = hashlib.sha256(b" (Twin) Tj").hexdigest()
+        assert [(s.stream, s.operation, s.operation_sha256) for s in locations] == [
+            (11, 3, expected),
+            (12, 8, expected),
+        ]
+        boxes = [s.bbox for s in locations]
+        assert [box.x0 for box in boxes if box is not None] == [10, 80]
+        assert locations[0].version.same_as(locations[1].version)
+
+
+def _twice_nested_form() -> bytes:
+    """Build two placements that reach the same inner Form through an outer Form."""
+    program = "BT /F1 16 Tf 10 270 Td (Header) Tj ET q 1 0 0 1 20 180 cm /Outer Do Q q 1 0 0 1 95 90 cm /Outer Do Q"
+    return build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300]"
+            " /Resources << /Font << /F1 4 0 R >> /XObject << /Outer 6 0 R >> >> /Contents 5 0 R >>",
+            4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            5: _stream(program),
+            6: _stream(
+                "q 1 0 0 1 2 4 cm /Inner Do Q",
+                " /Type /XObject /Subtype /Form /BBox [0 0 100 40] /Resources << /XObject << /Inner 7 0 R >> >>",
+            ),
+            7: _stream(
+                "BT /F1 12 Tf 3 8 Td (Echo) Tj ET",
+                " /Type /XObject /Subtype /Form /BBox [0 0 100 40] /Resources << /Font << /F1 4 0 R >> >>",
+            ),
+        }
+    )
+
+
+def test_retrieval_keeps_independently_resolved_repeated_form_locations() -> None:
+    import io  # noqa: PLC0415
+
+    import pikepdf  # noqa: PLC0415
+
+    data = _twice_nested_form()
+    # Independent syntax and CTMs establish the object identities and both display positions.
+    with pikepdf.open(io.BytesIO(data)) as control:
+        page = control.pages[0]
+        top = pikepdf.parse_content_stream(page)
+        outer = page.Resources.XObject.Outer
+        inner = outer.Resources.XObject.Inner
+        assert (outer.objgen, inner.objgen) == ((6, 0), (7, 0))
+        assert [str(op.operands[0]) for op in top if str(op.operator) == "Do"] == ["/Outer", "/Outer"]
+        outer_ops = pikepdf.parse_content_stream(outer)
+        assert [str(op.operands[0]) for op in outer_ops if str(op.operator) == "Do"] == ["/Inner"]
+        inner_ops = pikepdf.parse_content_stream(inner)
+        assert [str(op.operands[0]) for op in inner_ops if str(op.operator) == "Tj"] == ["Echo"]
+        text_origin = next(op.operands for op in inner_ops if str(op.operator) == "Td")
+        offset = next(op.operands for op in outer_ops if str(op.operator) == "cm")
+        top_translations = [op.operands for op in top if str(op.operator) == "cm"]
+        expected = [
+            (float(cm[4] + offset[4] + text_origin[0]), 300 - float(cm[5] + offset[5] + text_origin[1]))
+            for cm in top_translations
+        ]
+
+    with pyropdf.open(data) as document:
+        elements = [
+            element for chunk in document.to_chunks(provenance=True, table_strategy=None) for element in chunk.elements
+        ]
+        header = next(e for e in elements if e.text == "Header")
+        for src in header.sources:
+            op = src.resolve()
+            assert src.kind == "pdf"
+            assert src.stream == 5
+            assert op is not None
+            assert op.operator == "Tj"
+        e_glyphs = [src for e in elements for src in e.sources if src.text == "E"]
+        assert len(e_glyphs) == 2
+        for glyph, (x, baseline) in zip(e_glyphs, expected, strict=True):
+            assert glyph.kind == "unresolved"
+            assert glyph.stream is glyph.operation is glyph.resolve() is None
+            assert glyph.bbox is not None
+            assert glyph.bbox.x0 == pytest.approx(x)
+            assert glyph.bbox.y0 < baseline < glyph.bbox.y1

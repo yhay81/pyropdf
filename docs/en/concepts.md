@@ -10,6 +10,29 @@ page in display coordinates. These six rules describe how the API behaves; the
 [operation map](#choosing-the-operation-for-a-task) at the end points each task
 to its entry points.
 
+## Trace a retrieval result to its source
+
+For a PDF containing directly drawn text, start with a returned chunk and read its stored text-showing operation.
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    chunks = doc.to_chunks(provenance=True)
+source = next(
+    source for chunk in chunks for element in chunk.elements
+    for source in element.sources if source.operation is not None
+)
+operation = source.resolve()
+assert operation is not None
+print(source.page, source.page_xref, source.bbox, source.stream, source.operation)
+print(operation.operator, operation.operands)
+```
+
+The zero-based page and operation indexes belong to the immutable version held by `source.version`. The resolver continues to read that version after edits or closure. `version.same_as(other)` compares two captured versions, including uncommitted edits. Every grouped or split text element keeps its individual glyph locations in display space. A multi-character glyph keeps its original box when a split cuts its Unicode mapping.
+
+`kind="inferred"` identifies layout spacing or table structure. A glyph from a nested Form or an annotation appearance can have a display box with `kind="unresolved"` when the interpreter supplies no operator identity. Painted images retain their known image object number. This export uses PDF extraction and does not run OCR. `doc.to_json(provenance=True)` serializes these locations and indexes. For a known PDF operator, `operation_sha256` identifies its exact stored bytes, including their original spelling and spacing. The live version reader is available on the Python chunk objects.
+
 ## Display coordinates
 
 Every rectangle and point in the API, the boxes of words and search hits,

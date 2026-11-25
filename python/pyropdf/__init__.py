@@ -61,6 +61,7 @@ from pyropdf._attachments import Attachment, Attachments, RelatedFile
 from pyropdf._canvas import Canvas, ListNumbering, PathBuilder, PathInput, TableHeaderScope, TagRole, TextFit
 from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange, SignaturePermission
 from pyropdf._check import DefectKind, StructuralDefect, StructuralReport
+from pyropdf._chunk_sources import RetrievalSource, RetrievalVersion
 from pyropdf._chunks import Chunk, Element, ElementKind
 from pyropdf._collections import (
     Collection,
@@ -613,6 +614,8 @@ __all__ = [
     "RequirementHandler",
     "RequirementType",
     "ResetFormAction",
+    "RetrievalSource",
+    "RetrievalVersion",
     "Revision",
     "RichMedia",
     "RichMediaExecute",

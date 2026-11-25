@@ -139,6 +139,8 @@ method and property of its classes with its full description.
 - [`Paths`](text-and-content.md#paths_1): The paths of a page as columns, from `Page.paths`.
 - [`PatternPaint`](text-and-content.md#patternpaint): Paint with an indirect tiling or shading pattern in the canvas document.
 - [`RadialGradient`](text-and-content.md#radialgradient): A paint for a `Canvas` that changes color between two circles.
+- [`RetrievalSource`](text-and-content.md#retrievalsource): A contributor to an element. Display boxes describe the original glyph or image placement.
+- [`RetrievalVersion`](text-and-content.md#retrievalversion): The immutable store version used by an export, including the caller's unsaved edits.
 - [`Segment`](text-and-content.md#segment): One path construction segment of a `Path` or `PathBuilder`.
 - [`ShadingPattern`](text-and-content.md#shadingpattern): A paint that a shading fills, from a shading pattern or `sh`.
 - [`ShadingType`](text-and-content.md#shadingtype): A shading type of ISO 32000-2 §8.7.4.5.

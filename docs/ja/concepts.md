@@ -7,6 +7,29 @@ description: pyropdf の API の背後にあるモデル：表示座標、版、
 
 pyropdf はすべての編集を一つの版付きオブジェクトストアに保持し、どのページも表示座標で扱います。以下の 6 つの仕組みが API の土台です。作業ごとの入口を探すときは末尾の[目的別の API](#choosing-the-operation-for-a-task)を参照してください。
 
+## 検索結果から元の命令をたどる
+
+ページのコンテンツストリームに直接描かれた文字がある PDF では、取得したチャンクから、その文字を表示した命令を確認できます。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    chunks = doc.to_chunks(provenance=True)
+source = next(
+    source for chunk in chunks for element in chunk.elements
+    for source in element.sources if source.operation is not None
+)
+operation = source.resolve()
+assert operation is not None
+print(source.page, source.page_xref, source.bbox, source.stream, source.operation)
+print(operation.operator, operation.operands)
+```
+
+ページ番号と命令番号は、`source.version` が保持する版での 0 始まりの位置です。文書を編集したり閉じたりした後も、同じ版から命令を読み取れます。2 つの結果が未確定の編集も含めて同じ版を参照するかは、`version.same_as(other)` で確認できます。複数行をまとめた要素や分割した要素にも、文字を描いた位置が表示座標で残ります。1 つのグリフが複数の文字に対応する場合、分割後も元のグリフの矩形が残ります。
+
+行間に補った空白や推定した表の構造は `kind="inferred"` です。入れ子の Form や注釈の外観が描いた文字は、表示位置が分かっていても描画命令を特定できない場合に `kind="unresolved"` になります。画像にオブジェクト番号がある場合はその番号も返します。この API は PDF から抽出し、OCR は実行しません。`doc.to_json(provenance=True)` では位置と番号を JSON に書き出せます。命令を特定できた場合は、元の表記と空白を含むバイト列の SHA-256 が `operation_sha256` に入ります。元の版から命令を読むには Python のチャンクを使用します。
+
 ## 表示座標 {#display-coordinates}
 
 API に出てくる矩形と点は、単語や検索結果の箱、注釈の矩形、`clip`、ページボックスのいずれも**表示座標**です。単位は 1/72 インチのポイントで、原点は見えているページの左上、`y` は下向きに増えます。見えているページとは MediaBox で切り取った CropBox にページの回転を適用したもので、`page.rect` はビューアが表示するとおりの `(0, 0, width, height)` です。
