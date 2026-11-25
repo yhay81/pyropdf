@@ -1,6 +1,6 @@
 ---
 title: Reading content
-description: Text, words, characters, layout, search, tables, Markdown, and offline OCR.
+description: Text, words, characters, layout, search, tables, Markdown, JSON, retrieval chunks, tagged reading order, and offline OCR.
 ---
 
 # Reading content
@@ -72,6 +72,62 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.markdown())
 ```
 
+## JSON and retrieval chunks
+
+`doc.to_json()` exports the same layout elements—headings, paragraphs, list
+items, tables, and images—as JSON, each with its page index and bounding box in
+display space. `doc.to_chunks()` groups consecutive elements into Markdown
+retrieval chunks within a character budget (`max_chars`, 2000 by default),
+starting a new chunk at each heading so every `Chunk` keeps its enclosing
+`section`, `pages`, and `elements` with provenance. Tables, images, and
+headings are never split (`chunk.oversized` marks one that exceeds the budget),
+and both methods accept `pages=` and `table_strategy=`.
+
+```python
+import json
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    data = json.loads(doc.to_json())
+    print(len(data["pages"]), [elem["kind"] for elem in data["pages"][0]["elements"]])
+    for chunk in doc.to_chunks(max_chars=500):
+        print(chunk.index, chunk.pages, chunk.section, chunk.text)
+```
+
+## Tagged reading order
+
+For tagged PDFs, `doc.structure.reading_order()` extracts logical text in the
+document's structure-tree order across pages, reading page marked-content
+sequences, omitting `Artifact` elements, and returning `()` for untagged
+documents. Each `StructureText` keeps its `element`, content reference `item`,
+and `text` (`None` when text cannot be resolved, such as a Form XObject without
+replacement text). Element `actual_text` and `alt` (on `Figure`, `Formula`, and
+`Form`) replace painted glyphs, and `expand_abbreviations=True` uses `/E`
+expansions. Because `page.draw()` draws into a Form XObject, pass
+`actual_text`, `alt`, or `expanded` to `canvas.tag()` when tagging drawn
+content for logical extraction. See
+[Structure and accessibility](editing.md#structure-and-accessibility) for
+authoring structure trees.
+
+```python
+import pyropdf
+from pyropdf import TagRole
+
+with pyropdf.Document() as doc:
+    page = doc.pages.new((360, 200))
+    with page.draw() as canvas:
+        with canvas.tag(TagRole.HEADING_1, actual_text="Summary"):
+            canvas.text("Summary", (36, 40), size=18)
+        with canvas.tag(TagRole.SPAN, actual_text="PDF", expanded="Portable Document Format"):
+            canvas.text("PDF", (36, 70), size=12)
+        with canvas.tag(TagRole.FIGURE, alt="Revenue chart"):
+            canvas.rect((36, 90, 140, 140), fill=pyropdf.Color(0.2, 0.4, 0.8))
+        with canvas.tag(TagRole.ARTIFACT):
+            canvas.text("Page 1", (36, 180), size=9)
+    for item in doc.structure.reading_order(expand_abbreviations=True):
+        print(item.element.standard_role, item.text)
+```
+
 ## Content items
 
 `page.content()` returns what the page paints, glyph runs, paths, images,
@@ -104,6 +160,32 @@ with pyropdf.open("input.pdf") as doc:
     # numpy.asarray(paths.column("stroke_red")) reads the same buffer.
     red = paths.column("stroke_red")
     print([path.bbox for path, value in zip(paths, red) if value == 1])
+```
+
+`page.chars()` (and `page.layout(chars=True).chars`) exposes characters in the
+same columnar `Chars` form without building a Python object per glyph.
+`chars.names` lists the columns: glyph boxes (`x0`, `y0`, `x1`, `y1`), baseline
+origins (`origin_x`, `origin_y`), UTF-8 text buffers (`text_offsets`,
+`text_data`), layout indices (`block`, `line`, `span`), `is_synthetic`, and
+content provenance (`stream`, `operation`, `0` when absent).
+`chars.column(name)` returns a read-only `memoryview` that NumPy reads without
+a copy, `chars[start:stop]` slices without copying, pyarrow, polars, and DuckDB
+import the table as an Arrow struct array through the Arrow PyCapsule interface
+(`__arrow_c_schema__` and `__arrow_c_array__`, with one `text` UTF-8 field and
+nullable `stream` and `operation`), and indexing or iterating yields `Char`
+records on demand.
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    chars = doc.pages[0].chars()
+    x0 = chars.column("x0")
+    offsets = chars.column("text_offsets")
+    data = bytes(chars.column("text_data"))
+    # numpy.asarray(x0) reads the same buffer; pyarrow.array(chars) uses Arrow PyCapsule.
+    print(len(chars), chars.names)
+    print([(data[offsets[i] : offsets[i + 1]].decode(), x0[i]) for i in range(min(3, len(chars)))])
 ```
 
 ## Images

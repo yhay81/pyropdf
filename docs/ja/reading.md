@@ -1,6 +1,6 @@
 ---
 title: 内容を読む
-description: テキスト、単語、文字、レイアウト、検索、表、Markdown、オフライン OCR。
+description: テキスト、単語、文字、レイアウト、検索、表、Markdown、JSON、検索チャンク、タグ付き読み上げ順、オフライン OCR。
 ---
 
 # 内容を読む
@@ -67,6 +67,58 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.markdown())
 ```
 
+## JSON と検索チャンク {#json-and-retrieval-chunks}
+
+`doc.to_json()` は同じレイアウト要素（見出し、段落、箇条書き項目、表、画像）を
+ページ番号と表示座標の矩形つきで JSON として出力します。`doc.to_chunks()` は
+連続する要素を文字数上限（`max_chars`、既定は 2000）以内の Markdown 検索チャンクに
+まとめます。見出しごとに新しいチャンクが始まり、各 `Chunk` は上位見出しの `section`、
+対象ページの `pages`、出典つきの `elements` を保持します。表・画像・見出しは分割されず
+（上限を超えると `chunk.oversized` が `True` になります）、どちらのメソッドも `pages=` と
+`table_strategy=` を受け取ります。
+
+```python
+import json
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    data = json.loads(doc.to_json())
+    print(len(data["pages"]), [elem["kind"] for elem in data["pages"][0]["elements"]])
+    for chunk in doc.to_chunks(max_chars=500):
+        print(chunk.index, chunk.pages, chunk.section, chunk.text)
+```
+
+## タグ付き読み上げ順 {#tagged-reading-order}
+
+タグ付き PDF では、`doc.structure.reading_order()` がページをまたいで構造ツリーの論理順に
+テキストを取り出します。ページの marked-content 並びを読み取り、`Artifact` 要素を省き、
+タグのない文書では空のタプル `()` を返します。各 `StructureText` は元の構造要素 `element`、
+内容参照 `item`、テキスト `text`（代替テキストのない Form XObject など解決できない参照では
+`None`）を保持します。要素の `actual_text` や `alt`（`Figure`・`Formula`・`Form`）は描画
+グリフに優先し、`expand_abbreviations=True` で `/E` の略語展開も使います。`page.draw()` は
+Form XObject として描画するため、描画内容にタグを付けて論理テキストを取り出すときは
+`canvas.tag()` に `actual_text`・`alt`・`expanded` を指定してください。構造ツリーの編集は
+[構造ツリーとアクセシビリティ](editing.md#structure-and-accessibility)を参照してください。
+
+```python
+import pyropdf
+from pyropdf import TagRole
+
+with pyropdf.Document() as doc:
+    page = doc.pages.new((360, 200))
+    with page.draw() as canvas:
+        with canvas.tag(TagRole.HEADING_1, actual_text="Summary"):
+            canvas.text("Summary", (36, 40), size=18)
+        with canvas.tag(TagRole.SPAN, actual_text="PDF", expanded="Portable Document Format"):
+            canvas.text("PDF", (36, 70), size=12)
+        with canvas.tag(TagRole.FIGURE, alt="Revenue chart"):
+            canvas.rect((36, 90, 140, 140), fill=pyropdf.Color(0.2, 0.4, 0.8))
+        with canvas.tag(TagRole.ARTIFACT):
+            canvas.text("Page 1", (36, 180), size=9)
+    for item in doc.structure.reading_order(expand_abbreviations=True):
+        print(item.element.standard_role, item.text)
+```
+
 ## 描画される要素
 
 `page.content()` はページが描くもの（グリフの並び、パス、画像、クリップ）を、
@@ -97,6 +149,31 @@ with pyropdf.open("input.pdf") as doc:
     # numpy.asarray(paths.column("stroke_red")) は同じバッファを読む
     red = paths.column("stroke_red")
     print([path.bbox for path, value in zip(paths, red) if value == 1])
+```
+
+`page.chars()`（および `page.layout(chars=True).chars`）も文字を同じ列指向の
+`Chars` として返し、グリフごとの Python オブジェクトを作りません。`chars.names` に
+列名が並び、グリフ矩形（`x0`・`y0`・`x1`・`y1`）、ベースライン原点
+（`origin_x`・`origin_y`）、UTF-8 テキストバッファ（`text_offsets`・`text_data`）、
+レイアウト位置（`block`・`line`・`span`）、`is_synthetic`、描画元情報
+（`stream`・`operation`、該当なしは `0`）を持ちます。`chars.column(name)` は
+NumPy がコピーなしで読める読み取り専用の `memoryview` を返し、`chars[start:stop]` は
+コピーなしのスライスビューを作ります。pyarrow・polars・DuckDB は Arrow PyCapsule
+interface（`__arrow_c_schema__`・`__arrow_c_array__`。`text` は 1 つの UTF-8 列、
+`stream`・`operation` は NULL 許容）で表全体を取り込め、添字アクセスや反復では
+必要に応じて `Char` レコードが生成されます。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    chars = doc.pages[0].chars()
+    x0 = chars.column("x0")
+    offsets = chars.column("text_offsets")
+    data = bytes(chars.column("text_data"))
+    # numpy.asarray(x0) は同じバッファを読み、pyarrow.array(chars) は Arrow PyCapsule を使う
+    print(len(chars), chars.names)
+    print([(data[offsets[i] : offsets[i + 1]].decode(), x0[i]) for i in range(min(3, len(chars)))])
 ```
 
 ## 画像
