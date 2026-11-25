@@ -440,20 +440,32 @@ fn link(trailer: &Dict, key: &str, origin: usize) -> Result<Option<usize>> {
     }
 }
 
-/// Returns the position of the bytes that `offset`, counted from `origin`,
-/// gives.
-fn locate(origin: usize, offset: u64) -> Result<usize> {
+/// Returns the checked position of `offset` counted from `origin`, or `None`
+/// if it overflows the platform address space.
+fn checked_locate(origin: usize, offset: u64) -> Option<usize> {
     usize::try_from(offset)
         .ok()
         .and_then(|offset| origin.checked_add(offset))
+}
+
+/// Returns the position of the bytes that `offset`, counted from `origin`,
+/// gives.
+fn locate(origin: usize, offset: u64) -> Result<usize> {
+    checked_locate(origin, offset)
         .ok_or_else(|| Error::malformed(format!("offset {offset} is beyond the address space")))
+}
+
+/// Returns checked object number `first + index` of a subsection, or `None`
+/// if it overflows `u32`.
+fn checked_number(first: u64, index: u64) -> Option<u32> {
+    first
+        .checked_add(index)
+        .and_then(|number| u32::try_from(number).ok())
 }
 
 /// Returns object number `first + index` of a subsection.
 fn number(first: u64, index: u64) -> Result<u32> {
-    first
-        .checked_add(index)
-        .and_then(|number| u32::try_from(number).ok())
+    checked_number(first, index)
         .ok_or_else(|| Error::malformed("a subsection lists an object number beyond u32"))
 }
 
@@ -494,7 +506,11 @@ fn combine(
 ) -> Result<Vec<(u32, Listing)>> {
     let hybrid = stream.is_some();
     let mut ranked = BudgetVec::new(budget);
-    ranked.try_reserve_exact(listings.len() + stream.as_ref().map_or(0, |stream| stream.len()))?;
+    let total = listings
+        .len()
+        .checked_add(stream.as_ref().map_or(0, BudgetVec::len))
+        .ok_or_else(|| crate::LimitExceeded::new(LimitCode::MemorySize))?;
+    ranked.try_reserve_exact(total)?;
     for (position, &(number, listing)) in listings.iter().enumerate() {
         let class = match listing {
             Listing::Free { .. } if hybrid => 0,
@@ -527,13 +543,14 @@ pub(super) fn merge<'a>(
     budget: &Budget,
 ) -> Result<Vec<(u32, Entry)>> {
     let mut all = BudgetVec::new(budget);
-    all.try_reserve_exact(
-        sections
-            .clone()
-            .into_iter()
-            .map(|section| section.listings.len())
-            .sum(),
-    )?;
+    let total = sections
+        .clone()
+        .into_iter()
+        .try_fold(0_usize, |acc, section| {
+            acc.checked_add(section.listings.len())
+        })
+        .ok_or_else(|| crate::LimitExceeded::new(LimitCode::MemorySize))?;
+    all.try_reserve_exact(total)?;
     for (age, section) in sections.into_iter().enumerate() {
         for &(number, listing) in &section.listings {
             all.try_push((number, age, listing))?;
@@ -608,4 +625,52 @@ fn revisions(
     let mut revisions = revisions.into_vec();
     revisions.reverse();
     Ok(revisions)
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// `checked_locate(origin, offset)` and `checked_number(first, index)` never
+    /// panic or wrap across the full `usize`/`u64` domain, and every `Some`
+    /// result equals the exact mathematical sum.
+    #[kani::proof]
+    fn kani_xref_locate_and_number_checked() {
+        let origin: usize = kani::any();
+        let offset: u64 = kani::any();
+        match checked_locate(origin, offset) {
+            Some(pos) => assert_eq!(
+                u128::from(pos as u64),
+                u128::from(origin as u64) + u128::from(offset)
+            ),
+            None => {
+                assert!(
+                    u128::from(origin as u64) + u128::from(offset) > u128::from(usize::MAX as u64)
+                );
+            }
+        }
+
+        let first: u64 = kani::any();
+        let index: u64 = kani::any();
+        match checked_number(first, index) {
+            Some(n) => assert_eq!(u128::from(n), u128::from(first) + u128::from(index)),
+            None => {
+                assert!(u128::from(first) + u128::from(index) > u128::from(u32::MAX));
+            }
+        }
+    }
+
+    /// `big_endian` decodes any 0..=8-byte big-endian xref stream field without
+    /// overflow and matches `u64::from_be_bytes` zero-extended on the left.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn kani_xref_big_endian_exact() {
+        let raw: [u8; 8] = kani::any();
+        let width: usize = kani::any();
+        kani::assume(width <= 8);
+        let decoded = big_endian(&raw[8 - width..]);
+        let mut padded = [0u8; 8];
+        padded[8 - width..].copy_from_slice(&raw[8 - width..]);
+        assert_eq!(decoded, u64::from_be_bytes(padded));
+    }
 }

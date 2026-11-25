@@ -19,6 +19,7 @@ use pyropdf_store::budget::Budget;
 use crate::bridge::Bridged;
 use crate::render::Fallback;
 
+pub mod buffers;
 mod font_guard;
 mod glyphs;
 mod images;

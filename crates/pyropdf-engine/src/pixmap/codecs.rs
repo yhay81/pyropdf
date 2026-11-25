@@ -275,13 +275,15 @@ fn decode_pam(data: &[u8]) -> Result<Decoded, String> {
 }
 
 fn u16_at(data: &[u8], at: usize) -> Result<u16, String> {
-    data.get(at..at + 2)
+    at.checked_add(2)
+        .and_then(|end| data.get(at..end))
         .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
         .ok_or_else(|| "the BMP header is truncated".to_owned())
 }
 
 fn u32_at(data: &[u8], at: usize) -> Result<u32, String> {
-    data.get(at..at + 4)
+    at.checked_add(4)
+        .and_then(|end| data.get(at..end))
         .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
         .ok_or_else(|| "the BMP header is truncated".to_owned())
 }
@@ -464,10 +466,10 @@ pub(super) fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
     } else {
         stated
     };
-    let start = 14 + header;
+    let start = 14_usize.checked_add(header);
     // A palette shorter than its count keeps the entries that it holds.
-    let palette: Vec<[u8; 3]> = data
-        .get(start..offset.max(start))
+    let palette: Vec<[u8; 3]> = start
+        .and_then(|start| data.get(start..offset.max(start)))
         .unwrap_or_default()
         .chunks_exact(entry)
         .take(colors)
@@ -540,20 +542,25 @@ fn expand_rle(
             byte & 0x0f
         }
     };
-    let (mut x, mut y, mut at) = (0, 0, 0);
+    let (mut x, mut y, mut at) = (0_usize, 0_usize, 0_usize);
     loop {
+        let next_at = at.checked_add(2).ok_or_else(ends)?;
         let [count, value] = *data
-            .get(at..at + 2)
+            .get(at..next_at)
             .and_then(|code| <&[u8; 2]>::try_from(code).ok())
             .ok_or_else(ends)?;
-        at += 2;
+        at = next_at;
         match (count, value) {
-            (0, 0) => (x, y) = (0, y + 1),
+            (0, 0) => (x, y) = (0, y.saturating_add(1)),
             (0, 1) => break,
             (0, 2) => {
-                let delta = data.get(at..at + 2).ok_or_else(ends)?;
-                (x, y) = (x + usize::from(delta[0]), y + usize::from(delta[1]));
-                at += 2;
+                let delta_end = at.checked_add(2).ok_or_else(ends)?;
+                let delta = data.get(at..delta_end).ok_or_else(ends)?;
+                (x, y) = (
+                    x.saturating_add(usize::from(delta[0])),
+                    y.saturating_add(usize::from(delta[1])),
+                );
+                at = delta_end;
             }
             (0, length) => {
                 let length = usize::from(length);
@@ -562,7 +569,8 @@ fn expand_rle(
                 } else {
                     length.div_ceil(2)
                 };
-                let run = data.get(at..at + bytes).ok_or_else(ends)?;
+                let run_end = at.checked_add(bytes).ok_or_else(ends)?;
+                let run = data.get(at..run_end).ok_or_else(ends)?;
                 for i in 0..length {
                     put(
                         x,
@@ -573,15 +581,16 @@ fn expand_rle(
                             nibble(run[i / 2], i)
                         },
                     );
-                    x += 1;
+                    x = x.saturating_add(1);
                 }
                 // An absolute run ends on a 16-bit boundary.
-                at += bytes.next_multiple_of(2);
+                let padded = bytes.checked_next_multiple_of(2).ok_or_else(ends)?;
+                at = at.checked_add(padded).ok_or_else(ends)?;
             }
             (count, value) => {
                 for i in 0..usize::from(count) {
                     put(x, y, if bits == 8 { value } else { nibble(value, i) });
-                    x += 1;
+                    x = x.saturating_add(1);
                 }
             }
         }
@@ -809,6 +818,46 @@ pub(super) fn decode_tiff(data: &[u8], budget: &Budget) -> Result<Decoded, Decod
     })
 }
 
+/// Finds the byte offset of the 16-bit `PhotometricInterpretation = 3` (palette)
+/// value field in the first IFD of a classic or BigTIFF buffer.
+fn palette_photometric_offset(data: &[u8]) -> Option<usize> {
+    let little = data.starts_with(b"II");
+    let u16_at = |at: usize| -> Option<u16> {
+        let end = at.checked_add(2)?;
+        let bytes = data.get(at..end)?;
+        let bytes = [bytes[0], bytes[1]];
+        Some(if little {
+            u16::from_le_bytes(bytes)
+        } else {
+            u16::from_be_bytes(bytes)
+        })
+    };
+    let word_at = |at: usize, size: usize| -> Option<u64> {
+        let end = at.checked_add(size)?;
+        let bytes = data.get(at..end)?;
+        Some(bytes.iter().enumerate().fold(0, |value, (index, &byte)| {
+            let shift = if little { index } else { size - 1 - index } * 8;
+            value | u64::from(byte) << shift
+        }))
+    };
+    let big = u16_at(2)? == 43;
+    let (offset, count_size, entry_size) = if big {
+        (usize::try_from(word_at(8, 8)?).ok()?, 8_usize, 20_usize)
+    } else {
+        (usize::try_from(word_at(4, 4)?).ok()?, 2_usize, 12_usize)
+    };
+    let count = usize::try_from(word_at(offset, count_size)?).ok()?;
+    let entries = offset.checked_add(count_size)?;
+    let max_entries = data.len().checked_sub(entries)? / entry_size;
+    let bounded_count = count.min(max_entries);
+    let at = (0..bounded_count)
+        .filter_map(|index| index.checked_mul(entry_size)?.checked_add(entries))
+        .find(|&at| u16_at(at) == Some(262) && at.checked_add(2).and_then(u16_at) == Some(3))?;
+    // A SHORT value sits at the start of the entry's value field.
+    let value = at.checked_add(if big { 12 } else { 8 })?;
+    (u16_at(value)? == 3).then_some(value)
+}
+
 /// Returns a copy of the TIFF `data` whose first image has photometric
 /// interpretation 1, gray with black at 0, in place of 3, a palette, or
 /// `None` if its first directory has no such entry.
@@ -817,40 +866,7 @@ fn palette_as_gray<'b>(
     budget: &'b Budget,
 ) -> Result<Option<BudgetVec<'b, u8>>, LimitExceeded> {
     let little = data.starts_with(b"II");
-    let value = (|| {
-        let little = data.starts_with(b"II");
-        let u16_at = |at: usize| {
-            let bytes = [*data.get(at)?, *data.get(at + 1)?];
-            Some(if little {
-                u16::from_le_bytes(bytes)
-            } else {
-                u16::from_be_bytes(bytes)
-            })
-        };
-        let word_at = |at: usize, size: usize| -> Option<u64> {
-            let bytes = data.get(at..at + size)?;
-            Some(bytes.iter().enumerate().fold(0, |value, (index, &byte)| {
-                let shift = if little { index } else { size - 1 - index } * 8;
-                value | u64::from(byte) << shift
-            }))
-        };
-        let big = u16_at(2)? == 43;
-        let (offset, count_size, entry_size) = if big {
-            (usize::try_from(word_at(8, 8)?).ok()?, 8, 20)
-        } else {
-            (usize::try_from(word_at(4, 4)?).ok()?, 2, 12)
-        };
-        let count = usize::try_from(word_at(offset, count_size)?).ok()?;
-        let entries = offset + count_size;
-        let at = (0..count)
-            .map(|index| entries + index * entry_size)
-            .find(|&at| u16_at(at) == Some(262) && u16_at(at + 2) == Some(3))?;
-        // A SHORT value sits at the start of the entry's value field.
-        let value = at + if big { 12 } else { 8 };
-        (u16_at(value)? == 3).then_some(())?;
-        Some(value)
-    })();
-    let Some(value) = value else {
+    let Some(value) = palette_photometric_offset(data) else {
         return Ok(None);
     };
     let mut copy = BudgetVec::new(budget);
@@ -1099,4 +1115,107 @@ pub(super) fn write_ps(
     }
     out.write_all(&line)?;
     out.write_all(b"~>\ngrestore\nshowpage\n%%Trailer\n%%EOF\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_bmp_rejects_header_size_that_would_overflow_32_bit_palette_start() {
+        // 58-byte crafted 8-bit BMP whose DIB header size is 0xFFFF_FFF8.
+        // On 32-bit targets, `14 + header` previously wrapped to 6 and read the
+        // file header as palette RGB entries instead of rejecting the image.
+        let mut bmp = vec![0u8; 58];
+        bmp[0..2].copy_from_slice(b"BM");
+        bmp[10..14].copy_from_slice(&54u32.to_le_bytes());
+        bmp[14..18].copy_from_slice(&0xffff_fff8_u32.to_le_bytes());
+        bmp[18..22].copy_from_slice(&1i32.to_le_bytes());
+        bmp[22..26].copy_from_slice(&1i32.to_le_bytes());
+        bmp[28..30].copy_from_slice(&8u16.to_le_bytes());
+        bmp[30..34].copy_from_slice(&0u32.to_le_bytes());
+        let err = decode_bmp(&bmp).unwrap_err();
+        assert!(err.contains("palette"));
+    }
+
+    #[test]
+    fn palette_photometric_offset_handles_overflowing_ifd_offset_and_forged_count() {
+        // Classic TIFF with IFD offset = u32::MAX (would overflow `offset + 2` on 32-bit).
+        let mut classic = b"II*\0\xff\xff\xff\xff".to_vec();
+        assert_eq!(palette_photometric_offset(&classic), None);
+
+        // BigTIFF with IFD at offset 16 and forged entry count = u64::MAX.
+        let mut big = Vec::new();
+        big.extend_from_slice(b"II+\0");
+        big.extend_from_slice(&8u16.to_le_bytes());
+        big.extend_from_slice(&0u16.to_le_bytes());
+        big.extend_from_slice(&16u64.to_le_bytes());
+        big.extend_from_slice(&u64::MAX.to_le_bytes());
+        assert_eq!(palette_photometric_offset(&big), None);
+
+        // Classic TIFF with valid PhotometricInterpretation=3 entry at offset 8.
+        classic.truncate(4);
+        classic.extend_from_slice(&8u32.to_le_bytes());
+        classic.extend_from_slice(&1u16.to_le_bytes()); // 1 IFD entry
+        classic.extend_from_slice(&262u16.to_le_bytes()); // tag PhotometricInterpretation
+        classic.extend_from_slice(&3u16.to_le_bytes()); // type SHORT
+        classic.extend_from_slice(&1u32.to_le_bytes()); // count 1
+        classic.extend_from_slice(&3u16.to_le_bytes()); // value = Palette (3)
+        classic.extend_from_slice(&0u16.to_le_bytes());
+        assert_eq!(palette_photometric_offset(&classic), Some(18));
+    }
+
+    #[test]
+    fn expand_rle_handles_large_deltas_and_truncated_odd_runs_without_panicking() {
+        // Odd absolute run at EOF without padding byte.
+        assert!(expand_rle(&[0, 3, 1, 2, 3], 4, 1, 8, true).is_err());
+        // Valid delta moving past image bounds followed by end-of-bitmap.
+        let indices = expand_rle(&[0, 2, 255, 255, 0, 1], 2, 2, 8, true).unwrap();
+        assert_eq!(indices, vec![0, 0, 0, 0]);
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// `Field::new` accepts only zero or contiguous non-empty bitmasks, and
+    /// `Field::read` never shifts out of range and maps `0 -> 0` and `mask -> 255`.
+    #[kani::proof]
+    fn kani_bmp_bitfield_contiguous_and_scale() {
+        let mask: u32 = kani::any();
+        let pixel: u32 = kani::any();
+        match Field::new(mask) {
+            Ok(None) => assert_eq!(mask, 0),
+            Ok(Some(field)) => {
+                assert_ne!(mask, 0);
+                assert!(field.shift < 32);
+                assert_ne!(field.max, 0);
+                assert_eq!(field.max & field.max.wrapping_add(1), 0);
+                assert_eq!(field.max << field.shift, mask);
+                assert_eq!(field.read(0), 0);
+                assert_eq!(field.read(mask), 255);
+                let _ = field.read(pixel);
+            }
+            Err(_) => {
+                assert_ne!(mask, 0);
+                let shifted = mask >> mask.trailing_zeros();
+                assert_ne!(shifted & shifted.wrapping_add(1), 0);
+            }
+        }
+    }
+
+    /// `palette_photometric_offset` never panics or overflows on any 24-byte
+    /// input (classic TIFF or BigTIFF) and every returned offset admits a 2-byte
+    /// overwrite inside `data`.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn kani_tiff_palette_offset_never_panics() {
+        let data: [u8; 24] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= data.len());
+        if let Some(pos) = palette_photometric_offset(&data[..len]) {
+            assert!(pos + 2 <= len);
+        }
+    }
 }

@@ -475,7 +475,7 @@ impl<'a> Params<'a> {
             filters,
             version: u8::try_from(version).unwrap_or(u8::MAX),
             revision: revision as u8,
-            length: length as usize,
+            length: usize::try_from(length).unwrap_or(0),
             o,
             u,
             p,
@@ -790,5 +790,24 @@ impl Encryption {
                 Ok((dict, id, handler))
             }
         }
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Password padding always yields 32 bytes consisting of the prefix up to
+    /// 32 bytes followed by the leading bytes of ISO 32000-2 `PADDING`.
+    #[kani::proof]
+    #[kani::unwind(42)]
+    fn kani_security_password_padded_exact() {
+        let buf: [u8; 40] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= buf.len());
+        let out = padded(&buf[..len]);
+        let keep = len.min(32);
+        assert_eq!(&out[..keep], &buf[..keep]);
+        assert_eq!(&out[keep..], &PADDING[..32 - keep]);
     }
 }

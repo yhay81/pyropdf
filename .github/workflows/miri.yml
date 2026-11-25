@@ -1,5 +1,6 @@
-# Miri undefined-behavior and leak checks on the unsafe store and render-cache
-# paths (DESIGN.md sections 4, 9, and 12, F6 and F9).
+# Miri undefined-behavior and leak checks on the unsafe store, render-cache,
+# and pure-Rust buffer-math / codec paths (DESIGN.md sections 4, 9, and 12,
+# F6 and F9).
 name: Miri
 
 on:
@@ -7,12 +8,16 @@ on:
     paths:
       - "crates/pyropdf-store/**"
       - "crates/pyropdf-engine/src/render/**"
+      - "crates/pyropdf-engine/src/extract/buffers.rs"
+      - "crates/pyropdf-engine/src/pixmap/**"
       - ".github/workflows/miri.yml"
   push:
     branches: [main]
     paths:
       - "crates/pyropdf-store/**"
       - "crates/pyropdf-engine/src/render/**"
+      - "crates/pyropdf-engine/src/extract/buffers.rs"
+      - "crates/pyropdf-engine/src/pixmap/**"
       - ".github/workflows/miri.yml"
   schedule:
     # Mondays at 04:17 UTC.
@@ -75,6 +80,8 @@ jobs:
           version::tests::a_refused_trailer
           version::tests::change_sets_are_the_union
           version::tests::writes_respect_free_entries
+          version::journal::tests
+          security::crypto::tests
           --skip a_refused_allocation_releases_its_charge
           --skip set_and_map_refused_allocations
           --skip threads_never_charge_beyond_a_limit
@@ -87,7 +94,13 @@ jobs:
           --skip every_clone_keeps_what_it_held
           --skip a_diff_finds_exactly_the_numbers_that_differ
           --skip a_write_charges_what_it_allocates
-      - name: Run Miri on pyropdf-engine render cache lifetime handling
+      - name: Run Miri on pyropdf-engine render cache, buffer math, and pure-Rust codecs
         run: >-
           cargo +"$NIGHTLY" miri test --locked -p pyropdf-engine --lib --
           render::tests::with_cache_replaces_bridged_entry_and_drops_on_thread_exit
+          extract::buffers::tests
+          pixmap::buffer_math_tests
+          pixmap::codecs::tests
+          pixmap::images::tests
+          pixmap::jpx::tests
+          pixmap::fax::tests

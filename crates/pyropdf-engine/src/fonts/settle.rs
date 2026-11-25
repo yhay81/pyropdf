@@ -330,19 +330,9 @@ fn widths_glyphs(value: &Value) -> Option<Vec<u32>> {
             continue;
         }
         let last = end - 1;
-        let first_word = (first / 64) as usize;
-        let last_word = (last / 64) as usize;
+        let (first_word, last_word) = mark_glyph_range(&mut edges, &mut full_ends, first, last);
         first_used = first_used.min(first_word);
         end_used = end_used.max(last_word + 1);
-        let first_bits = u64::MAX << (first % 64);
-        let last_bits = u64::MAX >> (63 - last % 64);
-        if first_word == last_word {
-            edges[first_word] |= first_bits & last_bits;
-        } else {
-            edges[first_word] |= first_bits;
-            edges[last_word] |= last_bits;
-            full_ends[first_word + 1] = full_ends[first_word + 1].max(last_word as u16);
-        }
     }
     let mut glyphs = Vec::new();
     let mut full_end = 0;
@@ -429,5 +419,76 @@ fn tag(compact: &Compact) -> String {
     tag
 }
 
+/// Marks the inclusive glyph interval `first..=last` in the interval-sweep
+/// bitset (`edges`, `full_ends`), returning `(first_word, last_word)`.
+fn mark_glyph_range(
+    edges: &mut [u64],
+    full_ends: &mut [u16],
+    first: u32,
+    last: u32,
+) -> (usize, usize) {
+    let first_word = (first / 64) as usize;
+    let last_word = (last / 64) as usize;
+    let first_bits = u64::MAX << (first % 64);
+    let last_bits = u64::MAX >> (63 - last % 64);
+    if first_word == last_word {
+        edges[first_word] |= first_bits & last_bits;
+    } else {
+        edges[first_word] |= first_bits;
+        edges[last_word] |= last_bits;
+        full_ends[first_word + 1] = full_ends[first_word + 1].max(last_word as u16);
+    }
+    (first_word, last_word)
+}
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// The interval-sweep bitset used by `widths_glyphs` produces the exact
+    /// same bitmask as setting each glyph bit individually for any pair of
+    /// overlapping ranges across four 64-bit words (256 glyphs).
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn kani_widths_range_sweep_matches_naive() {
+        let mut edges = [0_u64; 4];
+        let mut full_ends = [0_u16; 4];
+        let mut naive = [0_u64; 4];
+
+        let f1: u32 = kani::any();
+        let l1: u32 = kani::any();
+        let f2: u32 = kani::any();
+        let l2: u32 = kani::any();
+        kani::assume(f1 <= l1 && l1 < 256);
+        kani::assume(f2 <= l2 && l2 < 256);
+
+        mark_glyph_range(&mut edges, &mut full_ends, f1, l1);
+        mark_glyph_range(&mut edges, &mut full_ends, f2, l2);
+
+        for word in 0..4_u32 {
+            let base = word * 64;
+            let top = base + 63;
+            for (f, l) in [(f1, l1), (f2, l2)] {
+                if l >= base && f <= top {
+                    let lo = f.max(base) - base;
+                    let hi = l.min(top) - base;
+                    naive[word as usize] |= (u64::MAX << lo) & (u64::MAX >> (63 - hi));
+                }
+            }
+        }
+
+        let mut full_end = 0_usize;
+        for word in 0..4_usize {
+            full_end = full_end.max(usize::from(full_ends[word]));
+            let bits = if word < full_end {
+                u64::MAX
+            } else {
+                edges[word]
+            };
+            assert_eq!(bits, naive[word]);
+        }
+    }
+}

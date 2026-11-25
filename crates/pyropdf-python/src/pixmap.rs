@@ -21,8 +21,8 @@ use pyo3::types::{PyBool, PyBytes, PyDict, PyInt, PyTuple};
 use pyropdf_engine::bridge::Error as BridgeError;
 use pyropdf_engine::ocr;
 use pyropdf_engine::pixmap::{
-    self as pixel_ops, Area, Bounded, BudgetedPngOutput, DecodeError, Decoded, EncodeError,
-    Encoding, FORMATS, Layout, encode, encode_png, format_of,
+    self as pixel_ops, Area, Bounded, BudgetedPngOutput, BufferViewError, DecodeError, Decoded,
+    EncodeError, Encoding, FORMATS, Layout, encode, encode_png, format_of,
 };
 use pyropdf_engine::render::{self, Raster, RasterError};
 use pyropdf_store::LimitExceeded;
@@ -168,13 +168,12 @@ impl Pixmap {
     /// Returns the offset of the pixel at column `x` and row `y`, or
     /// raises `IndexError` outside the pixmap.
     fn position(&self, x: i64, y: i64) -> PyResult<usize> {
-        if !(0..i64::from(self.width)).contains(&x) || !(0..i64::from(self.height)).contains(&y) {
-            return Err(PyIndexError::new_err(format!(
+        self.layout().pixel_offset(x, y).ok_or_else(|| {
+            PyIndexError::new_err(format!(
                 "pixel ({x}, {y}) is outside the {}x{} pixmap",
                 self.width, self.height
-            )));
-        }
-        Ok((y as usize * self.width as usize + x as usize) * self.channels() as usize)
+            ))
+        })
     }
 
     /// Checks that `value` has one byte per channel.
@@ -280,8 +279,8 @@ impl Pixmap {
 
     /// Bytes per row: width × channels.
     #[getter]
-    fn stride(&self) -> PyResult<u32> {
-        crate::errors::boundary(|| self.width * self.channels())
+    fn stride(&self) -> PyResult<u64> {
+        crate::errors::boundary(|| self.layout().stride_u64())
     }
 
     /// The horizontal and vertical resolution in dots per inch, which PNG
@@ -545,7 +544,19 @@ impl Pixmap {
     fn pixel<'py>(&self, py: Python<'py>, x: i64, y: i64) -> PyResult<Bound<'py, PyTuple>> {
         crate::errors::boundary(|| {
             let at = self.position(x, y)?;
-            PyTuple::new(py, &self.data[at..at + self.channels() as usize])
+            let end = at.checked_add(self.channels() as usize).ok_or_else(|| {
+                PyIndexError::new_err(format!(
+                    "pixel ({x}, {y}) is outside the {}x{} pixmap",
+                    self.width, self.height
+                ))
+            })?;
+            let slice = self.data.get(at..end).ok_or_else(|| {
+                PyIndexError::new_err(format!(
+                    "pixel ({x}, {y}) is outside the {}x{} pixmap",
+                    self.width, self.height
+                ))
+            })?;
+            PyTuple::new(py, slice)
         })?
     }
 
@@ -913,31 +924,21 @@ impl Pixmap {
             let owner = slf.clone().into_any();
             let pixmap = slf.get();
             let data = &pixmap.data;
-            let length = isize::try_from(data.len())
-                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
-            let channels = isize::try_from(pixmap.channels())
-                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
-            let width = isize::try_from(pixmap.width)
-                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
-            let height = isize::try_from(pixmap.height)
-                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
-            let row_stride = width
-                .checked_mul(channels)
-                .ok_or_else(|| PyBufferError::new_err("Pixmap buffer is too large"))?;
-            let f_contiguous = length == 0
-                || [height, width, channels]
-                    .into_iter()
-                    .filter(|&dim| dim > 1)
-                    .count()
-                    <= 1;
-            if (flags & ffi::PyBUF_F_CONTIGUOUS) == ffi::PyBUF_F_CONTIGUOUS && !f_contiguous {
-                return Err(PyBufferError::new_err(
-                    "Pixmap buffer is not Fortran-contiguous",
-                ));
-            }
+            let require_f = (flags & ffi::PyBUF_F_CONTIGUOUS) == ffi::PyBUF_F_CONTIGUOUS;
+            let geometry = pixmap
+                .layout()
+                .buffer_view(data.len(), require_f)
+                .map_err(|error| match error {
+                    BufferViewError::TooLarge => {
+                        PyBufferError::new_err("Pixmap buffer is too large")
+                    }
+                    BufferViewError::NotFortranContiguous => {
+                        PyBufferError::new_err("Pixmap buffer is not Fortran-contiguous")
+                    }
+                })?;
             // Shape and strides live in one allocation that `internal` owns
             // until `__releasebuffer__`.
-            let mut dimensions = Box::new([height, width, channels, row_stride, channels, 1]);
+            let mut dimensions = Box::new(geometry.dimensions);
             let dimensions_ptr = dimensions.as_mut_ptr();
             let nd = (flags & ffi::PyBUF_ND) == ffi::PyBUF_ND;
             let strides = (flags & ffi::PyBUF_STRIDES) == ffi::PyBUF_STRIDES;
@@ -947,7 +948,7 @@ impl Pixmap {
             unsafe {
                 (*view).obj = owner.into_ptr();
                 (*view).buf = data.as_ptr().cast_mut().cast::<c_void>();
-                (*view).len = length;
+                (*view).len = geometry.len;
                 (*view).readonly = 1;
                 (*view).itemsize = 1;
                 (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
@@ -978,6 +979,8 @@ impl Pixmap {
             // SAFETY: `__getbuffer__` stored a boxed `[isize; 6]` in
             // `internal`, once for this view; `format` is a static C string.
             unsafe {
+                (*view).shape = ptr::null_mut();
+                (*view).strides = ptr::null_mut();
                 let internal = (*view).internal;
                 if !internal.is_null() {
                     (*view).internal = ptr::null_mut();
@@ -1061,7 +1064,10 @@ fn read_image(
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => return Err(error.into()),
         };
-        budget.check(LimitCode::ImageInputSize, bytes.len() as u64 + read as u64)?;
+        budget.check(
+            LimitCode::ImageInputSize,
+            (bytes.len() as u64).saturating_add(read as u64),
+        )?;
         bytes.try_extend_from_slice(&chunk[..read])?;
     }
     Ok(bytes.into_vec())
@@ -1138,6 +1144,21 @@ fn temporary_sibling(target: &Path) -> io::Result<(PathBuf, File)> {
     ))
 }
 
+/// Raw mutable pointer into a freshly allocated, unshared Python `bytes`
+/// object, preserving pointer provenance across `py.detach`.
+struct SendMutPtr(*mut u8);
+
+impl SendMutPtr {
+    const fn into_ptr(self) -> *mut u8 {
+        self.0
+    }
+}
+
+// SAFETY: Constructed only for a freshly allocated, unshared `PyBytes` buffer
+// exclusively written by the detached closure while the caller holds sole
+// ownership of the `Bound` handle on the stack.
+unsafe impl Send for SendMutPtr {}
+
 /// Encodes `pixmap` as PNG for `document`, under a budget from the
 /// document's limits: its memory limit, cancellation token, and deadline.
 #[pyfunction]
@@ -1176,24 +1197,30 @@ pub fn pixmap_png<'py>(
         let bytes = unsafe { Bound::from_owned_ptr_or_err(py, raw)? };
         // SAFETY: `bytes` is a new, unshared bytes object and the result points
         // to its `len` bytes of writable storage until the object is published.
-        let target = unsafe { ffi::PyBytes_AsString(bytes.as_ptr()).cast::<u8>() } as usize;
+        let target_ptr = unsafe { ffi::PyBytes_AsString(bytes.as_ptr()).cast::<u8>() };
+        if target_ptr.is_null() {
+            return Err(PyErr::fetch(py));
+        }
+        let target = SendMutPtr(target_ptr);
+        let budget_ref = &budget;
         // The object remains owned and inaccessible to Python while detached, so
         // another thread can cancel the operation while the bytes are copied.
-        py.detach(|| -> Result<(), LimitExceeded> {
+        py.detach(move || -> Result<(), LimitExceeded> {
+            let base = target.into_ptr();
             for (index, source) in encoded.chunks(16 * 1024).enumerate() {
-                budget.poll()?;
+                budget_ref.poll()?;
                 // SAFETY: every chunk fits in the allocated, unshared object, and
                 // the source is a distinct Rust buffer. No uninitialized bytes
                 // are read. The owning handle remains alive until this finishes.
                 unsafe {
                     ptr::copy_nonoverlapping(
                         source.as_ptr(),
-                        (target as *mut u8).add(index * 16 * 1024),
+                        base.add(index * 16 * 1024),
                         source.len(),
                     );
                 }
             }
-            budget.poll()
+            budget_ref.poll()
         })
         .map_err(|e| limit_error(&e))?;
         bytes.cast_into::<PyBytes>().map_err(Into::into)

@@ -197,7 +197,10 @@ fn referenced(
         font,
         codes: RefCell::new([false; 256]),
     };
-    for row in rows.iter().filter(|row| used[row.id]) {
+    for row in rows
+        .iter()
+        .filter(|row| used.get(row.id).copied().unwrap_or(false))
+    {
         budget.poll().ok()?;
         let raw = &plain[row.data.clone()];
         let decoded;
@@ -215,7 +218,7 @@ fn referenced(
     for (i, _) in codes.into_iter().enumerate().filter(|(_, needed)| *needed) {
         let name = PredefinedEncoding::Standard.name(i as u8);
         let (id, _) = font.glyph_names().find(|(_, n)| *n == name)?;
-        used[id.to_u32() as usize] = true;
+        *used.get_mut(id.to_u32() as usize)? = true;
     }
     Some(used)
 }
@@ -305,4 +308,32 @@ fn rewrite(
         glyphs: used.len(),
         kept,
     })
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// The Type 1 eexec/charstring stream cipher is an exact involution for
+    /// every `u16` seed and every byte sequence: decrypting encrypted bytes
+    /// recovers the original plaintext identically.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn kani_type1_cipher_roundtrip() {
+        let seed: u16 = kani::any();
+        let plain: [u8; 8] = kani::any();
+        let mut encrypted = [0u8; 8];
+        for (dst, byte) in encrypted
+            .iter_mut()
+            .zip(cipher(plain.into_iter(), seed, true))
+        {
+            *dst = byte;
+        }
+        for (orig, dec) in plain
+            .into_iter()
+            .zip(cipher(encrypted.into_iter(), seed, false))
+        {
+            assert_eq!(dec, orig);
+        }
+    }
 }

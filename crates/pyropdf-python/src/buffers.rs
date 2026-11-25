@@ -13,6 +13,9 @@ use pyo3::exceptions::{PyBufferError, PyIndexError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
+use pyropdf_engine::extract::buffers::{
+    clear_bitmap_bits, column_buffer_view, plain_bytes as bytes, row_range_valid, set_bitmap_bit,
+};
 use pyropdf_engine::extract::{
     BBox, BlockTuple, ClipTuple, Contexts, GroupTuple, MarkTuple, PageContent, PaintColumns,
     PaintTuple, PathTable, StateTuple,
@@ -30,37 +33,16 @@ trait Columns: Send + Sync {
     fn column(&self, name: &str, start: usize, stop: usize) -> Option<(&[u8], &'static CStr)>;
 }
 
-/// Plain numeric column element types with no padding bytes.
-///
-/// # Safety
-/// Every byte of a valid value of an implementing type must be initialized.
-unsafe trait PlainNumber: Copy {}
-
-unsafe impl PlainNumber for u8 {}
-unsafe impl PlainNumber for i8 {}
-unsafe impl PlainNumber for i32 {}
-unsafe impl PlainNumber for u32 {}
-unsafe impl PlainNumber for f32 {}
-unsafe impl PlainNumber for f64 {}
-
-/// Returns the bytes of a column of plain numbers.
-fn bytes<T: PlainNumber>(items: &[T]) -> &[u8] {
-    // SAFETY: `PlainNumber` is implemented only for plain numeric types without
-    // padding, so every byte of the slice is initialized.
-    unsafe { std::slice::from_raw_parts(items.as_ptr().cast(), size_of_val(items)) }
-}
-
 /// Sets bit `row` of `bits`, which holds a byte per eight rows.
 fn set_bit(bits: &mut [u8], row: usize) {
-    bits[row / 8] |= 1 << (row % 8);
+    let set = set_bitmap_bit(bits, row);
+    debug_assert!(set, "bitmap bit {row} out of range");
 }
 
 /// Returns how many of the bits `start..stop` of `bits` are clear: the null
 /// rows of an Arrow validity bitmap.
 fn clear_bits(bits: &[u8], start: usize, stop: usize) -> usize {
-    (start..stop)
-        .filter(|&row| bits[row / 8] >> (row % 8) & 1 == 0)
-        .count()
+    clear_bitmap_bits(bits, start, stop).unwrap_or(0)
 }
 
 /// One row as `python/pyropdf/_text.py` builds a `Char` from it: `(text,
@@ -290,7 +272,7 @@ impl CharColumns {
 
 /// Checks that `start..stop` is a range of a table's `rows`.
 fn rows_of(start: usize, stop: usize, rows: usize) -> PyResult<()> {
-    if start <= stop && stop <= rows {
+    if row_range_valid(start, stop, rows) {
         Ok(())
     } else {
         Err(PyIndexError::new_err("the rows are out of range"))
@@ -618,7 +600,10 @@ impl PathColumns {
                 // Color, and tuple objects, before any conversion creates them.
                 operation
                     .operation
-                    .charge(LimitCode::MemorySize, stops.len() as u64 * 512 + 256)
+                    .charge(
+                        LimitCode::MemorySize,
+                        (stops.len() as u64).saturating_mul(512).saturating_add(256),
+                    )
                     .map_err(|refusal| limit_error(&refusal))?;
             }
             Ok(sampled)
@@ -677,16 +662,11 @@ impl Column {
                 .table
                 .column(column.name, column.start, column.stop)
                 .ok_or_else(|| PyBufferError::new_err("the column is unknown"))?;
-            let itemsize: isize = match format.to_bytes() {
-                b"d" => 8,
-                b"f" | b"i" | b"I" => 4,
-                _ => 1,
-            };
-            let length = isize::try_from(bytes.len())
-                .map_err(|_| PyBufferError::new_err("the column is too large"))?;
+            let geometry = column_buffer_view(bytes.len(), format.to_bytes())
+                .ok_or_else(|| PyBufferError::new_err("the column is too large"))?;
             // The shape lives in one allocation that `internal` owns until
             // `__releasebuffer__`; the strides are those of a contiguous view.
-            let mut shape = Box::new([length / itemsize, itemsize]);
+            let mut shape = Box::new(geometry.shape_and_stride);
             let shape_ptr = shape.as_mut_ptr();
             let nd = (flags & ffi::PyBUF_ND) == ffi::PyBUF_ND;
             let strides = (flags & ffi::PyBUF_STRIDES) == ffi::PyBUF_STRIDES;
@@ -696,9 +676,9 @@ impl Column {
             unsafe {
                 (*view).obj = owner.into_ptr();
                 (*view).buf = bytes.as_ptr().cast_mut().cast::<c_void>();
-                (*view).len = length;
+                (*view).len = geometry.len;
                 (*view).readonly = 1;
-                (*view).itemsize = itemsize;
+                (*view).itemsize = geometry.itemsize;
                 (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
                     format.as_ptr().cast_mut()
                 } else {
@@ -727,6 +707,8 @@ impl Column {
             // SAFETY: `__getbuffer__` stored a boxed `[isize; 2]` in `internal`
             // once for this view; the format is static.
             unsafe {
+                (*view).shape = ptr::null_mut();
+                (*view).strides = ptr::null_mut();
                 let internal = (*view).internal;
                 if !internal.is_null() {
                     (*view).internal = ptr::null_mut();
@@ -1064,10 +1046,7 @@ fn array(
 fn char_array(table: &Arc<CharTable>, start: usize, stop: usize) -> ArrowArray {
     let owner: Owner = table.clone();
     let length = stop - start;
-    let nulls = table.stream[start..stop]
-        .iter()
-        .filter(|&&stream| stream == 0)
-        .count();
+    let nulls = clear_bits(&table.source_bits, start, stop);
     let data =
         |pointer: *const u8| -> Box<[*const c_void]> { Box::new([ptr::null(), pointer.cast()]) };
     let buffers: [Box<[*const c_void]>; 13] = [
