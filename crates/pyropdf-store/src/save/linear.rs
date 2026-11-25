@@ -564,6 +564,28 @@ impl<'a> Plan<'a> {
                 "a page tree that its pages do not read as one tree",
             ));
         }
+        // Promote a PDF 2.0 direct catalog `/Outlines` dictionary to an
+        // indirect object, as qpdf's linearization layout requires for the
+        // outline hint table and first-page placement.
+        if let Some(Value::Reference(root)) = self.version.trailer().get("Root")
+            && self.find_reference(*root).is_some()
+            && !overrides.iter().any(|&(n, _)| n == root.number())
+            && let Some(Value::Dict(catalog)) = self.reference_value(*root)?.as_deref()
+            && let Some(outlines @ Value::Dict(_)) = catalog.get("Outlines")
+        {
+            let copied = crate::value::copy_for_edit(outlines, budget)?;
+            let number = self.add(copied)?;
+            let mut updated = catalog.clone();
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "replaces the existing /Outlines entry in the catalog"
+            )]
+            updated.insert(
+                Name::new(&b"Outlines"[..]),
+                Value::Reference(Reference::new(number, 0)),
+            );
+            overrides.try_push((root.number(), Arc::new(Value::Dict(updated))))?;
+        }
         self.overrides.try_extend(overrides.into_vec())?;
         self.overrides.sort_unstable_by_key(|&(number, _)| number);
         for &number in pages.iter() {
@@ -711,7 +733,7 @@ impl<'a> Plan<'a> {
         let outlines = catalog
             .as_ref()
             .and_then(|catalog| match catalog.get("Outlines") {
-                Some(Value::Reference(outlines)) => self.find(outlines.number()),
+                Some(Value::Reference(outlines)) => self.find_reference(*outlines),
                 _ => None,
             });
         let in_first = catalog.as_ref().is_some_and(outlines_first);
@@ -839,22 +861,24 @@ impl<'a> Plan<'a> {
         Ok(())
     }
 
-    /// Appends the outlines: their dictionary, then the objects that only
-    /// they use.
+    /// Appends the outlines: their dictionary (when indirect and classified as
+    /// `Class::Outlines`), then every other object that only they use.
     fn outlines(
         &mut self,
         order: &mut BudgetVec<'_, usize>,
         outlines: Option<usize>,
     ) -> Result<()> {
-        let Some(outlines) = outlines.filter(|&at| self.infos[at].class == Class::Outlines) else {
-            return Ok(());
-        };
+        let root = outlines.filter(|&at| self.infos[at].class == Class::Outlines);
         let start = order.len();
-        order.try_push(outlines)?;
+        if let Some(root) = root {
+            order.try_push(root)?;
+        }
         self.push(order, |at, info| {
-            info.class == Class::Outlines && at != outlines
+            info.class == Class::Outlines && Some(at) != root
         })?;
-        self.outlines = Some((start, order.len()));
+        if order.len() > start {
+            self.outlines = Some((start, order.len()));
+        }
         Ok(())
     }
 
@@ -1512,6 +1536,127 @@ mod tests {
             err.limit().map(LimitExceeded::code),
             Some(LimitCode::ObjectDepth)
         );
+    }
+
+    #[test]
+    fn direct_catalog_outlines_linearize_cleanly_in_both_page_modes() {
+        use crate::save::{FileBase, Options, full_with};
+        use crate::version::{Document, MemoryBase};
+
+        for page_mode in ["", "/PageMode /UseOutlines"] {
+            let mut base = MemoryBase::new(
+                [(Name::from("Root"), Value::Reference(Reference::new(1, 0)))]
+                    .into_iter()
+                    .collect(),
+            );
+            base.insert(
+                Reference::new(1, 0),
+                Bytes::new(
+                    format!(
+                        "<</Type/Catalog/Version/2.0/Pages 2 0 R {page_mode}\
+                         /Outlines<</Type/Outlines/First 4 0 R/Last 4 0 R/Count 1>>>>"
+                    )
+                    .into_bytes(),
+                ),
+            );
+            base.insert(
+                Reference::new(2, 0),
+                Bytes::new(&b"<</Type/Pages/Kids[3 0 R 5 0 R]/Count 2>>"[..]),
+            );
+            base.insert(
+                Reference::new(3, 0),
+                Bytes::new(&b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Resources<<>>>>"[..]),
+            );
+            base.insert(
+                Reference::new(4, 0),
+                Bytes::new(&b"<</Title(Chapter 1)/Dest[3 0 R/Fit]>>"[..]),
+            );
+            base.insert(
+                Reference::new(5, 0),
+                Bytes::new(&b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Resources<<>>>>"[..]),
+            );
+            let doc = Document::new(Arc::new(base), None);
+            let budget = Budget::default();
+            let mut out = Vec::new();
+            full_with(
+                &doc.current(),
+                &mut out,
+                &budget,
+                None,
+                Options {
+                    linearize: true,
+                    ..Options::default()
+                },
+            )
+            .unwrap();
+            let file = FileBase::open(Bytes::new(out), &budget).unwrap();
+            let reopened = Document::new(Arc::new(file), None);
+            let version = reopened.current();
+            assert!(is_linearized(&version, &budget).unwrap());
+            let Some(Value::Reference(root)) = version.trailer().get("Root") else {
+                panic!("missing Root");
+            };
+            let root_obj = version.get(root.number(), &budget).unwrap().unwrap();
+            let Value::Dict(catalog) = root_obj.value().as_ref() else {
+                panic!("Root is not a dict");
+            };
+            let Some(Value::Reference(outlines_ref)) = catalog.get("Outlines") else {
+                panic!("linearized catalog should hold indirect /Outlines");
+            };
+            let outlines_obj = version
+                .get(outlines_ref.number(), &budget)
+                .unwrap()
+                .unwrap();
+            let Value::Dict(outlines_dict) = outlines_obj.value().as_ref() else {
+                panic!("Outlines is not a dict");
+            };
+            let Some(Value::Reference(first_ref)) = outlines_dict.get("First") else {
+                panic!("missing /First outline item");
+            };
+            let item_obj = version.get(first_ref.number(), &budget).unwrap().unwrap();
+            let Value::Dict(item_dict) = item_obj.value().as_ref() else {
+                panic!("outline item is not a dict");
+            };
+            assert!(item_dict.get("Title").is_some());
+        }
+
+        // Even a non-dictionary direct /Outlines referencing an indirect object
+        // places every reachable outline object without miscounting.
+        let mut malformed = MemoryBase::new(
+            [(Name::from("Root"), Value::Reference(Reference::new(1, 0)))]
+                .into_iter()
+                .collect(),
+        );
+        malformed.insert(
+            Reference::new(1, 0),
+            Bytes::new(&b"<</Type/Catalog/Pages 2 0 R/Outlines[4 0 R]>>"[..]),
+        );
+        malformed.insert(
+            Reference::new(2, 0),
+            Bytes::new(&b"<</Type/Pages/Kids[3 0 R]/Count 1>>"[..]),
+        );
+        malformed.insert(
+            Reference::new(3, 0),
+            Bytes::new(&b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]>>"[..]),
+        );
+        malformed.insert(Reference::new(4, 0), Bytes::new(&b"<</Title(Orphan)>>"[..]));
+        let doc = Document::new(Arc::new(malformed), None);
+        let budget = Budget::default();
+        let mut out = Vec::new();
+        full_with(
+            &doc.current(),
+            &mut out,
+            &budget,
+            None,
+            Options {
+                linearize: true,
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        let file = FileBase::open(Bytes::new(out), &budget).unwrap();
+        let reopened = Document::new(Arc::new(file), None);
+        assert!(is_linearized(&reopened.current(), &budget).unwrap());
     }
 }
 

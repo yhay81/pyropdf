@@ -29,7 +29,7 @@ use std::slice;
 
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::value::{Bytes, Dict, Name, Reference, Stream, Value};
-use pyropdf_store::version::Transaction;
+use pyropdf_store::version::{Slot, Transaction};
 use pyropdf_store::{Error, LimitExceeded, write};
 
 /// The most cycles that a repeating gradient draws over what it paints: past
@@ -605,7 +605,7 @@ impl Shadings {
     }
 
     /// Returns the reference of an object that holds `value`, writing it
-    /// unless the table has one that the transaction still holds.
+    /// unless the table has one whose current store contents still match.
     fn shared(
         &mut self,
         transaction: &mut Transaction,
@@ -616,32 +616,68 @@ impl Shadings {
         let mut key = BudgetVec::new(budget);
         write::canonical(&mut key, value)?;
         if let Some(&known) = self.objects.get(key.as_slice())
-            && transaction.version().generation(known.number()).is_some()
+            && matches_cached(transaction, known, key.as_slice(), budget)?
         {
             return Ok(known);
         }
         let reference = transaction.allocate()?;
         transaction.write(reference.number(), value, budget)?;
-        budget.charge(
-            LimitCode::MemorySize,
-            (64 + 2 * size_of::<(Box<[u8]>, Reference)>()) as u64,
-        )?;
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "the entry is charged to the budget above"
-        )]
-        self.objects
-            .try_reserve(1)
-            .map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
-        // The key's own charge stays with the operation, as the table keeps it.
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "the entry is charged to the budget above, and room is made for it"
-        )]
-        self.objects
-            .insert(key.into_vec().into_boxed_slice(), reference);
+        if let Some(slot) = self.objects.get_mut(key.as_slice()) {
+            *slot = reference;
+        } else {
+            budget.charge(
+                LimitCode::MemorySize,
+                (64 + 2 * size_of::<(Box<[u8]>, Reference)>()) as u64,
+            )?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the entry is charged to the budget above"
+            )]
+            self.objects
+                .try_reserve(1)
+                .map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
+            // The key's own charge stays with the operation, as the table keeps it.
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the entry is charged to the budget above, and room is made for it"
+            )]
+            self.objects
+                .insert(key.into_vec().into_boxed_slice(), reference);
+        }
         Ok(reference)
     }
+}
+
+/// Returns whether `reference` in `transaction` still exists at the same
+/// generation with canonical bytes matching `expected`.
+fn matches_cached(
+    transaction: &Transaction,
+    reference: Reference,
+    expected: &[u8],
+    budget: &Budget,
+) -> Result<bool, Error> {
+    let version = transaction.version();
+    match version.slot(reference.number()) {
+        Some(Slot::Written(written)) => {
+            if written.generation() != reference.generation() {
+                return Ok(false);
+            }
+            if written.bytes().as_slice() == expected {
+                return Ok(true);
+            }
+        }
+        Some(Slot::Free(_)) => return Ok(false),
+        None => {}
+    }
+    let object = match version.get(reference.number(), budget) {
+        Ok(Some(object)) if object.generation() == reference.generation() => object,
+        Ok(_) => return Ok(false),
+        Err(error) if error.limit().is_some() => return Err(error),
+        Err(_) => return Ok(false),
+    };
+    let mut current = BudgetVec::new(budget);
+    write::canonical(&mut current, object.value())?;
+    Ok(current.as_slice() == expected)
 }
 
 /// The cycles of a repeating gradient that a painted box needs.
@@ -977,3 +1013,118 @@ fn stitching(functions: Vec<Value>, bounds: &[f64], encode: &[f64]) -> Dict {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod cache_tests {
+    use std::sync::Arc;
+
+    use pyropdf_store::version::{Document, MemoryBase};
+
+    use super::*;
+
+    #[test]
+    fn mutated_cached_shading_and_dependencies_are_rewritten_fresh() {
+        let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
+        let mut table = Shadings::new();
+        let budget = Budget::default();
+        let stops = [
+            Stop {
+                offset: 0.0,
+                color: [1.0, 0.0, 0.0],
+                alpha: 1.0,
+            },
+            Stop {
+                offset: 1.0,
+                color: [0.0, 0.0, 1.0],
+                alpha: 0.25,
+            },
+        ];
+        let gradient = Gradient {
+            geometry: Geometry::Axial {
+                start: [0.0, 0.0],
+                end: [100.0, 0.0],
+            },
+            stops: &stops,
+            extend: Extend::Pad,
+        };
+        let area = [0.0, 0.0, 100.0, 100.0];
+
+        let mut tx = document.begin();
+        let first = table.paint(&mut tx, &gradient, area, &budget).unwrap();
+        let pattern = table
+            .pattern(
+                &mut tx,
+                first.shading,
+                [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                &budget,
+            )
+            .unwrap();
+        // Unmodified objects are still shared.
+        assert_eq!(
+            table.paint(&mut tx, &gradient, area, &budget).unwrap(),
+            first
+        );
+        assert_eq!(
+            table
+                .pattern(
+                    &mut tx,
+                    first.shading,
+                    [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                    &budget
+                )
+                .unwrap(),
+            pattern
+        );
+
+        // Mutating the shading dictionary itself invalidates the shading cache entry.
+        let mut corrupted = Dict::new();
+        corrupted.insert(Name::from("Corrupted"), Value::Boolean(true));
+        tx.write(
+            first.shading.number(),
+            &Value::Dict(corrupted.clone()),
+            &budget,
+        )
+        .unwrap();
+        let after_shading = table.paint(&mut tx, &gradient, area, &budget).unwrap();
+        assert_ne!(after_shading.shading, first.shading);
+        assert_eq!(after_shading.mask, first.mask);
+
+        // Mutating the underlying function invalidates both function and shading.
+        let shading_obj = tx
+            .version()
+            .get(after_shading.shading.number(), &budget)
+            .unwrap()
+            .unwrap();
+        let Value::Dict(shading_dict) = shading_obj.value().as_ref() else {
+            panic!("expected shading dict");
+        };
+        let Some(&Value::Reference(fn_ref)) = shading_dict.get("Function") else {
+            panic!("expected /Function reference");
+        };
+        tx.write(fn_ref.number(), &Value::Dict(corrupted.clone()), &budget)
+            .unwrap();
+        let after_fn = table.paint(&mut tx, &gradient, area, &budget).unwrap();
+        assert_ne!(after_fn.shading, after_shading.shading);
+
+        // Mutating the cached soft mask transparency group stream invalidates the mask.
+        let mask_obj = tx
+            .version()
+            .get(after_fn.mask.unwrap().number(), &budget)
+            .unwrap()
+            .unwrap();
+        let Value::Dict(mask_dict) = mask_obj.value().as_ref() else {
+            panic!("expected mask ExtGState dict");
+        };
+        let Some(Value::Dict(smask)) = mask_dict.get("SMask") else {
+            panic!("expected SMask dict");
+        };
+        let Some(&Value::Reference(group_ref)) = smask.get("G") else {
+            panic!("expected group stream ref");
+        };
+        tx.write(group_ref.number(), &Value::Dict(corrupted), &budget)
+            .unwrap();
+        let after_mask = table.paint(&mut tx, &gradient, area, &budget).unwrap();
+        assert_ne!(after_mask.mask, after_fn.mask);
+        assert_eq!(after_mask.shading, after_fn.shading);
+    }
+}

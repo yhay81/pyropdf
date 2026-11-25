@@ -57,6 +57,10 @@ pub(crate) fn visual_spans<'b, T>(
 
 pub(super) const RICH_TEXT: i64 = 1 << 25;
 
+/// Largest user-space magnitude allowed for CSS font sizes and vertical rises
+/// after dividing by `/UserUnit`, keeping downstream metrics and PDF reals finite.
+pub(super) const MAX_USER_SIZE: f64 = 1.0e9;
+
 /// The PDF text string or XML text stream containing /RV.
 pub(crate) fn read(value: &Value, budget: &Budget) -> Result<Vec<Run>, WidgetError> {
     let xml = match value {
@@ -196,6 +200,14 @@ impl<'s> Style<'s> {
         }
     }
 
+    fn user_points(&self, pt: f64) -> Option<f64> {
+        if !(self.user_unit.is_finite() && self.user_unit > 0.0) {
+            return None;
+        }
+        let scaled = pt / self.user_unit;
+        (scaled.is_finite() && scaled.abs() <= MAX_USER_SIZE).then_some(scaled)
+    }
+
     fn property(&mut self, key: &str, val: &'s str) {
         match key {
             "text-align" => match val {
@@ -205,14 +217,18 @@ impl<'s> Style<'s> {
                 _ => {}
             },
             "font-size" => {
-                if let Some(pt) = points(val).filter(|v| *v > 0.) {
-                    self.size = pt / self.user_unit;
+                if let Some(size) = points(val)
+                    .filter(|v| *v > 0.)
+                    .and_then(|pt| self.user_points(pt))
+                    .filter(|v| *v > 0.)
+                {
+                    self.size = size;
                     self.auto_size = false;
                 }
             }
             "vertical-align" => {
-                if let Some(pt) = points(val) {
-                    self.rise = pt / self.user_unit;
+                if let Some(rise) = points(val).and_then(|pt| self.user_points(pt)) {
+                    self.rise = rise;
                 }
             }
             "font-style" => match val {
@@ -239,8 +255,12 @@ impl<'s> Style<'s> {
                         "bold" | "600" | "700" | "800" | "900" => self.bold = true,
                         "normal" | "100" | "200" | "300" | "400" | "500" => {}
                         _ => {
-                            if let Some(pt) = points(word).filter(|v| *v > 0.) {
-                                self.size = pt / self.user_unit;
+                            if let Some(size) = points(word)
+                                .filter(|v| *v > 0.)
+                                .and_then(|pt| self.user_points(pt))
+                                .filter(|v| *v > 0.)
+                            {
+                                self.size = size;
                                 self.auto_size = false;
                                 self.families(rest);
                                 break;
@@ -359,12 +379,20 @@ pub(crate) fn walk<'s>(
                     Element::Italic => style.italic = true,
                     Element::Underline => style.decoration = Some(true),
                     Element::Superscript => {
-                        style.rise += style.size * 0.35;
-                        style.size *= 0.75;
+                        let rise = style.rise + style.size * 0.35;
+                        let size = style.size * 0.75;
+                        if rise.is_finite() && size.is_finite() && size > 0.0 {
+                            style.rise = rise;
+                            style.size = size;
+                        }
                     }
                     Element::Subscript => {
-                        style.rise -= style.size * 0.2;
-                        style.size *= 0.75;
+                        let rise = style.rise - style.size * 0.2;
+                        let size = style.size * 0.75;
+                        if rise.is_finite() && size.is_finite() && size > 0.0 {
+                            style.rise = rise;
+                            style.size = size;
+                        }
                     }
                     _ => {}
                 }
@@ -412,4 +440,47 @@ pub(super) fn plain(runs: &[Run], budget: &Budget) -> Result<String, WidgetError
         },
     )?;
     String::from_utf8(text.into_vec()).map_err(|_| malformed("invalid decoded XHTML text"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tiny_or_invalid_user_unit_never_produces_non_finite_style_sizes_or_rises() {
+        for unit in [
+            1e-311,
+            1e-309,
+            f64::MIN_POSITIVE,
+            0.0,
+            -1.0,
+            f64::NAN,
+            f64::INFINITY,
+        ] {
+            let mut style = Style::new(Base14Font::Helvetica, 10.0, [0.0; 3], Align::Left);
+            style.auto_size = true;
+            style.user_unit = unit;
+            style.css("font-size:12pt; vertical-align:4pt; font:bold 14pt Times");
+            assert!(style.size.is_finite() && style.size > 0.0, "unit={unit}");
+            assert!(style.rise.is_finite(), "unit={unit}");
+            assert_eq!(style.size, 10.0, "unit={unit}");
+            assert_eq!(style.rise, 0.0, "unit={unit}");
+            assert!(style.auto_size, "unit={unit}");
+        }
+
+        // Huge /UserUnit that underflows font-size to 0 is also rejected.
+        let mut huge = Style::new(Base14Font::Helvetica, 10.0, [0.0; 3], Align::Left);
+        huge.user_unit = f64::MAX;
+        huge.css("font-size:1e-300pt; vertical-align:0pt");
+        assert_eq!(huge.size, 10.0);
+        assert_eq!(huge.rise, 0.0);
+
+        // Normal /UserUnit continues to scale points accurately.
+        let mut normal = Style::new(Base14Font::Helvetica, 10.0, [0.0; 3], Align::Left);
+        normal.user_unit = 2.0;
+        normal.css("font-size:12pt; vertical-align:4pt");
+        assert_eq!(normal.size, 6.0);
+        assert_eq!(normal.rise, 2.0);
+        assert!(!normal.auto_size);
+    }
 }

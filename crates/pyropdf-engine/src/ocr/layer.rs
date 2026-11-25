@@ -202,10 +202,34 @@ fn ocr_ops(
     text_rotation: u16,
     budget: &Budget,
 ) -> Result<Vec<u8>, Error> {
+    if !(space.unit.is_finite()
+        && space.unit > 0.0
+        && space.crop.iter().all(|value| value.is_finite()))
+    {
+        return Err(Error::Failed(
+            "OCR page geometry produces a non-finite text transform".to_owned(),
+        ));
+    }
     let mut out = Output::new(budget);
     out.push_str("q\n")?;
     for (x0, y0, x1, y1, text) in words {
+        if text.is_empty() {
+            continue;
+        }
         let (w, h) = (x1 - x0, y1 - y0);
+        if !(x0.is_finite()
+            && y0.is_finite()
+            && x1.is_finite()
+            && y1.is_finite()
+            && w.is_finite()
+            && h.is_finite()
+            && w > 0.0
+            && h > 0.0)
+        {
+            return Err(Error::Failed(
+                "OCR word box must have positive finite dimensions".to_owned(),
+            ));
+        }
         #[expect(clippy::cast_precision_loss, reason = "a word has few characters")]
         let chars = text.chars().count() as f64;
         let (origin, baseline, up, font_size, line_length) = match text_rotation {
@@ -225,12 +249,23 @@ fn ocr_ops(
         };
         // Scale the natural width of one em per character to the box.
         let sx = line_length / (chars * font_size);
+        let (a, b) = (sx * rx, sx * ry);
+        if !(font_size.is_finite()
+            && font_size > 0.0
+            && sx.is_finite()
+            && sx > 0.0
+            && [a, b, ux, uy, ox, oy].iter().all(|value| value.is_finite()))
+        {
+            return Err(Error::Failed(
+                "OCR word box produces a non-finite or degenerate text transform".to_owned(),
+            ));
+        }
         write!(
             out,
             "BT\n/{font_name} {} Tf\n3 Tr\n{} {} {} {} {} {} Tm\n<",
             fmt(font_size),
-            fmt(sx * rx),
-            fmt(sx * ry),
+            fmt(a),
+            fmt(b),
             fmt(ux),
             fmt(uy),
             fmt(ox),
@@ -274,6 +309,7 @@ impl Space {
 /// Formats a finite number without rounding away a narrow text matrix.
 /// Rust's display form uses decimal digits without PDF-invalid exponents.
 fn fmt(v: f64) -> String {
+    debug_assert!(v.is_finite(), "non-finite OCR operator number: {v}");
     if v == 0.0 {
         "0".to_owned()
     } else {
@@ -411,5 +447,50 @@ mod tests {
         let budget = Budget::default().with_timeout(std::time::Duration::ZERO);
         let error = layer(&words, [0.0, 0.0, 100.0, 100.0], 0, 1.0, 0, "F", &budget).unwrap_err();
         assert!(matches!(error, Error::Limit(refusal) if refusal.code() == LimitCode::Deadline));
+    }
+
+    #[test]
+    fn non_finite_or_degenerate_word_boxes_never_emit_inf_or_nan() {
+        let budget = Budget::default();
+        // Empty text is skipped cleanly without dividing by zero.
+        let empty = layer(
+            &[(10.0, 20.0, 50.0, 30.0, String::new())],
+            [0.0, 0.0, 200.0, 100.0],
+            0,
+            1.0,
+            0,
+            "OCR",
+            &budget,
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8(empty.content).unwrap(), "q\nQ\n");
+
+        // Extreme-aspect, zero-area, inverted, and non-finite boxes are refused.
+        for bad in [
+            (0.0, 0.0, 1e38, 1e-320, "a".to_owned()),
+            (0.0, 0.0, 1e-320, 1e38, "a".to_owned()),
+            (10.0, 20.0, 10.0, 30.0, "a".to_owned()),
+            (10.0, 20.0, 50.0, 20.0, "a".to_owned()),
+            (50.0, 20.0, 10.0, 30.0, "a".to_owned()),
+            (f64::NAN, 0.0, 10.0, 10.0, "a".to_owned()),
+            (-1e308, 0.0, 1e308, 10.0, "a".to_owned()),
+        ] {
+            let err =
+                layer(&[bad], [0.0, 0.0, 200.0, 100.0], 0, 1.0, 0, "OCR", &budget).unwrap_err();
+            assert!(matches!(err, Error::Failed(_)));
+        }
+
+        // Tiny /UserUnit that overflows display-to-PDF conversion is refused.
+        let err = layer(
+            &[(10.0, 20.0, 50.0, 30.0, "ab".to_owned())],
+            [0.0, 0.0, 200.0, 100.0],
+            0,
+            1e-311,
+            0,
+            "OCR",
+            &budget,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Failed(_)));
     }
 }

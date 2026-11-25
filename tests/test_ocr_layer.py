@@ -361,3 +361,19 @@ def test_layers_inside_a_transaction_read_its_prior_writes() -> None:
         assert page.text().splitlines() == ["First", "Second"]
     document.history.undo()
     assert document.to_bytes() == before
+
+
+def test_ocr_layer_rejects_extreme_aspect_and_overflowing_user_unit_boxes() -> None:
+    document = _blank_page_doc()
+    page = document.pages[0]
+    before = document.to_bytes()
+
+    with pytest.raises(pyropdf.OcrError, match="non-finite"):
+        page.apply_ocr(words=ocr_words([(0.0, 0.0, 1e38, 1e-320, "a")]), skip_existing=False)
+    assert document.to_bytes() == before
+
+    page.obj["UserUnit"] = 1e-311
+    with_tiny_unit = document.to_bytes()
+    with pytest.raises(pyropdf.OcrError, match="non-finite"):
+        page.apply_ocr(words=ocr_words([(10.0, 10.0, 50.0, 20.0, "Hello")]), skip_existing=False)
+    assert document.to_bytes() == with_tiny_unit

@@ -278,3 +278,33 @@ def test_rich_comb_keeps_cell_spacing_and_enforces_the_maximum_on_its_xhtml() ->
             assert [bytes(args[0]) for args in _operators(normal, "Tj")] == [b"A", b"B"]
             positions = _operators(normal, "Tm")
             assert 35 < float(positions[1][4]) - float(positions[0][4]) < 45
+
+
+@pytest.mark.parametrize("unit", [1e-311, 1e-309])
+def test_rich_text_tiny_user_unit_terminates_without_non_finite_operators(unit: float) -> None:
+    xml = _BODY + '<p>Hello <span style="font-size:12pt;vertical-align:4pt">World</span></p></body>'
+    with pyropdf.open(_seed()) as doc:
+        page = doc.pages[0]
+        page.widgets.add(TextField("auto", (4, 4, 225, 45), rich_text=_BODY + "<p>Auto</p></body>"))
+        page.widgets.add(
+            TextField(
+                "styled",
+                (4, 50, 225, 95),
+                rich_text=_BODY + "<p>Init</p></body>",
+                default_style="font-size:12pt;vertical-align:3pt",
+            )
+        )
+        # Switch to a tiny /UserUnit after widget creation so /Rect stays finite in user space.
+        page.obj["UserUnit"] = unit
+        doc.form["auto"].rich_text = _BODY + "<p>Auto resized text</p></body>"
+        doc.form["styled"].rich_text = xml
+        saved = doc.to_bytes()
+    with pikepdf.open(io.BytesIO(saved)) as pdf:
+        for field in pdf.Root.AcroForm.Fields:
+            normal = field.AP.N
+            raw = normal.read_bytes()
+            assert b"inf" not in raw
+            assert b"NaN" not in raw
+            sizes = [float(args[1]) for args in _operators(normal, "Tf")]
+            assert sizes
+            assert all(size > 0 for size in sizes)

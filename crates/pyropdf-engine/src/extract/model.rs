@@ -254,11 +254,15 @@ fn is_axis_aligned(transform: Affine) -> bool {
 }
 
 /// The exact bounding box of a path under `transform`, or `None` for a path
-/// without segments.
+/// without segments or a non-finite transform/result.
 fn path_bbox(path: &BezPath, transform: Affine) -> Option<Rect> {
+    if !affine_is_finite(transform) {
+        return None;
+    }
     path.segments()
         .map(|segment| (transform * segment).bounding_box())
         .reduce(|bbox, segment| bbox.union(segment))
+        .filter(|bbox| rect_is_finite(*bbox))
 }
 
 /// The largest scale that `transform` applies, used for stroke widths and
@@ -846,7 +850,17 @@ impl PathTable {
             .shading
             .clip_path
             .as_ref()
-            .and_then(|path| path_bbox(path, paint.matrix.inverse()))
+            .and_then(|path| {
+                let det = paint.matrix.determinant();
+                if !det.is_finite() || det == 0.0 {
+                    return None;
+                }
+                let inverse = paint.matrix.inverse();
+                if !affine_is_finite(inverse) {
+                    return None;
+                }
+                path_bbox(path, inverse)
+            })
             .map(bbox_tuple);
         let background = paint.shading.background.as_ref().map(|components| {
             let rgba = paint.shading.color_space.to_rgba(components, paint.opacity);
@@ -2613,4 +2627,105 @@ pub(crate) fn collect_page_content_on_faces<'a, S: ContentSink>(
         collector.describe_on(faces)?;
     }
     collector.finish(clip)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bridge::Bridged;
+    use crate::extract::{ItemKinds, page_content};
+    use crate::render::Fallback;
+
+    fn shading_pdf(pattern_matrix: &str) -> Vec<u8> {
+        let content = "/Pattern cs /P1 scn 0 0 200 100 re f";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /Contents 4 0 R \
+             /Resources << /Pattern << /P1 5 0 R >> >> >>"
+                .to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
+            format!(
+                "<< /Type /Pattern /PatternType 2 /Matrix [{pattern_matrix}] \
+                 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] \
+                 /BBox [10 10 90 90] /Function << /FunctionType 2 /Domain [0 1] \
+                 /C0 [1 0 0] /C1 [0 0 1] /N 1 >> >> >>"
+            ),
+        ];
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (at, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", at + 1).as_bytes());
+        }
+        let xref = out.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        out
+    }
+
+    #[test]
+    fn sample_shading_returns_none_bounds_for_singular_pattern_matrices() {
+        let budget = Budget::default();
+        let kinds = ItemKinds {
+            text_runs: false,
+            paths: true,
+            images: false,
+        };
+        for singular in ["0 0 0 0 0 0", "1 0 0 0 10 20", "1 1 1 1 0 0"] {
+            let bridged = Bridged::of_bytes(shading_pdf(singular));
+            let content = page_content(
+                &bridged,
+                &Fallback::default(),
+                0,
+                kinds,
+                true,
+                None,
+                &budget,
+            )
+            .unwrap();
+            assert_eq!(content.paths.rows(), 1, "matrix={singular}");
+            let sampled = content.paths.sample_shading(0, &budget).unwrap().unwrap();
+            assert!(
+                sampled.4.is_none(),
+                "singular matrix {singular} produced non-None bounds: {:?}",
+                sampled.4
+            );
+        }
+
+        // An invertible matrix still recovers its finite shading-space BBox.
+        let bridged = Bridged::of_bytes(shading_pdf("1 0 0 1 0 0"));
+        let content = page_content(
+            &bridged,
+            &Fallback::default(),
+            0,
+            kinds,
+            true,
+            None,
+            &budget,
+        )
+        .unwrap();
+        let sampled = content.paths.sample_shading(0, &budget).unwrap().unwrap();
+        assert_eq!(sampled.4, Some((10.0, 10.0, 90.0, 90.0)));
+
+        // Direct path_bbox rejects non-finite inverses as well.
+        let mut rect = BezPath::new();
+        rect.move_to((0.0, 0.0));
+        rect.line_to((10.0, 10.0));
+        assert!(path_bbox(&rect, Affine::new([0.0; 6]).inverse()).is_none());
+    }
 }

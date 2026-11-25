@@ -253,3 +253,35 @@ def test_destinations_into_the_page_keep_their_place(rotation: int) -> None:
     doc.history.undo()
     assert _targets(doc, rotation) == before
     assert doc.to_bytes() == pyropdf.open(_navigation(rotation)).to_bytes()
+
+
+@pytest.mark.parametrize("rotation", [90, 180, 270])
+def test_indirect_inner_inklist_and_path_arrays_keep_their_display_geometry(rotation: int) -> None:
+    data = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 200] >>",
+            3: f"<< /Type /Page /Parent 2 0 R /Rotate {rotation} /Annots [4 0 R 5 0 R] >>",
+            4: "<< /Type /Annot /Subtype /Ink /Rect [50 60 110 120] /InkList 6 0 R >>",
+            5: "<< /Type /Annot /Subtype /Polygon /Rect [20 30 80 90] /Path [8 0 R] >>",
+            6: "[7 0 R [80 90 110 120]]",
+            7: "[50 60 70 80]",
+            8: "[20 30 50 60 80 90]",
+        }
+    )
+    doc = pyropdf.open(data)
+    page = doc.pages[0]
+    before_layout = _layout(page)
+    before_path = [float(v) for v in page.annotations[1].obj["Path"][0]]
+
+    page.remove_rotation()
+
+    assert page.rotation == 0
+    assert _layout(page) == before_layout
+    after_path = [float(v) for v in page.annotations[1].obj["Path"][0]]
+    assert after_path != before_path
+
+    reopened = pyropdf.open(doc.to_bytes()).pages[0]
+    assert reopened.rotation == 0
+    assert _layout(reopened) == before_layout
+    assert [float(v) for v in reopened.annotations[1].obj["Path"][0]] == after_path
