@@ -267,6 +267,25 @@ pub(super) fn version(text: &str) -> Option<Version> {
     })
 }
 
+/// How a predicate expression is evaluated.
+///
+/// `Predicate` evaluates boolean guards (`IsRequired`, `DefaultValue`,
+/// type/link conditions, `MustBeDirect`/`MustBeIndirect`, `RequiredValue`
+/// triggers): an inapplicable version gate or ordering comparison against an
+/// absent operand evaluates to `false`.
+///
+/// `Constraint` evaluates `PossibleValues` `fn:Eval(...)` value constraints:
+/// a 2-argument version-gated sub-constraint (such as
+/// `fn:BeforeVersion(1.3, fn:Eval(@Colors<=4))`) applies only when the
+/// version gate is open and is vacuously `true` otherwise, and an ordering
+/// comparison against an absent sibling (such as `@min <= @max` when `/max`
+/// is omitted) evaluates to `Val::Unknown` rather than `false`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EvalMode {
+    Predicate,
+    Constraint,
+}
+
 /// What a predicate is evaluated against: the dictionary that holds the
 /// key, and the key's value.
 pub(super) struct Scope<'g, 'v, G: Graph> {
@@ -356,6 +375,14 @@ impl<G: Graph> Scope<'_, '_, G> {
     }
 
     pub(super) fn eval(&self, expr: &Expr<'_>) -> Result<Val, G::Error> {
+        self.eval_with(expr, EvalMode::Predicate)
+    }
+
+    pub(super) fn eval_constraint(&self, expr: &Expr<'_>) -> Result<Val, G::Error> {
+        self.eval_with(expr, EvalMode::Constraint)
+    }
+
+    fn eval_with(&self, expr: &Expr<'_>, mode: EvalMode) -> Result<Val, G::Error> {
         Ok(match expr {
             Expr::Word("true") => Val::Bool(true),
             Expr::Word("false") => Val::Bool(false),
@@ -370,24 +397,30 @@ impl<G: Graph> Scope<'_, '_, G> {
             Expr::Path(path) => self.path(path, |value| {
                 value.map_or(Val::Absent, |value| scalar(&self.graph.view(value)))
             })?,
-            Expr::Neg(inner) => match self.eval(inner)? {
+            Expr::Neg(inner) => match self.eval_with(inner, mode)? {
                 Val::Num(value) => Val::Num(-value),
                 _ => Val::Unknown,
             },
-            Expr::Binary(op, left, right) => self.binary(*op, left, right)?,
-            Expr::Call(name, args) => self.call(name, args)?,
+            Expr::Binary(op, left, right) => self.binary(*op, left, right, mode)?,
+            Expr::Call(name, args) => self.call(name, args, mode)?,
         })
     }
 
-    fn binary(&self, op: Op, left: &Expr<'_>, right: &Expr<'_>) -> Result<Val, G::Error> {
-        let left = self.eval(left)?;
+    fn binary(
+        &self,
+        op: Op,
+        left: &Expr<'_>,
+        right: &Expr<'_>,
+        mode: EvalMode,
+    ) -> Result<Val, G::Error> {
+        let left = self.eval_with(left, mode)?;
         if op == Op::And && left == Val::Bool(false) {
             return Ok(left);
         }
         if op == Op::Or && left == Val::Bool(true) {
             return Ok(left);
         }
-        let right = self.eval(right)?;
+        let right = self.eval_with(right, mode)?;
         Ok(match op {
             Op::And | Op::Or => match (left.truth(), right.truth()) {
                 (_, Some(value)) if value == (op == Op::Or) => Val::Bool(value),
@@ -407,7 +440,10 @@ impl<G: Graph> Scope<'_, '_, G> {
                     Op::Gt => a > b,
                     _ => a >= b,
                 }),
-                (Val::Absent, _) | (_, Val::Absent) => Val::Bool(false),
+                (Val::Absent, _) | (_, Val::Absent) => match mode {
+                    EvalMode::Predicate => Val::Bool(false),
+                    EvalMode::Constraint => Val::Unknown,
+                },
                 _ => Val::Unknown,
             },
             Op::Add | Op::Sub | Op::Mul | Op::Mod => match (&left, &right) {
@@ -423,22 +459,23 @@ impl<G: Graph> Scope<'_, '_, G> {
         })
     }
 
-    fn call(&self, name: &str, args: &[Expr<'_>]) -> Result<Val, G::Error> {
+    fn call(&self, name: &str, args: &[Expr<'_>], mode: EvalMode) -> Result<Val, G::Error> {
         let path = || args.first().and_then(Expr::text);
         Ok(match (name, args) {
-            ("fn:Eval" | "fn:IsRequired", [inner]) | ("fn:Deprecated", [_, inner]) => {
-                self.eval(inner)?
-            }
-            ("fn:Not", [inner]) => match self.eval(inner)?.truth() {
+            ("fn:Eval", [inner]) | ("fn:Deprecated", [_, inner]) => self.eval_with(inner, mode)?,
+            ("fn:IsRequired", [inner]) => self.eval_with(inner, EvalMode::Predicate)?,
+            ("fn:Not", [inner]) => match self.eval_with(inner, mode)?.truth() {
                 Some(value) => Val::Bool(!value),
                 None => Val::Unknown,
             },
             ("fn:MustBeDirect" | "fn:MustBeIndirect", []) => Val::Bool(true),
-            ("fn:MustBeDirect" | "fn:MustBeIndirect", [inner]) => self.eval(inner)?,
+            ("fn:MustBeDirect" | "fn:MustBeIndirect", [inner]) => {
+                self.eval_with(inner, EvalMode::Predicate)?
+            }
             ("fn:IsPresent", [_]) => self.present(path())?,
             ("fn:IsPresent", [_, then]) => match self.present(path())? {
                 Val::Bool(false) => Val::Bool(true),
-                Val::Bool(true) => self.eval(then)?,
+                Val::Bool(true) => self.eval_with(then, mode)?,
                 other => other,
             },
             ("fn:SinceVersion" | "fn:BeforeVersion" | "fn:IsPDFVersion", [at, rest @ ..]) => {
@@ -452,8 +489,8 @@ impl<G: Graph> Scope<'_, '_, G> {
                 };
                 match rest {
                     [] => Val::Bool(open),
-                    [_] if !open => Val::Bool(false),
-                    [inner] => match self.eval(inner)? {
+                    [_] if !open => Val::Bool(mode == EvalMode::Constraint),
+                    [inner] => match self.eval_with(inner, mode)? {
                         Val::Bool(value) => Val::Bool(value),
                         Val::Unknown => Val::Unknown,
                         _ => Val::Bool(true),
@@ -483,7 +520,7 @@ impl<G: Graph> Scope<'_, '_, G> {
                         } else {
                             match self.extension(ext_name, None)? {
                                 Some(false) => Val::Bool(false),
-                                Some(true) => match self.eval(second)? {
+                                Some(true) => match self.eval_with(second, mode)? {
                                     Val::Bool(value) => Val::Bool(value),
                                     Val::Unknown => Val::Unknown,
                                     _ => Val::Bool(true),
@@ -518,7 +555,7 @@ impl<G: Graph> Scope<'_, '_, G> {
                 })?
             }
             ("fn:Contains", [_, wanted]) => {
-                let wanted = self.eval(wanted)?;
+                let wanted = self.eval_with(wanted, mode)?;
                 if matches!(wanted, Val::Unknown | Val::Present) {
                     return Ok(Val::Unknown);
                 }
@@ -717,6 +754,10 @@ impl<G: Graph> Scope<'_, '_, G> {
         };
         // ETSI EN 319 142-1 §5.6 registers these PDF 1.7 declarations for the
         // CAdES subfilter. ETSI_PAdES is the model name, not a catalog key.
+        // ISO 32000-1 §7.12.1 requires /Extensions, its developer extension
+        // dictionaries, and their entries to be direct objects, so indirect
+        // /Extensions or vendor dicts intentionally do not satisfy this check
+        // (do not deref_once here; see PR #1089 and test_signature_structures.py).
         if name == "ETSI_PAdES" && candidate == Some("ETSI.CAdES.detached") {
             let base = Version { major: 1, minor: 7 };
             let present = self.version >= base

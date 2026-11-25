@@ -1246,38 +1246,35 @@ impl<'g, G: Graph> Walk<'g, G> {
     /// greater than every key of its parent tree.
     fn structure(&mut self, number: u32, node: &G::Value, name: &str) -> Result<(), G::Error> {
         if let Some(kids) = self.graph.get(node, b"K") {
-            let items = match self.graph.view(kids) {
-                View::Reference(kid) => vec![Item::Reference(0, kid)],
-                _ => self.items(kids, "K")?,
-            };
-            for item in items {
-                let Item::Reference(at, kid) = item else {
-                    continue;
-                };
-                let Some(value) = self.graph.resolve(kid)? else {
-                    continue;
-                };
-                let kind = self.graph.get(&value, b"Type").map(|t| self.graph.view(t));
-                let element = match kind {
-                    Some(View::Name(b"StructElem")) => true,
-                    None => self.graph.get(&value, b"S").is_some(),
-                    _ => false,
-                };
-                let parent = self.graph.get(&value, b"P").map(|p| self.graph.view(p));
-                if element && parent != Some(View::Reference(number)) {
-                    let found = match parent {
-                        Some(View::Reference(other)) => format!("{other} 0 R"),
-                        Some(other) => other.to_string(),
-                        None => "nothing".to_owned(),
-                    };
-                    self.invariant(
-                        Some(kid),
-                        "P",
-                        &format!("{name}/K"),
-                        "14.7.2",
-                        format!("kid {at} of structure node {number} names {found} as its /P"),
-                    );
+            match self.graph.view(kids) {
+                View::Array(_) => {
+                    for (at, item) in self.graph.elements(kids).iter().enumerate() {
+                        self.graph.visit(false)?;
+                        if let View::Reference(kid) = self.graph.view(item)
+                            && let Some(value) = self.graph.target(item)?
+                        {
+                            self.check_structure_kid(number, name, at, kid, &value);
+                        }
+                    }
                 }
+                View::Reference(target_id) => {
+                    self.graph.visit(false)?;
+                    if let Some(resolved) = self.graph.target(kids)? {
+                        if matches!(self.graph.view(&resolved), View::Array(_)) {
+                            for (at, item) in self.graph.elements(&resolved).iter().enumerate() {
+                                self.graph.visit(false)?;
+                                if let View::Reference(kid) = self.graph.view(item)
+                                    && let Some(value) = self.graph.target(item)?
+                                {
+                                    self.check_structure_kid(number, name, at, kid, &value);
+                                }
+                            }
+                        } else {
+                            self.check_structure_kid(number, name, 0, target_id, &resolved);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         if name != "StructTreeRoot" {
@@ -1325,6 +1322,37 @@ impl<'g, G: Graph> Walk<'g, G> {
             });
         }
         Ok(())
+    }
+
+    fn check_structure_kid(
+        &mut self,
+        parent_number: u32,
+        parent_name: &str,
+        at: usize,
+        kid: u32,
+        value: &G::Value,
+    ) {
+        let kind = self.graph.get(value, b"Type").map(|t| self.graph.view(t));
+        let element = match kind {
+            Some(View::Name(b"StructElem")) => true,
+            None => self.graph.get(value, b"S").is_some(),
+            _ => false,
+        };
+        let parent = self.graph.get(value, b"P").map(|p| self.graph.view(p));
+        if element && parent != Some(View::Reference(parent_number)) {
+            let found = match parent {
+                Some(View::Reference(other)) => format!("{other} 0 R"),
+                Some(other) => other.to_string(),
+                None => "nothing".to_owned(),
+            };
+            self.invariant(
+                Some(kid),
+                "P",
+                &format!("{parent_name}/K"),
+                "14.7.2",
+                format!("kid {at} of structure node {parent_number} names {found} as its /P"),
+            );
+        }
     }
 
     fn check_parent_tree_next_key(&mut self, number: u32, next: i64, greatest: Option<i64>) {
@@ -1787,7 +1815,7 @@ fn admits_expr<G: Graph>(
                 None => Admit::Unknown,
             })
         }
-        _ => Ok(match scope.eval(expr)? {
+        _ => Ok(match scope.eval_constraint(expr)? {
             Val::Bool(true) => Admit::Yes,
             Val::Bool(false) => Admit::No,
             _ => Admit::Unknown,

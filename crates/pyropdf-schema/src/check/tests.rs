@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use super::{DefectKind, Graph, View, check};
+use super::{DefectKind, Graph, View, check, check_authored};
 use crate::Version;
 
 /// A small document for the check's own tests.
@@ -10,6 +10,7 @@ enum V {
     Null,
     Bool(bool),
     Int(i64),
+    Real(f64),
     Name(&'static str),
     Str(&'static [u8]),
     Array(Vec<V>),
@@ -48,6 +49,7 @@ impl Graph for Doc {
             V::Null => View::Null,
             V::Bool(value) => View::Boolean(*value),
             V::Int(value) => View::Integer(*value),
+            V::Real(value) => View::Real(*value),
             V::Name(name) => View::Name(name.as_bytes()),
             V::Str(bytes) => View::String(bytes),
             V::Array(items) => View::Array(items.len()),
@@ -814,4 +816,399 @@ fn appearance_state_checks_indirect_direct_null_and_rollover_down() {
         invariants(objects),
         vec![(Some(3), "Annots/0/AS".into(), "AnnotSquare/AS".into())]
     );
+}
+
+#[test]
+fn filter_colors_version_gate_allows_pdf13_plus_and_enforces_bounds() {
+    for filter in ["FilterFlateDecode", "FilterLZWDecode"] {
+        let clause = format!("{filter}/Colors");
+        for (major, minor) in [(1, 3), (1, 7), (2, 0)] {
+            let mut document = doc(valid());
+            document.version = Version { major, minor };
+            for colors in [1, 3, 5] {
+                let value = V::Dict(vec![("Colors", V::Int(colors))]);
+                let report = check_authored(&document, filter, 4, &value)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    report.defects,
+                    vec![],
+                    "{filter} /Colors {colors} on PDF {major}.{minor}"
+                );
+            }
+            for colors in [0, -1] {
+                let value = V::Dict(vec![("Colors", V::Int(colors))]);
+                let report = check_authored(&document, filter, 4, &value)
+                    .unwrap()
+                    .unwrap();
+                assert!(
+                    report
+                        .defects
+                        .iter()
+                        .any(|d| d.kind == DefectKind::Value && d.clause == clause),
+                    "expected Value defect for {filter} /Colors {colors} on PDF {major}.{minor}: {:?}",
+                    report.defects
+                );
+            }
+        }
+
+        let mut pdf12 = doc(valid());
+        pdf12.version = Version { major: 1, minor: 2 };
+        for colors in [1, 4] {
+            let value = V::Dict(vec![("Colors", V::Int(colors))]);
+            let report = check_authored(&pdf12, filter, 4, &value).unwrap().unwrap();
+            assert_eq!(
+                report.defects,
+                vec![],
+                "{filter} /Colors {colors} on PDF 1.2"
+            );
+        }
+        for colors in [0, 5] {
+            let value = V::Dict(vec![("Colors", V::Int(colors))]);
+            let report = check_authored(&pdf12, filter, 4, &value).unwrap().unwrap();
+            assert!(
+                report
+                    .defects
+                    .iter()
+                    .any(|d| d.kind == DefectKind::Value && d.clause == clause),
+                "expected Value defect for {filter} /Colors {colors} on PDF 1.2: {:?}",
+                report.defects
+            );
+        }
+    }
+
+    // Preserve fn:BeforeVersion semantics in IsRequired predicates.
+    let form_without_pre13_required = |major: u8, minor: u8| {
+        let mut objects = valid();
+        let V::Dict(page) = &mut objects[3] else {
+            unreachable!()
+        };
+        for (key, value) in page.iter_mut() {
+            if *key == "Resources" {
+                *value = V::Dict(vec![("XObject", V::Dict(vec![("Fm0", V::Ref(4))]))]);
+            }
+        }
+        objects.push(V::Stream(vec![
+            ("Type", V::Name("XObject")),
+            ("Subtype", V::Name("Form")),
+            (
+                "BBox",
+                V::Array(vec![V::Int(0), V::Int(0), V::Int(10), V::Int(10)]),
+            ),
+            ("Resources", V::Dict(vec![])),
+            ("Length", V::Int(0)),
+        ]));
+        let mut document = doc(objects);
+        document.version = Version { major, minor };
+        check(&document)
+            .unwrap()
+            .defects
+            .into_iter()
+            .filter(|d| d.kind == DefectKind::Required)
+            .map(|d| d.clause)
+            .collect::<Vec<_>>()
+    };
+    let pdf12_required = form_without_pre13_required(1, 2);
+    assert!(pdf12_required.contains(&"XObjectFormType1/FormType".to_owned()));
+    assert!(pdf12_required.contains(&"XObjectFormType1/Matrix".to_owned()));
+    assert_eq!(form_without_pre13_required(1, 3), Vec::<String>::new());
+
+    // Preserve fn:BeforeVersion || fn:SinceVersion(..., ...) inside IsRequired.
+    let mut pdf17 = doc(valid());
+    pdf17.version = Version { major: 1, minor: 7 };
+    let polygon_with_path = V::Dict(vec![
+        ("Type", V::Name("Annot")),
+        ("Subtype", V::Name("Polygon")),
+        (
+            "Rect",
+            V::Array(vec![V::Int(0), V::Int(0), V::Int(10), V::Int(10)]),
+        ),
+        ("Path", V::Array(vec![])),
+    ]);
+    let pdf17_poly = check_authored(&pdf17, "AnnotPolygon", 4, &polygon_with_path)
+        .unwrap()
+        .unwrap();
+    assert!(
+        pdf17_poly
+            .defects
+            .iter()
+            .any(|d| d.kind == DefectKind::Required && d.clause == "AnnotPolygon/Vertices"),
+        "{:?}",
+        pdf17_poly.defects
+    );
+    let mut pdf20 = doc(valid());
+    pdf20.version = Version { major: 2, minor: 0 };
+    let pdf20_poly = check_authored(&pdf20, "AnnotPolygon", 4, &polygon_with_path)
+        .unwrap()
+        .unwrap();
+    assert!(
+        !pdf20_poly
+            .defects
+            .iter()
+            .any(|d| d.kind == DefectKind::Required && d.clause == "AnnotPolygon/Vertices"),
+        "{:?}",
+        pdf20_poly.defects
+    );
+}
+
+#[test]
+fn opt_content_zoom_allows_single_bound_and_rejects_negative_or_inverted() {
+    let with_zoom = |zoom: Vec<(&'static str, V)>| {
+        let mut objects = valid();
+        objects[1] = V::Dict(vec![
+            ("Type", V::Name("Catalog")),
+            ("Pages", V::Ref(2)),
+            (
+                "OCProperties",
+                V::Dict(vec![
+                    ("OCGs", V::Array(vec![V::Ref(4)])),
+                    ("D", V::Dict(vec![])),
+                ]),
+            ),
+        ]);
+        objects.push(V::Dict(vec![
+            ("Type", V::Name("OCG")),
+            ("Name", V::Str(b"Layer")),
+            ("Usage", V::Dict(vec![("Zoom", V::Dict(zoom))])),
+        ]));
+        check(&doc(objects)).unwrap().defects
+    };
+
+    for valid_zoom in [
+        vec![("min", V::Real(2.0))],
+        vec![("max", V::Real(5.0))],
+        vec![("min", V::Real(0.0))],
+        vec![("max", V::Real(0.0))],
+        vec![("min", V::Real(1.0)), ("max", V::Real(5.0))],
+        vec![("min", V::Real(2.0)), ("max", V::Real(2.0))],
+    ] {
+        assert_eq!(with_zoom(valid_zoom.clone()), vec![], "{valid_zoom:?}");
+    }
+
+    let neg_min: Vec<_> = with_zoom(vec![("min", V::Real(-0.5))])
+        .into_iter()
+        .map(|d| (d.kind, d.clause))
+        .collect();
+    assert_eq!(
+        neg_min,
+        vec![(DefectKind::Value, "OptContentZoom/min".into())]
+    );
+
+    let neg_max: Vec<_> = with_zoom(vec![("max", V::Real(-1.0))])
+        .into_iter()
+        .map(|d| (d.kind, d.clause))
+        .collect();
+    assert_eq!(
+        neg_max,
+        vec![(DefectKind::Value, "OptContentZoom/max".into())]
+    );
+
+    let mut inverted: Vec<_> = with_zoom(vec![("min", V::Real(5.0)), ("max", V::Real(2.0))])
+        .into_iter()
+        .map(|d| (d.kind, d.clause))
+        .collect();
+    inverted.sort_by(|a, b| a.1.cmp(&b.1));
+    assert_eq!(
+        inverted,
+        vec![
+            (DefectKind::Value, "OptContentZoom/max".into()),
+            (DefectKind::Value, "OptContentZoom/min".into()),
+        ]
+    );
+
+    let mut empty: Vec<_> = with_zoom(vec![])
+        .into_iter()
+        .map(|d| (d.kind, d.clause))
+        .collect();
+    empty.sort_by(|a, b| a.1.cmp(&b.1));
+    assert_eq!(
+        empty,
+        vec![
+            (DefectKind::Required, "OptContentZoom/max".into()),
+            (DefectKind::Required, "OptContentZoom/min".into()),
+        ]
+    );
+
+    // Absent operand in IsRequired comparison stays false (does not falsely demand /AN).
+    let rendition = V::Dict(vec![
+        ("Type", V::Name("Action")),
+        ("S", V::Name("Rendition")),
+        ("JS", V::Str(b"1")),
+    ]);
+    let report = check_authored(&doc(valid()), "ActionRendition", 4, &rendition)
+        .unwrap()
+        .unwrap();
+    assert!(
+        !report
+            .defects
+            .iter()
+            .any(|d| d.kind == DefectKind::Required && d.clause == "ActionRendition/AN"),
+        "{:?}",
+        report.defects
+    );
+}
+
+#[test]
+fn indirect_structure_k_arrays_validate_parent_backlinks_and_cycles() {
+    let build_root_k = |second_parent: V| {
+        let mut objects = valid();
+        objects[1] = V::Dict(vec![
+            ("Type", V::Name("Catalog")),
+            ("Pages", V::Ref(2)),
+            ("StructTreeRoot", V::Ref(4)),
+        ]);
+        // 4: StructTreeRoot -> indirect /K array 7
+        objects.push(V::Dict(vec![
+            ("Type", V::Name("StructTreeRoot")),
+            ("K", V::Ref(7)),
+        ]));
+        // 5: valid child
+        objects.push(V::Dict(vec![
+            ("Type", V::Name("StructElem")),
+            ("S", V::Name("Document")),
+            ("P", V::Ref(4)),
+        ]));
+        // 6: second child with configurable /P
+        objects.push(V::Dict(vec![
+            ("Type", V::Name("StructElem")),
+            ("S", V::Name("P")),
+            ("P", second_parent),
+        ]));
+        // 7: indirect /K array
+        objects.push(V::Array(vec![V::Ref(5), V::Ref(6)]));
+        objects
+    };
+    assert_eq!(invariants(build_root_k(V::Ref(4))), vec![]);
+    assert_eq!(
+        invariants(build_root_k(V::Ref(1))),
+        vec![(Some(6), "P".into(), "StructTreeRoot/K".into())]
+    );
+
+    // Nested StructElem with an indirect /K array mixing MCID and StructElem refs.
+    let build_elem_k = |leaf_parent: V| {
+        let mut objects = valid();
+        objects[1] = V::Dict(vec![
+            ("Type", V::Name("Catalog")),
+            ("Pages", V::Ref(2)),
+            ("StructTreeRoot", V::Ref(4)),
+        ]);
+        objects.push(V::Dict(vec![
+            ("Type", V::Name("StructTreeRoot")),
+            ("K", V::Ref(5)),
+        ]));
+        objects.push(V::Dict(vec![
+            ("Type", V::Name("StructElem")),
+            ("S", V::Name("Document")),
+            ("P", V::Ref(4)),
+            ("K", V::Ref(6)),
+        ]));
+        objects.push(V::Array(vec![V::Int(0), V::Ref(7), V::Ref(8)]));
+        objects.push(V::Dict(vec![
+            ("Type", V::Name("StructElem")),
+            ("S", V::Name("P")),
+            ("P", V::Ref(5)),
+        ]));
+        objects.push(V::Dict(vec![
+            ("Type", V::Name("StructElem")),
+            ("S", V::Name("Span")),
+            ("P", leaf_parent),
+        ]));
+        let mut d = doc(objects);
+        d.trailer = V::Dict(vec![("Size", V::Int(12)), ("Root", V::Ref(1))]);
+        d
+    };
+    let ok_elem: Vec<_> = check(&build_elem_k(V::Ref(5)))
+        .unwrap()
+        .defects
+        .into_iter()
+        .filter(|d| d.kind == DefectKind::Invariant)
+        .collect();
+    assert_eq!(ok_elem, vec![]);
+    let bad_elem: Vec<_> = check(&build_elem_k(V::Ref(4)))
+        .unwrap()
+        .defects
+        .into_iter()
+        .filter(|d| d.kind == DefectKind::Invariant)
+        .map(|d| (d.object, d.path, d.clause))
+        .collect();
+    assert_eq!(bad_elem, vec![(Some(8), "P".into(), "StructElem/K".into())]);
+
+    // Self-referential indirect /K array terminates cleanly and respects visit budgets.
+    let mut cyclic = valid();
+    cyclic[1] = V::Dict(vec![
+        ("Type", V::Name("Catalog")),
+        ("Pages", V::Ref(2)),
+        ("StructTreeRoot", V::Ref(4)),
+    ]);
+    cyclic.push(V::Dict(vec![
+        ("Type", V::Name("StructTreeRoot")),
+        ("K", V::Ref(5)),
+    ]));
+    cyclic.push(V::Array(vec![V::Ref(5)]));
+    assert!(check(&doc(cyclic.clone())).is_ok());
+
+    let mut tight = doc(cyclic);
+    tight.limit = 4;
+    assert!(check(&tight).is_err());
+}
+
+#[test]
+fn etsi_pades_cades_requires_direct_extensions_and_vendor_dicts() {
+    let run = |extensions: V, extra: Option<V>| {
+        let mut objects = valid();
+        objects[1] = V::Dict(vec![
+            ("Type", V::Name("Catalog")),
+            ("Pages", V::Ref(2)),
+            ("AcroForm", V::Ref(4)),
+            ("Extensions", extensions),
+        ]);
+        objects.push(V::Dict(vec![("Fields", V::Array(vec![V::Ref(5)]))]));
+        objects.push(V::Dict(vec![
+            ("FT", V::Name("Sig")),
+            ("T", V::Str(b"Approval")),
+            ("V", V::Ref(6)),
+        ]));
+        objects.push(V::Dict(vec![
+            ("Type", V::Name("Sig")),
+            ("Filter", V::Name("Adobe.PPKLite")),
+            ("SubFilter", V::Name("ETSI.CAdES.detached")),
+            ("Contents", V::Str(b"\x00")),
+        ]));
+        if let Some(obj7) = extra {
+            objects.push(obj7);
+        }
+        check(&doc(objects))
+            .unwrap()
+            .defects
+            .into_iter()
+            .map(|d| (d.kind, d.clause))
+            .collect::<Vec<_>>()
+    };
+
+    let direct_esic = V::Dict(vec![(
+        "ESIC",
+        V::Dict(vec![
+            ("BaseVersion", V::Name("1.7")),
+            ("ExtensionLevel", V::Int(2)),
+        ]),
+    )]);
+    assert!(
+        !run(direct_esic.clone(), None)
+            .contains(&(DefectKind::Version, "Signature/SubFilter".to_owned()))
+    );
+
+    // ISO 32000-1 §7.12.1 requires direct /Extensions and vendor dicts.
+    let indirect_ext = run(V::Ref(7), Some(direct_esic));
+    assert!(indirect_ext.contains(&(DefectKind::Indirect, "Catalog/Extensions".to_owned())));
+    assert!(indirect_ext.contains(&(DefectKind::Version, "Signature/SubFilter".to_owned())));
+
+    let indirect_vendor = run(
+        V::Dict(vec![("ESIC", V::Ref(7))]),
+        Some(V::Dict(vec![
+            ("BaseVersion", V::Name("1.7")),
+            ("ExtensionLevel", V::Int(2)),
+        ])),
+    );
+    assert!(indirect_vendor.contains(&(DefectKind::Indirect, "Extensions/*".to_owned())));
+    assert!(indirect_vendor.contains(&(DefectKind::Version, "Signature/SubFilter".to_owned())));
 }
