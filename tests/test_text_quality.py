@@ -20,8 +20,14 @@ ROOT = Path(__file__).resolve().parents[1]
 LABELS = sorted((ROOT / "evidence" / "pymupdf-comparison" / "quality").glob("*.json"))
 #: The share of a word's ink box that its box covers.
 COVERED = 0.9
-#: Pages whose labels pyropdf does not meet yet, with the issue that tracks each.
+#: Pages whose reading-order anchors pyropdf does not meet yet, with the issue that tracks each.
 KNOWN: dict[str, str] = {}
+#: Pages whose labeled table rows pyropdf does not meet yet, with the issue that tracks each.
+KNOWN_TABLES: dict[str, str] = {
+    "senate-expenditures-p1": (
+        "#1153: borderless multi-line data rows beneath a double-ruled bordered header are not attached to the grid"
+    ),
+}
 
 
 def _normalize(text: str) -> str:
@@ -61,8 +67,13 @@ def test_labeled_words_cover_their_ink(path: Path) -> None:
         assert best >= COVERED, word["text"]
 
 
-@pytest.mark.parametrize("path", [path for path in LABELS if "table" in json.loads(path.read_text())])
-def test_labeled_table_rows(path: Path) -> None:
+TABLE_LABELS = [path for path in LABELS if "table" in json.loads(path.read_text())]
+
+
+@pytest.mark.parametrize("path", TABLE_LABELS, ids=[path.stem for path in TABLE_LABELS])
+def test_labeled_table_rows(path: Path, request: pytest.FixtureRequest) -> None:
+    if path.stem in KNOWN_TABLES:
+        request.applymarker(pytest.mark.xfail(reason=KNOWN_TABLES[path.stem], strict=True))
     label, page = _label(path)
     [table] = page.tables()
     assert max(len(row) for row in table.rows) == label["table"]["columns"]

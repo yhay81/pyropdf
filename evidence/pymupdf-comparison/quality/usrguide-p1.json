@@ -1,0 +1,114 @@
+{
+ "document": "usrguide.pdf",
+ "page": 1,
+ "checked": false,
+ "notes": "Agent-labeled from Ghostscript renderings at 150 and 288 dpi; awaiting the owner's check. Title block, hyperlinked Table of Contents with dot leaders, and bottom footnote.",
+ "anchors": [
+  "LATEX for authors",
+  "current version",
+  "Copyright 2020–2025, LATEX Project Team.",
+  "2026-02-12",
+  "Contents",
+  "1 Introduction",
+  "2 Creating document commands and environments",
+  "2.5 Optional arguments",
+  "2.10 Argument processors",
+  "2.19 Creating new argument processors",
+  "3 Copying and showing (robust) commands and environments",
+  "4 Preconstructing command names",
+  "conditions of the LATEX Project",
+  "the source usrguide.tex for full details."
+ ],
+ "words": [
+  {
+   "text": "authors",
+   "seed": [
+    305.51,
+    163.83,
+    358.62,
+    181.38
+   ],
+   "ink": [
+    306.25,
+    165.75,
+    358.0,
+    178.0
+   ]
+  },
+  {
+   "text": "Introduction",
+   "seed": [
+    139.74,
+    354.92,
+    202.91,
+    365.08
+   ],
+   "ink": [
+    140.0,
+    356.0,
+    202.75,
+    363.0
+   ]
+  },
+  {
+   "text": "Optional",
+   "seed": [
+    162.65,
+    436.62,
+    200.84,
+    446.58
+   ],
+   "ink": [
+    163.25,
+    437.75,
+    200.5,
+    446.75
+   ]
+  },
+  {
+   "text": "tabular",
+   "seed": [
+    279.26,
+    532.26,
+    310.84,
+    542.22
+   ],
+   "ink": [
+    279.5,
+    533.25,
+    310.5,
+    540.25
+   ]
+  },
+  {
+   "text": "showing",
+   "seed": [
+    207.03,
+    625.9,
+    246.88,
+    636.06
+   ],
+   "ink": [
+    207.5,
+    627.0,
+    246.75,
+    636.0
+   ]
+  },
+  {
+   "text": "conditions",
+   "seed": [
+    350.43,
+    679.45,
+    388.13,
+    687.42
+   ],
+   "ink": [
+    350.75,
+    680.5,
+    387.75,
+    686.0
+   ]
+  }
+ ]
+}

@@ -955,6 +955,13 @@ fn as_u64(value: usize) -> u64 {
 /// This absorbs super/subscripts while separating normal leading of 1.0 or more.
 const LINE_TOLERANCE: f64 = 0.5;
 
+/// A leading superscript must sit below this share of the body size and at
+/// least `LEADING_SUPERSCRIPT_RISE` sizes above the body baseline to let the
+/// body baseline replace it.
+const LEADING_SUPERSCRIPT_SIZE: f64 = 0.85;
+const LEADING_SUPERSCRIPT_RISE: f64 = 1.0 / 6.0;
+const MAX_LEADING_SUPERSCRIPTS: usize = 3;
+
 /// Backward movement above this factor starts another source-order paint run.
 const PAINT_RUN_RESET_TOLERANCE: f64 = 0.05;
 
@@ -1639,19 +1646,35 @@ fn cluster_lines(glyphs: Vec<GlyphRecord>) -> Result<Vec<Vec<GlyphRecord>>, Erro
     });
     let mut lines: Vec<Vec<usize>> = Vec::new();
     let mut current_baseline = f64::NEG_INFINITY;
+    let mut can_promote_baseline = false;
     for index in horizontal {
         let glyph = &arena[index];
         let tolerance = glyph.size.max(1.0) * LINE_TOLERANCE;
         if (glyph.y - current_baseline).abs() <= tolerance {
-            try_push_text(
-                lines
-                    .last_mut()
-                    .expect("a line was created immediately before"),
-                index,
-                "physical text-line glyphs",
-            )?;
+            let line = lines
+                .last_mut()
+                .expect("a line was created immediately before");
+            // Promote the baseline once when body text joins a line that so
+            // far holds only a few smaller, raised superscript glyphs, so
+            // lowered glyphs or subscripts on the same line are measured from
+            // the body baseline instead of the superscript.
+            if can_promote_baseline
+                && line.len() <= MAX_LEADING_SUPERSCRIPTS
+                && line.iter().all(|&prior| {
+                    let prior = &arena[prior];
+                    prior.size <= glyph.size * LEADING_SUPERSCRIPT_SIZE
+                        && glyph.y - prior.y >= glyph.size * LEADING_SUPERSCRIPT_RISE
+                })
+            {
+                current_baseline = glyph.y;
+                can_promote_baseline = false;
+            } else if line.len() >= MAX_LEADING_SUPERSCRIPTS {
+                can_promote_baseline = false;
+            }
+            try_push_text(line, index, "physical text-line glyphs")?;
         } else {
             current_baseline = glyph.y;
+            can_promote_baseline = true;
             let mut line = Vec::new();
             try_push_text(&mut line, index, "physical text-line glyphs")?;
             try_push_text(&mut lines, line, "physical text lines")?;
@@ -3485,4 +3508,97 @@ fn font_bbox(glyph: &GlyphRecord) -> BBox {
         }
     }
     (x0, y0, x1, y1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn glyph(ch: char, x: f64, y: f64, size: f64) -> GlyphRecord {
+        let text = GlyphText::Char(ch);
+        GlyphRecord {
+            bidi_flags: glyph_bidi_flags(&text),
+            text,
+            x,
+            y,
+            size,
+            advance: size * 0.6,
+            zero_advance: false,
+            direction: (1.0, 0.0),
+            writing_mode: 0,
+            font_key: 0,
+            font: FontInfo::default(),
+            color: None,
+            render_mode: 0,
+            is_clipped: false,
+            ink: None,
+            is_underlined: false,
+            is_struck: false,
+            joins_previous: false,
+            source_order: 0,
+            shown_until: 1,
+            run: 0,
+            source: None,
+        }
+    }
+
+    #[test]
+    fn leading_superscript_does_not_split_lowered_glyph_from_line() {
+        // Mirrors a footnote line (like usrguide.pdf p1): a 6pt superscript
+        // marker raised 2.8pt above 8pt body text and a lowered 8pt glyph
+        // 1.7pt below the body baseline must stay on one physical line, while
+        // the next line 9.5pt below starts a separate line.
+        let glyphs = vec![
+            glyph('*', 10.0, 682.8, 6.0),
+            glyph('L', 20.0, 685.6, 8.0),
+            glyph('A', 24.0, 684.2, 6.0),
+            glyph('T', 28.0, 685.6, 8.0),
+            glyph('E', 32.0, 687.3, 8.0),
+            glyph('X', 36.0, 685.6, 8.0),
+            glyph('P', 10.0, 695.1, 8.0),
+        ];
+
+        let lines = cluster_lines(glyphs).expect("clustering succeeds");
+
+        assert_eq!(lines.len(), 2);
+        let first: String = lines[0]
+            .iter()
+            .flat_map(|record| record.text.chars())
+            .collect();
+        let second: String = lines[1]
+            .iter()
+            .flat_map(|record| record.text.chars())
+            .collect();
+        assert_eq!(first, "*LATEX");
+        assert_eq!(second, "P");
+    }
+
+    #[test]
+    fn oversized_outlier_on_body_line_does_not_pull_in_next_line() {
+        // Mirrors an OCR body line followed by a larger margin artifact and a
+        // separate heading below: the outlier must not promote the baseline.
+        let glyphs = vec![
+            glyph('1', 20.0, 142.2, 13.7),
+            glyph('8', 28.0, 142.2, 13.7),
+            glyph('8', 36.0, 142.2, 13.7),
+            glyph('0', 44.0, 142.2, 13.7),
+            glyph('S', 5.0, 145.2, 20.6),
+            glyph('D', 60.0, 151.7, 14.7),
+            glyph('E', 70.0, 151.7, 14.7),
+        ];
+
+        let lines = cluster_lines(glyphs).expect("clustering succeeds");
+
+        assert_eq!(lines.len(), 2);
+        let first: String = lines[0]
+            .iter()
+            .flat_map(|record| record.text.chars())
+            .collect();
+        let second: String = lines[1]
+            .iter()
+            .flat_map(|record| record.text.chars())
+            .collect();
+        assert_eq!(first, "S1880");
+        assert_eq!(second, "DE");
+    }
 }

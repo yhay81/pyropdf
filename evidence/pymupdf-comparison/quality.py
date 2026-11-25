@@ -242,7 +242,7 @@ def _table(label: dict[str, Any], tables: list[list[list[Any]]]) -> dict[str, An
             for want, got in zip(expected["rows"][key], rows[normalize(key)], strict=False)
             if normalize(want) == normalize(str(got or ""))
         )
-        if (len(found), right) > (best["rows_found"], best["cells_right"]):
+        if table and (best["columns"] is None or (len(found), right) > (best["rows_found"], best["cells_right"])):
             columns = max(len(row) for row in table)
             best = {**best, "columns": columns, "rows_found": len(found), "cells_right": right}
     best["cells"] = sum(len(cells) for cells in expected["rows"].values())
@@ -275,9 +275,8 @@ def _row(name: str, version: str, entry: dict[str, Any]) -> str:
     iou = "" if w["mean_iou"] is None else f"{w['mean_iou']:.2f}"
     table = "| |"
     if t:
-        table = (
-            f"{t['rows_found']}/{t['rows']} | {t['cells_right']}/{t['cells']} | {t['columns']}/{t['expected_columns']}"
-        )
+        columns = "—" if t["columns"] is None else t["columns"]
+        table = f"{t['rows_found']}/{t['rows']} | {t['cells_right']}/{t['cells']} | {columns}/{t['expected_columns']}"
     return (
         f"| {name} | {version} | {a['found']}/{a['anchors']} | {a['in_order']}/{a['pairs']} "
         f"| {w['placed']}/{w['words']} | {iou} | {table} |"

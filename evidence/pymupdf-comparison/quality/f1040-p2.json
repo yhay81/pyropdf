@@ -1,0 +1,118 @@
+{
+ "document": "f1040.pdf",
+ "page": 2,
+ "checked": false,
+ "notes": "Agent-labeled from Ghostscript renderings at 150 and 288 dpi; awaiting the owner's check. Page 2 of Form 1040 with sidebar callout boxes, numbered tax and payment lines, and multi-column signature and preparer blocks.",
+ "anchors": [
+  "Form 1040 (2025)",
+  "Amount from line 11a (adjusted gross income)",
+  "Someone can claim",
+  "Spouse itemizes on a separate return",
+  "Standard deduction or itemized deductions (from Schedule A)",
+  "Qualified business income deduction from Form 8995 or Form 8995-A",
+  "Subtract line 14 from line 11b. If zero or less, enter -0-. This is your taxable income",
+  "Child tax credit or credit for other dependents from Schedule 8812",
+  "Add lines 22 and 23. This is your total tax",
+  "Federal income tax withheld from:",
+  "2025 estimated tax payments and amount applied from 2024 return",
+  "Earned income credit (EIC)",
+  "Add lines 25d, 26, and 32. These are your total payments",
+  "If line 33 is more than line 24, subtract line 24 from line 33. This is the amount you overpaid",
+  "Subtract line 33 from line 24. This is the amount you owe.",
+  "Do you want to allow another person to discuss this return with the IRS? See instructions.",
+  "Under penalties of perjury, I declare that I have examined this return",
+  "Go to www.irs.gov/Form1040 for instructions and the latest information."
+ ],
+ "words": [
+  {
+   "text": "itemizes",
+   "seed": [
+    157.09,
+    62.1,
+    186.42,
+    71.42
+   ],
+   "ink": [
+    157.5,
+    64.0,
+    186.25,
+    69.75
+   ]
+  },
+  {
+   "text": "$23,625",
+   "seed": [
+    36.3,
+    203.52,
+    61.6,
+    211.68
+   ],
+   "ink": [
+    36.5,
+    204.75,
+    61.25,
+    211.25
+   ]
+  },
+  {
+   "text": "Federal",
+   "seed": [
+    115.2,
+    266.09,
+    141.86,
+    275.42
+   ],
+   "ink": [
+    115.75,
+    268.0,
+    141.25,
+    273.75
+   ]
+  },
+  {
+   "text": "American",
+   "seed": [
+    115.2,
+    422.1,
+    148.98,
+    431.42
+   ],
+   "ink": [
+    115.25,
+    424.0,
+    148.5,
+    429.75
+   ]
+  },
+  {
+   "text": "identification",
+   "seed": [
+    461.3,
+    595.23,
+    501.22,
+    603.4
+   ],
+   "ink": [
+    461.75,
+    597.0,
+    500.75,
+    602.0
+   ]
+  },
+  {
+   "text": "Preparer",
+   "seed": [
+    36.0,
+    719.53,
+    70.25,
+    731.38
+   ],
+   "ink": [
+    36.5,
+    722.0,
+    70.25,
+    731.0
+   ]
+  }
+ ]
+}
