@@ -367,7 +367,7 @@ fn signed_revision(
     // Other threads' edits wait for the transaction's writer lock, which
     // the replaced document's transaction holds until it is dropped; then
     // they begin again on the signed document.
-    document.replace(Document::new(Arc::new(base), limit));
+    document.replace(Document::new(Arc::new(base), limit))?;
     Ok(PyBytes::new(py, &signed).unbind())
 }
 

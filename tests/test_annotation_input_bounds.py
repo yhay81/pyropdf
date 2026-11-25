@@ -50,7 +50,9 @@ class Slow:
         return 10.0
 
 
-def _page(limits: pyropdf.DocumentLimits | None = None) -> tuple[pyropdf.Document, pyropdf.Page, tuple[Any, ...]]:
+def _page(
+    limits: pyropdf.DocumentLimits | None = None,
+) -> tuple[pyropdf.Document, pyropdf.Page, tuple[_core._Document, int, int]]:
     source = pyropdf.Document()
     source.pages.new((200, 200))
     doc = pyropdf.open(source.to_bytes(), limits=limits)
@@ -58,7 +60,7 @@ def _page(limits: pyropdf.DocumentLimits | None = None) -> tuple[pyropdf.Documen
     return doc, page, (doc._core(), page._number, page._generation)  # noqa: SLF001
 
 
-def _square(page: pyropdf.Page) -> tuple[Any, ...]:
+def _square(page: pyropdf.Page) -> tuple[_core._Document, int, int, int, tuple[int, int]]:
     annotation = page.annotations.add(pyropdf.Square((10, 10, 50, 50)))
     return annotation._location()  # noqa: SLF001
 

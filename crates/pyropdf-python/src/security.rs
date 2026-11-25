@@ -171,20 +171,32 @@ pub fn unlock(
             None => FileBase::open_with_password(bytes, password.as_deref(), &budget)
                 .map_err(|e| store_error(&e)),
         })?;
+        let base = Arc::new(base);
         let access = base.security().map_or(Access::Owner, Handler::access);
-        if let Some(previous) = handler(&version) {
-            if let Some(verified) = base.security() {
-                previous.retain_recipient_access(verified);
-            }
-        } else {
-            let unlocked = Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT));
+        let unlocked = if handler(&version).is_none() {
+            let unlocked = Document::new(Arc::clone(&base) as _, Some(DEFAULT_HISTORY_LIMIT));
             if document.check_at_open() {
                 py.detach(|| crate::document::check_every_object(&unlocked.current(), &budget))
                     .map_err(|e| store_error(&e))?;
             }
-            let _write = py.detach(|| document.history.write_lock());
-            document.document()?;
-            document.replace(unlocked);
+            Some(unlocked)
+        } else {
+            None
+        };
+        crate::history::outside_transaction(document, "unlock")?;
+        let _write = py.detach(|| document.history.write_lock());
+        let current = document.current()?;
+        if let Some(previous) = handler(&current) {
+            if let Some(verified) = base.security() {
+                previous.retain_recipient_access(verified);
+            }
+        } else if let Some(unlocked) = unlocked
+            && current
+                .base()
+                .file()
+                .is_some_and(pyropdf_store::index::Index::is_encrypted)
+        {
+            document.replace(unlocked)?;
         }
         Ok(access_name(access))
     })?

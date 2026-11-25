@@ -6,6 +6,7 @@ import os
 import secrets
 import stat
 import sys
+import threading
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
@@ -195,7 +196,7 @@ class Document:
     empty one. Documents are context managers that close on exit.
     """
 
-    __slots__ = ("_access", "_closed", "_doc", "_drawn", "_fallback", "_form_font", "_limits")
+    __slots__ = ("_access", "_closed", "_doc", "_drawn", "_fallback", "_form_font", "_limits", "_lock")
 
     def __init__(self, *, limits: DocumentLimits | None = None, version: str = "1.7") -> None:
         """Create an empty document using header version 1.0 through 1.7, or 2.0.
@@ -210,6 +211,7 @@ class Document:
         self._doc = load(limits)
         self._limits = limits
         self._closed = False
+        self._lock = threading.Lock()
         self._access: Access | None = None
         # What canvases stored, so that drawing the same image or page again reuses it.
         self._drawn: _Images | None = None
@@ -1075,7 +1077,9 @@ class Document:
         if not unlocked:
             return None
         access = Access.OWNER if opened == "owner" else Access.USER
-        return max(access, self._access) if self._access is not None else access
+        with self._lock:
+            recorded = self._access
+        return max(access, recorded) if recorded is not None else access
 
     @property
     def encryption_method(self) -> str | None:
@@ -1130,8 +1134,9 @@ class Document:
             secret, recipient = _password_bytes(password), None
         opened = _core.unlock(self._doc, secret, recipient)
         access = Access.OWNER if opened == "owner" else Access.USER
-        if self._access is None or access > self._access:
-            self._access = access
+        with self._lock:
+            if not self._closed and (self._access is None or access > self._access):
+                self._access = access
         return access
 
     def save(  # noqa: PLR0913 - the save options are all keyword-only
@@ -1829,8 +1834,13 @@ class Document:
 
     def close(self) -> None:
         """Close the document and release its data; later operations raise :class:`DocumentClosedError`."""
-        self._closed = True
         self._doc.close()
+        with self._lock:
+            self._closed = True
+            self._drawn = None
+            self._fallback = None
+            self._form_font = None
+            self._access = None
 
     def _ensure_open(self) -> None:
         """Refuse operations on a closed document."""

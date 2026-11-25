@@ -108,7 +108,7 @@ to bottom for `"vertical"`.
 
 ```python
 Pixmap.from_bytes(
-    data: bytes | bytearray | memoryview | Pixmap,
+    data: bytes | bytearray | memoryview,
     *,
     max_size: int | None = 268435456,
 ) -> Pixmap

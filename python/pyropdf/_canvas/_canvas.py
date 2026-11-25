@@ -273,11 +273,18 @@ class Canvas:
             msg = "a canvas is used in one with block; start another with page.draw()"
             raise ValueError(msg)
         document = self._page.document
+        core = document._core()  # noqa: SLF001
         # One operation from the document's limits holds the canvas's
         # preparation, its buffers, and its writes.
-        self._operation = _core.begin_canvas(document._core())  # noqa: SLF001
+        operation = _core.begin_canvas(core)
+        self._operation = operation
+        try:
+            self._tagged = isinstance(document.catalog.get("StructTreeRoot"), Dictionary)
+        except BaseException:
+            _core.abort_canvas(core, operation)
+            self._operation = None
+            raise
         self._entered = True
-        self._tagged = isinstance(document.catalog.get("StructTreeRoot"), Dictionary)
         return self
 
     def __exit__(

@@ -280,6 +280,11 @@ impl Cache {
         Self::default()
     }
 
+    /// Drops any cached bridged document.
+    pub fn clear(&self) {
+        *self.lock() = None;
+    }
+
     /// Returns the plain bridge for extraction and operations that do not
     /// draw annotations.
     pub fn get(

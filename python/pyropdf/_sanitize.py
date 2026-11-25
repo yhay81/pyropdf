@@ -348,9 +348,10 @@ def _remove_hidden_text(document: Document) -> int:
     removed = 0
     forms = _Forms()
     for page in document.pages:
-        kept, count, painted = _visible_operations(page.operations, 0)
+        operations = page.operations
+        kept, count, painted = _visible_operations(operations, 0)
         if count:
-            page.operations = kept
+            page.operations = Operations(kept, tail=operations.tail)
             removed += count
         forms.paint(painted, _page_resources(page.obj))
         annotations = page.obj.get("Annots")
@@ -364,9 +365,10 @@ def _remove_hidden_text(document: Document) -> int:
         forms.paint(painted, forms.resources[xref])
     # Every entry mode is final now: rewrite each form once.
     for xref, stream in forms.streams.items():
-        kept, count, _ = _visible_operations(Operations.parse(stream.read()), forms.entries[xref])
+        operations = Operations.parse(stream.read())
+        kept, count, _ = _visible_operations(operations, forms.entries[xref])
         if count:
-            stream.write(Operations(kept).to_bytes())
+            stream.write(Operations(kept, tail=operations.tail).to_bytes())
             removed += count
     return removed
 

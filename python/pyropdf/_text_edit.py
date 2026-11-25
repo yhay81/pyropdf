@@ -478,8 +478,8 @@ def _sub(resources: Dictionary | None, key: str) -> Dictionary | None:
 
 
 def _key(dictionary: Dictionary) -> object:
-    """Return what identifies a font dictionary: its object number, or the handle of a direct one."""
-    return dictionary.xref if dictionary.is_indirect else ("direct", id(dictionary))
+    """Return what identifies a dictionary: its object number, or the direct handle itself."""
+    return dictionary.xref if dictionary.is_indirect else dictionary
 
 
 def _number(value: object) -> float:

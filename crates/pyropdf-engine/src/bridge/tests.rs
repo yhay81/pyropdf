@@ -360,6 +360,21 @@ fn the_cache_keeps_one_version_and_no_version_alive() {
     assert!(!Arc::ptr_eq(&first, &second));
 }
 
+#[test]
+fn clear_drops_the_cached_bridge() {
+    let budget = Budget::default();
+    let document = three_pages();
+    let cache = Cache::new();
+    let version = document.current();
+    let pages = page_index(&version);
+    let cached = cache.get(&version, &pages, &budget).unwrap();
+    let weak = Arc::downgrade(&cached);
+    drop(cached);
+    assert!(weak.upgrade().is_some());
+    cache.clear();
+    assert!(weak.upgrade().is_none());
+}
+
 fn assert_interpretation_limit(error: Error, limit: u64) {
     let Error::Store(store) = error else {
         panic!("expected an interpreter input limit, got {error}");

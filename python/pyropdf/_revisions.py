@@ -66,11 +66,13 @@ class Revision:
         except OverflowError as exc:
             msg = f"revision index out of range: {self.index}"
             raise IndexError(msg) from exc
-        if parent._access is not None and opened.access is not None:  # noqa: SLF001
-            opened._access = max(opened.access, parent._access)  # noqa: SLF001
-        if parent._fallback is not None:  # noqa: SLF001
-            opened._fallback = dict(parent._fallback)  # noqa: SLF001
-            _set_fallback(opened, opened._fallback)  # noqa: SLF001
+        with parent._lock:  # noqa: SLF001
+            parent_access = parent._access  # noqa: SLF001
+            parent_fallback = None if parent._fallback is None else dict(parent._fallback)  # noqa: SLF001
+        if parent_access is not None and opened.access is not None:
+            opened._access = max(opened.access, parent_access)  # noqa: SLF001
+        if parent_fallback is not None:
+            _set_fallback(opened, parent_fallback)
         return opened
 
 
