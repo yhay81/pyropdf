@@ -179,3 +179,55 @@ opened documents per operation. On this machine whole-document text extraction
 took 124.2 and 65.9 ms with the new profile, compared with 127.2 and 67.0 ms
 before. The four 72 and 144 dpi rendering comparisons ranged from 2.7% faster
 to 1.7% slower. The paired native-platform results are tracked in [#1108](https://github.com/yhay81/pyropdf/issues/1108).
+
+## Cold-path crate release profile (#1164)
+
+After #1141, #1143, #1145, and #1156, `main` at `20f2a0e1` reached 9,430,524
+bytes on Windows x86_64, leaving only 6,660 bytes below the 9,437,184-byte abi3
+limit and blocking PR #1162 (+21,077 bytes on Windows).
+
+Keeping `pyropdf-python` (the root `cdylib`, which controls the fat-LTO
+pipeline and symbol stripping), the rasterizer (`vello_cpu`, `vello_common`,
+`ab_glyph_rasterizer`), the RTen GEMM kernels (`rten-gemm`), the core PDF
+parser and interpreter (`hayro`, `hayro-interpret`, `hayro-syntax`), and Flate
+compression (`flate2`, `zlib-rs`) at `opt-level = 2`, while size-optimizing
+`skrifa`, `hayro-font`, `hayro-cmap`, and `pyo3` at level `s` and strictly
+cold-path crates (`pyropdf-schema`, `rten` non-GEMM/model-loading and `rayon`,
+cold image/SVG/XML codecs, and PAdES/X.509/CMS/PKCS/ECDSA crypto) at level `z`,
+reduced the delivered macOS arm64 wheel on `20f2a0e1` from 8,112,601 to
+7,712,713 bytes — a saving of 399,888 bytes (390.5 KiB; compressed extension
+from 7,450,275 to 7,050,385 bytes). Overriding `pyropdf-python` itself to level
+`s` was measured and rejected because it lowered the fat-LTO pipeline for
+`vello_cpu` (+21.7% slower 144 dpi rendering) and prevented symbol stripping.
+The candidate wheel passed `tools/smoke_artifact.py` (including panic
+unwinding, rendering, extraction, editing, and reopening full and incremental
+saves). [Artifact hashes and timings](cold-crates-profile.json).
+
+To reproduce from `20f2a0e1`, build the base `Cargo.toml` and the updated
+`Cargo.toml` into separate directories, repack both with Zopfli, smoke-test
+both, and run [compare_profile.py](compare_profile.py):
+
+```sh
+# Build baseline from 20f2a0e1 into baseline/ and candidate from HEAD into candidate/:
+uvx --from maturin==1.16.0 maturin build --release --locked --compression-level 9 --out baseline
+# (apply Cargo.toml profile change)
+uvx --from maturin==1.16.0 maturin build --release --locked --compression-level 9 --out candidate
+for directory in baseline candidate; do
+  uv run --locked --only-group wheel --python 3.14 python tools/repack_wheel.py "$directory"
+  python3 tools/smoke_artifact.py "$directory" --pattern '*.whl'
+done
+python3 tools/wheel_size.py candidate --abi abi3 --base baseline
+python3 evidence/wheel-size/compare_profile.py baseline candidate \
+  --base-revision 20f2a0e1e43febd152025bb07b27dcee2d23c500 \
+  --change 'opt-level = "s" for skrifa, hayro-font, hayro-cmap, pyo3; opt-level = "z" for pyropdf-schema, rten/rayon cold crates, cold image/SVG/XML codecs, and PAdES/X.509/CMS/PKCS crypto' \
+  --python /opt/homebrew/bin/python3.15 \
+  --output evidence/wheel-size/cold-crates-profile.json
+```
+
+Across `bill-hr815` and `usrguide` (best of five freshly opened documents per
+operation on Apple M2 Pro, macOS 27.2, CPython 3.15.2), all four 72 and 144 dpi
+rendering comparisons stayed flat (−0.6% to +0.4%: 377.9 vs 378.5 ms and 648.3
+vs 644.7 ms on `bill-hr815`; 77.8 vs 78.2 ms and 116.1 vs 115.7 ms on
+`usrguide`), text extraction moved by +2.2% and +0.3%, word extraction moved by
+−2.2% and +3.8%, search moved by +0.6% and +4.3%, and save improved by 6.6% and
+2.9%.

@@ -1,0 +1,79 @@
+{
+  "base_revision": "20f2a0e1e43febd152025bb07b27dcee2d23c500",
+  "change": "opt-level = \"s\" for skrifa, hayro-font, hayro-cmap, pyo3; opt-level = \"z\" for pyropdf-schema, rten/rayon cold crates, cold image/SVG/XML codecs, and PAdES/X.509/CMS/PKCS crypto",
+  "target": "aarch64-apple-darwin",
+  "host": "Apple M2 Pro, macOS 27.2",
+  "rustc": "1.100.0",
+  "maturin": "1.16.0",
+  "zopflipy": "1.14",
+  "before": {
+    "wheel": {
+      "filename": "pyropdf-0.4.0-cp311-abi3-macosx_11_0_arm64.whl",
+      "tag": "cp311-abi3-macosx_11_0_arm64",
+      "sha256": "5406bd930f7742592bc8ed59e07bd89a9c8ac11523f13a81418edf82ed0b8b9c",
+      "size_bytes": 8112601,
+      "size_mib": 7.736779,
+      "extension_bytes": 7450275
+    },
+    "benchmark": {
+      "engine": "pyropdf 0.4.0",
+      "python": "3.15.2",
+      "runs": 5,
+      "results": {
+        "bill-hr815": {
+          "open": 0.09920902084559202,
+          "text": 117.71175009198487,
+          "words": 198.84016609285027,
+          "search": 119.19016693718731,
+          "render_72": 377.8992089210078,
+          "render_144": 648.3038750011474,
+          "save": 0.9232920128852129
+        },
+        "usrguide": {
+          "open": 0.12570794206112623,
+          "text": 63.09541594237089,
+          "words": 76.11795898992568,
+          "search": 60.05966698285192,
+          "render_72": 77.81187503132969,
+          "render_144": 116.14304105751216,
+          "save": 1.416750019416213
+        }
+      }
+    }
+  },
+  "after": {
+    "wheel": {
+      "filename": "pyropdf-0.4.0-cp311-abi3-macosx_11_0_arm64.whl",
+      "tag": "cp311-abi3-macosx_11_0_arm64",
+      "sha256": "926e2c3022a6f3c972efdff21d56ae7d15ba7a4b4260f7753828ae83abcd79c1",
+      "size_bytes": 7712713,
+      "size_mib": 7.355416,
+      "extension_bytes": 7050385
+    },
+    "benchmark": {
+      "engine": "pyropdf 0.4.0",
+      "python": "3.15.2",
+      "runs": 5,
+      "results": {
+        "bill-hr815": {
+          "open": 0.10595808271318674,
+          "text": 120.26583310216665,
+          "words": 194.51858405955136,
+          "search": 119.94270898867399,
+          "render_72": 378.4686248982325,
+          "render_144": 644.6597500471398,
+          "save": 0.8625419577583671
+        },
+        "usrguide": {
+          "open": 0.10795891284942627,
+          "text": 63.28437500633299,
+          "words": 79.00675002019852,
+          "search": 62.66641698312014,
+          "render_72": 78.15383397974074,
+          "render_144": 115.65599997993559,
+          "save": 1.3754579704254866
+        }
+      }
+    }
+  }
+}

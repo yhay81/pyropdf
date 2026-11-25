@@ -581,3 +581,51 @@ def test_wheel_metadata_edits_are_isolated_before_any_runner_is_scheduled() -> N
     assert "needs: edited-inputs" in compare
     assert "github.event.action != 'edited' || needs.edited-inputs.outputs.compare == 'true'" in compare
     assert "concurrency:" not in compare
+
+
+def test_release_profile_size_optimizes_cold_crates_and_preserves_hot_paths() -> None:
+    release = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["profile"]["release"]
+    assert release["opt-level"] == 2
+    assert release["lto"] == "fat"
+    assert release["codegen-units"] == 1
+    assert release["strip"] == "symbols"
+    assert release["panic"] == "unwind"
+
+    packages = release["package"]
+    # The root cdylib drives fat LTO and symbol stripping; hot rasterizer, GEMM,
+    # PDF parsing/interpretation, and compression crates must stay speed-optimized.
+    for hot in (
+        "pyropdf-python",
+        "vello_cpu",
+        "vello_common",
+        "ab_glyph_rasterizer",
+        "rten-gemm",
+        "hayro",
+        "hayro-interpret",
+        "hayro-syntax",
+        "flate2",
+        "zlib-rs",
+    ):
+        assert packages.get(hot, {}).get("opt-level") not in {"s", "z"}, f"{hot} must remain speed-optimized"
+    assert "*" not in packages
+
+    for cold in (
+        "pyropdf-store",
+        "pyropdf-schema",
+        "pyropdf-engine",
+        "harfrust",
+        "read-fonts",
+        "skrifa",
+        "rten",
+        "hayro-svg",
+        "hayro-jbig2",
+        "hayro-jpeg2000",
+        "cms",
+        "x509-cert",
+        "der",
+        "pkcs8",
+        "quick-xml",
+        "tiff",
+        "gif",
+    ):
+        assert packages[cold]["opt-level"] in {"s", "z"}, f"{cold} should be size-optimized in release wheels"
