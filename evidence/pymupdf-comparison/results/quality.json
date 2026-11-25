@@ -1,5 +1,5 @@
 {
- "commit": "129eb3aa with #1149",
+ "commit": "20f2a0e1 with #1153",
  "engines": [
   "PyMuPDF 2.1",
   "PyMuPDF 2.1 sort=True",
@@ -583,9 +583,9 @@
     "table": {
      "columns": 7,
      "rows": 3,
-     "rows_found": 0,
+     "rows_found": 3,
      "cells": 21,
-     "cells_right": 0,
+     "cells_right": 21,
      "expected_columns": 7
     }
    }

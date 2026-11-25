@@ -30,6 +30,21 @@ const HYBRID_GRID_SLOT_SIMILARITY: f64 = 0.8;
 const HYBRID_GRID_LEADING_VARIATION: f64 = 0.75;
 /// How far, in points, rules and boxes snap to each other.
 const TABLE_SNAP_TOLERANCE: f64 = 1.0;
+/// Widest double-rule gap, in points, between a bordered header grid and an
+/// adjacent outer-bordered body box sharing the same cross-axis span.
+const MAX_DOUBLE_RULE_GAP: f64 = 4.0;
+/// Minimum whitespace gap, in ems, across a projected header column boundary
+/// before splitting a borderless body line into separate column phrases.
+const BODY_COLUMN_RULE_GAP: f64 = 0.85;
+/// Fewest aligned multi-column records required to treat an outer-bordered
+/// body box as a table body rather than prose or a summary note.
+const MIN_BORDERLESS_BODY_RECORDS: usize = 2;
+/// Minimum Jaccard similarity between adjacent multi-column records' occupied
+/// column masks in a borderless body.
+const BORDERLESS_BODY_SLOT_SIMILARITY: f64 = 0.6;
+/// Widest inter-line edge gap, in ems, for a wrapped continuation line to
+/// attach to the preceding record.
+const CONTINUATION_MAX_EDGE_GAP: f64 = 1.25;
 
 /// A table slot: its box and text, or `None` for a slot that a merged cell
 /// covers.
@@ -1038,6 +1053,1217 @@ fn rule_coordinates(rules: &[RuleSegment], horizontal: bool) -> Result<Vec<f64>,
     Ok(coordinates)
 }
 
+/// One connected component of vector rules with its clustered axis bounds.
+struct RuleComponent {
+    rules: Vec<RuleSegment>,
+    xs: Vec<f64>,
+    ys: Vec<f64>,
+    bounded: bool,
+}
+
+impl RuleComponent {
+    fn axis_bounds(&self, horizontal: bool) -> &[f64] {
+        if horizontal { &self.ys } else { &self.xs }
+    }
+
+    fn cross_bounds(&self, horizontal: bool) -> &[f64] {
+        if horizontal { &self.xs } else { &self.ys }
+    }
+
+    fn bbox(&self) -> Option<BBox> {
+        let (&x0, &x1) = (self.xs.first()?, self.xs.last()?);
+        let (&y0, &y1) = (self.ys.first()?, self.ys.last()?);
+        Some((x0, y0, x1, y1))
+    }
+}
+
+/// Text reading orientation inside a borderless table body in display space.
+#[derive(Clone, Copy)]
+struct BodyOrientation {
+    /// `true` when lines run horizontally (rows stack along `y`); `false` when
+    /// lines run vertically (rows stack along `x`).
+    horizontal: bool,
+    /// `+1.0` along ascending column-axis coordinates, `-1.0` along descending.
+    inline_sign: f64,
+    /// `+1.0` along ascending row-axis coordinates, `-1.0` along descending.
+    block_sign: f64,
+}
+
+/// One column-aligned text phrase on a physical body line.
+struct BodyPhrase {
+    column: usize,
+    word_start: usize,
+    word_end: usize,
+    cross_start: f64,
+    cross_end: f64,
+}
+
+/// One physical text line parsed against projected header column boundaries.
+struct ParsedBodyLine<'b> {
+    line_index: usize,
+    axis_start: f64,
+    axis_end: f64,
+    axis_center: f64,
+    font_size: f64,
+    phrases: BudgetVec<'b, BodyPhrase>,
+    slots: BudgetVec<'b, bool>,
+    occupied_cols: usize,
+}
+
+impl ParsedBodyLine<'_> {
+    /// Cross-axis extent of all phrases mapped to `column` on this line.
+    fn column_span(&self, column: usize) -> Option<(f64, f64)> {
+        let mut start = f64::INFINITY;
+        let mut end = f64::NEG_INFINITY;
+        for phrase in self.phrases.iter() {
+            if phrase.column == column {
+                start = start.min(phrase.cross_start);
+                end = end.max(phrase.cross_end);
+            }
+        }
+        (start <= end).then_some((start, end))
+    }
+
+    /// Logical-first occupied column index (the leading key column).
+    fn first_occupied_column(&self, inline_sign: f64) -> Option<usize> {
+        if inline_sign >= 0.0 {
+            self.slots.iter().position(|&occupied| occupied)
+        } else {
+            self.slots.iter().rposition(|&occupied| occupied)
+        }
+    }
+}
+
+/// One logical data record (its start line plus any wrapped continuation lines).
+struct BodyRecord<'b> {
+    lines: BudgetVec<'b, ParsedBodyLine<'b>>,
+    display_axis_start: f64,
+    display_axis_end: f64,
+}
+
+/// One row-axis band of a borderless body with its grouped data records.
+struct BodyBandPlan<'b> {
+    axis_start: f64,
+    axis_end: f64,
+    /// Records in ascending display row-axis order.
+    records: BudgetVec<'b, BodyRecord<'b>>,
+}
+
+/// Validated plan pairing a bordered header grid with a borderless-column body.
+struct AttachedBodyPlan<'b> {
+    orientation: BodyOrientation,
+    header_xs: Vec<f64>,
+    header_ys: Vec<f64>,
+    body_component_indices: BudgetVec<'b, usize>,
+    /// Body bands in ascending display row-axis order.
+    bands: BudgetVec<'b, BodyBandPlan<'b>>,
+    total_body_records: usize,
+    total_rule_count: usize,
+}
+
+/// Return the 1D span of `bbox` along the row axis (`y` if horizontal, `x` if
+/// vertical) or cross/column axis (`x` if horizontal, `y` if vertical).
+fn bbox_axis_span((x0, y0, x1, y1): BBox, horizontal: bool) -> (f64, f64) {
+    if horizontal { (y0, y1) } else { (x0, x1) }
+}
+
+fn bbox_cross_span((x0, y0, x1, y1): BBox, horizontal: bool) -> (f64, f64) {
+    if horizontal { (x0, x1) } else { (y0, y1) }
+}
+
+/// Determine the dominant text orientation inside one display-space box along
+/// `horizontal`, returning `None` if no matching lines lie inside.
+fn body_text_orientation(
+    physical_lines: &[Vec<GlyphRecord>],
+    bbox: BBox,
+    horizontal: bool,
+) -> Option<BodyOrientation> {
+    let (axis_lo, axis_hi) = bbox_axis_span(bbox, horizontal);
+    let (cross_lo, cross_hi) = bbox_cross_span(bbox, horizontal);
+    let mut positive = 0usize;
+    let mut negative = 0usize;
+    for line in physical_lines {
+        let Some(first) = line.first() else {
+            continue;
+        };
+        let line_is_horizontal = first.direction.0.abs() >= first.direction.1.abs();
+        if line_is_horizontal != horizontal {
+            continue;
+        }
+        let line_box = line_bbox(line);
+        let (line_a0, line_a1) = bbox_axis_span(line_box, horizontal);
+        let (line_c0, line_c1) = bbox_cross_span(line_box, horizontal);
+        let axis_center = (line_a0 + line_a1) * 0.5;
+        let cross_center = (line_c0 + line_c1) * 0.5;
+        if axis_center < axis_lo - TABLE_SNAP_TOLERANCE
+            || axis_center > axis_hi + TABLE_SNAP_TOLERANCE
+            || cross_center < cross_lo - TABLE_SNAP_TOLERANCE
+            || cross_center > cross_hi + TABLE_SNAP_TOLERANCE
+        {
+            continue;
+        }
+        let inline_component = if horizontal {
+            first.direction.0
+        } else {
+            first.direction.1
+        };
+        if inline_component >= 0.0 {
+            positive += 1;
+        } else {
+            negative += 1;
+        }
+    }
+    if positive == 0 && negative == 0 {
+        return None;
+    }
+    let inline_sign = if positive >= negative { 1.0 } else { -1.0 };
+    // Block progression vector is `(-dy, dx)`:
+    // horizontal `(s, 0)` -> `(0, s)` (+y for 0 deg, -y for 180 deg);
+    // vertical `(0, s)` -> `(-s, 0)` (-x for 90 deg, +x for 270 deg).
+    let block_sign = if horizontal {
+        inline_sign
+    } else {
+        -inline_sign
+    };
+    Some(BodyOrientation {
+        horizontal,
+        inline_sign,
+        block_sign,
+    })
+}
+
+/// Return the column index owning `words[word_start..word_end]` within
+/// `col_bounds`, using the logical-first non-tiny word so overflowing wrapped
+/// descriptions stay in their starting column while slight edge overhangs snap
+/// cleanly.
+fn phrase_column(
+    words: &[BorrowedWord<'_>],
+    word_start: usize,
+    word_end: usize,
+    col_bounds: &[f64],
+    horizontal: bool,
+    is_rtl: bool,
+) -> Option<usize> {
+    let col_count = col_bounds.len().saturating_sub(1);
+    if col_count == 0 || word_start >= word_end {
+        return None;
+    }
+    let anchor_span = |range: std::ops::Range<usize>| -> (f64, f64) {
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for &(word_box, _) in &words[range] {
+            let (s, e) = bbox_cross_span(word_box, horizontal);
+            lo = lo.min(s);
+            hi = hi.max(e);
+        }
+        (lo, hi)
+    };
+    let best_overlap_col = |lo: f64, hi: f64| -> Option<usize> {
+        let mut best: Option<(usize, f64)> = None;
+        for col in 0..col_count {
+            let overlap = (hi.min(col_bounds[col + 1]) - lo.max(col_bounds[col])).max(0.0);
+            if overlap > 0.0 && best.is_none_or(|(_, best_overlap)| overlap > best_overlap) {
+                best = Some((col, overlap));
+            }
+        }
+        if let Some((col, _)) = best {
+            return Some(col);
+        }
+        grid_interval(col_bounds, (lo + hi) * 0.5)
+    };
+
+    // Logical-first word: `words` is in `glyph_progress` order, so index
+    // `word_start` is logical-first for LTR and `word_end - 1` for pure RTL.
+    let min_anchor_width = TABLE_SNAP_TOLERANCE * 2.0;
+    let anchor_index = if is_rtl {
+        (word_start..word_end).rev().find(|&idx| {
+            let (s, e) = bbox_cross_span(words[idx].0, horizontal);
+            e - s > min_anchor_width
+        })
+    } else {
+        (word_start..word_end).find(|&idx| {
+            let (s, e) = bbox_cross_span(words[idx].0, horizontal);
+            e - s > min_anchor_width
+        })
+    };
+    let (lo, hi) = if let Some(idx) = anchor_index {
+        bbox_cross_span(words[idx].0, horizontal)
+    } else {
+        anchor_span(word_start..word_end)
+    };
+    best_overlap_col(lo, hi)
+}
+
+/// Parse one physical text line inside a borderless body band into column
+/// phrases aligned against `col_bounds`.
+fn parse_body_line<'b>(
+    line_index: usize,
+    line: &[GlyphRecord],
+    words: &[BorrowedWord<'_>],
+    col_bounds: &[f64],
+    orientation: BodyOrientation,
+    budget: &'b Budget,
+) -> Result<Option<ParsedBodyLine<'b>>, Error> {
+    let col_count = col_bounds.len().saturating_sub(1);
+    if col_count < 2 || line.is_empty() || words.is_empty() {
+        return Ok(None);
+    }
+    let cross_min = col_bounds[0] - TABLE_SNAP_TOLERANCE;
+    let cross_max = col_bounds[col_count] + TABLE_SNAP_TOLERANCE;
+
+    // Collect indices into `words` whose center lies inside the table's
+    // cross-axis span. `words` is already in `glyph_progress` order.
+    let mut kept_indices: BudgetVec<'b, usize> = BudgetVec::new(budget);
+    for (idx, &(word_box, _)) in words.iter().enumerate() {
+        let (w0, w1) = bbox_cross_span(word_box, orientation.horizontal);
+        let center = (w0 + w1) * 0.5;
+        if center >= cross_min && center <= cross_max {
+            kept_indices.try_push(idx)?;
+        }
+    }
+    if kept_indices.is_empty() {
+        return Ok(None);
+    }
+
+    // Check that kept words form a contiguous slice or filter them cleanly.
+    // To stay borrow-only without copying words, split runs along `kept_indices`.
+    let word_inline_span = |word_box: BBox| -> (f64, f64) {
+        let (s, e) = bbox_cross_span(word_box, orientation.horizontal);
+        if orientation.inline_sign >= 0.0 {
+            (s, e)
+        } else {
+            (-e, -s)
+        }
+    };
+    let word_size =
+        |glyphs: &[GlyphRecord]| -> f64 { glyphs.iter().map(|g| g.size).fold(0.0_f64, f64::max) };
+
+    let is_rtl = is_pure_rtl_line(line);
+    let mut phrases: BudgetVec<'b, BodyPhrase> = BudgetVec::new(budget);
+    let mut slots: BudgetVec<'b, bool> = BudgetVec::new(budget);
+    slots.try_extend(std::iter::repeat_n(false, col_count))?;
+
+    let mut run_start = 0usize;
+    while run_start < kept_indices.len() {
+        let mut run_end = run_start + 1;
+        while run_end < kept_indices.len() {
+            let prev_idx = kept_indices[run_end - 1];
+            let next_idx = kept_indices[run_end];
+            // Non-contiguous word index means an excluded outside word sat between them.
+            if next_idx != prev_idx + 1 {
+                break;
+            }
+            let (prev_box, prev_glyphs) = words[prev_idx];
+            let (next_box, next_glyphs) = words[next_idx];
+            let (_, prev_inline_end) = word_inline_span(prev_box);
+            let (next_inline_start, _) = word_inline_span(next_box);
+            let gap = next_inline_start - prev_inline_end;
+            let scale = word_size(prev_glyphs).max(word_size(next_glyphs)).max(1.0);
+            let wide_gutter = gap > scale * LINE_SEGMENT_GAP;
+            let crosses_divider = col_bounds[1..col_count].iter().any(|&divider| {
+                let d = divider * orientation.inline_sign;
+                prev_inline_end <= d + TABLE_SNAP_TOLERANCE
+                    && next_inline_start >= d - TABLE_SNAP_TOLERANCE
+            });
+            if wide_gutter || (crosses_divider && gap > scale * BODY_COLUMN_RULE_GAP) {
+                break;
+            }
+            run_end += 1;
+        }
+        let w_start = kept_indices[run_start];
+        let w_end = kept_indices[run_end - 1] + 1;
+        if let Some(column) = phrase_column(
+            words,
+            w_start,
+            w_end,
+            col_bounds,
+            orientation.horizontal,
+            is_rtl,
+        ) {
+            let mut cross_start = f64::INFINITY;
+            let mut cross_end = f64::NEG_INFINITY;
+            for &(word_box, _) in &words[w_start..w_end] {
+                let (s, e) = bbox_cross_span(word_box, orientation.horizontal);
+                cross_start = cross_start.min(s);
+                cross_end = cross_end.max(e);
+            }
+            slots[column] = true;
+            phrases.try_push(BodyPhrase {
+                column,
+                word_start: w_start,
+                word_end: w_end,
+                cross_start,
+                cross_end,
+            })?;
+        }
+        run_start = run_end;
+    }
+
+    let occupied_cols = slots.iter().filter(|&&occupied| occupied).count();
+    if occupied_cols == 0 {
+        return Ok(None);
+    }
+    let mut axis_start = f64::INFINITY;
+    let mut axis_end = f64::NEG_INFINITY;
+    let mut font_size = 0.0_f64;
+    for &idx in kept_indices.iter() {
+        let (word_box, glyphs) = words[idx];
+        let (a0, a1) = bbox_axis_span(word_box, orientation.horizontal);
+        axis_start = axis_start.min(a0);
+        axis_end = axis_end.max(a1);
+        font_size = font_size.max(word_size(glyphs));
+    }
+    Ok(Some(ParsedBodyLine {
+        line_index,
+        axis_start,
+        axis_end,
+        axis_center: (axis_start + axis_end) * 0.5,
+        font_size: font_size.max(1.0),
+        phrases,
+        slots,
+        occupied_cols,
+    }))
+}
+
+/// Return whether `curr` is a wrapped continuation of `record` rather than the
+/// start of a new data record.
+fn is_wrapped_continuation(
+    record: &BodyRecord<'_>,
+    curr: &ParsedBodyLine<'_>,
+    next: Option<&ParsedBodyLine<'_>>,
+    orientation: BodyOrientation,
+) -> bool {
+    let start = &record.lines[0];
+    let prev = &record.lines[record.lines.len() - 1];
+    if start.occupied_cols < 2 || curr.occupied_cols >= start.occupied_cols {
+        return false;
+    }
+    // Every occupied column on a continuation line must already belong to the
+    // record's start line.
+    if !curr
+        .slots
+        .iter()
+        .zip(start.slots.iter())
+        .all(|(&c, &s)| !c || s)
+    {
+        return false;
+    }
+    // Wrapped lines follow tightly in the block reading direction.
+    let scale = prev.font_size.max(curr.font_size).max(1.0);
+    let center_step = (curr.axis_center - prev.axis_center) * orientation.block_sign;
+    let edge_gap = if orientation.block_sign >= 0.0 {
+        curr.axis_start - prev.axis_end
+    } else {
+        prev.axis_start - curr.axis_end
+    };
+    if center_step <= 0.0
+        || center_step > scale * TEXT_TABLE_ROW_GAP
+        || edge_gap > scale * CONTINUATION_MAX_EDGE_GAP
+    {
+        return false;
+    }
+    // A continuation phrase must not physically intrude into the cross-axis
+    // span of another occupied column of the parent record (guards against
+    // full-width prose paragraphs beneath a multi-column heading line).
+    for phrase in curr.phrases.iter() {
+        for (other_col, &occupied) in start.slots.iter().enumerate() {
+            if !occupied || other_col == phrase.column {
+                continue;
+            }
+            if let Some((other_start, other_end)) = start.column_span(other_col) {
+                let overlap = phrase.cross_end.min(other_end) - phrase.cross_start.max(other_start);
+                if overlap > TABLE_SNAP_TOLERANCE {
+                    return false;
+                }
+            }
+        }
+    }
+    if curr.occupied_cols == 1 {
+        return true;
+    }
+    // Multi-column continuations (when 2+ text columns wrap together) must not
+    // re-occupy the record's leading key column or begin a repeating section of
+    // sparser multi-column rows.
+    if let Some(lead_col) = start.first_occupied_column(orientation.inline_sign)
+        && curr.slots[lead_col]
+    {
+        return false;
+    }
+    if let Some(next_line) = next
+        && next_line.occupied_cols >= 2
+        && grid_slot_similarity(&curr.slots, &next_line.slots) >= HYBRID_GRID_SLOT_SIMILARITY
+    {
+        return false;
+    }
+    edge_gap <= scale
+}
+
+/// Return whether two multi-column records share similar occupied columns and
+/// consistent cross-axis alignment (left, right, or center) in every shared
+/// column.
+fn records_column_aligned(left: &ParsedBodyLine<'_>, right: &ParsedBodyLine<'_>) -> bool {
+    if grid_slot_similarity(&left.slots, &right.slots) < BORDERLESS_BODY_SLOT_SIMILARITY {
+        return false;
+    }
+    let scale = left.font_size.max(right.font_size).max(1.0);
+    let tolerance = scale * TEXT_TABLE_ALIGNMENT_TOLERANCE;
+    let mut shared = 0usize;
+    for col in 0..left.slots.len() {
+        if !left.slots[col] || !right.slots[col] {
+            continue;
+        }
+        let (Some((l0, l1)), Some((r0, r1))) = (left.column_span(col), right.column_span(col))
+        else {
+            continue;
+        };
+        shared += 1;
+        let left_aligned = (l0 - r0).abs() <= tolerance;
+        let right_aligned = (l1 - r1).abs() <= tolerance;
+        let center_aligned = ((l0 + l1) * 0.5 - (r0 + r1) * 0.5).abs() <= tolerance;
+        if !left_aligned && !right_aligned && !center_aligned {
+            return false;
+        }
+    }
+    shared >= 2
+}
+
+/// Group all matching physical lines in one body band into logical records.
+fn group_band_records<'b>(
+    physical_lines: &[Vec<GlyphRecord>],
+    word_lines: &[Vec<BorrowedWord<'_>>],
+    (band_start, band_end): (f64, f64),
+    col_bounds: &[f64],
+    orientation: BodyOrientation,
+    budget: &'b Budget,
+) -> Result<BodyBandPlan<'b>, Error> {
+    let mut parsed: BudgetVec<'b, ParsedBodyLine<'b>> = BudgetVec::new(budget);
+    for (line_index, (line, words)) in physical_lines.iter().zip(word_lines).enumerate() {
+        budget.poll()?;
+        let Some(first) = line.first() else {
+            continue;
+        };
+        let line_is_horizontal = first.direction.0.abs() >= first.direction.1.abs();
+        if line_is_horizontal != orientation.horizontal {
+            continue;
+        }
+        let inline_component = if orientation.horizontal {
+            first.direction.0
+        } else {
+            first.direction.1
+        };
+        if (inline_component >= 0.0) != (orientation.inline_sign >= 0.0) {
+            continue;
+        }
+        let (line_a0, line_a1) = bbox_axis_span(line_bbox(line), orientation.horizontal);
+        let axis_center = (line_a0 + line_a1) * 0.5;
+        if axis_center < band_start - TABLE_SNAP_TOLERANCE
+            || axis_center > band_end + TABLE_SNAP_TOLERANCE
+        {
+            continue;
+        }
+        if let Some(entry) =
+            parse_body_line(line_index, line, words, col_bounds, orientation, budget)?
+        {
+            parsed.try_push(entry)?;
+        }
+    }
+    // Sort in reverse logical reading order so `pop` yields lines in reading
+    // order while `last` peeks the next line without releasing budget tracking.
+    parsed.sort_unstable_by(|left, right| {
+        (right.axis_center * orientation.block_sign)
+            .total_cmp(&(left.axis_center * orientation.block_sign))
+    });
+
+    let mut records: BudgetVec<'b, BodyRecord<'b>> = BudgetVec::new(budget);
+    while let Some(line) = parsed.pop() {
+        budget.poll()?;
+        let attaches = records.last().is_some_and(|record| {
+            is_wrapped_continuation(record, &line, parsed.last(), orientation)
+        });
+        if attaches {
+            let record = records
+                .last_mut()
+                .expect("last record was checked immediately above");
+            record.display_axis_start = record.display_axis_start.min(line.axis_start);
+            record.display_axis_end = record.display_axis_end.max(line.axis_end);
+            record.lines.try_push(line)?;
+        } else {
+            let display_axis_start = line.axis_start;
+            let display_axis_end = line.axis_end;
+            let mut rec_lines = BudgetVec::new(budget);
+            rec_lines.try_push(line)?;
+            records.try_push(BodyRecord {
+                lines: rec_lines,
+                display_axis_start,
+                display_axis_end,
+            })?;
+        }
+    }
+
+    // Store records in ascending display row-axis order for grid tiling.
+    if orientation.block_sign < 0.0 {
+        records.reverse();
+    }
+    Ok(BodyBandPlan {
+        axis_start: band_start,
+        axis_end: band_end,
+        records,
+    })
+}
+
+/// Validate that the grouped body bands exhibit repeated aligned tabular
+/// records rather than prose or an unrelated summary box.
+fn body_plan_is_tabular(bands: &[BodyBandPlan<'_>], budget: &Budget) -> Result<bool, Error> {
+    let mut total_records = 0usize;
+    let mut multi_col_records = 0usize;
+    let mut standalone_single_col = 0usize;
+    let mut total_adjacent_pairs = 0usize;
+    let mut aligned_adjacent_pairs = 0usize;
+
+    let mut all_multi_starts: BudgetVec<'_, &ParsedBodyLine<'_>> = BudgetVec::new(budget);
+    for band in bands {
+        let mut prev_multi: Option<&ParsedBodyLine<'_>> = None;
+        for record in band.records.iter() {
+            total_records += 1;
+            let start = &record.lines[0];
+            if start.occupied_cols >= 2 {
+                multi_col_records += 1;
+                all_multi_starts.try_push(start)?;
+                if let Some(previous) = prev_multi {
+                    total_adjacent_pairs += 1;
+                    if records_column_aligned(previous, start) {
+                        aligned_adjacent_pairs += 1;
+                    }
+                }
+                prev_multi = Some(start);
+            } else {
+                standalone_single_col += 1;
+            }
+        }
+    }
+    if multi_col_records < MIN_BORDERLESS_BODY_RECORDS {
+        return Ok(false);
+    }
+    // Reject boxes dominated by unattached single-column prose lines.
+    if standalone_single_col > 0 && standalone_single_col * 3 >= total_records {
+        return Ok(false);
+    }
+    // When every band holds a single record separated by horizontal rules,
+    // verify column alignment across consecutive bands instead.
+    if total_adjacent_pairs == 0 {
+        for pair in all_multi_starts.windows(2) {
+            total_adjacent_pairs += 1;
+            if records_column_aligned(pair[0], pair[1]) {
+                aligned_adjacent_pairs += 1;
+            }
+        }
+    }
+    Ok(total_adjacent_pairs > 0 && aligned_adjacent_pairs * 4 >= total_adjacent_pairs * 3)
+}
+
+/// Return full-width row-axis coordinates of `rules` spanning
+/// `[cross_start, cross_end]`.
+fn full_width_axis_bounds(
+    rules: &[RuleSegment],
+    axis_bounds: &[f64],
+    cross_start: f64,
+    cross_end: f64,
+    horizontal: bool,
+    budget: &Budget,
+) -> Result<Vec<f64>, Error> {
+    let mut kept = Vec::new();
+    for &coord in axis_bounds {
+        budget.poll()?;
+        if rule_covers(rules, horizontal, coord, cross_start, cross_end)? {
+            try_push_text(&mut kept, coord, "body band axis bounds")?;
+        }
+    }
+    Ok(kept)
+}
+
+/// Try to pair header component `header_index` with one or more adjacent
+/// outer-bordered body components across a narrow double-rule gap along
+/// `horizontal`.
+fn plan_double_rule_body<'b>(
+    components: &[RuleComponent],
+    consumed: &[bool],
+    header_index: usize,
+    horizontal: bool,
+    physical_lines: &[Vec<GlyphRecord>],
+    word_lines: &[Vec<BorrowedWord<'_>>],
+    budget: &'b Budget,
+) -> Result<Option<AttachedBodyPlan<'b>>, Error> {
+    let header = &components[header_index];
+    let header_cross = header.cross_bounds(horizontal);
+    let header_axis = header.axis_bounds(horizontal);
+    if !header.bounded || header_cross.len() < 3 || header_axis.len() < 2 {
+        return Ok(None);
+    }
+    let cross_lo = header_cross[0];
+    let cross_hi = header_cross[header_cross.len() - 1];
+    let header_axis_lo = header_axis[0];
+    let header_axis_hi = header_axis[header_axis.len() - 1];
+
+    // Try attaching on either side (+block or -block), letting the body box's
+    // text orientation decide which side is logically "after" the header.
+    for side in [1.0_f64, -1.0_f64] {
+        let mut chain_indices: BudgetVec<'b, usize> = BudgetVec::new(budget);
+        let mut frontier = if side > 0.0 {
+            header_axis_hi
+        } else {
+            header_axis_lo
+        };
+        let mut orientation: Option<BodyOrientation> = None;
+
+        loop {
+            budget.poll()?;
+            let mut next_match: Option<(usize, f64, BodyOrientation)> = None;
+            for (idx, candidate) in components.iter().enumerate() {
+                if idx == header_index
+                    || consumed[idx]
+                    || !candidate.bounded
+                    || chain_indices.contains(&idx)
+                {
+                    continue;
+                }
+                let cand_cross = candidate.cross_bounds(horizontal);
+                let cand_axis = candidate.axis_bounds(horizontal);
+                if cand_cross.len() != 2 || cand_axis.len() < 2 {
+                    continue;
+                }
+                if (cand_cross[0] - cross_lo).abs() > TABLE_SNAP_TOLERANCE
+                    || (cand_cross[1] - cross_hi).abs() > TABLE_SNAP_TOLERANCE
+                {
+                    continue;
+                }
+                let gap = if side > 0.0 {
+                    cand_axis[0] - frontier
+                } else {
+                    frontier - cand_axis[cand_axis.len() - 1]
+                };
+                if gap < -TABLE_SNAP_TOLERANCE || gap > MAX_DOUBLE_RULE_GAP {
+                    continue;
+                }
+                let Some(cand_bbox) = candidate.bbox() else {
+                    continue;
+                };
+                let Some(cand_orientation) =
+                    body_text_orientation(physical_lines, cand_bbox, horizontal)
+                else {
+                    continue;
+                };
+                if cand_orientation.block_sign != side {
+                    continue;
+                }
+                if let Some(existing) = orientation
+                    && (existing.inline_sign != cand_orientation.inline_sign
+                        || existing.block_sign != cand_orientation.block_sign)
+                {
+                    continue;
+                }
+                if next_match.is_none_or(|(_, best_gap, _)| gap < best_gap) {
+                    next_match = Some((idx, gap, cand_orientation));
+                }
+            }
+            let Some((matched_idx, _, matched_orientation)) = next_match else {
+                break;
+            };
+            orientation = Some(matched_orientation);
+            chain_indices.try_push(matched_idx)?;
+            let matched_axis = components[matched_idx].axis_bounds(horizontal);
+            frontier = if side > 0.0 {
+                matched_axis[matched_axis.len() - 1]
+            } else {
+                matched_axis[0]
+            };
+        }
+
+        let Some(orientation) = orientation else {
+            continue;
+        };
+
+        let header_axis_rows = header_axis.len() - 1;
+        let col_count = header_cross.len() - 1;
+        let mut bands: BudgetVec<'b, BodyBandPlan<'b>> = BudgetVec::new(budget);
+        let mut total_body_records = 0usize;
+        let mut total_real_rules = header.rules.len();
+        let mut inferred_row_dividers = 0usize;
+
+        for &body_idx in chain_indices.iter() {
+            let body = &components[body_idx];
+            total_real_rules = total_real_rules.saturating_add(body.rules.len());
+            let body_axis = full_width_axis_bounds(
+                &body.rules,
+                body.axis_bounds(horizontal),
+                cross_lo,
+                cross_hi,
+                horizontal,
+                budget,
+            )?;
+            if body_axis.len() < 2 {
+                continue;
+            }
+            for pair in body_axis.windows(2) {
+                let plan = group_band_records(
+                    physical_lines,
+                    word_lines,
+                    (pair[0], pair[1]),
+                    header_cross,
+                    orientation,
+                    budget,
+                )?;
+                if plan.records.is_empty() && pair[1] - pair[0] <= MAX_DOUBLE_RULE_GAP {
+                    continue;
+                }
+                if !plan.records.is_empty() {
+                    total_body_records = total_body_records.saturating_add(plan.records.len());
+                    inferred_row_dividers =
+                        inferred_row_dividers.saturating_add(plan.records.len().saturating_sub(1));
+                    bands.try_push(plan)?;
+                }
+            }
+        }
+
+        if bands.is_empty() || !body_plan_is_tabular(&bands, budget)? {
+            continue;
+        }
+        // Sort bands in ascending display row-axis order.
+        bands.sort_unstable_by(|left, right| left.axis_start.total_cmp(&right.axis_start));
+
+        let projected_col_rules = col_count.saturating_sub(1);
+        let total_rule_count = total_real_rules
+            .saturating_add(projected_col_rules)
+            .saturating_add(inferred_row_dividers);
+        budget.check(LimitCode::TextRuleCount, as_u64(total_rule_count))?;
+        table_slots(
+            header_axis_rows.saturating_add(total_body_records),
+            col_count,
+            budget,
+        )?;
+
+        let mut header_xs = Vec::new();
+        for &x in &header.xs {
+            try_push_text(&mut header_xs, x, "hybrid header x bounds")?;
+        }
+        let mut header_ys = Vec::new();
+        for &y in &header.ys {
+            try_push_text(&mut header_ys, y, "hybrid header y bounds")?;
+        }
+        return Ok(Some(AttachedBodyPlan {
+            orientation,
+            header_xs,
+            header_ys,
+            body_component_indices: chain_indices,
+            bands,
+            total_body_records,
+            total_rule_count,
+        }));
+    }
+    Ok(None)
+}
+
+/// Try to split one connected component whose ruled header touches (0 pt gap)
+/// one or more trailing full-width unsplit body bands along `horizontal`.
+fn plan_connected_borderless_body<'b>(
+    component: &RuleComponent,
+    horizontal: bool,
+    physical_lines: &[Vec<GlyphRecord>],
+    word_lines: &[Vec<BorrowedWord<'_>>],
+    budget: &'b Budget,
+) -> Result<Option<AttachedBodyPlan<'b>>, Error> {
+    let cross = component.cross_bounds(horizontal);
+    let axis = component.axis_bounds(horizontal);
+    if !component.bounded || cross.len() < 3 || axis.len() < 3 {
+        return Ok(None);
+    }
+    let cross_lo = cross[0];
+    let cross_hi = cross[cross.len() - 1];
+    let full_axis = full_width_axis_bounds(
+        &component.rules,
+        axis,
+        cross_lo,
+        cross_hi,
+        horizontal,
+        budget,
+    )?;
+    if full_axis.len() < 3 {
+        return Ok(None);
+    }
+
+    // Check which full-width axis bands lack ALL internal column dividers.
+    let band_count = full_axis.len() - 1;
+    let mut band_has_internal_cols: BudgetVec<'b, bool> = BudgetVec::new(budget);
+    for pair in full_axis.windows(2) {
+        let mut has_col = false;
+        for &divider in &cross[1..cross.len() - 1] {
+            if rule_covers(&component.rules, !horizontal, divider, pair[0], pair[1])? {
+                has_col = true;
+                break;
+            }
+        }
+        band_has_internal_cols.try_push(has_col)?;
+    }
+
+    for side in [1.0_f64, -1.0_f64] {
+        // Count trailing unsplit bands on `side`.
+        let unsplit_count = if side > 0.0 {
+            band_has_internal_cols
+                .iter()
+                .rev()
+                .take_while(|&&has_col| !has_col)
+                .count()
+        } else {
+            band_has_internal_cols
+                .iter()
+                .take_while(|&&has_col| !has_col)
+                .count()
+        };
+        if unsplit_count == 0 || unsplit_count == band_count {
+            continue;
+        }
+        let split_at = if side > 0.0 {
+            band_count - unsplit_count
+        } else {
+            unsplit_count
+        };
+        let split_coord = full_axis[split_at];
+        let body_axis_lo = if side > 0.0 {
+            split_coord
+        } else {
+            full_axis[0]
+        };
+        let body_axis_hi = if side > 0.0 {
+            full_axis[band_count]
+        } else {
+            split_coord
+        };
+        let body_bbox = if horizontal {
+            (cross_lo, body_axis_lo, cross_hi, body_axis_hi)
+        } else {
+            (body_axis_lo, cross_lo, body_axis_hi, cross_hi)
+        };
+        let Some(orientation) = body_text_orientation(physical_lines, body_bbox, horizontal) else {
+            continue;
+        };
+        if orientation.block_sign != side {
+            continue;
+        }
+
+        // Keep header axis coordinates up to `split_coord` (inclusive).
+        let mut header_axis_coords = Vec::new();
+        for &coord in axis {
+            let in_header = if side > 0.0 {
+                coord <= split_coord + TABLE_SNAP_TOLERANCE
+            } else {
+                coord >= split_coord - TABLE_SNAP_TOLERANCE
+            };
+            if in_header {
+                try_push_text(
+                    &mut header_axis_coords,
+                    coord,
+                    "connected header axis bounds",
+                )?;
+            }
+        }
+        if header_axis_coords.len() < 2 {
+            continue;
+        }
+        let header_axis_rows = header_axis_coords.len() - 1;
+        let col_count = cross.len() - 1;
+
+        let body_band_range = if side > 0.0 {
+            split_at..band_count
+        } else {
+            0..split_at
+        };
+        let mut bands: BudgetVec<'b, BodyBandPlan<'b>> = BudgetVec::new(budget);
+        let mut total_body_records = 0usize;
+        let mut inferred_row_dividers = 0usize;
+        for b_idx in body_band_range {
+            let (b0, b1) = (full_axis[b_idx], full_axis[b_idx + 1]);
+            let plan = group_band_records(
+                physical_lines,
+                word_lines,
+                (b0, b1),
+                cross,
+                orientation,
+                budget,
+            )?;
+            if plan.records.is_empty() && b1 - b0 <= MAX_DOUBLE_RULE_GAP {
+                continue;
+            }
+            if !plan.records.is_empty() {
+                total_body_records = total_body_records.saturating_add(plan.records.len());
+                inferred_row_dividers =
+                    inferred_row_dividers.saturating_add(plan.records.len().saturating_sub(1));
+                bands.try_push(plan)?;
+            }
+        }
+        if bands.is_empty() || !body_plan_is_tabular(&bands, budget)? {
+            continue;
+        }
+        bands.sort_unstable_by(|left, right| left.axis_start.total_cmp(&right.axis_start));
+
+        let projected_col_rules = col_count.saturating_sub(1);
+        let total_rule_count = component
+            .rules
+            .len()
+            .saturating_add(projected_col_rules)
+            .saturating_add(inferred_row_dividers);
+        budget.check(LimitCode::TextRuleCount, as_u64(total_rule_count))?;
+        table_slots(
+            header_axis_rows.saturating_add(total_body_records),
+            col_count,
+            budget,
+        )?;
+
+        let mut cross_copy = Vec::new();
+        for &c in cross {
+            try_push_text(&mut cross_copy, c, "connected header cross bounds")?;
+        }
+        let (header_xs, header_ys) = if horizontal {
+            (cross_copy, header_axis_coords)
+        } else {
+            (header_axis_coords, cross_copy)
+        };
+        return Ok(Some(AttachedBodyPlan {
+            orientation,
+            header_xs,
+            header_ys,
+            body_component_indices: BudgetVec::new(budget),
+            bands,
+            total_body_records,
+            total_rule_count,
+        }));
+    }
+    Ok(None)
+}
+
+/// Assemble the text of one borderless body cell across all lines of `record`
+/// mapped to `column`, charging its UTF-8 bytes against `text_size`.
+fn body_record_cell_text(
+    record: &BodyRecord<'_>,
+    column: usize,
+    word_lines: &[Vec<BorrowedWord<'_>>],
+    budget: &Budget,
+    charged: &mut usize,
+) -> Result<String, Error> {
+    let mut text = String::new();
+    let mut has_row = false;
+    for line in record.lines.iter() {
+        budget.poll()?;
+        let words = &word_lines[line.line_index];
+        let logical_rtl = glyphs_rtl_order(
+            line.phrases
+                .iter()
+                .filter(|phrase| phrase.column == column)
+                .flat_map(|phrase| words[phrase.word_start..phrase.word_end].iter())
+                .flat_map(|(_, glyphs)| glyphs.iter()),
+        ) != RtlLineOrder::None;
+        let mut has_word = false;
+        let mut append_word = |glyphs: &[GlyphRecord]| -> Result<(), Error> {
+            if !has_word && has_row {
+                try_push_str_text(&mut text, "\n", "borderless body cell text")?;
+            } else if has_word {
+                try_push_str_text(&mut text, " ", "borderless body cell text")?;
+            }
+            try_push_logical_glyphs(&mut text, glyphs, "borderless body cell text")?;
+            has_word = true;
+            has_row = true;
+            Ok(())
+        };
+        if logical_rtl {
+            for phrase in line.phrases.iter().rev() {
+                if phrase.column != column {
+                    continue;
+                }
+                for (_, glyphs) in words[phrase.word_start..phrase.word_end].iter().rev() {
+                    append_word(glyphs)?;
+                }
+            }
+        } else {
+            for phrase in line.phrases.iter() {
+                if phrase.column != column {
+                    continue;
+                }
+                for (_, glyphs) in &words[phrase.word_start..phrase.word_end] {
+                    append_word(glyphs)?;
+                }
+            }
+        }
+    }
+    budget.charge(LimitCode::TextSize, as_u64(text.len()))?;
+    *charged += text.len();
+    Ok(text)
+}
+
+/// Compute monotonic display-space row boundaries tiling `[band.axis_start,
+/// band.axis_end]` across `band.records` (already in ascending display order).
+fn body_band_row_bounds<'b>(
+    band: &BodyBandPlan<'_>,
+    budget: &'b Budget,
+) -> Result<BudgetVec<'b, f64>, Error> {
+    let mut bounds = BudgetVec::new(budget);
+    bounds.try_push(band.axis_start)?;
+    for pair in band.records.windows(2) {
+        let raw_mid = if pair[0].display_axis_end <= pair[1].display_axis_start {
+            (pair[0].display_axis_end + pair[1].display_axis_start) * 0.5
+        } else {
+            let c0 = (pair[0].display_axis_start + pair[0].display_axis_end) * 0.5;
+            let c1 = (pair[1].display_axis_start + pair[1].display_axis_end) * 0.5;
+            (c0 + c1) * 0.5
+        };
+        let prev = *bounds.last().expect("band start was pushed");
+        bounds.try_push(raw_mid.clamp(prev, band.axis_end))?;
+    }
+    bounds.try_push(band.axis_end)?;
+    Ok(bounds)
+}
+
+/// Materialize one combined header + borderless body table, releasing all
+/// `text_size` charges if header tiling fails or any limit refuses.
+fn materialize_attached_body_table(
+    header_rules: &[RuleSegment],
+    plan: &AttachedBodyPlan<'_>,
+    word_lines: &[Vec<BorrowedWord<'_>>],
+    budget: &Budget,
+) -> Result<Option<TableTuple>, Error> {
+    budget.check(LimitCode::TextRuleCount, as_u64(plan.total_rule_count))?;
+    let mut charged = 0usize;
+    let result = build_attached_body_table(header_rules, plan, word_lines, budget, &mut charged);
+    if !matches!(result, Ok(Some(_))) {
+        budget.release(LimitCode::TextSize, as_u64(charged));
+    }
+    result
+}
+
+fn build_attached_body_table(
+    header_rules: &[RuleSegment],
+    plan: &AttachedBodyPlan<'_>,
+    word_lines: &[Vec<BorrowedWord<'_>>],
+    budget: &Budget,
+    charged: &mut usize,
+) -> Result<Option<TableTuple>, Error> {
+    let horizontal = plan.orientation.horizontal;
+    let header_rows = plan.header_ys.len() - 1;
+    let header_cols = plan.header_xs.len() - 1;
+    let (total_rows, total_cols) = if horizontal {
+        (header_rows + plan.total_body_records, header_cols)
+    } else {
+        (header_rows, header_cols + plan.total_body_records)
+    };
+    let slot_count = table_slots(total_rows, total_cols, budget)?;
+    let Ok(row_count_u32) = u32::try_from(total_rows) else {
+        return Ok(None);
+    };
+    let Ok(col_count_u32) = u32::try_from(total_cols) else {
+        return Ok(None);
+    };
+
+    let Some((mut header_cells, header_anchors)) = tile_grid_cells(
+        header_rules,
+        &plan.header_xs,
+        &plan.header_ys,
+        word_lines,
+        budget,
+        charged,
+    )?
+    else {
+        return Ok(None);
+    };
+
+    let mut cells = try_filled_text(slot_count, None, "hybrid borderless table cells")?;
+    let mut anchors = try_filled_text(slot_count, 0u32, "hybrid borderless table anchors")?;
+
+    // Header sits before body in display order when `block_sign > 0`, and after
+    // body when `block_sign < 0`.
+    let (header_row_offset, header_col_offset, body_row_offset, body_col_offset) =
+        match (horizontal, plan.orientation.block_sign >= 0.0) {
+            (true, true) => (0, 0, header_rows, 0),
+            (true, false) => (plan.total_body_records, 0, 0, 0),
+            (false, true) => (0, 0, 0, header_cols),
+            (false, false) => (0, plan.total_body_records, 0, 0),
+        };
+
+    for r in 0..header_rows {
+        for c in 0..header_cols {
+            let old_slot = r * header_cols + c;
+            let new_slot = (r + header_row_offset) * total_cols + (c + header_col_offset);
+            let old_anchor = header_anchors[old_slot] as usize;
+            let anchor_r = old_anchor / header_cols + header_row_offset;
+            let anchor_c = old_anchor % header_cols + header_col_offset;
+            let Ok(new_anchor) = u32::try_from(anchor_r * total_cols + anchor_c) else {
+                return Ok(None);
+            };
+            anchors[new_slot] = new_anchor;
+            cells[new_slot] = header_cells[old_slot].take();
+        }
+    }
+
+    let col_bounds: &[f64] = if horizontal {
+        &plan.header_xs
+    } else {
+        &plan.header_ys
+    };
+    let col_count = col_bounds.len() - 1;
+    let mut record_offset = 0usize;
+    for band in plan.bands.iter() {
+        let row_bounds = body_band_row_bounds(band, budget)?;
+        for (idx, record) in band.records.iter().enumerate() {
+            budget.poll()?;
+            let a0 = row_bounds[idx];
+            let a1 = row_bounds[idx + 1];
+            for col in 0..col_count {
+                let text = body_record_cell_text(record, col, word_lines, budget, charged)?;
+                let cell_bbox = if horizontal {
+                    (col_bounds[col], a0, col_bounds[col + 1], a1)
+                } else {
+                    (a0, col_bounds[col], a1, col_bounds[col + 1])
+                };
+                let (dest_r, dest_c) = if horizontal {
+                    (body_row_offset + record_offset, col)
+                } else {
+                    (col, body_col_offset + record_offset)
+                };
+                let slot = dest_r * total_cols + dest_c;
+                let Ok(anchor) = u32::try_from(slot) else {
+                    return Ok(None);
+                };
+                anchors[slot] = anchor;
+                cells[slot] = Some((cell_bbox, text));
+            }
+            record_offset += 1;
+        }
+    }
+
+    let first_band = &plan.bands[0];
+    let last_band = &plan.bands[plan.bands.len() - 1];
+    let (x0, y0, x1, y1) = if horizontal {
+        (
+            plan.header_xs[0],
+            plan.header_ys[0].min(first_band.axis_start),
+            plan.header_xs[header_cols],
+            plan.header_ys[header_rows].max(last_band.axis_end),
+        )
+    } else {
+        (
+            plan.header_xs[0].min(first_band.axis_start),
+            plan.header_ys[0],
+            plan.header_xs[header_cols].max(last_band.axis_end),
+            plan.header_ys[header_rows],
+        )
+    };
+
+    Ok(Some((
+        (x0, y0, x1, y1),
+        row_count_u32,
+        col_count_u32,
+        cells,
+        anchors,
+        (0.95, None, None, None),
+    )))
+}
+
 /// Detect high-confidence rectangular tables from connected vector-rule grids.
 fn detect_grid_tables(
     physical_lines: &[Vec<GlyphRecord>],
@@ -1083,7 +2309,7 @@ fn detect_grid_tables(
     }
     grouped_rules.sort_unstable_by_key(|(root, _)| *root);
 
-    let mut tables = Vec::new();
+    let mut rule_components = Vec::new();
     let mut group_start = 0;
     while group_start < grouped_rules.len() {
         budget.poll()?;
@@ -1097,9 +2323,94 @@ fn detect_grid_tables(
             try_push_text(&mut component_rules, rule, "table component rules")?;
         }
         group_start = group_end;
+        let xs = clustered_coordinates(rule_coordinates(&component_rules, false)?);
+        let ys = clustered_coordinates(rule_coordinates(&component_rules, true)?);
+        let bounded = xs.len() >= 2
+            && ys.len() >= 2
+            && cell_is_bounded(
+                &component_rules,
+                (xs[0], ys[0], xs[xs.len() - 1], ys[ys.len() - 1]),
+            )?;
+        try_push_text(
+            &mut rule_components,
+            RuleComponent {
+                rules: component_rules,
+                xs,
+                ys,
+                bounded,
+            },
+            "table rule components",
+        )?;
+    }
 
-        let original_xs = clustered_coordinates(rule_coordinates(&component_rules, false)?);
-        let original_ys = clustered_coordinates(rule_coordinates(&component_rules, true)?);
+    let mut consumed = try_filled_text(
+        rule_components.len(),
+        false,
+        "consumed table rule components",
+    )?;
+    let mut tables = Vec::new();
+
+    // First associate bordered header grids with adjacent outer-bordered
+    // borderless-column bodies across a narrow double-rule gap (or attached
+    // directly with no gap).
+    for index in 0..rule_components.len() {
+        budget.poll()?;
+        if consumed[index] || !rule_components[index].bounded {
+            continue;
+        }
+        let mut plan = None;
+        for horizontal in [true, false] {
+            if let Some(found) = plan_double_rule_body(
+                &rule_components,
+                &consumed,
+                index,
+                horizontal,
+                physical_lines,
+                &word_lines,
+                budget,
+            )? {
+                plan = Some(found);
+                break;
+            }
+        }
+        if plan.is_none() {
+            for horizontal in [true, false] {
+                if let Some(found) = plan_connected_borderless_body(
+                    &rule_components[index],
+                    horizontal,
+                    physical_lines,
+                    &word_lines,
+                    budget,
+                )? {
+                    plan = Some(found);
+                    break;
+                }
+            }
+        }
+        if let Some(plan) = plan
+            && let Some(table) = materialize_attached_body_table(
+                &rule_components[index].rules,
+                &plan,
+                &word_lines,
+                budget,
+            )?
+        {
+            consumed[index] = true;
+            for &body_idx in plan.body_component_indices.iter() {
+                consumed[body_idx] = true;
+            }
+            try_push_text(&mut tables, table, "bordered tables")?;
+        }
+    }
+
+    for (index, component) in rule_components.into_iter().enumerate() {
+        budget.poll()?;
+        if consumed[index] {
+            continue;
+        }
+        let mut component_rules = component.rules;
+        let original_xs = component.xs;
+        let original_ys = component.ys;
         if original_xs.len() < 3 || original_ys.len() < 3 {
             continue;
         }
@@ -1292,5 +2603,150 @@ mod tests {
         let budget = Budget::default().with_timeout(std::time::Duration::ZERO);
         let error = detect_grid_tables(&[], &[], &budget).unwrap_err();
         assert!(matches!(error, Error::Limit(refusal) if refusal.code() == LimitCode::Deadline));
+    }
+
+    fn text_glyphs(text: &str, x: f64, y: f64, size: f64) -> Vec<GlyphRecord> {
+        let advance = size * 0.55;
+        text.chars()
+            .enumerate()
+            .map(|(idx, ch)| {
+                let mut g = glyph(ch, x + idx as f64 * advance);
+                g.y = y;
+                g.size = size;
+                g.advance = advance;
+                g
+            })
+            .collect()
+    }
+
+    fn rule_seg(x0: f64, y0: f64, x1: f64, y1: f64, horizontal: bool) -> RuleSegment {
+        RuleSegment {
+            x0,
+            y0,
+            x1,
+            y1,
+            horizontal,
+        }
+    }
+
+    /// A 2-row, 3-column bordered header (`y = 20..50`) separated by a 2 pt
+    /// double-rule gap from an outer-bordered body box (`y = 52..150`).
+    fn double_rule_rules() -> Vec<RuleSegment> {
+        vec![
+            // Header outer frame + internal row/column rules
+            rule_seg(20.0, 20.0, 260.0, 20.0, true),
+            rule_seg(20.0, 35.0, 260.0, 35.0, true),
+            rule_seg(20.0, 50.0, 260.0, 50.0, true),
+            rule_seg(20.0, 20.0, 20.0, 50.0, false),
+            rule_seg(80.0, 20.0, 80.0, 50.0, false),
+            rule_seg(200.0, 20.0, 200.0, 50.0, false),
+            rule_seg(260.0, 20.0, 260.0, 50.0, false),
+            // Body outer frame (2 pt below header, no internal vertical rules)
+            rule_seg(20.0, 52.0, 260.0, 52.0, true),
+            rule_seg(20.0, 150.0, 260.0, 150.0, true),
+            rule_seg(20.0, 52.0, 20.0, 150.0, false),
+            rule_seg(260.0, 52.0, 260.0, 150.0, false),
+        ]
+    }
+
+    fn double_rule_body_lines() -> Vec<Vec<GlyphRecord>> {
+        let mut line0 = text_glyphs("ID", 25.0, 30.0, 6.0);
+        line0.extend(text_glyphs("DESC", 85.0, 30.0, 6.0));
+        line0.extend(text_glyphs("AMT", 230.0, 30.0, 6.0));
+
+        let mut row1 = text_glyphs("R1", 25.0, 62.0, 6.0);
+        row1.extend(text_glyphs("FIRST ITEM", 85.0, 62.0, 6.0));
+        row1.extend(text_glyphs("10.00", 235.0, 62.0, 6.0));
+        // Continuation line overflowing slightly past the x=200 header divider
+        // while staying strictly left of the right-aligned amount at x=235.
+        let row1_cont = text_glyphs("CONTINUATION OVERFLOWING PAST DIVIDER", 85.0, 69.0, 6.0);
+        let row1_cont2 = text_glyphs("FINAL LINE", 85.0, 76.0, 6.0);
+
+        let mut row2 = text_glyphs("R2", 25.0, 84.0, 6.0);
+        row2.extend(text_glyphs("SECOND ITEM", 85.0, 84.0, 6.0));
+        row2.extend(text_glyphs("20.00", 235.0, 84.0, 6.0));
+        let row2_cont = text_glyphs("SECOND CONTINUATION", 85.0, 91.0, 6.0);
+
+        vec![line0, row1, row1_cont, row1_cont2, row2, row2_cont]
+    }
+
+    #[test]
+    fn double_rule_header_attaches_borderless_body_with_wrapped_continuations() {
+        let rules = double_rule_rules();
+        let lines = double_rule_body_lines();
+        let budget = Budget::default();
+
+        let tables = detect_grid_tables(&lines, &rules, &budget).unwrap();
+        assert_eq!(tables.len(), 1);
+        let (bbox, row_count, col_count, cells, _, diagnostics) = &tables[0];
+        assert_eq!((*row_count, *col_count), (4, 3));
+        assert_eq!(*bbox, (20.0, 20.0, 260.0, 150.0));
+        assert_eq!(diagnostics.0, 0.95);
+        let text_at = |r: usize, c: usize| {
+            cells[r * 3 + c]
+                .as_ref()
+                .map(|(_, text)| text.as_str())
+                .unwrap_or("")
+        };
+        assert_eq!(text_at(2, 0), "R1");
+        assert_eq!(
+            text_at(2, 1),
+            "FIRST ITEM\nCONTINUATION OVERFLOWING PAST DIVIDER\nFINAL LINE"
+        );
+        assert_eq!(text_at(2, 2), "10.00");
+        assert_eq!(text_at(3, 0), "R2");
+        assert_eq!(text_at(3, 1), "SECOND ITEM\nSECOND CONTINUATION");
+        assert_eq!(text_at(3, 2), "20.00");
+    }
+
+    #[test]
+    fn double_rule_prose_box_is_not_attached_and_does_not_trip_cell_budget() {
+        let rules = double_rule_rules();
+        let mut lines = Vec::new();
+        let mut header = text_glyphs("ID", 25.0, 30.0, 6.0);
+        header.extend(text_glyphs("DESC", 85.0, 30.0, 6.0));
+        header.extend(text_glyphs("AMT", 230.0, 30.0, 6.0));
+        lines.push(header);
+        // 12 single-phrase prose lines inside the lower box.
+        for i in 0..12 {
+            lines.push(text_glyphs(
+                "Ordinary narrative sentence explaining the table above.",
+                25.0,
+                60.0 + i as f64 * 7.0,
+                6.0,
+            ));
+        }
+        // Tight cell budget that allows the 2x3 header (6 cells) but would fail
+        // if the 12 prose lines were mistakenly counted as 12x3 table rows.
+        let budget = Budget::default().with_limit(LimitCode::TableCellCount, Some(10));
+        let tables = detect_grid_tables(&lines, &rules, &budget).unwrap();
+        assert_eq!(tables.len(), 1);
+        assert_eq!((tables[0].1, tables[0].2), (2, 3));
+        assert_eq!(tables[0].5.0, 1.0);
+    }
+
+    #[test]
+    fn double_rule_body_enforces_table_cell_rule_and_text_size_budgets() {
+        let rules = double_rule_rules();
+        let lines = double_rule_body_lines();
+
+        // 4x3 = 12 cells exceeds a limit of 10.
+        let cell_budget = Budget::default().with_limit(LimitCode::TableCellCount, Some(10));
+        let err = detect_grid_tables(&lines, &rules, &cell_budget).unwrap_err();
+        assert!(
+            matches!(err, Error::Limit(refusal) if refusal.code() == LimitCode::TableCellCount)
+        );
+
+        // 11 real rules + 2 projected column dividers + 1 inferred row divider = 14 rules.
+        let rule_budget = Budget::default().with_limit(LimitCode::TextRuleCount, Some(13));
+        let err = detect_grid_tables(&lines, &rules, &rule_budget).unwrap_err();
+        assert!(matches!(err, Error::Limit(refusal) if refusal.code() == LimitCode::TextRuleCount));
+
+        // TextSize refusal mid-body releases every byte charged for header and
+        // earlier body cells.
+        let text_budget = Budget::default().with_limit(LimitCode::TextSize, Some(20));
+        let err = detect_grid_tables(&lines, &rules, &text_budget).unwrap_err();
+        assert!(matches!(err, Error::Limit(refusal) if refusal.code() == LimitCode::TextSize));
+        assert_eq!(text_budget.used(LimitCode::TextSize), 0);
     }
 }

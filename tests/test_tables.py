@@ -442,6 +442,184 @@ def test_text_tables_refuse_excess_columns_instead_of_omitting_rows() -> None:
     assert caught.value.code == "table_column_count"
 
 
+def _double_rule_hybrid_table_pdf(*, gap: float = 2.0, prose_body: bool = False) -> bytes:
+    """Build a bordered 2x3 header separated by ``gap`` pt from an outer-bordered body box."""
+    body_top = 220.0 - gap
+    rules = (
+        "q 0 G 1 w\n"
+        # Header box (y = 220..260 in PDF coords -> 40..80 in display coords)
+        "40 260 m 300 260 l\n"
+        "40 240 m 300 240 l\n"
+        "40 220 m 300 220 l\n"
+        "40 220 m 40 260 l\n"
+        "100 220 m 100 260 l\n"
+        "235 220 m 235 260 l\n"
+        "300 220 m 300 260 l\n"
+        # Outer-bordered body box (no internal vertical rules)
+        f"40 {body_top:.2f} m 300 {body_top:.2f} l\n"
+        "40 80 m 300 80 l\n"
+        f"40 80 m 40 {body_top:.2f} l\n"
+        f"300 80 m 300 {body_top:.2f} l\n"
+        "S Q"
+    )
+    header = (
+        "BT /F1 8 Tf 48 247 Td (ID) Tj ET\n"
+        "BT /F1 8 Tf 108 247 Td (Description) Tj ET\n"
+        "BT /F1 8 Tf 245 247 Td (Amount) Tj ET\n"
+        "BT /F1 8 Tf 48 227 Td (Code) Tj ET\n"
+        "BT /F1 8 Tf 108 227 Td (Details) Tj ET\n"
+        "BT /F1 8 Tf 245 227 Td (USD) Tj ET"
+    )
+    if prose_body:
+        body = (
+            "BT /F1 8 Tf 48 202 Td (This summary box explains the totals shown above.) Tj ET\n"
+            "BT /F1 8 Tf 48 190 Td (It contains ordinary narrative prose across the full width.) Tj ET\n"
+            "BT /F1 8 Tf 48 178 Td (It must not be attached as tabular data rows.) Tj ET"
+        )
+    else:
+        body = (
+            # Record 1 with 2 wrapped continuation lines (line 2 overflows past the
+            # x=235 header divider into whitespace while staying left of 120.50 at x=268).
+            "BT /F1 7 Tf 48 204 Td (V001) Tj ET\n"
+            "BT /F1 7 Tf 105 204 Td (TRAVEL EXPENSE) Tj ET\n"
+            "BT /F1 7 Tf 268 204 Td (120.50) Tj ET\n"
+            "BT /F1 7 Tf 105 194 Td (AIRFARE KANSAS CITY TO WASHINGTON AND) Tj ET\n"
+            "BT /F1 7 Tf 105 184 Td (RETURN) Tj ET\n"
+            # Record 2 with 1 wrapped continuation line
+            "BT /F1 7 Tf 48 172 Td (V002) Tj ET\n"
+            "BT /F1 7 Tf 105 172 Td (RAIL EXPENSE) Tj ET\n"
+            "BT /F1 7 Tf 268 172 Td (85.00) Tj ET\n"
+            "BT /F1 7 Tf 105 162 Td (TRAIN FARE TO NEW YORK) Tj ET\n"
+            # Record 3 single-line row
+            "BT /F1 7 Tf 48 150 Td (V003) Tj ET\n"
+            "BT /F1 7 Tf 105 150 Td (LODGING) Tj ET\n"
+            "BT /F1 7 Tf 268 150 Td (210.00) Tj ET"
+        )
+    return _table_pdf(f"{rules}\n{header}\n{body}")
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize("gap", [2.0, 0.0])
+def test_double_rule_and_connected_borderless_body_with_wrapped_rows(rotation: int, gap: float) -> None:
+    """Attach borderless multi-line body rows beneath a bordered header in every rotation."""
+    document = pyropdf.open(_double_rule_hybrid_table_pdf(gap=gap))
+    document.pages[0].rotation = rotation
+
+    tables = document.pages[0].tables()
+
+    assert len(tables) == 1
+    table = tables[0]
+    physical_shape = (5, 3) if rotation in (0, 180) else (3, 5)
+    assert (len(table.rows), len(table.rows[0])) == physical_shape
+    assert table.diagnostics.confidence == 0.95
+    if rotation == 0:
+        assert table.rows[2:] == (
+            ("V001", "TRAVEL EXPENSE\nAIRFARE KANSAS CITY TO WASHINGTON AND\nRETURN", "120.50"),
+            ("V002", "RAIL EXPENSE\nTRAIN FARE TO NEW YORK", "85.00"),
+            ("V003", "LODGING", "210.00"),
+        )
+    else:
+        cells = {cell for row in table.rows for cell in row if cell}
+        assert {
+            "V001",
+            "TRAVEL EXPENSE\nAIRFARE KANSAS CITY TO WASHINGTON AND\nRETURN",
+            "120.50",
+            "V002",
+            "RAIL EXPENSE\nTRAIN FARE TO NEW YORK",
+            "85.00",
+            "V003",
+            "LODGING",
+            "210.00",
+        } <= cells
+
+
+def test_double_rule_prose_box_is_not_merged_into_header() -> None:
+    """Keep a prose box below a bordered header out of the detected table."""
+    table = pyropdf.open(_double_rule_hybrid_table_pdf(gap=2.0, prose_body=True)).pages[0].tables()[0]
+
+    assert (len(table.rows), len(table.rows[0])) == (2, 3)
+    assert table.diagnostics.confidence == 1.0
+
+
+def test_double_rule_table_enforces_text_size_and_cell_count_budgets() -> None:
+    """Refuse when a double-rule body exceeds max_size or table_cell_count."""
+    page = pyropdf.open(_double_rule_hybrid_table_pdf(gap=2.0)).pages[0]
+    # Allow glyph collection (page text fits) while refusing the materialized
+    # header + borderless body cell strings.
+    page_text_bytes = len(page.text().encode())
+    with pytest.raises(pyropdf.LimitError) as caught:
+        page.tables(max_size=page_text_bytes + 40)
+    assert caught.value.code == "text_size"
+
+    # A 10-column bordered header above a 420-row borderless body yields
+    # (1 + 420) * 10 = 4,210 cells (> 4,096 default table_cell_count) with only
+    # 17 vector rules.
+    header_rules = [
+        "q 0 G 1 w",
+        "20 500 m 320 500 l",
+        "20 480 m 320 480 l",
+        *[f"{20 + col * 30} 480 m {20 + col * 30} 500 l" for col in range(11)],
+        # Outer-bordered body box 2 pt below header.
+        "20 478 m 320 478 l",
+        "20 20 m 320 20 l",
+        "20 20 m 20 478 l",
+        "320 20 m 320 478 l",
+        "S Q",
+    ]
+    body_rows = [
+        f"BT /F1 0.8 Tf 25 {475 - row * 1.0:.1f} Td (A{row}) Tj ET\n"
+        f"BT /F1 0.8 Tf 295 {475 - row * 1.0:.1f} Td (B{row}) Tj ET"
+        for row in range(420)
+    ]
+    oversized_stream = "\n".join([*header_rules, *body_rows])
+    oversized_pdf = build_raw_pdf({
+        1: "<< /Type /Catalog /Pages 2 0 R >>",
+        2: f"<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 340 520] {_RESOURCES} >>",
+        3: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+        5: f"<< /Length {len(oversized_stream)} >>\nstream\n{oversized_stream}\nendstream",
+    })  # fmt: skip
+    oversized_page = pyropdf.open(oversized_pdf).pages[0]
+    with pytest.raises(pyropdf.LimitError) as caught:
+        oversized_page.tables()
+    assert caught.value.code == "table_cell_count"
+
+
+def test_senate_expenditures_double_rule_table_all_rotations() -> None:
+    """Extract all 34 rows and 7 columns cleanly across every page rotation."""
+    base_page = pyropdf.open("tests/assets/real_world/senate-expenditures.pdf").pages[0]
+    [base] = base_page.tables()
+
+    assert (len(base.rows), len(base.rows[0])) == (34, 7)
+    assert base.diagnostics.confidence == 0.95
+    rows_by_doc = {row[0]: row for row in base.rows if row[0]}
+    # Three-line wrapped description whose second line overflows past the header
+    # rule at x=647.46 must stay intact without leaking words into AMOUNT ($).
+    assert rows_by_doc["DHAW20190004"] == (
+        "DHAW20190004",
+        "04/03/2019",
+        "CITIBANK - TRAVEL CBA CARD",
+        "03/21/2019",
+        "03/24/2019",
+        (
+            "STAFF TRANSPORTATION\n"
+            "AIRFARE FOR K FORD 3/21 WASHINGTON DC TO SAINT LOUIS, KANSAS CITY; 3/24 SAINT LOUIS TO\n"
+            "WASHINGTON DC"
+        ),
+        "903.90",
+    )
+    for rotation in (0, 90, 180, 270):
+        doc = pyropdf.open("tests/assets/real_world/senate-expenditures.pdf")
+        doc.pages[0].rotation = rotation
+        [rotated] = doc.pages[0].tables()
+        expected_shape = (34, 7) if rotation in (90, 270) else (7, 34)
+        assert (len(rotated.rows), len(rotated.rows[0])) == expected_shape
+        cells = {cell for row in rotated.rows for cell in row if cell}
+        assert "BAIN, J MATTHEW" in cells
+        assert "DHAW20190004" in cells
+        assert "903.90" in cells
+
+
 def test_tables_read_the_current_version_within_the_text_budgets() -> None:
     document = pyropdf.open(_borderless_table_pdf())
     page = document.pages[0]

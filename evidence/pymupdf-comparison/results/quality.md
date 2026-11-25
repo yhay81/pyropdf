@@ -1,4 +1,4 @@
-Labels: `quality/*.json`; pyropdf commit 129eb3aa with #1149.
+Labels: `quality/*.json`; pyropdf commit 20f2a0e1 with #1153.
 
 | Page | Engine | Anchors found | Anchor pairs in order | Words placed | Mean word IoU | Table rows | Cells right | Columns |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -28,7 +28,7 @@ Labels: `quality/*.json`; pyropdf commit 129eb3aa with #1149.
 | patent-us223898-p3 | pyropdf 0.4.0 | 14/14 | 13/13 | 0/0 |  | | | |
 | senate-expenditures-p1 | PyMuPDF 2.1 | 16/16 | 11/15 | 0/6 | 0.00 | 0/3 | 0/21 | 7/7 |
 | senate-expenditures-p1 | PyMuPDF 2.1 sort=True | 6/16 | 4/5 | 0/6 | 0.00 | 0/3 | 0/21 | 7/7 |
-| senate-expenditures-p1 | pyropdf 0.4.0 | 16/16 | 15/15 | 6/6 | 0.70 | 0/3 | 0/21 | 7/7 |
+| senate-expenditures-p1 | pyropdf 0.4.0 | 16/16 | 15/15 | 6/6 | 0.70 | 3/3 | 21/21 | 7/7 |
 | usrguide-p1 | PyMuPDF 2.1 | 14/14 | 13/13 | 6/6 | 0.75 | | | |
 | usrguide-p1 | PyMuPDF 2.1 sort=True | 14/14 | 13/13 | 6/6 | 0.75 | | | |
 | usrguide-p1 | pyropdf 0.4.0 | 14/14 | 13/13 | 6/6 | 0.75 | | | |

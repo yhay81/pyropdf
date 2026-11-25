@@ -23,11 +23,7 @@ COVERED = 0.9
 #: Pages whose reading-order anchors pyropdf does not meet yet, with the issue that tracks each.
 KNOWN: dict[str, str] = {}
 #: Pages whose labeled table rows pyropdf does not meet yet, with the issue that tracks each.
-KNOWN_TABLES: dict[str, str] = {
-    "senate-expenditures-p1": (
-        "#1153: borderless multi-line data rows beneath a double-ruled bordered header are not attached to the grid"
-    ),
-}
+KNOWN_TABLES: dict[str, str] = {}
 
 
 def _normalize(text: str) -> str:
