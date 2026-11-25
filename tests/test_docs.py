@@ -104,6 +104,63 @@ def test_review_comments_recipe_lists_page_author_and_comment(
     ]
 
 
+def _matching_recipes(*needles: str) -> dict[str, str]:
+    recipes: dict[str, str] = {}
+    for language in LANGUAGES:
+        matches = [
+            code
+            for code in EXAMPLE.findall((DOCS / language / "recipes.md").read_text(encoding="utf-8"))
+            if all(needle in code for needle in needles)
+        ]
+        assert len(matches) == 1, (language, needles)
+        recipes[language] = matches[0]
+    assert recipes["en"] == recipes["ja"], needles
+    return recipes
+
+
+def test_canonical_workflow_recipes_produce_expected_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    thumb_recipe = _matching_recipes("doc.render(dpi=36", "page.images()", "image.stored()")["en"]
+    stamp_recipe = _matching_recipes("pyropdf.Stamp(", "canvas.opacity(")["en"]
+    redact_recipe = _matching_recipes("pyropdf.RedactionMark(", "doc.sanitize(")["en"]
+
+    monkeypatch.chdir(tmp_path)
+    with pyropdf.Document() as img_source:
+        swatch = img_source.pages.new((8, 6))
+        with swatch.draw() as canvas:
+            canvas.rect((0, 0, 8, 6), fill=pyropdf.Color(0.9, 0.1, 0.1))
+        jpeg_bytes = swatch.pixmap(dpi=72).to_bytes("jpeg", quality=90)
+        png_bytes = swatch.pixmap(dpi=72).to_bytes("png")
+
+    with pyropdf.Document() as doc:
+        page = doc.pages.new((612, 792))
+        with page.draw() as canvas:
+            canvas.text("Invoice total 42", (36, 60), size=14)
+            canvas.image((36, 90, 96, 130), jpeg_bytes)
+            canvas.image((120, 90, 180, 130), png_bytes)
+        doc.pages.new((612, 792))
+        doc.metadata = {"title": "Draft"}
+        doc.attachments.add("notes.txt", b"secret")
+        doc.save(tmp_path / "input.pdf")
+
+    exec(compile(thumb_recipe, "docs/en/recipes.md", "exec"), {"__name__": "__main__"})  # noqa: S102
+    assert (tmp_path / "thumb-1.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert (tmp_path / "thumb-2.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert (tmp_path / "page-1-image-0.jpg").read_bytes() == jpeg_bytes
+    assert (tmp_path / "page-1-image-1.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+    exec(compile(stamp_recipe, "docs/en/recipes.md", "exec"), {"__name__": "__main__"})  # noqa: S102
+    with pyropdf.open(tmp_path / "watermarked.pdf") as watermarked:
+        assert watermarked.pages[0].annotations[0].type is pyropdf.AnnotationType.STAMP
+        assert "CONFIDENTIAL" in watermarked.pages[0].text()
+        assert "CONFIDENTIAL" in watermarked.pages[1].text()
+
+    exec(compile(redact_recipe, "docs/en/recipes.md", "exec"), {"__name__": "__main__"})  # noqa: S102
+    with pyropdf.open(tmp_path / "marked-clean.pdf") as cleaned:
+        assert len(cleaned.attachments) == 0
+        assert dict(cleaned.metadata) == {}
+        assert [a.type for a in cleaned.pages[0].annotations] == [pyropdf.AnnotationType.REDACT]
+
+
 def test_api_reference_examples_are_collected() -> None:
     api_ids = [where for where, _ in _examples() if where.startswith("docs/en/api/")]
     assert api_ids != []

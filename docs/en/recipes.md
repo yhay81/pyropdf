@@ -1,6 +1,6 @@
 ---
 title: Recipes
-description: Short, complete programs for common PDF tasks — merge, split, render, extract, highlight, fill forms, shrink, clean, and protect.
+description: Short, complete programs for common PDF tasks — merge, split, render thumbnails, extract images and text, stamp, watermark, fill and flatten forms, mark for redaction, sanitize, and protect.
 ---
 
 # Recipes
@@ -32,14 +32,15 @@ with pyropdf.open("input.pdf") as doc:
             part.save(f"page-{number}.pdf")
 ```
 
-## Keep, reorder, or delete pages
+## Keep, reorder, rotate, or delete pages
 
 ```python
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
-    doc.pages.select([1, 0])   # keep these pages, in this order
-    del doc.pages[-1]          # delete the last one
+    doc.pages.select([1, 0])    # keep these pages, in this order
+    doc.pages[0].rotation = 90  # turn the new first page clockwise
+    del doc.pages[-1]           # delete the last one
     doc.save("reordered.pdf")
 ```
 
@@ -57,6 +58,33 @@ with pyropdf.open("input.pdf") as doc:
 
 `doc.render` renders in parallel. A thumbnail is the same call at a low
 `dpi`, such as 36.
+
+## Render thumbnails and extract page images
+
+```python
+from pathlib import Path
+
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    for number, thumb in enumerate(doc.render(dpi=36, format="png"), start=1):
+        Path(f"thumb-{number}.png").write_bytes(thumb)
+    for page_number, page in enumerate(doc.pages, start=1):
+        for image in page.images():
+            stored = image.stored()
+            if stored is not None:
+                Path(f"page-{page_number}-image-{image.index}.{stored.extension}").write_bytes(stored.data)
+            else:
+                image.pixmap().save(f"page-{page_number}-image-{image.index}.png")
+```
+
+`doc.render(dpi=36, format="png")` renders low-resolution thumbnails in
+parallel (or pass `fit=256` to bound the longest side in pixels).
+`page.images()` lists every embedded image painted on the page: `stored()`
+passes through JPEG, JPEG 2000, JBIG2, and CCITT bytes without re-encoding,
+and `pixmap()` decodes any other image—including its soft mask as alpha—for
+PNG export. To embed a `/Thumb` preview inside the PDF itself, assign
+`page.thumbnail = page.pixmap(fit=96)`.
 
 ## Extract text or Markdown
 
@@ -102,23 +130,59 @@ with pyropdf.open("input.pdf") as doc:
 `page.annotations` includes notes, highlights, and other markup, leaving out
 links, form widgets, and popups.
 
+## Add stamps and diagonal watermarks
+
+```python
+import pyropdf
+
+font = pyropdf.Font.standard("Helvetica-Bold")
+with pyropdf.open("input.pdf") as doc:
+    with doc.transaction("stamp and watermark"):
+        doc.pages[0].annotations.add(
+            pyropdf.Stamp((36, 36, 180, 76), icon=pyropdf.StampIcon.CONFIDENTIAL)
+        )
+        label = "CONFIDENTIAL"
+        width = font.text_width(label, 48)
+        for page in doc.pages:
+            cx, cy = page.rect.width / 2, page.rect.height / 2
+            place = pyropdf.Matrix(-35) * pyropdf.Matrix(1, 0, 0, 1, cx, cy)
+            with page.draw() as canvas, canvas.opacity(0.25), canvas.transform(place):
+                canvas.text(label, (-width / 2, 0), font=font, size=48, fill=pyropdf.Color(0.7, 0.1, 0.1))
+    doc.save("watermarked.pdf")
+```
+
+`Stamp` adds a standard rubber-stamp annotation with its own appearance stream,
+while `page.draw()` paints a semi-transparent diagonal watermark directly in
+display space on every page (pass `underlay=True` to paint it beneath the
+page's content). Wrapping both in `doc.transaction` keeps the whole edit as one
+undo step.
+
 ## Fill a form from a dictionary
 
 ```python
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:  # make a form to fill
-    doc.pages[0].widgets.add(pyropdf.TextField("name", (72, 300, 300, 324)))
+    page = doc.pages[0]
+    page.widgets.add(pyropdf.TextField("name", (72, 300, 300, 324)))
+    page.widgets.add(pyropdf.CheckBox("approved", (72, 340, 90, 358)))
+    page.widgets.add(pyropdf.ComboBox("status", (72, 372, 220, 396), choices=["Draft", "Final"]))
     doc.save("form.pdf")
 
-values = {"name": "Ada Lovelace"}
+values = {"name": "Ada Lovelace", "approved": True, "status": "Final"}
 with pyropdf.open("form.pdf") as doc:
     with doc.transaction("fill"):
         for name, value in values.items():
             doc.form[name].value = value
+    doc.save("filled-editable.pdf", incremental=True)
     doc.flatten()  # optional: draw the values into the pages for good
     doc.save("filled.pdf")
 ```
+
+Setting `doc.form[name].value` regenerates each widget's appearance. Saving
+with `incremental=True` preserves the original bytes and keeps the fields
+editable; calling `doc.flatten()` paints the filled appearances into the page
+content and removes the interactive fields.
 
 ## Remove pages without text
 
@@ -173,6 +237,34 @@ with pyropdf.open("input.pdf") as doc:
 
 `sanitize` removes JavaScript, actions, attachments, metadata, comments,
 hidden text, and unused objects; each has its own switch.
+
+## Mark for redaction and sanitize
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    with doc.transaction("mark for redaction"):
+        for page in doc.pages:
+            for quad in page.search("total", quads=True):
+                page.annotations.add(
+                    pyropdf.RedactionMark(
+                        quad.rect,
+                        quads=(quad,),
+                        overlay_text="REDACTED",
+                        default_appearance=b"/Helv 10 Tf 1 1 1 rg",
+                        interior_color=pyropdf.Color(0, 0, 0),
+                    )
+                )
+    report = doc.sanitize("marked-clean.pdf", comments=False)
+    print(dict(report.removed))
+```
+
+`comments=False` keeps the `/Redact` review marks while `sanitize` strips
+JavaScript, actions, attachments, metadata, hidden text, and unused objects
+in one full save. `RedactionMark` marks regions for review without removing
+the underlying page content; full content-removing redaction is tracked in
+[#362](https://github.com/yhay81/pyropdf/issues/362).
 
 ## Protect with a password
 
