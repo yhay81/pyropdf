@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import struct
 import subprocess
 from pathlib import Path
 
+import pikepdf
 import pytest
 from test_attachments import build_raw_pdf
 from test_preservation import EDITS
@@ -403,6 +405,96 @@ def test_arlington_summary_and_verbose_reports_retain_paths(
         VERAPDF.validate(jar, flavour, [accepted, rejected, absent])
     with pytest.raises(ValueError, match="incomplete verbose"):
         VERAPDF.detailed_reports(jar, flavour, [accepted, rejected, absent])
+
+
+def _write_trailer_id_variant(tmp_path: Path, name: str, second_id: bytes) -> Path:
+    """Replace only the second trailer ID of the PDF/A-3u fixture while preserving xref offsets."""
+    source = (ROOT / "tests/assets/pdfa/pdfa-3u.pdf").read_bytes()
+    matches = list(re.finditer(rb"/ID\s*\[\s*<[0-9A-Fa-f]{32}>\s*(<[0-9A-Fa-f]{32}>)", source))
+    assert len(matches) == 1
+    start, end = matches[0].span(1)
+    token = f"<{second_id.hex()}>".ljust(end - start).encode("ascii")
+    assert len(token) == end - start
+    path = tmp_path / name
+    path.write_bytes(source[:start] + token + source[end:])
+    return path
+
+
+@pytest.mark.parametrize(
+    ("second_id", "flavour", "case"),
+    [
+        # Valid 16-byte IDs with UTF-16BE / UTF-8 BOM prefixes hit Arlington 1.28.2's bug (#945).
+        (
+            bytes.fromhex("feff") + bytes(range(14)),
+            "arlington1.7+ISO_19005_3",
+            ({"TrailerIDArray-1-StringByte-9"}, None, False),
+        ),
+        (
+            bytes.fromhex("efbbbf") + bytes(range(13)),
+            "arlington2.0",
+            ({"TrailerIDArray-1-StringByte-9"}, None, False),
+        ),
+        # Expected failures alongside the BOM false positive must still match every expected rule.
+        (
+            bytes.fromhex("feff") + bytes(range(14)),
+            "arlington2.0+ISO_19005_3",
+            ({"VRI-OCSP-Array-9", "TrailerIDArray-1-StringByte-9"}, ("#926", {"VRI-OCSP-Array-9"}), False),
+        ),
+        # A missing expected rule must still fail even when the BOM false positive occurs.
+        (
+            bytes.fromhex("feff") + bytes(range(14)),
+            "arlington2.0+ISO_19005_3",
+            ({"TrailerIDArray-1-StringByte-9"}, ("#926", {"VRI-OCSP-Array-9"}), True),
+        ),
+        # Real <16-byte IDs must always fail, with or without a BOM prefix.
+        (
+            bytes.fromhex("feff") + bytes(range(13)),
+            "arlington1.7+ISO_19005_3",
+            ({"TrailerIDArray-1-StringByte-9"}, None, True),
+        ),
+        (
+            bytes.fromhex("00a1") + bytes(range(13)),
+            "arlington1.7+ISO_19005_3",
+            ({"TrailerIDArray-1-StringByte-9"}, None, True),
+        ),
+        # Non-BOM 16-byte IDs are not affected by the bug and must still fail if reported.
+        (
+            bytes.fromhex("00a1") + bytes(range(14)),
+            "arlington1.7+ISO_19005_3",
+            ({"TrailerIDArray-1-StringByte-9"}, None, True),
+        ),
+        # Additional unexpected rules alongside TrailerIDArray-1-StringByte-9 must still fail.
+        (
+            bytes.fromhex("feff") + bytes(range(14)),
+            "arlington1.7+ISO_19005_3",
+            ({"TrailerIDArray-1-StringByte-9", "Catalog-1"}, None, True),
+        ),
+        # Non-Arlington profiles never apply the Arlington BOM workaround.
+        (
+            bytes.fromhex("feff") + bytes(range(14)),
+            "3u",
+            ({"TrailerIDArray-1-StringByte-9"}, None, True),
+        ),
+    ],
+)
+def test_arlington_trailer_id_bom_verification_accepts_only_valid_bom_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    second_id: bytes,
+    flavour: str,
+    case: tuple[set[str], tuple[str, set[str]] | None, bool],
+) -> None:
+    reported_rules, expected, fails = case
+    path = _write_trailer_id_variant(tmp_path, "variant.pdf", second_id)
+    with pikepdf.Pdf.open(path) as pdf:
+        assert bytes(pdf.trailer.ID[1]) == second_id
+        assert pdf.check_pdf_syntax() == []
+    report = f"DEVIATION {path} {flavour}\n" + "".join(f"  DEVIATION {rule}\n" for rule in sorted(reported_rules))
+    monkeypatch.setattr(VERAPDF, "validate", lambda *_args: {path.name: False})
+    monkeypatch.setattr(VERAPDF, "detailed_reports", lambda *_args: {path: report})
+    outcomes = {f"{flavour} {path.name}": expected} if expected is not None else {}
+
+    assert bool(VERAPDF.run(Path("unused.jar"), {path: flavour}, outcomes=outcomes)) == fails
 
 
 @pytest.mark.spec("{profile}", "interpret", "edit", "preserve")

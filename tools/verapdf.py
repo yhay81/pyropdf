@@ -25,6 +25,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pikepdf
+
 import pyropdf
 from pyropdf._objects import _direct_value
 
@@ -657,9 +659,57 @@ def detailed_reports(jar: Path, flavour: str, paths: list[Path]) -> dict[Path, s
     return {path: "\n".join(lines) for path, lines in reports.items()}
 
 
+# Pinned greenfield-apps-arlington 1.28.2 measures TrailerIDArray string length via
+# Java COSString.getString().length() instead of raw octets (#945), shrinking 16-byte
+# binary IDs that start with a UTF-16BE or UTF-8 BOM below 16 characters.
+TRAILER_ID_LENGTH_RULES = {
+    "TrailerIDArray-0-StringByte-9": 0,
+    "TrailerIDArray-1-StringByte-9": 1,
+}
+TRAILER_ID_ENTRIES = 2
+TRAILER_ID_MIN_BYTES = 16
+
+
 def failed_rules(report: str) -> set[str]:
     """Read numeric, ISO table, and Arlington rule identifiers, including spaces."""
     return set(re.findall(r"^[ \t]+(?:FAIL|DEVIATION) ([^\r\n]+)$", report, re.MULTILINE))
+
+
+def _cos_string_bom_decoded_len(raw: bytes) -> int | None:
+    """Return Java COSString.getString().length() when ``raw`` starts with a PDF text BOM."""
+    if raw.startswith(b"\xfe\xff"):
+        return (len(raw) - 1) // 2
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return len(raw[3:].decode("utf-8", errors="replace").encode("utf-16-be")) // 2
+    return None
+
+
+def _is_bom_shrunk_valid_trailer_id_entry(entry: object) -> bool:
+    """Return whether ``entry`` is a direct >=16-byte string whose BOM decoded length is <16."""
+    if not isinstance(entry, pikepdf.String) or entry.is_indirect:
+        return False
+    raw = bytes(entry)
+    decoded_len = _cos_string_bom_decoded_len(raw)
+    return len(raw) >= TRAILER_ID_MIN_BYTES and decoded_len is not None and decoded_len < TRAILER_ID_MIN_BYTES
+
+
+def is_arlington_trailer_id_bom_false_positive(path: Path, rules: set[str]) -> bool:
+    """Verify via pikepdf whether ``rules`` are solely Arlington 1.28.2's BOM length bug (#945)."""
+    if not rules or not (rules <= set(TRAILER_ID_LENGTH_RULES)):
+        return False
+    try:
+        with pikepdf.Pdf.open(path) as pdf:
+            trailer_id = pdf.trailer.get("/ID")
+            if (
+                pdf.check_pdf_syntax()
+                or not isinstance(trailer_id, pikepdf.Array)
+                or trailer_id.is_indirect
+                or len(trailer_id) != TRAILER_ID_ENTRIES
+            ):
+                return False
+            return all(_is_bom_shrunk_valid_trailer_id_entry(trailer_id[TRAILER_ID_LENGTH_RULES[r]]) for r in rules)
+    except (OSError, pikepdf.PdfError):
+        return False
 
 
 def run(
@@ -675,10 +725,30 @@ def run(
             accepted = verdicts[path.name]
             key = f"{flavour} {path.name}"
             expected = outcomes.get(key)
-            note = f" ({expected[0]})" if expected else ""
-            sys.stdout.write(f"{'PASS' if accepted else 'FAIL'} {key}{note}\n")
             report = reports.get(path, "")
-            if accepted == bool(expected) or (expected and failed_rules(report) != expected[1]):
+            actual = failed_rules(report) if not accepted else set()
+            expected_rules = expected[1] if expected else set()
+            extra = actual - expected_rules
+            bom_bug = (
+                not accepted
+                and flavour.startswith("arlington")
+                and expected_rules <= actual
+                and is_arlington_trailer_id_bom_false_positive(path, extra)
+            )
+            if bom_bug:
+                actual -= extra
+                if not actual:
+                    accepted = True
+            if expected and bom_bug:
+                note = f" ({expected[0]}; #945 verified BOM trailer ID)"
+            elif expected:
+                note = f" ({expected[0]})"
+            elif bom_bug:
+                note = " (#945 verified BOM trailer ID)"
+            else:
+                note = ""
+            sys.stdout.write(f"{'PASS' if accepted else 'FAIL'} {key}{note}\n")
+            if accepted == bool(expected) or (expected and actual != expected_rules):
                 failures.append((flavour, path))
                 sys.stdout.write(f"unexpected verdict for {key}\n{report}\n")
     return failures
