@@ -82,10 +82,12 @@ from pyropdf._transparency import uses_transparency
 from pyropdf._widgets import Widgets
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    import os
+    from collections.abc import Callable, Mapping, Sequence
 
     from pyropdf._core import CharColumns
     from pyropdf._document import Document
+    from pyropdf._markdown import ExportedImage
     from pyropdf._operations import InlineImage, Operation
     from pyropdf._pixmap import Pixmap
     from pyropdf._targets import Target
@@ -1473,12 +1475,15 @@ class Page:
         finally:
             pinned.close()
 
-    def markdown(
+    def markdown(  # noqa: PLR0913 - keyword-only retrieval export options.
         self,
         *,
         table_strategy: Literal["lines", "text"] | None = "lines",
         use_structure: Literal["auto", "always", "never"] = "auto",
         expand_abbreviations: bool = False,
+        margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
+        images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
+        max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
         max_size: int | None = _markdown._DEFAULT_MAX_MARKDOWN_SIZE,  # noqa: SLF001
     ) -> str:
         """Return the current version of the page as Markdown.
@@ -1486,12 +1491,17 @@ class Page:
         This is :meth:`Document.markdown` of this page alone, using the
         document's structure tree when enabled and trustworthy, or inferring
         heading sizes from this page when falling back to geometric extraction.
+        ``margins``, ``images``, and ``max_graphics`` work as on
+        :meth:`Document.markdown`.
         """
         _markdown.validate_options(
             table_strategy,
             max_size,
             use_structure=use_structure,
             expand_abbreviations=expand_abbreviations,
+            margins=margins,
+            images=images,
+            max_graphics=max_graphics,
         )
         with self._export_single() as export_page:
             return _markdown.pages_markdown(
@@ -1500,6 +1510,9 @@ class Page:
                 max_size=max_size,
                 use_structure=use_structure,
                 expand_abbreviations=expand_abbreviations,
+                margins=margins,
+                images=images,
+                max_graphics=max_graphics,
             )
 
     def tables(

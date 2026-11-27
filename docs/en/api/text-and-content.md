@@ -355,6 +355,7 @@ Element(
     rows: tuple[tuple[str | None, ...], ...] | None = None,
     alt_text: str | None = None,
     language: str | None = None,
+    image: str | None = None,
 )
 ```
 
@@ -367,8 +368,9 @@ otherwise). `page` is the page's index and `bbox` the box in display
 space; a paragraph's box spans its lines. `level` is a heading's level,
 1 through 6 (1 through 4 when inferred geometrically), `rows` a table's
 cells as `Table.rows` holds them, `alt_text` an element's `/Alt`
-description when present, and `language` its inherited BCP 47 `/Lang`
-tag when reading from the structure tree.
+description when present, `language` its inherited BCP 47 `/Lang`
+tag when reading from the structure tree, and `image` its exported
+image filename or callback reference when `images=...` is configured.
 
 ### `to_dict`
 
@@ -393,6 +395,34 @@ ElementKind: TypeAlias = Literal[
 ```
 
 The kind of a structured page `Element`.
+
+## `ExportedImage`
+
+```python
+ExportedImage(
+    *,
+    page: int,
+    index: int,
+    bbox: Rect,
+    filename: str,
+    media_type: str,
+    data: bytes,
+    width: int,
+    height: int,
+    alt_text: str | None = None,
+)
+```
+
+One image prepared for Markdown, JSON, or chunk export.
+
+Passed to a callable supplied via `images=...` on `Document.markdown`,
+`Page.markdown`, `Document.to_json`, or `Document.to_chunks`.
+`page` is the 0-based page index, `index` the paint-order image index on
+that page, `bbox` its display-space rectangle, `filename` its stable
+suggested name (`page-{page}-image-{index}.{ext}`), `media_type` its
+MIME type (`"image/png"` or `"image/jpeg"`), `data` its encoded bytes,
+`width` and `height` its pixel dimensions, and `alt_text` any
+structure-tree `/Alt` description when available.
 
 ## `FillRule`
 
