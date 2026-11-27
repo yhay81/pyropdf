@@ -1,0 +1,155 @@
+{
+  "platform": "macosx_arm64",
+  "baseline_meta": {
+    "cargo_lock_packages": 220,
+    "duplicates_in_engine": [
+      "fearless_simd v0.7.0",
+      "fearless_simd v1.3.0",
+      "miniz_oxide v0.8.9",
+      "miniz_oxide v0.9.1",
+      "read-fonts v0.46.0",
+      "read-fonts v0.47.0",
+      "skrifa v0.49.0",
+      "skrifa v0.50.0",
+      "syn v2.0.119",
+      "syn v3.0.10"
+    ],
+    "cargo_audit_clean": true,
+    "cargo_audit_summary": "clean (0 warnings/advisories)",
+    "wasm32_emscripten_ok": true
+  },
+  "v041_abi3_wheels": {
+    "win_amd64": 8961169,
+    "manylinux_x86_64": 8900191,
+    "macosx_x86_64": 8566157,
+    "manylinux_aarch64": 8324603,
+    "macosx_arm64": 7735902
+  },
+  "v041_wasm_wheel": 6748614,
+  "variants": {
+    "option_b_harfrust_bidi": {
+      "head": {
+        "filename": "pyropdf-0.4.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "tag": "cp311-abi3-macosx_11_0_arm64",
+        "sha256": "dfd66508f1174d1602f846f0d3826ecd3da98e2ad0e9d310b8218d75d4e05cd0",
+        "size_bytes": 7755922,
+        "size_mib": 7.396624,
+        "extension_bytes": 7091115
+      },
+      "base": {
+        "filename": "pyropdf-0.4.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "tag": "cp311-abi3-macosx_11_0_arm64",
+        "sha256": "e47cf544811a32d2af620fcb460d2977d1a1d88c36bcd62dd6bf1367b6fabcc2",
+        "size_bytes": 7738445,
+        "size_mib": 7.379956,
+        "extension_bytes": 7073639
+      },
+      "growth_bytes": 17477,
+      "justification": "spike measurement",
+      "original_deflate9_bytes": 7944567,
+      "extension_growth_bytes": 17476,
+      "meta": {
+        "cargo_lock_packages": 220,
+        "duplicates_in_engine": [
+          "fearless_simd v0.7.0",
+          "fearless_simd v1.3.0",
+          "miniz_oxide v0.8.9",
+          "miniz_oxide v0.9.1",
+          "read-fonts v0.46.0",
+          "read-fonts v0.47.0",
+          "skrifa v0.49.0",
+          "skrifa v0.50.0",
+          "syn v2.0.119",
+          "syn v3.0.10"
+        ],
+        "cargo_audit_clean": true,
+        "cargo_audit_summary": "clean (0 warnings/advisories)",
+        "wasm32_emscripten_ok": true
+      }
+    },
+    "option_a1_parley_std": {
+      "head": {
+        "filename": "pyropdf-0.4.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "tag": "cp311-abi3-macosx_11_0_arm64",
+        "sha256": "83fde5a972f5a500a5029bf49bb2daf62a2ef8d2199cb8521284f27986b93298",
+        "size_bytes": 8106108,
+        "size_mib": 7.730587,
+        "extension_bytes": 7437348
+      },
+      "base": {
+        "filename": "pyropdf-0.4.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "tag": "cp311-abi3-macosx_11_0_arm64",
+        "sha256": "e47cf544811a32d2af620fcb460d2977d1a1d88c36bcd62dd6bf1367b6fabcc2",
+        "size_bytes": 7738445,
+        "size_mib": 7.379956,
+        "extension_bytes": 7073639
+      },
+      "growth_bytes": 367663,
+      "justification": "spike measurement",
+      "original_deflate9_bytes": 8303551,
+      "extension_growth_bytes": 363709,
+      "meta": {
+        "cargo_lock_packages": 252,
+        "duplicates_in_engine": [
+          "fearless_simd v0.7.0",
+          "fearless_simd v1.3.0",
+          "harfrust v0.15.0",
+          "harfrust v0.16.1",
+          "miniz_oxide v0.8.9",
+          "miniz_oxide v0.9.1",
+          "read-fonts v0.46.0",
+          "read-fonts v0.47.0",
+          "skrifa v0.49.0",
+          "skrifa v0.50.0",
+          "syn v2.0.119",
+          "syn v3.0.10"
+        ],
+        "cargo_audit_clean": true,
+        "cargo_audit_summary": "clean (0 warnings/advisories)",
+        "wasm32_emscripten_ok": true
+      }
+    },
+    "option_a2_parley_complex_scripts": {
+      "head": {
+        "filename": "pyropdf-0.4.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "tag": "cp311-abi3-macosx_11_0_arm64",
+        "sha256": "c64784b1f01520c1749532d574e03eaf73a540324883333752583cd033f84305",
+        "size_bytes": 10506553,
+        "size_mib": 10.01983,
+        "extension_bytes": 9837794
+      },
+      "base": {
+        "filename": "pyropdf-0.4.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "tag": "cp311-abi3-macosx_11_0_arm64",
+        "sha256": "e47cf544811a32d2af620fcb460d2977d1a1d88c36bcd62dd6bf1367b6fabcc2",
+        "size_bytes": 7738445,
+        "size_mib": 7.379956,
+        "extension_bytes": 7073639
+      },
+      "growth_bytes": 2768108,
+      "justification": "spike measurement",
+      "original_deflate9_bytes": 10742212,
+      "extension_growth_bytes": 2764155,
+      "meta": {
+        "cargo_lock_packages": 252,
+        "duplicates_in_engine": [
+          "fearless_simd v0.7.0",
+          "fearless_simd v1.3.0",
+          "harfrust v0.15.0",
+          "harfrust v0.16.1",
+          "miniz_oxide v0.8.9",
+          "miniz_oxide v0.9.1",
+          "read-fonts v0.46.0",
+          "read-fonts v0.47.0",
+          "skrifa v0.49.0",
+          "skrifa v0.50.0",
+          "syn v2.0.119",
+          "syn v3.0.10"
+        ],
+        "cargo_audit_clean": true,
+        "cargo_audit_summary": "clean (0 warnings/advisories)",
+        "wasm32_emscripten_ok": true
+      }
+    }
+  }
+}
