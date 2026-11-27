@@ -2286,6 +2286,20 @@ def prepare_type3_text_replacement(doc: pyropdf.Document) -> None:
             b"endcmap\nend\nend\n"
         )
     ]
+    fd = doc.objects[
+        doc.objects.add(
+            {
+                "Type": pyropdf.Name("FontDescriptor"),
+                "Flags": 32,
+                "FontBBox": [0, 0, 50, 40],
+                "ItalicAngle": 0,
+                "Ascent": 40,
+                "Descent": 0,
+                "CapHeight": 30,
+                "StemV": 10,
+            }
+        )
+    ]
     t3 = doc.objects[
         doc.objects.add(
             {
@@ -2301,6 +2315,7 @@ def prepare_type3_text_replacement(doc: pyropdf.Document) -> None:
                 "FirstChar": 65,
                 "LastChar": 67,
                 "Widths": [25, 35, 40],
+                "FontDescriptor": fd,
                 "ToUnicode": tu,
             }
         )
