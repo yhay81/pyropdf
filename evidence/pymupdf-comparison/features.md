@@ -1,13 +1,18 @@
-# PDF capabilities: PyMuPDF 2.0 and pyropdf main
+# PDF capabilities: PyMuPDF 2.1 and pyropdf main
 
-The [release comparisons](README.md#release-comparisons) identify actual wheels, updated task coverage and measured results.
+The [release comparisons](README.md#release-comparisons) identify published wheels,
+updated task coverage, and measured results, including the Linux/x86-64 release
+archives attached to [v0.4.1](https://github.com/yhay81/pyropdf/releases/tag/v0.4.1)
+(`comparison-v0.4.1.zip`) and [v0.4.0](https://github.com/yhay81/pyropdf/releases/tag/v0.4.0)
+(`comparison-v0.4.0.zip`), the [v0.3.1 macOS/arm64 report](releases/v0.3.1-darwin-arm64/comparison.md),
+and the [labeled text/table quality results](results/quality.md).
 
 This is an inventory of *capabilities*, not a claim of API or output parity.
-It compares PyMuPDF 2.0 (released 2026-10-19) with pyropdf main at
-[`d06091e27d931fb8f766d2548675a8fdfbcb2677`](https://github.com/yhay81/pyropdf/commit/d06091e27d931fb8f766d2548675a8fdfbcb2677),
-inspected 2026-10-30. Main includes changes after the published pyropdf 0.2.0;
-this table does **not** describe that release. Open PRs are not included.
-#355 tracks the project goal.
+It compares PyMuPDF 2.1 (and its audited 2.0 baseline) with pyropdf `main` at
+[`9c67ea2735ab49678216b468e60e14b2e678bfcc`](https://github.com/yhay81/pyropdf/commit/9c67ea2735ab49678216b468e60e14b2e678bfcc),
+inspected 2026-11-27 (after the published `v0.4.1` release). Open PRs are not
+included. #355 tracks the project goal, and [capabilities.tsv](capabilities.tsv)
+holds the machine-readable release task map aligned with this inventory.
 
 The PyMuPDF inventory uses its official [Document](https://pymupdf.readthedocs.io/en/latest/document.html),
 [Page](https://pymupdf.readthedocs.io/en/latest/page.html),
@@ -15,103 +20,109 @@ The PyMuPDF inventory uses its official [Document](https://pymupdf.readthedocs.i
 [Pixmap](https://pymupdf.readthedocs.io/en/latest/pixmap.html) and
 [feature comparison](https://pymupdf.readthedocs.io/en/latest/about.html)
 references. pyropdf's API, implementation, tests and issue state were inspected
-at the commit above. `Available` means an API for the named task exists, not
-that every option, file, result or quality level matches. `Partial` names a
-known limitation; `Missing` means no equivalent public operation was found.
-Rows are task-level, not an exhaustive method-by-method or specification audit;
-low-level object access alone is not counted as a high-level feature. Links
-name existing work, including broader trackers where appropriate. Text and
-rendering accuracy need independent comparisons (#430).
+at the commit above. `Available` means an API for the named task exists and is
+covered by tests on `main`, not that every option, file, result or quality level
+matches. `Partial` names a known limitation; `Missing` means no equivalent
+public operation is shipped. Rows are task-level, not an exhaustive
+method-by-method or specification audit; low-level object access alone is not
+counted as a high-level feature. Links name open work, including broader
+trackers where appropriate. Text and layout accuracy are scored separately in
+[quality.md](results/quality.md) (#1192).
 
 ## Documents and pages
 
-| Capability | PyMuPDF 2.0 | pyropdf main | Work |
+| Capability | PyMuPDF 2.1 | pyropdf main | Work |
 | --- | --- | --- | --- |
-| Open, repair and probe | `open`, `repair`, `is_repaired` | Available: `open`, `probe`, `is_repaired`; recovery coverage has not been shown equal | #252 |
+| Open, repair and probe | `open`, `repair`, `is_repaired` | Available: `open`, `probe`, `is_repaired`; damaged-PDF repair benchmarking and hardening continue | #252, #1190 |
 | Insert, move, delete and select pages | `insert_pdf`, `move_page`, `delete_pages`, `select` | Available: `doc.pages` with identity and referential rules | |
 | Rotate and flatten | `set_rotation`, `bake` | Available: `page.rotation`, `page.flatten`, `doc.flatten` | |
-| Normalize rotation without changing appearance | `remove_rotation` | Available: `page.remove_rotation()` keeps content, boxes, annotations, links, and widgets as displayed | #429 |
-| Page boxes and labels | `set_mediabox`, `get_page_labels`, `set_page_labels` | Available: five page boxes, `doc.page_labels`, `page.label`; labels checked against PyMuPDF on the corpus | #357, #358 |
-| Metadata and outline | `metadata`, `set_xml_metadata`, `get_toc`, `set_toc` | Available: `doc.metadata`, `doc.xmp`, `doc.outline` | #356 |
-| Layers and visibility | `get_layers`, `set_layer`, `set_oc` | Partial: `doc.layers` reads and changes configuration; rendering and extraction do not yet honor OCMD `/VE` or annotation `/OC` | #360, #372, #373 |
-| Embedded files | `embfile_*` | Available: `doc.attachments`; attachment annotations are separate | #162, #227 |
+| Normalize rotation without changing appearance | `remove_rotation` | Available: `page.remove_rotation()` keeps content, boxes, annotations, links, and widgets as displayed | |
+| Page boxes and labels | `set_mediabox`, `get_page_labels`, `set_page_labels` | Available: five page boxes, `doc.page_labels`, `page.label`; labels checked against PyMuPDF on the corpus | |
+| Metadata and outline | `metadata`, `set_xml_metadata`, `get_toc`, `set_toc` | Available: `doc.metadata`, `doc.xmp`, `doc.outline` | |
+| Layers and visibility | `get_layers`, `set_layer`, `set_oc` | Partial: `doc.layers` reads and changes configuration; rendering and extraction do not yet honor OCMD `/VE` or annotation `/OC` | #372, #373 |
+| Embedded files | `embfile_*` | Available: `doc.attachments`; file attachment annotations are separate | |
 | Low-level objects | `xref_object`, `update_object`, `update_stream` | Available: `doc.objects`, `page.obj`, typed objects | |
 | Undo and redo | `journal_*` | Available in memory: `doc.transaction`, `doc.history` | |
-| Persist and reload undo history | `journal_save`, `journal_load` | Available: `doc.history.save()`, `doc.history.restore()`; the bytes are pyropdf's own | #428 |
+| Persist and reload undo history | `journal_save`, `journal_load` | Available: `doc.history.save()`, `doc.history.restore()`; the format is pyropdf's own | |
 
 ## Reading and understanding
 
-| Capability | PyMuPDF 2.0 | pyropdf main | Work |
+| Capability | PyMuPDF 2.1 | pyropdf main | Work |
 | --- | --- | --- | --- |
-| Text, words, blocks, characters and formats | `get_text` | Available: `text`, `words`, `chars`, `layout`; dictionary, HTML and XML serialization | #137, #430 |
-| Type 3 characters without Unicode mapping | Default text extraction uses a fallback on the corpus fixture | Partial: skipped with a warning; `unmapped="glyph_id"` gives replacements for Type 3, not the original character code. The fixture's intended Unicode is unknown | #437; [comparison](results/text-main.md) |
+| Text, words, blocks, characters and formats | `get_text` | Available: `page.text`, `words`, `chars`, `layout`; dictionary, HTML and XML serialization; `/ActualText` opt-out, mixed horizontal/vertical & Japanese ruby handling, and Linux x86-64 speed tuning remain | #1177, #1178, #1184 |
+| Type 3 characters without Unicode mapping | Default text extraction uses a fallback on the corpus fixture | Available (opt-in): default skips with a warning; `unmapped="type3_char_code"` recovers the Type 3 character code (#437) and `unmapped="glyph_id"` returns glyph IDs | |
 | Search and selection | `search_for`, `get_text_selection` | Available: `page.search`, `page.selection` | |
-| Tables | `find_tables` | Available: `page.tables`; option and quality parity not established | #253, #430 |
-| Markdown | `to_markdown` | Available: `page.markdown`, `doc.markdown`; tagged structure and retrieval features remain | #253 |
-| Retrieval chunks and structured document JSON | `to_chunks`, `to_json` | Yes: `Document.to_json` and `Document.to_chunks`, with a character budget instead of tokens; see `evidence/document-chunks/` | #253, #427 |
-| OCR and searchable OCR layer | `get_textpage_ocr`, `Pixmap.pdfocr_tobytes` | Available: offline `page.ocr` and `page.apply_ocr`; hybrid region selection remains | #145, #146, #253 |
-| Vector paths and painted items | `get_drawings`, `get_texttrace` | Available: `page.content`; provenance for all nested content remains | #104 |
-| Image placements and data | `get_image_info`, `get_images`, `extract_image` | Available: `page.content`, `page.images`, image records | #359 |
-| Page fonts and font programs | `get_fonts`, `extract_font` | Available: `page.fonts`, `doc.font_program`; page font listings are compared with PyMuPDF on the corpus | #399, #418 |
-| Annotation appearance and sound | `Annot.get_pixmap`, `get_text`, `get_sound` | Available: `annotation.pixmap()` and `annotation.text()` render and read one appearance alone; `annotation.sound()` reads a sound annotation's audio and format | #422, #423 |
+| Tables | `find_tables` | Available: `page.tables` (including borderless multi-line rows under bordered double-rule headers, #1153); explicit line guides, tolerances, header detection and structured export remain | #253, #1186, #1192 |
+| Markdown | `to_markdown` | Available: `page.markdown`, `doc.markdown`; structure-tree-driven output, retrieval export controls and mixed orientation/ruby remain | #253, #1181, #1182, #1184 |
+| Retrieval chunks and structured document JSON | `to_chunks`, `to_json` | Available: `doc.to_json` and `doc.to_chunks`, with a character budget instead of tokens; see `evidence/document-chunks/`; provenance tracing, structure-driven output and export controls remain | #253, #853, #1181, #1182 |
+| OCR and searchable OCR layer | `get_textpage_ocr`, `Pixmap.pdfocr_tobytes` | Available: offline `page.ocr` and `page.apply_ocr` with optional `[ocr]` model data; hybrid region-selective OCR remains | #253, #1185 |
+| Vector paths and painted items | `get_drawings`, `get_texttrace` | Available: `page.content`, `page.chars`; provenance for nested painted content, stored color space/writing mode/font identity and path clustering remain | #104, #1176, #1179 |
+| Image placements and data | `get_image_info`, `get_images`, `extract_image` | Available: `page.content`, `page.images`, image records, `replace`, and `remove` | |
+| Page fonts and font programs | `get_fonts`, `extract_font` | Available: `page.fonts`, `doc.font_program`; page font listings are compared with PyMuPDF on the corpus | |
+| Annotation appearance and sound | `Annot.get_pixmap`, `get_text`, `get_sound` | Available: `annotation.pixmap()` and `annotation.text()` render and read one appearance alone; `annotation.sound()` reads a sound annotation's audio and format | |
 
 ## Rendering and pixmaps
 
-| Capability | PyMuPDF 2.0 | pyropdf main | Work |
+| Capability | PyMuPDF 2.1 | pyropdf main | Work |
 | --- | --- | --- | --- |
-| Raster and SVG | `get_pixmap`, `get_svg_image` | Available: `page.pixmap`, `page.svg`; gray, RGB and alpha | |
+| Raster and SVG | `get_pixmap`, `get_svg_image` | Available: `page.pixmap`, `page.svg`; gray, RGB, alpha, hinting, and opt-in glyph cache; `antialias` option remains | #1175 |
 | Selectable text in SVG | `get_svg_image(text_as_path=False)` | Missing: `page.svg` emits text as paths | #435 |
-| CMYK raster output | `get_pixmap(colorspace=csCMYK)` | Missing; engine support is tracked separately | #248, #425, #433 |
-| Pixmap conversion and basic operations | invert, gamma, tint, crop, scale, Pillow | Available: `Pixmap.invert`, `gamma`, `tint`, `crop`, `scale`, `to_gray`, `to_rgb`, alpha and Pillow conversion | #398 |
+| CMYK raster output | `get_pixmap(colorspace=csCMYK)` | Missing: `page.pixmap` supports RGB and gray layouts; engine CMYK rasterization is tracked separately | #248, #425, #433 |
+| Pixmap conversion and basic operations | invert, gamma, tint, crop, scale, Pillow | Available: `Pixmap.invert`, `gamma`, `tint`, `crop`, `scale`, `to_gray`, `to_rgb`, alpha and Pillow conversion | |
 | Pixmap transforms, inspection and editing | `flip_rotate`, `warp`, `color_count`, `color_topusage`, `pixel`, `set_pixel`, `set_rect` | Available: `Pixmap.rotate`, `flip`, `warp`, `color_count`, `colors`, `top_color`, `pixel`, `with_pixel`, `fill`; edits return new pixmaps | |
-| Pixmap image formats | PNG, JPEG, PAM, PNM family, PS, PSD output; additional input formats | Available: Pixmap reads PNG, JPEG, PBM, PGM, PPM, PAM, BMP (uncompressed and run-length), GIF, TIFF, and JPEG 2000 and writes PNG, JPEG, PAM, PBM, PGM, PPM, PNM, PSD, and PostScript; JPEG XR is refused, since no maintained Rust decoder reads it, and CMYK waits for #425 | #431, #446 |
-| Rendering speed | MuPDF | Not established for this main. The published 0.1.0 corpus comparison reports 2.03× and 2.34× the time at 72 and 144 dpi respectively, on one machine | #365; [method and limitations](README.md) |
+| Pixmap image formats | PNG, JPEG, PAM, PNM family, PS, PSD output; additional input formats | Available: `Pixmap` reads PNG, JPEG, PBM, PGM, PPM, PAM, BMP (uncompressed and run-length), GIF, TIFF, and JPEG 2000 and writes PNG, JPEG, PAM, PBM, PGM, PPM, PNM, PSD, and PostScript; JPEG XR is refused (no maintained Rust decoder), and CMYK waits for #425 | #355, #425 |
+| Rendering speed | MuPDF | Measured in `v0.4.1` on Linux x86-64 vs PyMuPDF 2.1 (`comparison-v0.4.1.zip`): 1.81× at 72 dpi and 1.54× at 144 dpi (`open` 0.26×, `save` 0.12×, `search` 0.97×, `text` 1.40×, `words` 1.68×); `v0.3.1` macOS/arm64 was 1.77× / 1.82× | #365, #715, #1178; [v0.4.1](https://github.com/yhay81/pyropdf/releases/tag/v0.4.1), [v0.3.1 macOS/arm64](releases/v0.3.1-darwin-arm64/comparison.md) |
 
 ## Writing, annotations and forms
 
-| Capability | PyMuPDF 2.0 | pyropdf main | Work |
+| Capability | PyMuPDF 2.1 | pyropdf main | Work |
 | --- | --- | --- | --- |
-| Shapes, paths, images and placed pages | `Shape`, `insert_image`, `show_pdf_page` | Available: `page.draw()` canvas, with paths, images and `page` placement | #396 |
-| Draw text and use fonts | `insert_text`, `insert_textbox`, `Font`, `insert_font` | Missing from canvas; text and fonts wait on krilla | #153, #323 |
-| Images to PDF | `open(image).convert_to_pdf()` | Available: `doc.pages.new_from_image`; supported formats and optional Pillow are documented in its API | #361, #412 |
-| Read and edit annotations | `annots`, `Annot` | Available: `page.annotations`, with each annotation's appearance and sound | #160, #422, #423 |
-| Create markup annotations | `add_*_annot` | Partial: text markup, notes, shapes, lines, polygons, ink and carets have settled appearances; free text, stamps and attachments remain | #161, #168, #162, #421 |
-| Links | `insert_link`, `update_link` | Available: `page.links` | #163 |
-| Form fields | `widgets`, `add_widget`, `Widget.update` | Partial: create, read, fill and flatten exist; embedded Unicode form fonts and widget font API remain | #194, #212 |
-| HTML layout | `insert_htmlbox`, `Story` | Excluded by #355 | |
+| Shapes, paths, images and placed pages | `Shape`, `insert_image`, `show_pdf_page` | Available: `page.draw()` canvas with paths, images, optional-content layers, tags, and `page` placement; `Canvas.draw(item)` round-trip for inline images, stencil masks, tiling patterns, soft masks and function/mesh shadings remains | #1188, #1200 |
+| Draw text and use fonts | `insert_text`, `insert_textbox`, `Font`, `insert_font` | Available: `Canvas.text` with Standard 14 fonts (#467) and embedded TrueType/OpenType/CFF faces shaped with `harfrust` and subset at save (#153, #479–#482); invisible/clip render modes, vertical writing, per-glyph fallback and rich BiDi runs remain | #249, #1187, #1198 |
+| Images to PDF | `open(image).convert_to_pdf()` | Available: `doc.pages.new_from_image` (single and multi-frame); multi-image collections and CBZ archives remain | #1189 |
+| Read and edit annotations | `annots`, `Annot` | Available: `page.annotations`, including appearances, sound, and multimedia/3D/RichMedia data | |
+| Create markup annotations | `add_*_annot` | Available: `page.annotations` creates text markup, notes, shapes, lines, polygons, ink, carets, free text, stamps, and file attachments with settled appearances | |
+| Links | `insert_link`, `update_link` | Available: `page.links` | |
+| Form fields | `widgets`, `add_widget`, `Widget.update` | Available: `doc.form` and widgets support create, read, fill, flatten, embedded Unicode fonts, rich text, password appearances, and legacy XFA packet preservation | |
+| HTML layout | `insert_htmlbox`, `Story` | Excluded from PDF task scope by #355 | |
 
 ## Rewriting and saving
 
-| Capability | PyMuPDF 2.0 | pyropdf main | Work |
+| Capability | PyMuPDF 2.1 | pyropdf main | Work |
 | --- | --- | --- | --- |
-| Incremental and full save; compression and object streams | `save`, `saveIncr`, `garbage`, `deflate`, `use_objstms` | Available: `save`, `to_bytes`, `prune`, `compress`, `object_streams`, `dedupe` | |
-| Linearized save and detection | `save(linear=True)`, `is_fast_webaccess` | Missing | #252, #426 |
-| Encryption | standard handler including AES and RC4 | Available: standard handler; exact algorithm and permission behavior is not asserted identical | |
-| Redaction | `add_redact_annot`, `apply_redactions` | Missing permanent content removal | #362, #104 |
-| Remove content outside a rectangle | `clip_to_rect` removes non-intersecting items; intersecting paths and images remain whole | Missing; crop boxes and rendering clips hide rather than remove content. #420 proposes stronger outside removal | #250, #420 |
-| Clean content streams and resources | `Page.clean_contents`, `save(clean=True)` | Available: `page.clean_contents()` normalizes page content and appearance streams and prunes unnamed resources; no `save(clean=True)` | #250, #434 |
-| Sanitizing | `scrub` | Available: `doc.sanitize`, with a report | #363 |
-| Font subsetting | `subset_fonts` | Available: `doc.subset_fonts`; format coverage is not asserted identical | #364 |
-| Bulk image rewriting | `rewrite_images` | Mostly: `doc.rewrite_images` rewrites masked (masks of another size at their own resolution, `/Matte` un-premultiplied), CMYK, ICC-based, stencil mask, and inline images, including those in Form XObjects and appearances, writes bitonal images as CCITT Group 4 and lossless ones as Flate or JPEG, and reports what it leaves; CMYK JPEGs and other JPEG 2000 remain. `set_to_gray` changes images only; `recolor` converts whole pages | #401, #432, #451, #452; whole-page recoloring #400; [probe](results/text-main.md) |
-| Recolor | `Page.recolor`, `Document.recolor` | Missing | #400 |
+| Incremental and full save; compression and object streams | `save`, `saveIncr`, `garbage`, `deflate`, `use_objstms` | Available: `save`, `to_bytes`, `prune`, `compress`, `object_streams`, `dedupe`, and hybrid-reference xref; pre-save cleaning, ASCII/pretty output, and per-stream filters remain | #252, #1191 |
+| Linearized save and detection | `save(linear=True)`, `is_fast_webaccess` | Available: `doc.save(linearize=True)`, `doc.is_linearized` | |
+| Encryption | standard handler including AES and RC4 | Available: standard handler (RC4/AES), public-key recipients (#864), AES-GCM ISO/TS 32003 (#865), and document MAC ISO/TS 32004 (#866); direct rendering of some legacy recipient, crypt-filter, and GCM streams awaits store-source integration | #937, #968, #993, #1043 |
+| Redaction | `add_redact_annot`, `apply_redactions` | Partial: redaction marks and independent verification exist (#1076); permanent removal of text, images, and vector content awaits nested provenance | #362, #104 |
+| Remove content outside a rectangle | `clip_to_rect` removes non-intersecting items; intersecting paths and images remain whole | Missing: crop boxes and rendering clips hide rather than remove content. #420 proposes stronger outside removal | #250, #420 |
+| Clean content streams and resources | `Page.clean_contents`, `save(clean=True)` | Available: `page.clean_contents()` normalizes page content and appearance streams and prunes unnamed resources; pre-save cleaning option tracked separately | #1191 |
+| Sanitizing | `scrub` | Available: `doc.sanitize`, with a report | |
+| Font subsetting | `subset_fonts` | Available: `doc.subset_fonts` (TrueType and CFF) | |
+| Bulk image rewriting | `rewrite_images` | Available: `doc.rewrite_images` rewrites masked, alternate, CMYK, ICC-based, stencil mask, and inline images across Form XObjects and appearances (lossless, grayscale, and bitonal CCITT Group 4) and returns an unsupported-image report for images it leaves untouched | |
+| Recolor | `Page.recolor`, `Document.recolor` | Available: `page.recolor` and `doc.recolor` (gray, RGB, CMYK); filtered and nested CMYK function curves remain | #1007 |
+| Text replacement | — | Partial: `page.replace_text` edits simple-font text; composite (CID/Type 0), Type 3, and vertical fonts, plus item-level editing over provenance, remain | #250, #1180, #1201 |
 
 ## Additional pyropdf capabilities and project goals
 
 | Capability | pyropdf main | Work |
 | --- | --- | --- |
-| Atomic transactions, in-memory undo and change reports | Available | |
-| Typed objects and Arlington structural checks | Available; not a claim of full PDF conformance validation | |
-| Signing | Available on main: PAdES B-B/B-T with supported signers; verification is separate | #397, #403 |
-| Signature verification | Missing | #403 |
-| Bounded work on untrusted input | Limits exist, but no safety claim until hayro's bounded construction is released | #15 |
-| Conformance-preserving edits and structure-aware reading | Not complete | #255, #253 |
-| Free-threaded Python and MIT licence | Available | |
+| Atomic transactions, undo/redo, persisted history, and change reports | Available: `doc.transaction`, `doc.history`, `doc.changes`, and incremental `doc.revisions` | |
+| Typed objects and Arlington structural checks | Available: `doc.objects`, `doc.check`, and 838 mapped ISO 32000-2 features (`docs/spec-coverage.md`); not a claim of standalone conformance certification | #254, #256 |
+| Signing | Available: `doc.sign` (PAdES B-B/B-T with ECDSA, signer and timestamp callbacks, DocMDP/FieldMDP, DSS, ISO/TS 32001/32002) | |
+| Signature verification | Available: `doc.signatures` and `signature.verify` (integrity, byte coverage, signer, timestamps, later modifications) | |
+| Conformance-preserving edits and authoring | Available (#255 closed): PDF/A-1 through PDF/A-4 and PDF/UA-1/2 authoring, editing, and pre-save claim reports validated with veraPDF | |
+| Bounded work on untrusted input | Partial: `DocumentLimits` and `DocumentLimits.web()` enforce store and API budgets, but no untrusted-input safety claim until hayro's bounded construction ships | #15, #1197 |
+| Structure-aware reading and retrieval | Partial: structure tree read/edit exists (#822, #907); structure-driven Markdown/JSON/chunks and retrieval provenance remain | #253, #853, #1181 |
+| Free-threaded Python, WebAssembly, and MIT licence | Available: native `abi3-py311`, free-threaded `cp314t`/`cp315t`, and PyEmscripten wheels under MIT | #257, #258 |
 
 ## Boundaries and evidence
 
 #355 excludes non-PDF inputs (such as XPS, EPUB and SVG) and HTML layout;
-images to PDF are in scope. API names, coordinate conventions and dependency
+images to PDF stay in scope. API names, coordinate conventions and dependency
 choices intentionally differ. This inventory does not establish that every
 PyMuPDF PDF method or option has been covered: future findings should be added
-with reproducible examples and issues. The [benchmark](README.md) is a
-historical 0.1.0 measurement, not a measurement of the main commit above.
+with reproducible examples and issues. Release-wheel timings and reading-quality
+scores are published with each release (`comparison-v0.4.1.zip`,
+`comparison-v0.4.0.zip`, [v0.3.1 macOS/arm64](releases/v0.3.1-darwin-arm64/comparison.md))
+and in [results/quality.md](results/quality.md); [README.md](README.md) keeps
+the historical 0.1.0 baseline alongside them.
