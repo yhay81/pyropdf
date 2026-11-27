@@ -2,6 +2,8 @@
 //! ported from pylopdf's `search_lines` and `line_search_index` in
 //! `rust/src/extract.rs` at 036be111cafe77755db4bb2be17bc70a8f2f9d82.
 
+use std::sync::Arc;
+
 use pyropdf_store::budget::{Budget, LimitCode};
 
 use super::layout::{QuadTuple, glyphs_bbox, glyphs_quad};
@@ -32,7 +34,7 @@ pub enum SearchHits {
 /// `fallback` draws the CJK fonts that the document does not embed, for
 /// [`TextOptions::exact_bboxes`] alone.
 pub fn page_search(
-    bridged: &Bridged,
+    bridged: &Arc<Bridged>,
     fallback: &Fallback,
     index: usize,
     options: &TextOptions,

@@ -435,7 +435,9 @@ fn a_missing_page_is_refused() {
 
 #[test]
 fn text_charges_its_glyphs_and_text_and_a_refusal_keeps_nothing() {
-    let bridged = Bridged::of_bytes(pdf_with("BT /F1 12 Tf 10 50 Td (Hi there) Tj ET"));
+    let bridged = Arc::new(Bridged::of_bytes(pdf_with(
+        "BT /F1 12 Tf 10 50 Td (Hi there) Tj ET",
+    )));
     let options = TextOptions::default();
     let budget = Budget::default();
     let mut out = String::from("before ");
@@ -471,7 +473,7 @@ fn text_charges_its_glyphs_and_text_and_a_refusal_keeps_nothing() {
 
 #[test]
 fn text_of_a_missing_page_is_refused() {
-    let bridged = Bridged::of_bytes(pdf_with(""));
+    let bridged = Arc::new(Bridged::of_bytes(pdf_with("")));
     let mut out = String::new();
     assert_eq!(
         page_text(
@@ -483,6 +485,32 @@ fn text_of_a_missing_page_is_refused() {
         ),
         Err(Error::NoPage(1))
     );
+}
+
+#[test]
+fn miri_smoke_extract_with_cache_replacement_and_tls_drop() {
+    let b1 = Arc::new(Bridged::of_bytes(pdf_with(
+        "BT /F1 12 Tf 10 50 Td (One) Tj ET",
+    )));
+    let b2 = Arc::new(Bridged::of_bytes(pdf_with(
+        "BT /F1 12 Tf 10 50 Td (Two) Tj ET",
+    )));
+    // Run on a child thread so both `*held = None` replacement and TLS drop of
+    // `ExtractCached` (`InterpreterCache<'static>` and `Stretches<'static>`
+    // before `Arc<Bridged>`) run under Miri.
+    std::thread::spawn(move || {
+        super::text::with_extract_cache(&b1, |bridged, _interp, _stretches, _fonts| {
+            assert_eq!(bridged.pdf().pages().len(), 1);
+        });
+        super::text::with_extract_cache(&b1, |bridged, _interp, _stretches, _fonts| {
+            assert_eq!(bridged.pdf().pages().len(), 1);
+        });
+        super::text::with_extract_cache(&b2, |bridged, _interp, _stretches, _fonts| {
+            assert_eq!(bridged.pdf().pages().len(), 1);
+        });
+    })
+    .join()
+    .unwrap();
 }
 
 #[test]
@@ -613,7 +641,7 @@ fn loaded_japanese() -> Fallback {
 
 /// Returns the box and the ascender of the first span of page 0, as the
 /// text options view it, in a layout through `fallback`.
-fn first_span(bridged: &Bridged, fallback: &Fallback, options: &TextOptions) -> (BBox, f64) {
+fn first_span(bridged: &Arc<Bridged>, fallback: &Fallback, options: &TextOptions) -> (BBox, f64) {
     let layout = page_layout(
         bridged,
         fallback,
@@ -630,7 +658,7 @@ fn first_span(bridged: &Bridged, fallback: &Fallback, options: &TextOptions) -> 
 
 #[test]
 fn exact_boxes_measure_a_font_that_a_document_does_not_embed_on_its_face() {
-    let bridged = Bridged::of_bytes(nonembedded_japanese(""));
+    let bridged = Arc::new(Bridged::of_bytes(nonembedded_japanese("")));
     let none = Fallback::default();
     let face = loaded_japanese();
     let plain = TextOptions::default();
@@ -670,8 +698,10 @@ fn only_exact_boxes_of_a_font_that_is_not_embedded_read_a_face() {
     let path = std::env::temp_dir().join(name);
     std::fs::write(&path, SUBSET).unwrap();
     let file = || Source::File(Arc::new(FontFile::new(path.clone(), None)));
-    let nonembedded = Bridged::of_bytes(nonembedded_japanese(""));
-    let helvetica = Bridged::of_bytes(pdf_with("BT /F1 12 Tf 10 50 Td (Hi there) Tj ET"));
+    let nonembedded = Arc::new(Bridged::of_bytes(nonembedded_japanese("")));
+    let helvetica = Arc::new(Bridged::of_bytes(pdf_with(
+        "BT /F1 12 Tf 10 50 Td (Hi there) Tj ET",
+    )));
 
     // A face is read once, so one that these calls had read would still draw
     // after its file is gone.
@@ -695,7 +725,7 @@ fn only_exact_boxes_of_a_font_that_is_not_embedded_read_a_face() {
 fn a_stretched_face_keeps_the_advances_and_the_words_of_the_page() {
     // Half the widths of the face's glyphs, which hayro draws at half their
     // width, by a transform that would halve their advances too.
-    let bridged = Bridged::of_bytes(nonembedded_japanese("/W [0 65535 500]"));
+    let bridged = Arc::new(Bridged::of_bytes(nonembedded_japanese("/W [0 65535 500]")));
     let layout = page_layout(
         &bridged,
         &loaded_japanese(),
@@ -716,9 +746,9 @@ fn a_stretched_face_keeps_the_advances_and_the_words_of_the_page() {
 
 #[test]
 fn actual_text_spans_the_ink_of_its_glyphs_on_the_face() {
-    let plain = Bridged::of_bytes(nonembedded_japanese(""));
+    let plain = Arc::new(Bridged::of_bytes(nonembedded_japanese("")));
     let marked = format!("/Span << /ActualText (word) >> BDC {SHOWN} EMC");
-    let marked = Bridged::of_bytes(nonembedded_page(&marked, ""));
+    let marked = Arc::new(Bridged::of_bytes(nonembedded_page(&marked, "")));
     let face = loaded_japanese();
 
     let (whole, _) = first_span(&plain, &face, &EXACT);
@@ -740,7 +770,7 @@ fn actual_text_spans_the_ink_of_its_glyphs_on_the_face() {
 
 #[test]
 fn a_face_that_does_not_load_leaves_the_boxes_that_the_page_gives() {
-    let bridged = Bridged::of_bytes(nonembedded_japanese(""));
+    let bridged = Arc::new(Bridged::of_bytes(nonembedded_japanese("")));
     // hayro then shows these codes in no font at all.
     let name = format!("pyropdf-extract-no-face-{}.otf", std::process::id());
     let path = std::env::temp_dir().join(name);

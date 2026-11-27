@@ -73,7 +73,6 @@ from pyropdf._text import (
     _rect,
     _warn_skipped,
     build_layout,
-    build_words,
     text_options,
 )
 from pyropdf._text_edit import replace_text
@@ -1140,8 +1139,19 @@ class Page:
             max_size=max_size,
             exact_bboxes=exact_bboxes,
         )
-        _, _, blocks, _ = self._layout(options, chars=False, max_glyphs=max_glyphs, max_size=max_size)
-        return build_words(blocks)
+        try:
+            words, skipped = _core.page_words(
+                self._reader(),
+                self._number,
+                self._generation,
+                options,
+                max_glyphs,
+                max_size,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+        _warn_skipped(skipped)
+        return words
 
     def layout(  # noqa: PLR0913 - the text options are all keyword-only
         self,

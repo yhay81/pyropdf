@@ -824,6 +824,15 @@ def page_layout(
     max_size: int | None,
     /,
 ) -> tuple[float, float, list[Any], int, CharColumns | None]: ...
+def page_words(
+    document: _Document | _PageSnapshot,
+    number: int,
+    generation: int,
+    options: _TextOptions,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[list[Any], int]: ...
 def page_chars(
     document: _Document,
     number: int,

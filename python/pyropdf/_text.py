@@ -638,6 +638,22 @@ _set_char_origin = Char.origin.__set__
 _set_char_synthetic = Char.is_synthetic.__set__
 _set_char_stream = Char.stream.__set__
 _set_char_operation = Char.operation.__set__
+_set_word_text = Word.text.__set__
+_set_word_bbox = Word.bbox.__set__
+_set_word_block = Word.block.__set__
+_set_word_line = Word.line.__set__
+_set_word_index = Word.index.__set__
+
+
+def _word(text: str, bbox: Rect, block: int, line: int, index: int) -> Word:
+    """Build one :class:`Word` from core fields without keyword-argument overhead."""
+    word = _new_object(Word)
+    _set_word_text(word, text)
+    _set_word_bbox(word, bbox)
+    _set_word_block(word, block)
+    _set_word_line(word, line)
+    _set_word_index(word, index)
+    return word
 
 
 def _quad(quad: Sequence[Sequence[float]]) -> Quad:
@@ -653,7 +669,7 @@ def _quad(quad: Sequence[Sequence[float]]) -> Quad:
 def build_words(blocks: Sequence[_CoreBlock]) -> list[Word]:
     """Build :meth:`Page.words` from the core's layout."""
     return [
-        Word(text=text, bbox=_rect(bbox), block=block_index, line=line_index, index=index)
+        _word(text, _rect(bbox), block_index, line_index, index)
         for block_index, (_, lines) in enumerate(blocks)
         for line_index, (_, _, words, _, _, _) in enumerate(lines)
         for index, (bbox, text) in enumerate(words)

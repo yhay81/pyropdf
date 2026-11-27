@@ -494,8 +494,10 @@ pub fn annotation_text(
             (LimitCode::TextSize, max_size),
         ])?;
         py.detach(|| {
-            let bridged = Bridged::new(&isolated.version, &isolated.pages, &budget)
-                .map_err(|e| bridge_error(&e))?;
+            let bridged = std::sync::Arc::new(
+                Bridged::new(&isolated.version, &isolated.pages, &budget)
+                    .map_err(|e| bridge_error(&e))?,
+            );
             let mut text = String::new();
             let (skipped, _) =
                 extract::page_text(&bridged, isolated.page_index, &options, &budget, &mut text)

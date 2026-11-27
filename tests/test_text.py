@@ -543,3 +543,41 @@ def test_every_corpus_page_reads_within_the_default_limits(name: str) -> None:
         warnings.simplefilter("ignore", pyropdf.PyropdfWarning)
         texts = [page.text() for page in document.pages]
         assert document.text() == "".join(texts)
+
+
+def test_page_words_returns_frozen_word_records_matching_layout() -> None:
+    document = pyropdf.open(build_text_pdf("BT /F1 20 Tf 72 700 Td (Alpha Beta) Tj 0 -30 Td (Gamma) Tj ET"))
+    page = document.pages[0]
+
+    words = page.words()
+    assert [word.text for word in words] == ["Alpha", "Beta", "Gamma"]
+    for word in words:
+        assert type(word) is pyropdf.Word
+        assert type(word.bbox) is pyropdf.Rect
+        with pytest.raises(AttributeError):
+            word.text = "mutated"  # ty: ignore[invalid-assignment]
+    assert [(word.block, word.line, word.index) for word in words] == [(0, 0, 0), (0, 0, 1), (0, 1, 0)]
+
+    layout = page.layout()
+    assert " ".join(word.text for word in words) == " ".join(
+        line.text for block in layout.blocks for line in block.lines
+    )
+
+    del document.pages[0]
+    with pytest.raises(pyropdf.StalePageError):
+        page.words()
+
+
+def test_chunked_text_budgets_refuse_at_exact_glyph_and_size_boundaries() -> None:
+    page_content = "BT /F1 12 Tf 72 700 Td (0123456789) Tj ET"
+    document = pyropdf.open(build_text_pdf(page_content, page_content))
+
+    assert document.pages[0].text(max_glyphs=10) == "0123456789\n"
+    with pytest.raises(pyropdf.LimitError) as glyph_error:
+        document.pages[0].text(max_glyphs=9)
+    assert glyph_error.value.code == "text_glyph_count"
+
+    assert document.text(max_glyphs=10, max_size=22) == "0123456789\n0123456789\n"
+    with pytest.raises(pyropdf.LimitError) as size_error:
+        document.text(max_glyphs=10, max_size=21)
+    assert size_error.value.code == "text_size"

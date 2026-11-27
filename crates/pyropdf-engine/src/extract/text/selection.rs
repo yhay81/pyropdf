@@ -2,6 +2,8 @@
 //! ported from pylopdf's `TextPage::selection` and `nearest_glyph` in
 //! `rust/src/extract.rs` at 036be111cafe77755db4bb2be17bc70a8f2f9d82.
 
+use std::sync::Arc;
+
 use pyropdf_store::budget::{Budget, LimitCode};
 
 use super::{
@@ -20,7 +22,7 @@ use crate::render::Fallback;
 /// The points are in display space, and the text options view the glyphs.
 /// The budgets are those of [`super::page_text`]. A refusal keeps nothing.
 pub fn page_selection(
-    bridged: &Bridged,
+    bridged: &Arc<Bridged>,
     index: usize,
     options: &TextOptions,
     start: (f64, f64),
