@@ -40,6 +40,7 @@ pixmap は buffer protocol に対応するので、NumPy や Pillow は画素を
 | `colorspace` | `"gray"` で ITU-R BT.601 の重みでグレーに変換します。 |
 | `hinting` | `True` で FreeType の light hinting のように文字をヒンティングし、小さな文字をくっきりさせます。既定ではヒンティングしません。 |
 | `glyph_cache` | `True` で各グリフをサイズごとに一度だけラスタ化して使い回し、文字を速く描きます。ただし文字は縦に最大で半画素ずれます。キャッシュのメモリは `DocumentLimits` の外にあり、スレッドがその文書の版に持つ描画キャッシュと同じだけ残ります。既定では使いません。 |
+| `antialias` | `False` で hayro のエイリアシングしきい値を使い、塗り・線・文字のアンチエイリアスを無効化して輪郭をくっきり描きます。ラスタ画像の描画はそのまま保たれ、`glyph_cache` はバイパスされます。既定は `True` です。 |
 
 ```python
 import pyropdf

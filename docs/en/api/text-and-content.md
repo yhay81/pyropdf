@@ -249,6 +249,7 @@ Content.pixmap(
     colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
     hinting: bool = False,
     glyph_cache: bool = False,
+    antialias: bool = True,
 ) -> Pixmap
 ```
 

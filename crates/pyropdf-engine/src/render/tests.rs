@@ -132,15 +132,21 @@ fn f1040() -> Arc<Bridged> {
 }
 
 /// hayro's own rendering of the first page of `bridged` at 72 dpi on
-/// white, as RGB samples, with its default settings but `hinting` and
-/// `glyph_caching`.
-fn hayro_rgb(bridged: &Bridged, hinting: bool, glyph_caching: bool) -> Vec<u8> {
+/// white, as RGB samples, with its default settings but `hinting`,
+/// `glyph_caching`, and `aliasing_threshold`.
+fn hayro_rgb_with(
+    bridged: &Bridged,
+    hinting: bool,
+    glyph_caching: bool,
+    aliasing_threshold: Option<u8>,
+) -> Vec<u8> {
     let pages = bridged.pdf().pages();
     hayro::render(
         pages.first().unwrap(),
         &RenderCache::new(),
         &InterpreterSettings::default(),
         &RenderSettings {
+            aliasing_threshold,
             hinting,
             glyph_caching,
             ..RenderSettings::default()
@@ -155,6 +161,13 @@ fn hayro_rgb(bridged: &Bridged, hinting: bool, glyph_caching: bool) -> Vec<u8> {
     .iter()
     .flat_map(|pixel| [pixel.r, pixel.g, pixel.b])
     .collect()
+}
+
+/// hayro's own rendering of the first page of `bridged` at 72 dpi on
+/// white, as RGB samples, with its default settings but `hinting` and
+/// `glyph_caching`.
+fn hayro_rgb(bridged: &Bridged, hinting: bool, glyph_caching: bool) -> Vec<u8> {
+    hayro_rgb_with(bridged, hinting, glyph_caching, None)
 }
 
 #[test]
@@ -552,15 +565,65 @@ fn with_cache_replaces_bridged_entry_and_drops_on_thread_exit() {
     // Run on a child thread so both `*held = None` replacement and TLS drop of
     // `Cached` (`RenderCache<'static>` before `Arc<Bridged>`) are checked.
     std::thread::spawn(move || {
-        let pages_first = with_cache(&first, &none, |bridged, _cache| bridged.pdf().pages().len());
-        let pages_cached = with_cache(&first, &none, |bridged, _cache| bridged.pdf().pages().len());
-        let pages_second = with_cache(&second, &none, |bridged, _cache| {
+        let pages_first = with_cache(&first, &none, true, |bridged, _cache| {
             bridged.pdf().pages().len()
         });
-        assert_eq!((pages_first, pages_cached, pages_second), (1, 1, 1));
+        let pages_cached = with_cache(&first, &none, true, |bridged, _cache| {
+            bridged.pdf().pages().len()
+        });
+        let pages_aliased = with_cache(&first, &none, false, |bridged, _cache| {
+            bridged.pdf().pages().len()
+        });
+        let pages_second = with_cache(&second, &none, false, |bridged, _cache| {
+            bridged.pdf().pages().len()
+        });
+        assert_eq!(
+            (pages_first, pages_cached, pages_aliased, pages_second),
+            (1, 1, 1, 1)
+        );
     })
     .join()
     .unwrap();
+}
+
+#[test]
+fn antialias_false_matches_hayro_threshold_and_isolates_cache() {
+    let bridged = pdf20_simple();
+    let other = pdf20_simple();
+    let none = Fallback::default();
+    let aliased = Options {
+        antialias: false,
+        ..Options::new((1.0, 0.0, 0.0, 1.0), false)
+    };
+    let smooth = Options::new((1.0, 0.0, 0.0, 1.0), false);
+    let aliased_cached = Options {
+        antialias: false,
+        glyph_cache: true,
+        ..Options::new((1.0, 0.0, 0.0, 1.0), false)
+    };
+
+    let expected_smooth = hayro_rgb_with(&bridged, false, false, None);
+    let expected_aliased = hayro_rgb_with(&bridged, false, false, Some(ALIASED_THRESHOLD));
+    assert!(expected_aliased != expected_smooth);
+
+    // Fresh renders after switching bridges.
+    raster(&other, &none, 0, &smooth).unwrap();
+    let ours_smooth = raster(&bridged, &none, 0, &smooth).unwrap();
+    assert!(ours_smooth.data == expected_smooth);
+
+    raster(&other, &none, 0, &aliased).unwrap();
+    let ours_aliased = raster(&bridged, &none, 0, &aliased).unwrap();
+    assert!(ours_aliased.data == expected_aliased);
+
+    // Alternating on the same bridge through the thread-local cache matches fresh renders.
+    assert!(raster(&bridged, &none, 0, &smooth).unwrap() == ours_smooth);
+    assert!(raster(&bridged, &none, 0, &aliased).unwrap() == ours_aliased);
+    assert!(raster(&bridged, &none, 0, &aliased_cached).unwrap() == ours_aliased);
+    assert!(raster(&bridged, &none, 0, &smooth).unwrap() == ours_smooth);
+
+    // Batch rendering honors antialias=false as raster does.
+    let batched = batch(&bridged, &none, &[0, 0], &aliased, 2, Ok::<_, RasterError>).unwrap();
+    assert!(batched == [ours_aliased.clone(), ours_aliased]);
 }
 
 #[test]
@@ -576,14 +639,17 @@ fn miri_smoke_render_with_cache_replacement_and_tls_drop() {
     // Run on a child thread so both `*held = None` replacement and TLS drop of
     // `Cached` (`RenderCache<'static>` before `Arc<Bridged>`) run under Miri.
     std::thread::spawn(move || {
-        with_cache(&b1, &none, |bridged, cache| {
+        with_cache(&b1, &none, true, |bridged, cache| {
             let _ = bridged.pdf().pages().len();
             let _ = cache;
         });
-        with_cache(&b1, &none, |bridged, _cache| {
+        with_cache(&b1, &none, true, |bridged, _cache| {
             assert_eq!(bridged.pdf().pages().len(), 1);
         });
-        with_cache(&b2, &none, |bridged, _cache| {
+        with_cache(&b1, &none, false, |bridged, _cache| {
+            assert_eq!(bridged.pdf().pages().len(), 1);
+        });
+        with_cache(&b2, &none, false, |bridged, _cache| {
             assert_eq!(bridged.pdf().pages().len(), 1);
         });
     })

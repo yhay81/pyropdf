@@ -433,6 +433,7 @@ pub fn annotation_pixmap(
     alpha: bool,
     gray: bool,
     background: (u8, u8, u8, u8),
+    antialias: bool,
 ) -> PyResult<Option<Pixmap>> {
     crate::errors::boundary(|| {
         let Some(isolated) = isolated(py, document, number, generation, index, id)? else {
@@ -449,6 +450,7 @@ pub fn annotation_pixmap(
             annotations: false,
             hinting: false,
             glyph_cache: false,
+            antialias,
         };
         let fallback = document.fallback();
         let raster = py.detach(|| -> PyResult<Raster> {

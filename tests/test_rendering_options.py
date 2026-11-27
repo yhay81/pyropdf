@@ -1,4 +1,4 @@
-"""The options of page.pixmap: clip, background, annotations, colorspace, hinting, and glyph_cache.
+"""The options of page.pixmap: clip, background, annotations, colorspace, hinting, glyph_cache, and antialias.
 
 Ported from pylopdf's tests/test_rendering_api.py at 036be111. Intended
 differences:
@@ -230,6 +230,114 @@ def test_glyph_cache_must_be_a_bool() -> None:
         _page().pixmap(glyph_cache=1)  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError, match="glyph_cache must be a bool"):
         pyropdf.open(REAL_WORLD / "pdf20-simple.pdf").render(glyph_cache=None)  # ty: ignore[invalid-argument-type]
+
+
+def _vector_text_and_image_page() -> pyropdf.Page:
+    """Open a 200 by 100 page with a diagonal vector stroke, text, and a raster image."""
+    return page_with(
+        "0 0 0 RG 3 w 10 10 m 80 90 l S "
+        "BT /F1 24 Tf 10 50 Td (Aliased) Tj ET "
+        "q 40 0 0 40 130 30 cm "
+        "BI /W 2 /H 2 /CS /RGB /BPC 8 /F /AHx ID FF0000 00FF00 0000FF 8040C0> EI Q"
+    )
+
+
+def _diagonal_annotation_page() -> pyropdf.Page:
+    """Open a page with a Stamp annotation whose appearance draws a diagonal black stroke."""
+    return page_with(
+        "",
+        annots="6 0 R",
+        objects={
+            6: "<< /Type /Annot /Subtype /Stamp /Rect [20 20 180 80] /AP << /N 7 0 R >> >>",
+            7: stream_object("0 0 0 RG 3 w 4 4 m 156 56 l S", "/Type /XObject /Subtype /Form /BBox [0 0 160 60]"),
+        },
+    )
+
+
+def test_antialias_false_produces_hard_edges_and_preserves_images() -> None:
+    page = _vector_text_and_image_page()
+    smooth = page.pixmap()
+    assert bytes(page.pixmap(antialias=True)) == bytes(smooth)
+    aliased = page.pixmap(antialias=False)
+
+    assert bytes(aliased) != bytes(smooth)
+
+    # Left half holds the diagonal stroke and text: anti-aliased renders blend gray edge pixels,
+    # while antialias=False produces only hard black and white pixels.
+    smooth_left = _crop(smooth, 0, 0, 120, 100)
+    aliased_left = _crop(aliased, 0, 0, 120, 100)
+    smooth_colors = {smooth_left[i : i + 3] for i in range(0, len(smooth_left), 3)}
+    aliased_colors = {aliased_left[i : i + 3] for i in range(0, len(aliased_left), 3)}
+    assert len(smooth_colors) > 2
+    assert aliased_colors == {b"\x00\x00\x00", b"\xff\xff\xff"}
+
+    # Right half holds the 2x2 RGB raster image placed at (130..170, 30..70) in PDF space
+    # -> (130..170, 30..70) in display space on a 200x100 page: image colors remain intact.
+    assert _crop(aliased, 140, 40, 141, 41) == b"\xff\x00\x00"
+    assert _crop(aliased, 160, 40, 161, 41) == b"\x00\xff\x00"
+    assert _crop(aliased, 140, 60, 141, 61) == b"\x00\x00\xff"
+    assert _crop(aliased, 160, 60, 161, 61) == b"\x80\x40\xc0"
+
+
+def test_antialias_honored_by_document_content_and_annotation_pixmap() -> None:
+    doc = pyropdf.open(REAL_WORLD / "pdf20-simple.pdf")
+    smooth_pages = [page.pixmap().to_bytes("png") for page in doc.pages]
+    aliased_pages = [page.pixmap(antialias=False).to_bytes("png") for page in doc.pages]
+    assert aliased_pages != smooth_pages
+    assert doc.render(antialias=False) == aliased_pages
+    assert doc.render(antialias=True) == smooth_pages
+    assert doc.render() == smooth_pages
+
+    content = doc.pages[0].content()
+    assert bytes(content.pixmap(antialias=False)) == bytes(doc.pages[0].pixmap(antialias=False))
+    assert bytes(content.pixmap(antialias=True)) == bytes(doc.pages[0].pixmap(antialias=True))
+    assert bytes(content.pixmap(antialias=False)) != bytes(content.pixmap())
+
+    annot = _diagonal_annotation_page().annotations[0]
+    smooth_annot = annot.pixmap()
+    aliased_annot = annot.pixmap(antialias=False)
+    assert bytes(annot.pixmap(antialias=True)) == bytes(smooth_annot)
+    assert bytes(aliased_annot) != bytes(smooth_annot)
+    smooth_annot_colors = {bytes(smooth_annot)[i : i + 3] for i in range(0, len(bytes(smooth_annot)), 3)}
+    aliased_annot_colors = {bytes(aliased_annot)[i : i + 3] for i in range(0, len(bytes(aliased_annot)), 3)}
+    assert len(smooth_annot_colors) > 2
+    assert aliased_annot_colors == {b"\x00\x00\x00", b"\xff\xff\xff"}
+
+
+def test_antialias_cache_isolation_and_default_corpus_identity() -> None:
+    page = _corpus_page()
+    fresh_smooth = bytes(_corpus_page().pixmap())
+    fresh_aliased = bytes(_corpus_page().pixmap(antialias=False))
+    fresh_cached_smooth = bytes(_corpus_page().pixmap(glyph_cache=True))
+    assert fresh_aliased != fresh_smooth
+
+    # Alternating antialias settings on one page never suffers stale render-cache hits.
+    assert bytes(page.pixmap()) == fresh_smooth
+    assert bytes(page.pixmap(antialias=False)) == fresh_aliased
+    assert bytes(page.pixmap(antialias=True)) == fresh_smooth
+    assert bytes(page.pixmap(antialias=False, glyph_cache=True)) == fresh_aliased
+    assert bytes(page.pixmap(antialias=True, glyph_cache=True)) == fresh_cached_smooth
+    assert bytes(page.pixmap(antialias=False)) == fresh_aliased
+    assert bytes(page.pixmap()) == fresh_smooth
+
+    # Default antialias=True is byte-for-byte identical to implicit default across representative corpus PDFs.
+    for name in ("pdf20-simple.pdf", "f1040.pdf", "pdfium-type3.pdf"):
+        corpus_page = pyropdf.open(REAL_WORLD / name).pages[0]
+        assert bytes(corpus_page.pixmap(dpi=36)) == bytes(corpus_page.pixmap(dpi=36, antialias=True))
+
+
+@pytest.mark.parametrize("bad", [1, 0, None, "false"])
+def test_antialias_must_be_a_bool(bad: object) -> None:
+    page = _page()
+    with pytest.raises(TypeError, match="antialias must be a bool"):
+        page.pixmap(antialias=bad)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="antialias must be a bool"):
+        page.document.render(antialias=bad)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="antialias must be a bool"):
+        page.content().pixmap(antialias=bad)  # ty: ignore[invalid-argument-type]
+    annot = _diagonal_annotation_page().annotations[0]
+    with pytest.raises(TypeError, match="antialias must be a bool"):
+        annot.pixmap(antialias=bad)  # ty: ignore[invalid-argument-type]
 
 
 def test_gray_holds_the_luma_of_each_color() -> None:

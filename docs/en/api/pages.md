@@ -437,6 +437,7 @@ Page.pixmap(
     colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
     hinting: bool = False,
     glyph_cache: bool = False,
+    antialias: bool = True,
 ) -> Pixmap
 ```
 
@@ -472,6 +473,11 @@ lies. Its memory is outside `DocumentLimits`: it grows with
 each glyph that the document draws at another size, and lasts as
 long as the thread's render cache for the document's version, which
 the thread keeps until it renders another version.
+
+`antialias=False` disables anti-aliasing for fills, strokes, and
+text by passing hayro's aliasing threshold, producing hard-edged
+vector and text output while still drawing raster images normally.
+When `antialias=False`, hayro bypasses the glyph cache.
 
 `clip` is a display rectangle `(x0, y0, x1, y1)`: its bounding
 box under the matrix, rounded outward to whole pixels and

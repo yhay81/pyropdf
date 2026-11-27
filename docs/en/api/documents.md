@@ -1114,6 +1114,7 @@ Document.render(
     colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
     hinting: bool = False,
     glyph_cache: bool = False,
+    antialias: bool = True,
     format: Literal['png', 'jpeg'] = 'png',
     quality: int = 95,
     workers: int | None = None,
@@ -1124,7 +1125,8 @@ Document.render(
 Render pages of the current version to encoded images, in the order of `pages`.
 
 `dpi`, `matrix`, `fit`, `alpha`, `background`,
-`annotations`, `colorspace`, `hinting`, and `glyph_cache` mean
+`annotations`, `colorspace`, `hinting`, `glyph_cache`, and
+`antialias` mean
 what they mean to `Page.pixmap`, so the default is opaque RGB at
 72 dpi, `fit` scales each page individually from its own display
 size, and each image is what

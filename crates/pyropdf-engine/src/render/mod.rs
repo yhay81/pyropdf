@@ -27,8 +27,15 @@ pub use batch::{MAX_WORKERS, batch, batch_scaled};
 pub use fallback::{Fallback, FontFile, Language, Source};
 pub use svg::svg;
 
+/// The coverage threshold passed to hayro when [`Options::antialias`] is `false`.
+///
+/// `vello_common` paints a pixel when its quantized 8-bit coverage is at least
+/// the threshold (`>=`), so `128` paints coverages `128..=255` (at least 50%)
+/// and leaves coverages `0..=127` unpainted.
+pub const ALIASED_THRESHOLD: u8 = 128;
+
 /// What hayro renders with: its defaults, with text hinted and glyphs
-/// cached only on request.
+/// cached only on request, and anti-aliasing enabled by default.
 ///
 /// hayro 0.9 hints text by default (LaurenzV/hayro#1705), which hayro 0.8
 /// did not. Hinting reads more of a font program than the glyphs drawn, so
@@ -42,8 +49,14 @@ pub use svg::svg;
 /// glyph where it lies, as it did with hayro 0.8 (#622), unless asked to
 /// reuse rasterized glyphs, which renders text faster and less faithfully
 /// (evidence/glyph-cache, #685).
-fn render_settings(hinting: bool, glyph_caching: bool) -> RenderSettings {
+///
+/// When `antialias` is `false`, hayro receives
+/// `aliasing_threshold: Some(ALIASED_THRESHOLD)` (LaurenzV/hayro#1611),
+/// producing hard-edged fills, strokes, and text (bypassing hayro's glyph
+/// cache) while preserving raster image drawing.
+fn render_settings(hinting: bool, glyph_caching: bool, antialias: bool) -> RenderSettings {
     RenderSettings {
+        aliasing_threshold: (!antialias).then_some(ALIASED_THRESHOLD),
         hinting,
         glyph_caching,
         ..RenderSettings::default()
@@ -73,7 +86,7 @@ pub fn page(bridged: &Bridged, index: usize, scale: f32) -> Result<Rgba> {
             page,
             &cache,
             &settings,
-            &render_settings(false, false),
+            &render_settings(false, false, true),
             &PixmapSettings {
                 x_scale: scale,
                 y_scale: scale,
@@ -182,12 +195,16 @@ pub struct Options {
     /// cache, as hayro's default settings draw it: each glyph is rasterized
     /// once at each size and placed at a whole pixel vertically.
     pub glyph_cache: bool,
+    /// Whether fills, strokes, and text are anti-aliased. When `false`,
+    /// hayro renders with [`ALIASED_THRESHOLD`] while preserving image
+    /// drawing.
+    pub antialias: bool,
 }
 
 impl Options {
     /// Renders through `matrix` in RGB, on white without `alpha` and on
-    /// transparency with it, with annotations, no clip, no hinting, and no
-    /// glyph cache.
+    /// transparency with it, with annotations, no clip, no hinting, no
+    /// glyph cache, and anti-aliasing enabled.
     pub const fn new(matrix: Matrix, alpha: bool) -> Self {
         Self {
             matrix,
@@ -198,6 +215,7 @@ impl Options {
             annotations: true,
             hinting: false,
             glyph_cache: false,
+            antialias: true,
         }
     }
 }
@@ -264,6 +282,7 @@ struct Cached {
     cache: RenderCache<'static>,
     bridged: Arc<Bridged>,
     fallback: Fallback,
+    antialias: bool,
 }
 
 thread_local! {
@@ -271,16 +290,19 @@ thread_local! {
 }
 
 /// Runs `render` with hayro's document of `bridged` and this thread's cache
-/// for it and `fallback`.
+/// for it, `fallback`, and `antialias`.
 fn with_cache<T>(
     bridged: &Arc<Bridged>,
     fallback: &Fallback,
+    antialias: bool,
     render: impl FnOnce(&'static Bridged, &RenderCache<'static>) -> T,
 ) -> T {
     CACHE.with(|cell| {
         let mut held = cell.borrow_mut();
         if !held.as_ref().is_some_and(|cached| {
-            Arc::ptr_eq(&cached.bridged, bridged) && cached.fallback.same(fallback)
+            Arc::ptr_eq(&cached.bridged, bridged)
+                && cached.fallback.same(fallback)
+                && cached.antialias == antialias
         }) {
             // Drop the old cache before its bridge, then start one for this bridge.
             *held = None;
@@ -288,6 +310,7 @@ fn with_cache<T>(
                 cache: RenderCache::new(),
                 bridged: Arc::clone(bridged),
                 fallback: fallback.clone(),
+                antialias,
             });
         }
         let cached = held.as_ref().expect("the cache was just set");
@@ -335,7 +358,7 @@ pub fn raster_scaled(
             "fit dimensions must be positive".to_owned(),
         ));
     }
-    with_cache(bridged, fallback, |bridged, cache| {
+    with_cache(bridged, fallback, options.antialias, |bridged, cache| {
         draw(bridged, pages, cache, fallback, index, options, scale)
     })
 }
@@ -579,7 +602,7 @@ fn paint<'a>(
         page,
         cache,
         settings,
-        &render_settings(options.hinting, options.glyph_cache),
+        &render_settings(options.hinting, options.glyph_cache, options.antialias),
         &mut context,
         transform,
     );

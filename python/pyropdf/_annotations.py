@@ -47,7 +47,7 @@ from pyropdf._media import (
     media_annotation,
 )
 from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Array, Dictionary, Name, Stream, String
-from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix
+from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
 from pyropdf._prepress import (
     FixedPrint,
     PrinterMark,
@@ -1584,7 +1584,7 @@ class Annotation(_AppearanceOwner):
             Annotation(self._page, entry[1], entry[0]) for entry in _entries(self._page) if entry[11][0] == self._id
         ]
 
-    def pixmap(
+    def pixmap(  # noqa: PLR0913 - the rendering options are all keyword-only
         self,
         *,
         dpi: float | None = None,
@@ -1592,6 +1592,7 @@ class Annotation(_AppearanceOwner):
         alpha: bool = False,
         background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
         colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
+        antialias: bool = True,
     ) -> Pixmap:
         """Render the annotation's appearance alone, over its display rectangle :attr:`rect`.
 
@@ -1606,9 +1607,10 @@ class Annotation(_AppearanceOwner):
         """
         linear = _render_matrix(matrix, dpi)
         rgba = _render_background(background, alpha=alpha)
+        _validate_bool("antialias", antialias)
         gray = _render_gray(colorspace)
         page = self._page
-        pixmap = _core.annotation_pixmap(*self._location(), linear, alpha, gray, rgba)
+        pixmap = _core.annotation_pixmap(*self._location(), linear, alpha, gray, rgba, antialias)
         if pixmap is None:
             raise page._stale()  # noqa: SLF001
         return pixmap
