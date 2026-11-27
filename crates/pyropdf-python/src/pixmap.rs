@@ -1342,6 +1342,7 @@ pub fn render_page(
     annotations: bool,
     hinting: bool,
     glyph_cache: bool,
+    antialias: bool,
 ) -> PyResult<Pixmap> {
     crate::errors::boundary(|| {
         let document = source.document();
@@ -1358,6 +1359,7 @@ pub fn render_page(
             annotations,
             hinting,
             glyph_cache,
+            antialias,
         };
         let scale = fit.map_or(render::Scale::Matrix(matrix), |(w, h)| {
             render::Scale::Fit(w, h)
@@ -1432,6 +1434,7 @@ pub fn render_pages(
     annotations: bool,
     hinting: bool,
     glyph_cache: bool,
+    antialias: bool,
     format: &str,
     quality: u8,
     workers: usize,
@@ -1452,6 +1455,7 @@ pub fn render_pages(
             annotations,
             hinting,
             glyph_cache,
+            antialias,
         };
         let scale = fit.map_or(render::Scale::Matrix(matrix), |(w, h)| {
             render::Scale::Fit(w, h)

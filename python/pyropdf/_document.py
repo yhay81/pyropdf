@@ -1506,6 +1506,7 @@ class Document:
         colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
         hinting: bool = False,
         glyph_cache: bool = False,
+        antialias: bool = True,
         format: Literal["png", "jpeg"] = "png",  # noqa: A002 - the public name.
         quality: int = 95,
         workers: int | None = None,
@@ -1514,7 +1515,8 @@ class Document:
         """Render pages of the current version to encoded images, in the order of ``pages``.
 
         ``dpi``, ``matrix``, ``fit``, ``alpha``, ``background``,
-        ``annotations``, ``colorspace``, ``hinting``, and ``glyph_cache`` mean
+        ``annotations``, ``colorspace``, ``hinting``, ``glyph_cache``, and
+        ``antialias`` mean
         what they mean to :meth:`Page.pixmap`, so the default is opaque RGB at
         72 dpi, ``fit`` scales each page individually from its own display
         size, and each image is what
@@ -1541,6 +1543,7 @@ class Document:
         _validate_bool("annotations", annotations)
         _validate_bool("hinting", hinting)
         _validate_bool("glyph_cache", glyph_cache)
+        _validate_bool("antialias", antialias)
         gray = _render_gray(colorspace)
         _validate_encoding(format, quality, alpha=alpha)
         if workers is None:
@@ -1565,6 +1568,7 @@ class Document:
             annotations,
             hinting,
             glyph_cache,
+            antialias,
             format,
             quality,
             workers,

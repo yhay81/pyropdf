@@ -607,6 +607,7 @@ class Page:
         colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
         hinting: bool = False,
         glyph_cache: bool = False,
+        antialias: bool = True,
     ) -> Pixmap:
         """Render the current version of the page to a :class:`Pixmap`.
 
@@ -641,6 +642,11 @@ class Page:
         long as the thread's render cache for the document's version, which
         the thread keeps until it renders another version.
 
+        ``antialias=False`` disables anti-aliasing for fills, strokes, and
+        text by passing hayro's aliasing threshold, producing hard-edged
+        vector and text output while still drawing raster images normally.
+        When ``antialias=False``, hayro bypasses the glyph cache.
+
         ``clip`` is a display rectangle ``(x0, y0, x1, y1)``: its bounding
         box under the matrix, rounded outward to whole pixels and
         intersected with the page, is all that is rasterized. A clip that
@@ -663,6 +669,7 @@ class Page:
         _validate_bool("annotations", annotations)
         _validate_bool("hinting", hinting)
         _validate_bool("glyph_cache", glyph_cache)
+        _validate_bool("antialias", antialias)
         gray = _render_gray(colorspace)
         box = None if clip is None else _clip_box(clip)
         try:
@@ -679,6 +686,7 @@ class Page:
                 annotations,
                 hinting,
                 glyph_cache,
+                antialias,
             )
         except StaleObjectError as error:
             raise self._stale() from error

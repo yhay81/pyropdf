@@ -424,6 +424,7 @@ Annotation.pixmap(
     alpha: bool = False,
     background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
     colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
+    antialias: bool = True,
 ) -> Pixmap
 ```
 

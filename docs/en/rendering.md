@@ -41,6 +41,7 @@ without a copy: `numpy.asarray(pixmap)` has the shape
 | `colorspace` | `"gray"` converts to gray with ITU-R BT.601 weights. |
 | `hinting` | `True` hints text as FreeType's light hinting does, which sharpens small text; text renders unhinted by default. |
 | `glyph_cache` | `True` rasterizes each glyph once at each size and reuses it, which renders text faster but moves it by up to half a pixel vertically. The cache's memory is outside `DocumentLimits` and lasts as long as the thread's render cache for the document's version. Off by default. |
+| `antialias` | `False` disables anti-aliasing for fills, strokes, and text through hayro's aliasing threshold, producing hard-edged vector and text output while still drawing raster images normally (and bypassing `glyph_cache`). On (`True`) by default. |
 
 ```python
 import pyropdf

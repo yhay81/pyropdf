@@ -630,6 +630,7 @@ class Content(_ContentOrigin, Sequence[ContentItem]):
         colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
         hinting: bool = False,
         glyph_cache: bool = False,
+        antialias: bool = True,
     ) -> Pixmap:
         """Render this complete page capture with the options of :meth:`Page.pixmap`.
 
@@ -648,6 +649,7 @@ class Content(_ContentOrigin, Sequence[ContentItem]):
             colorspace=colorspace,
             hinting=hinting,
             glyph_cache=glyph_cache,
+            antialias=antialias,
             annotations=page.annotations_included,
         )
 

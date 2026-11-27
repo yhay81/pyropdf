@@ -298,6 +298,7 @@ def render_page(
     annotations: bool,
     hinting: bool,
     glyph_cache: bool,
+    antialias: bool,
     /,
 ) -> Pixmap: ...
 def render_page_svg(
@@ -314,6 +315,7 @@ def render_pages(
     annotations: bool,
     hinting: bool,
     glyph_cache: bool,
+    antialias: bool,
     format: str,  # noqa: A002
     quality: int,
     workers: int,
@@ -581,6 +583,7 @@ def annotation_pixmap(
     alpha: bool,
     gray: bool,
     background: tuple[int, int, int, int],
+    antialias: bool,
     /,
 ) -> Pixmap | None: ...
 def annotation_text(
