@@ -76,3 +76,13 @@ Choose additions using three criteria: a redistributable license, a size below
 1 MB, and coverage not already represented in the corpus. A new file needs a
 record in the table above, and the SHA-256 of each of its damaged inputs in
 `damage.sha256`.
+
+## Quality-comparison additions
+
+Additional real-world documents used by the reading, table, and retrieval
+quality benchmarks under `evidence/pymupdf-comparison/` (kept outside the
+15-file Phase 1 parity set above so historical parity baselines stay fixed):
+
+| File | Source | License | Coverage |
+|---|---|---|---|
+| `forms/mhlw-deposit-report.pdf` | [mhlw.go.jp](https://www.mhlw.go.jp/bunya/roudoukijun/roudoujouken01/dl/new200327-1.pdf), Ministry of Health, Labour and Welfare Form No. 24 (*Deposit Management Status Report* / 様式第24号 預金管理状況報告, Labor Standards Act Art. 18); retrieved 2026-11-27, SHA-256 `a65c027ca015dd0ac64abb603d719daf66970542ba660a9eae5856d620a9ef17` | [Public Data License 1.0](https://www.digital.go.jp/resources/open_data/public_data_license_v1.0) (CC BY 4.0 compatible; MHLW [copyright](https://www.mhlw.go.jp/chosakuken/index.html)) | 126 KB, PDF 1.5, 270°-rotated landscape Japanese statutory business form with OCR comb fields, bordered accounting & preservation tables, and two-column reverse instructions |

@@ -1,0 +1,10 @@
+{
+ "document": "wdl6812-manuscript.pdf",
+ "page": 1,
+ "mode": "ocr",
+ "checked": false,
+ "notes": "Negative-control OCR scan fixture; awaiting the owner's visual check. Page 1 is a non-text illuminated decorative panel (zero expected CJK/Latin anchors; PP-OCR emits at most a few low-signal ornament artifacts). Page 2 is a classical Arabic Qur'anic manuscript outside the CJK/Latin PP-OCR model's alphabet.",
+ "anchors": [],
+ "words": [],
+ "max_spurious_words": 8
+}

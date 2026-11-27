@@ -1,13 +1,14 @@
 {
- "commit": "20f2a0e1 with #1153",
+ "commit": "4e0e3c00",
  "engines": [
   "PyMuPDF 2.1",
   "PyMuPDF 2.1 sort=True",
-  "pyropdf 0.4.0"
+  "pyropdf 0.4.1"
  ],
  "pages": {
   "bill-hr815-p1": {
    "checked": true,
+   "mode": "native",
    "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 12,
@@ -40,7 +41,7 @@
      "failures": []
     }
    },
-   "pyropdf 0.4.0": {
+   "pyropdf 0.4.1": {
     "anchors": {
      "anchors": 12,
      "found": 12,
@@ -57,8 +58,35 @@
     }
    }
   },
+  "bunka-kokugo-series-019-p4-p1": {
+   "checked": false,
+   "mode": "ocr",
+   "PyMuPDF 2.1": {
+    "skipped": "FzErrorLibrary: code=3: Tesseract language initialisation failed"
+   },
+   "PyMuPDF 2.1 sort=True": {
+    "skipped": "FzErrorLibrary: code=3: Tesseract language initialisation failed"
+   },
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 11,
+     "found": 11,
+     "in_order": 10,
+     "pairs": 10,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 6,
+     "placed": 6,
+     "mean_iou": 0.6811984578736691,
+     "failures": []
+    }
+   }
+  },
   "f1040-p1": {
    "checked": true,
+   "mode": "native",
    "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 18,
@@ -91,7 +119,7 @@
      "failures": []
     }
    },
-   "pyropdf 0.4.0": {
+   "pyropdf 0.4.1": {
     "anchors": {
      "anchors": 18,
      "found": 18,
@@ -110,6 +138,7 @@
   },
   "f1040-p2": {
    "checked": false,
+   "mode": "native",
    "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 18,
@@ -142,7 +171,7 @@
      "failures": []
     }
    },
-   "pyropdf 0.4.0": {
+   "pyropdf 0.4.1": {
     "anchors": {
      "anchors": 18,
      "found": 18,
@@ -159,8 +188,152 @@
     }
    }
   },
+  "mhlw-deposit-report-p1": {
+   "checked": false,
+   "mode": "native",
+   "PyMuPDF 2.1": {
+    "anchors": {
+     "anchors": 12,
+     "found": 12,
+     "in_order": 5,
+     "pairs": 11,
+     "missing": [],
+     "inversions": [
+      [
+       "様式第24号(第57条関係)",
+       "預金管理状況報告"
+      ],
+      [
+       "受付印",
+       "事業の名称"
+      ],
+      [
+       "事業の名称",
+       "労働保険番号"
+      ],
+      [
+       "労働保険番号",
+       "貯蓄金管理協定"
+      ],
+      [
+       "預金の状況",
+       "貯蓄金管理協定に定められた預金の利率"
+      ],
+      [
+       "保証契約の締結",
+       "労働基準監督署長殿"
+      ]
+     ]
+    },
+    "words": {
+     "words": 6,
+     "placed": 0,
+     "mean_iou": 0.0,
+     "failures": [
+      "様式第24号(第57条関係)",
+      "労働保険番号",
+      "事業の名称",
+      "預金の種類",
+      "抵当権の設定",
+      "労働基準監督署長殿"
+     ]
+    },
+    "table": {
+     "columns": null,
+     "rows": 1,
+     "rows_found": 0,
+     "cells": 6,
+     "cells_right": 0,
+     "expected_columns": 6
+    }
+   },
+   "PyMuPDF 2.1 sort=True": {
+    "anchors": {
+     "anchors": 12,
+     "found": 10,
+     "in_order": 3,
+     "pairs": 9,
+     "missing": [
+      "預金の状況",
+      "当該年度末の預金額(a+b-c)"
+     ],
+     "inversions": [
+      [
+       "様式第24号(第57条関係)",
+       "預金管理状況報告"
+      ],
+      [
+       "預金管理状況報告",
+       "受付印"
+      ],
+      [
+       "労働保険番号",
+       "貯蓄金管理協定"
+      ],
+      [
+       "貯蓄金管理協定に定められた預金の利率",
+       "当該年度当初の預金額(a)"
+      ],
+      [
+       "当該年度当初の預金額(a)",
+       "保証契約の締結"
+      ],
+      [
+       "保証契約の締結",
+       "労働基準監督署長殿"
+      ]
+     ]
+    },
+    "words": {
+     "words": 6,
+     "placed": 0,
+     "mean_iou": 0.0,
+     "failures": [
+      "様式第24号(第57条関係)",
+      "労働保険番号",
+      "事業の名称",
+      "預金の種類",
+      "抵当権の設定",
+      "労働基準監督署長殿"
+     ]
+    },
+    "table": {
+     "columns": null,
+     "rows": 1,
+     "rows_found": 0,
+     "cells": 6,
+     "cells_right": 0,
+     "expected_columns": 6
+    }
+   },
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 12,
+     "found": 12,
+     "in_order": 11,
+     "pairs": 11,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 6,
+     "placed": 6,
+     "mean_iou": 0.897646525478978,
+     "failures": []
+    },
+    "table": {
+     "columns": 6,
+     "rows": 1,
+     "rows_found": 1,
+     "cells": 6,
+     "cells_right": 6,
+     "expected_columns": 6
+    }
+   }
+  },
   "mhlw-doc-p1": {
    "checked": true,
+   "mode": "native",
    "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 11,
@@ -198,7 +371,7 @@
      "failures": []
     }
    },
-   "pyropdf 0.4.0": {
+   "pyropdf 0.4.1": {
     "anchors": {
      "anchors": 11,
      "found": 11,
@@ -217,6 +390,7 @@
   },
   "mhlw-doc-p2": {
    "checked": false,
+   "mode": "native",
    "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 5,
@@ -249,7 +423,7 @@
      "failures": []
     }
    },
-   "pyropdf 0.4.0": {
+   "pyropdf 0.4.1": {
     "anchors": {
      "anchors": 5,
      "found": 5,
@@ -268,6 +442,7 @@
   },
   "nics-background-checks-2015-11-p1": {
    "checked": true,
+   "mode": "native",
    "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 11,
@@ -321,7 +496,7 @@
      "expected_columns": 25
     }
    },
-   "pyropdf 0.4.0": {
+   "pyropdf 0.4.1": {
     "anchors": {
      "anchors": 11,
      "found": 11,
@@ -348,6 +523,7 @@
   },
   "patent-us223898-p2": {
    "checked": true,
+   "mode": "native",
    "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 9,
@@ -390,7 +566,7 @@
      "failures": []
     }
    },
-   "pyropdf 0.4.0": {
+   "pyropdf 0.4.1": {
     "anchors": {
      "anchors": 9,
      "found": 9,
@@ -409,6 +585,7 @@
   },
   "patent-us223898-p3": {
    "checked": false,
+   "mode": "native",
    "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 14,
@@ -451,7 +628,7 @@
      "failures": []
     }
    },
-   "pyropdf 0.4.0": {
+   "pyropdf 0.4.1": {
     "anchors": {
      "anchors": 14,
      "found": 14,
@@ -470,6 +647,7 @@
   },
   "senate-expenditures-p1": {
    "checked": false,
+   "mode": "native",
    "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 16,
@@ -565,7 +743,7 @@
      "expected_columns": 7
     }
    },
-   "pyropdf 0.4.0": {
+   "pyropdf 0.4.1": {
     "anchors": {
      "anchors": 16,
      "found": 16,
@@ -592,6 +770,7 @@
   },
   "usrguide-p1": {
    "checked": false,
+   "mode": "native",
    "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 14,
@@ -624,7 +803,7 @@
      "failures": []
     }
    },
-   "pyropdf 0.4.0": {
+   "pyropdf 0.4.1": {
     "anchors": {
      "anchors": 14,
      "found": 14,
@@ -643,6 +822,7 @@
   },
   "usrguide-p2": {
    "checked": true,
+   "mode": "native",
    "PyMuPDF 2.1": {
     "anchors": {
      "anchors": 12,
@@ -675,7 +855,7 @@
      "failures": []
     }
    },
-   "pyropdf 0.4.0": {
+   "pyropdf 0.4.1": {
     "anchors": {
      "anchors": 12,
      "found": 12,
@@ -690,6 +870,64 @@
      "mean_iou": 0.7082563107386122,
      "failures": []
     }
+   }
+  },
+  "wdl6812-manuscript-p1": {
+   "checked": false,
+   "mode": "ocr",
+   "PyMuPDF 2.1": {
+    "anchors": {
+     "anchors": 0,
+     "found": 0,
+     "in_order": 0,
+     "pairs": 0,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 0,
+     "placed": 0,
+     "mean_iou": null,
+     "failures": []
+    },
+    "spurious_words": 0,
+    "max_spurious_words": 8
+   },
+   "PyMuPDF 2.1 sort=True": {
+    "anchors": {
+     "anchors": 0,
+     "found": 0,
+     "in_order": 0,
+     "pairs": 0,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 0,
+     "placed": 0,
+     "mean_iou": null,
+     "failures": []
+    },
+    "spurious_words": 0,
+    "max_spurious_words": 8
+   },
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 0,
+     "found": 0,
+     "in_order": 0,
+     "pairs": 0,
+     "missing": [],
+     "inversions": []
+    },
+    "words": {
+     "words": 0,
+     "placed": 0,
+     "mean_iou": null,
+     "failures": []
+    },
+    "spurious_words": 4,
+    "max_spurious_words": 8
    }
   }
  }

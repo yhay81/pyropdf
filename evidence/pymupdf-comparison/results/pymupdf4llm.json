@@ -1,0 +1,1357 @@
+{
+ "commit": "4e0e3c00",
+ "engines": [
+  "pyropdf 0.4.1",
+  "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)",
+  "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)"
+ ],
+ "totals": {
+  "pyropdf 0.4.1": {
+   "anchors_found": 147,
+   "anchors": 152,
+   "in_order": 134,
+   "pairs": 135,
+   "chunk_found": 147,
+   "table_cells_right": 93,
+   "table_cells": 102,
+   "headings": 55,
+   "lists": 19,
+   "pipe_rows": 111,
+   "markdown_ms": 755.5699999999999,
+   "chunks_ms": 740.14
+  },
+  "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+   "anchors_found": 132,
+   "anchors": 152,
+   "in_order": 110,
+   "pairs": 120,
+   "chunk_found": 132,
+   "table_cells_right": 25,
+   "table_cells": 102,
+   "headings": 8,
+   "lists": 11,
+   "pipe_rows": 116,
+   "markdown_ms": 9043.99,
+   "chunks_ms": 9044.63
+  },
+  "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+   "anchors_found": 112,
+   "anchors": 152,
+   "in_order": 98,
+   "pairs": 100,
+   "chunk_found": 112,
+   "table_cells_right": 23,
+   "table_cells": 102,
+   "headings": 12,
+   "lists": 53,
+   "pipe_rows": 292,
+   "markdown_ms": 3924.9900000000002,
+   "chunks_ms": 3908.52
+  }
+ },
+ "pages": {
+  "bill-hr815-p1": {
+   "document": "bill-hr815.pdf",
+   "page": 1,
+   "checked": true,
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 12,
+     "found": 12,
+     "pairs": 11,
+     "in_order": 11,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 12,
+     "found": 12,
+     "pairs": 11,
+     "in_order": 11,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 5,
+    "lists": 0,
+    "pipe_rows": 0,
+    "chunks": 5,
+    "max_chunk_chars": 1771,
+    "markdown_ms": 8.08,
+    "chunks_ms": 8.3
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+    "anchors": {
+     "anchors": 12,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [
+      "(1) DIVISION A.—Israel Security Supplemental Appropria-"
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 12,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [
+      "(1) DIVISION A.—Israel Security Supplemental Appropria-"
+     ],
+     "inversions": []
+    },
+    "headings": 2,
+    "lists": 0,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 2029,
+    "markdown_ms": 573.6,
+    "chunks_ms": 560.17
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+    "anchors": {
+     "anchors": 12,
+     "found": 12,
+     "pairs": 11,
+     "in_order": 11,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 12,
+     "found": 12,
+     "pairs": 11,
+     "in_order": 11,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 2,
+    "lists": 22,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 2153,
+    "markdown_ms": 79.19,
+    "chunks_ms": 78.39
+   }
+  },
+  "f1040-p1": {
+   "document": "f1040.pdf",
+   "page": 1,
+   "checked": true,
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 18,
+     "found": 18,
+     "pairs": 17,
+     "in_order": 17,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 18,
+     "found": 18,
+     "pairs": 17,
+     "in_order": 17,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 8,
+    "lists": 0,
+    "pipe_rows": 8,
+    "chunks": 9,
+    "max_chunk_chars": 1958,
+    "markdown_ms": 235.08,
+    "chunks_ms": 231.71
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+    "anchors": {
+     "anchors": 18,
+     "found": 18,
+     "pairs": 17,
+     "in_order": 17,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 18,
+     "found": 18,
+     "pairs": 17,
+     "in_order": 17,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 0,
+    "pipe_rows": 41,
+    "chunks": 1,
+    "max_chunk_chars": 111764,
+    "markdown_ms": 2053.08,
+    "chunks_ms": 2063.82
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+    "anchors": {
+     "anchors": 18,
+     "found": 8,
+     "pairs": 7,
+     "in_order": 7,
+     "missing": [
+      "U.S. Individual Income Tax Return",
+      "For the year Jan. 1–Dec. 31, 2025, or other tax year beginning",
+      "Your first name and middle initial",
+      "If joint return, spouse’s first name and middle initial",
+      "Home address (number and street).",
+      "City, town, or post office.",
+      "Foreign country name",
+      "Household employee wages not reported on Form(s) W-2",
+      "Additional income from Schedule 1, line 10",
+      "Subtract line 10 from line 9. This is your adjusted gross income"
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 18,
+     "found": 8,
+     "pairs": 7,
+     "in_order": 7,
+     "missing": [
+      "U.S. Individual Income Tax Return",
+      "For the year Jan. 1–Dec. 31, 2025, or other tax year beginning",
+      "Your first name and middle initial",
+      "If joint return, spouse’s first name and middle initial",
+      "Home address (number and street).",
+      "City, town, or post office.",
+      "Foreign country name",
+      "Household employee wages not reported on Form(s) W-2",
+      "Additional income from Schedule 1, line 10",
+      "Subtract line 10 from line 9. This is your adjusted gross income"
+     ],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 0,
+    "pipe_rows": 55,
+    "chunks": 1,
+    "max_chunk_chars": 7460,
+    "markdown_ms": 612.13,
+    "chunks_ms": 616.21
+   }
+  },
+  "f1040-p2": {
+   "document": "f1040.pdf",
+   "page": 2,
+   "checked": false,
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 18,
+     "found": 18,
+     "pairs": 17,
+     "in_order": 17,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 18,
+     "found": 18,
+     "pairs": 17,
+     "in_order": 17,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 7,
+    "lists": 4,
+    "pipe_rows": 0,
+    "chunks": 8,
+    "max_chunk_chars": 1824,
+    "markdown_ms": 243.95,
+    "chunks_ms": 245.88
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+    "anchors": {
+     "anchors": 18,
+     "found": 17,
+     "pairs": 16,
+     "in_order": 16,
+     "missing": [
+      "Go to www.irs.gov/Form1040 for instructions and the latest information."
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 18,
+     "found": 17,
+     "pairs": 16,
+     "in_order": 16,
+     "missing": [
+      "Go to www.irs.gov/Form1040 for instructions and the latest information."
+     ],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 0,
+    "pipe_rows": 39,
+    "chunks": 1,
+    "max_chunk_chars": 425009,
+    "markdown_ms": 1217.64,
+    "chunks_ms": 1235.09
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+    "anchors": {
+     "anchors": 18,
+     "found": 8,
+     "pairs": 7,
+     "in_order": 7,
+     "missing": [
+      "Form 1040 (2025)",
+      "Standard deduction or itemized deductions (from Schedule A)",
+      "Subtract line 14 from line 11b. If zero or less, enter -0-. This is your taxable income",
+      "Add lines 22 and 23. This is your total tax",
+      "Add lines 25d, 26, and 32. These are your total payments",
+      "If line 33 is more than line 24, subtract line 24 from line 33. This is the amount you overpaid",
+      "Subtract line 33 from line 24. This is the amount you owe.",
+      "Do you want to allow another person to discuss this return with the IRS? See instructions.",
+      "Under penalties of perjury, I declare that I have examined this return",
+      "Go to www.irs.gov/Form1040 for instructions and the latest information."
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 18,
+     "found": 8,
+     "pairs": 7,
+     "in_order": 7,
+     "missing": [
+      "Form 1040 (2025)",
+      "Standard deduction or itemized deductions (from Schedule A)",
+      "Subtract line 14 from line 11b. If zero or less, enter -0-. This is your taxable income",
+      "Add lines 22 and 23. This is your total tax",
+      "Add lines 25d, 26, and 32. These are your total payments",
+      "If line 33 is more than line 24, subtract line 24 from line 33. This is the amount you overpaid",
+      "Subtract line 33 from line 24. This is the amount you owe.",
+      "Do you want to allow another person to discuss this return with the IRS? See instructions.",
+      "Under penalties of perjury, I declare that I have examined this return",
+      "Go to www.irs.gov/Form1040 for instructions and the latest information."
+     ],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 0,
+    "pipe_rows": 62,
+    "chunks": 1,
+    "max_chunk_chars": 7223,
+    "markdown_ms": 478.18,
+    "chunks_ms": 469.56
+   }
+  },
+  "mhlw-deposit-report-p1": {
+   "document": "forms/mhlw-deposit-report.pdf",
+   "page": 1,
+   "checked": false,
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 12,
+     "found": 9,
+     "pairs": 8,
+     "in_order": 8,
+     "missing": [
+      "貯蓄金管理協定に定められた預金の利率",
+      "当該年度当初の預金額(a)",
+      "当該年度末の預金額(a+b-c)"
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 12,
+     "found": 9,
+     "pairs": 8,
+     "in_order": 8,
+     "missing": [
+      "貯蓄金管理協定に定められた預金の利率",
+      "当該年度当初の預金額(a)",
+      "当該年度末の預金額(a+b-c)"
+     ],
+     "inversions": []
+    },
+    "headings": 15,
+    "lists": 2,
+    "pipe_rows": 11,
+    "chunks": 17,
+    "max_chunk_chars": 4498,
+    "markdown_ms": 33.04,
+    "chunks_ms": 45.86,
+    "table": {
+     "rows": 1,
+     "rows_found": 0,
+     "cells": 6,
+     "cells_right": 0,
+     "pipe_rows": 11
+    }
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+    "anchors": {
+     "anchors": 12,
+     "found": 8,
+     "pairs": 7,
+     "in_order": 4,
+     "missing": [
+      "預金の状況",
+      "貯蓄金管理協定に定められた預金の利率",
+      "当該年度当初の預金額(a)",
+      "当該年度末の預金額(a+b-c)"
+     ],
+     "inversions": [
+      [
+       "様式第24号(第57条関係)",
+       "預金管理状況報告"
+      ],
+      [
+       "受付印",
+       "事業の名称"
+      ],
+      [
+       "事業の名称",
+       "労働保険番号"
+      ]
+     ]
+    },
+    "chunk_anchors": {
+     "anchors": 12,
+     "found": 8,
+     "pairs": 7,
+     "in_order": 4,
+     "missing": [
+      "預金の状況",
+      "貯蓄金管理協定に定められた預金の利率",
+      "当該年度当初の預金額(a)",
+      "当該年度末の預金額(a+b-c)"
+     ],
+     "inversions": [
+      [
+       "様式第24号(第57条関係)",
+       "預金管理状況報告"
+      ],
+      [
+       "受付印",
+       "事業の名称"
+      ],
+      [
+       "事業の名称",
+       "労働保険番号"
+      ]
+     ]
+    },
+    "headings": 0,
+    "lists": 0,
+    "pipe_rows": 18,
+    "chunks": 1,
+    "max_chunk_chars": 20185,
+    "markdown_ms": 414.34,
+    "chunks_ms": 415.06,
+    "table": {
+     "rows": 1,
+     "rows_found": 0,
+     "cells": 6,
+     "cells_right": 0,
+     "pipe_rows": 18
+    }
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+    "anchors": {
+     "anchors": 12,
+     "found": 9,
+     "pairs": 8,
+     "in_order": 8,
+     "missing": [
+      "貯蓄金管理協定に定められた預金の利率",
+      "当該年度当初の預金額(a)",
+      "当該年度末の預金額(a+b-c)"
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 12,
+     "found": 9,
+     "pairs": 8,
+     "in_order": 8,
+     "missing": [
+      "貯蓄金管理協定に定められた預金の利率",
+      "当該年度当初の預金額(a)",
+      "当該年度末の預金額(a+b-c)"
+     ],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 0,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 1185,
+    "markdown_ms": 112.57,
+    "chunks_ms": 112.43,
+    "table": {
+     "rows": 1,
+     "rows_found": 0,
+     "cells": 6,
+     "cells_right": 0,
+     "pipe_rows": 0
+    }
+   }
+  },
+  "mhlw-doc-p1": {
+   "document": "mhlw-doc.pdf",
+   "page": 1,
+   "checked": true,
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 11,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 9,
+     "missing": [],
+     "inversions": [
+      [
+       "（第１回労働基準法における「労働者」に関する研究会資料３－１を更新）",
+       "裁判例資料の作成方法"
+      ]
+     ]
+    },
+    "chunk_anchors": {
+     "anchors": 11,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 9,
+     "missing": [],
+     "inversions": [
+      [
+       "（第１回労働基準法における「労働者」に関する研究会資料３－１を更新）",
+       "裁判例資料の作成方法"
+      ]
+     ]
+    },
+    "headings": 0,
+    "lists": 6,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 996,
+    "markdown_ms": 61.45,
+    "chunks_ms": 39.09
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+    "anchors": {
+     "anchors": 11,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 11,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 4,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 1032,
+    "markdown_ms": 41.24,
+    "chunks_ms": 40.17
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+    "anchors": {
+     "anchors": 11,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 11,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 19,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 1040,
+    "markdown_ms": 64.46,
+    "chunks_ms": 65.94
+   }
+  },
+  "mhlw-doc-p2": {
+   "document": "mhlw-doc.pdf",
+   "page": 2,
+   "checked": false,
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 5,
+     "found": 3,
+     "pairs": 2,
+     "in_order": 2,
+     "missing": [
+      "＜裁判例の評釈について＞\n○　評釈の選定方法",
+      "○　留意点\n評釈がある裁判例については、資料２－２の１頁目の表の「評釈」の項目に「○」を付けている。"
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 5,
+     "found": 3,
+     "pairs": 2,
+     "in_order": 2,
+     "missing": [
+      "＜裁判例の評釈について＞\n○　評釈の選定方法",
+      "○　留意点\n評釈がある裁判例については、資料２－２の１頁目の表の「評釈」の項目に「○」を付けている。"
+     ],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 2,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 291,
+    "markdown_ms": 18.57,
+    "chunks_ms": 25.98
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+    "anchors": {
+     "anchors": 5,
+     "found": 3,
+     "pairs": 2,
+     "in_order": 2,
+     "missing": [
+      "＜裁判例の評釈について＞\n○　評釈の選定方法",
+      "○　留意点\n評釈がある裁判例については、資料２－２の１頁目の表の「評釈」の項目に「○」を付けている。"
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 5,
+     "found": 3,
+     "pairs": 2,
+     "in_order": 2,
+     "missing": [
+      "＜裁判例の評釈について＞\n○　評釈の選定方法",
+      "○　留意点\n評釈がある裁判例については、資料２－２の１頁目の表の「評釈」の項目に「○」を付けている。"
+     ],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 2,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 314,
+    "markdown_ms": 19.61,
+    "chunks_ms": 19.65
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+    "anchors": {
+     "anchors": 5,
+     "found": 3,
+     "pairs": 2,
+     "in_order": 2,
+     "missing": [
+      "＜裁判例の評釈について＞\n○　評釈の選定方法",
+      "○　留意点\n評釈がある裁判例については、資料２－２の１頁目の表の「評釈」の項目に「○」を付けている。"
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 5,
+     "found": 3,
+     "pairs": 2,
+     "in_order": 2,
+     "missing": [
+      "＜裁判例の評釈について＞\n○　評釈の選定方法",
+      "○　留意点\n評釈がある裁判例については、資料２－２の１頁目の表の「評釈」の項目に「○」を付けている。"
+     ],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 4,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 312,
+    "markdown_ms": 48.47,
+    "chunks_ms": 49.28
+   }
+  },
+  "nics-background-checks-2015-11-p1": {
+   "document": "nics-background-checks-2015-11.pdf",
+   "page": 1,
+   "checked": true,
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 11,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 11,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 0,
+    "pipe_rows": 58,
+    "chunks": 2,
+    "max_chunk_chars": 25714,
+    "markdown_ms": 88.3,
+    "chunks_ms": 66.05,
+    "table": {
+     "rows": 3,
+     "rows_found": 3,
+     "cells": 75,
+     "cells_right": 75,
+     "pipe_rows": 58
+    }
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+    "anchors": {
+     "anchors": 11,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 11,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 0,
+    "pipe_rows": 14,
+    "chunks": 1,
+    "max_chunk_chars": 10810,
+    "markdown_ms": 3028.65,
+    "chunks_ms": 3024.61,
+    "table": {
+     "rows": 3,
+     "rows_found": 1,
+     "cells": 75,
+     "cells_right": 25,
+     "pipe_rows": 14
+    }
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+    "anchors": {
+     "anchors": 11,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 11,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 2,
+    "lists": 0,
+    "pipe_rows": 57,
+    "chunks": 1,
+    "max_chunk_chars": 8165,
+    "markdown_ms": 1134.79,
+    "chunks_ms": 1133.73,
+    "table": {
+     "rows": 3,
+     "rows_found": 2,
+     "cells": 75,
+     "cells_right": 5,
+     "pipe_rows": 57
+    }
+   }
+  },
+  "patent-us223898-p2": {
+   "document": "patent-us223898.pdf",
+   "page": 2,
+   "checked": true,
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 9,
+     "found": 9,
+     "pairs": 8,
+     "in_order": 8,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 9,
+     "found": 9,
+     "pairs": 8,
+     "in_order": 8,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 7,
+    "lists": 1,
+    "pipe_rows": 0,
+    "chunks": 8,
+    "max_chunk_chars": 1918,
+    "markdown_ms": 14.28,
+    "chunks_ms": 16.48
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+    "anchors": {
+     "anchors": 9,
+     "found": 9,
+     "pairs": 8,
+     "in_order": 7,
+     "missing": [],
+     "inversions": [
+      [
+       "he lar, the lealing-wires must be of largn",
+       "dimensions and good conductors, and a glas"
+      ]
+     ]
+    },
+    "chunk_anchors": {
+     "anchors": 9,
+     "found": 9,
+     "pairs": 8,
+     "in_order": 7,
+     "missing": [],
+     "inversions": [
+      [
+       "he lar, the lealing-wires must be of largn",
+       "dimensions and good conductors, and a glas"
+      ]
+     ]
+    },
+    "headings": 2,
+    "lists": 1,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 6757,
+    "markdown_ms": 356.71,
+    "chunks_ms": 349.99
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+    "anchors": {
+     "anchors": 9,
+     "found": 9,
+     "pairs": 8,
+     "in_order": 7,
+     "missing": [],
+     "inversions": [
+      [
+       "he lar, the lealing-wires must be of largn",
+       "dimensions and good conductors, and a glas"
+      ]
+     ]
+    },
+    "chunk_anchors": {
+     "anchors": 9,
+     "found": 9,
+     "pairs": 8,
+     "in_order": 7,
+     "missing": [],
+     "inversions": [
+      [
+       "he lar, the lealing-wires must be of largn",
+       "dimensions and good conductors, and a glas"
+      ]
+     ]
+    },
+    "headings": 1,
+    "lists": 0,
+    "pipe_rows": 53,
+    "chunks": 1,
+    "max_chunk_chars": 5103,
+    "markdown_ms": 571.6,
+    "chunks_ms": 568.21
+   }
+  },
+  "patent-us223898-p3": {
+   "document": "patent-us223898.pdf",
+   "page": 3,
+   "checked": false,
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 14,
+     "found": 14,
+     "pairs": 13,
+     "in_order": 13,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 14,
+     "found": 14,
+     "pairs": 13,
+     "in_order": 13,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 2,
+    "lists": 4,
+    "pipe_rows": 0,
+    "chunks": 4,
+    "max_chunk_chars": 1887,
+    "markdown_ms": 16.16,
+    "chunks_ms": 13.83
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+    "anchors": {
+     "anchors": 14,
+     "found": 14,
+     "pairs": 13,
+     "in_order": 11,
+     "missing": [],
+     "inversions": [
+      [
+       "a nercury-pump.",
+       "vacuum has been reached, is heronetically"
+      ],
+      [
+       "TOMAS A. CDSON.",
+       "JoEN F. RANDOLPE."
+      ]
+     ]
+    },
+    "chunk_anchors": {
+     "anchors": 14,
+     "found": 14,
+     "pairs": 13,
+     "in_order": 11,
+     "missing": [],
+     "inversions": [
+      [
+       "a nercury-pump.",
+       "vacuum has been reached, is heronetically"
+      ],
+      [
+       "TOMAS A. CDSON.",
+       "JoEN F. RANDOLPE."
+      ]
+     ]
+    },
+    "headings": 0,
+    "lists": 4,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 4313,
+    "markdown_ms": 319.06,
+    "chunks_ms": 317.7
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+    "anchors": {
+     "anchors": 14,
+     "found": 12,
+     "pairs": 11,
+     "in_order": 10,
+     "missing": [
+      "In the drawings, Figare 1 shows the lamp",
+      "I clain as my invention"
+     ],
+     "inversions": [
+      [
+       "a nercury-pump.",
+       "vacuum has been reached, is heronetically"
+      ]
+     ]
+    },
+    "chunk_anchors": {
+     "anchors": 14,
+     "found": 12,
+     "pairs": 11,
+     "in_order": 10,
+     "missing": [
+      "In the drawings, Figare 1 shows the lamp",
+      "I clain as my invention"
+     ],
+     "inversions": [
+      [
+       "a nercury-pump.",
+       "vacuum has been reached, is heronetically"
+      ]
+     ]
+    },
+    "headings": 1,
+    "lists": 8,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 11096,
+    "markdown_ms": 378.65,
+    "chunks_ms": 375.42
+   }
+  },
+  "senate-expenditures-p1": {
+   "document": "senate-expenditures.pdf",
+   "page": 1,
+   "checked": false,
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 16,
+     "found": 16,
+     "pairs": 15,
+     "in_order": 15,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 16,
+     "found": 16,
+     "pairs": 15,
+     "in_order": 15,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 0,
+    "pipe_rows": 34,
+    "chunks": 2,
+    "max_chunk_chars": 5311,
+    "markdown_ms": 12.97,
+    "chunks_ms": 15.8,
+    "table": {
+     "rows": 3,
+     "rows_found": 3,
+     "cells": 21,
+     "cells_right": 18,
+     "pipe_rows": 34
+    }
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+    "anchors": {
+     "anchors": 16,
+     "found": 16,
+     "pairs": 15,
+     "in_order": 11,
+     "missing": [],
+     "inversions": [
+      [
+       "BAIN, J MATTHEW",
+       "DISTRICT DIRECTOR"
+      ],
+      [
+       "DISTRICT DIRECTOR",
+       "37,499.96"
+      ],
+      [
+       "GRUENDER, BENJAMIN L",
+       "FIELD REPRESENTATIVE FROM SEP. 16"
+      ],
+      [
+       "FIELD REPRESENTATIVE FROM SEP. 16",
+       "1,458.33"
+      ]
+     ]
+    },
+    "chunk_anchors": {
+     "anchors": 16,
+     "found": 16,
+     "pairs": 15,
+     "in_order": 11,
+     "missing": [],
+     "inversions": [
+      [
+       "BAIN, J MATTHEW",
+       "DISTRICT DIRECTOR"
+      ],
+      [
+       "DISTRICT DIRECTOR",
+       "37,499.96"
+      ],
+      [
+       "GRUENDER, BENJAMIN L",
+       "FIELD REPRESENTATIVE FROM SEP. 16"
+      ],
+      [
+       "FIELD REPRESENTATIVE FROM SEP. 16",
+       "1,458.33"
+      ]
+     ]
+    },
+    "headings": 0,
+    "lists": 0,
+    "pipe_rows": 4,
+    "chunks": 1,
+    "max_chunk_chars": 35504,
+    "markdown_ms": 691.82,
+    "chunks_ms": 684.99,
+    "table": {
+     "rows": 3,
+     "rows_found": 0,
+     "cells": 21,
+     "cells_right": 0,
+     "pipe_rows": 4
+    }
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+    "anchors": {
+     "anchors": 16,
+     "found": 14,
+     "pairs": 13,
+     "in_order": 13,
+     "missing": [
+      "OBLIGATION/SERVICE",
+      "AMOUNT ($)"
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 16,
+     "found": 14,
+     "pairs": 13,
+     "in_order": 13,
+     "missing": [
+      "OBLIGATION/SERVICE",
+      "AMOUNT ($)"
+     ],
+     "inversions": []
+    },
+    "headings": 0,
+    "lists": 0,
+    "pipe_rows": 37,
+    "chunks": 1,
+    "max_chunk_chars": 4944,
+    "markdown_ms": 201.56,
+    "chunks_ms": 196.67,
+    "table": {
+     "rows": 3,
+     "rows_found": 3,
+     "cells": 21,
+     "cells_right": 18,
+     "pipe_rows": 37
+    }
+   }
+  },
+  "usrguide-p1": {
+   "document": "usrguide.pdf",
+   "page": 1,
+   "checked": false,
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 14,
+     "found": 14,
+     "pairs": 13,
+     "in_order": 13,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 14,
+     "found": 14,
+     "pairs": 13,
+     "in_order": 13,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 6,
+    "lists": 0,
+    "pipe_rows": 0,
+    "chunks": 6,
+    "max_chunk_chars": 1877,
+    "markdown_ms": 11.76,
+    "chunks_ms": 14.35
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+    "anchors": {
+     "anchors": 14,
+     "found": 8,
+     "pairs": 7,
+     "in_order": 7,
+     "missing": [
+      "Copyright 2020–2025, LATEX Project Team.",
+      "1 Introduction",
+      "2 Creating document commands and environments",
+      "3 Copying and showing (robust) commands and environments",
+      "4 Preconstructing command names",
+      "the source usrguide.tex for full details."
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 14,
+     "found": 8,
+     "pairs": 7,
+     "in_order": 7,
+     "missing": [
+      "Copyright 2020–2025, LATEX Project Team.",
+      "1 Introduction",
+      "2 Creating document commands and environments",
+      "3 Copying and showing (robust) commands and environments",
+      "4 Preconstructing command names",
+      "the source usrguide.tex for full details."
+     ],
+     "inversions": []
+    },
+    "headings": 2,
+    "lists": 0,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 2147,
+    "markdown_ms": 167.58,
+    "chunks_ms": 173.14
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+    "anchors": {
+     "anchors": 14,
+     "found": 4,
+     "pairs": 3,
+     "in_order": 3,
+     "missing": [
+      "LATEX for authors",
+      "Copyright 2020–2025, LATEX Project Team.",
+      "1 Introduction",
+      "2 Creating document commands and environments",
+      "2.5 Optional arguments",
+      "2.10 Argument processors",
+      "2.19 Creating new argument processors",
+      "3 Copying and showing (robust) commands and environments",
+      "4 Preconstructing command names",
+      "the source usrguide.tex for full details."
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 14,
+     "found": 4,
+     "pairs": 3,
+     "in_order": 3,
+     "missing": [
+      "LATEX for authors",
+      "Copyright 2020–2025, LATEX Project Team.",
+      "1 Introduction",
+      "2 Creating document commands and environments",
+      "2.5 Optional arguments",
+      "2.10 Argument processors",
+      "2.19 Creating new argument processors",
+      "3 Copying and showing (robust) commands and environments",
+      "4 Preconstructing command names",
+      "the source usrguide.tex for full details."
+     ],
+     "inversions": []
+    },
+    "headings": 2,
+    "lists": 0,
+    "pipe_rows": 23,
+    "chunks": 1,
+    "max_chunk_chars": 2227,
+    "markdown_ms": 130.49,
+    "chunks_ms": 128.95
+   }
+  },
+  "usrguide-p2": {
+   "document": "usrguide.pdf",
+   "page": 2,
+   "checked": true,
+   "pyropdf 0.4.1": {
+    "anchors": {
+     "anchors": 12,
+     "found": 12,
+     "pairs": 11,
+     "in_order": 11,
+     "missing": [],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 12,
+     "found": 12,
+     "pairs": 11,
+     "in_order": 11,
+     "missing": [],
+     "inversions": []
+    },
+    "headings": 5,
+    "lists": 0,
+    "pipe_rows": 0,
+    "chunks": 6,
+    "max_chunk_chars": 832,
+    "markdown_ms": 11.93,
+    "chunks_ms": 16.81
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, without pymupdf-layout)": {
+    "anchors": {
+     "anchors": 12,
+     "found": 6,
+     "pairs": 5,
+     "in_order": 5,
+     "missing": [
+      "Expandable floating point (and other) calculations",
+      "Expandable \\input equivalent",
+      "Case changing",
+      "Text sub- and superscripts",
+      "Support for problem solving",
+      "Describing argument types"
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 12,
+     "found": 6,
+     "pairs": 5,
+     "in_order": 5,
+     "missing": [
+      "Expandable floating point (and other) calculations",
+      "Expandable \\input equivalent",
+      "Case changing",
+      "Text sub- and superscripts",
+      "Support for problem solving",
+      "Describing argument types"
+     ],
+     "inversions": []
+    },
+    "headings": 2,
+    "lists": 0,
+    "pipe_rows": 0,
+    "chunks": 1,
+    "max_chunk_chars": 2314,
+    "markdown_ms": 160.66,
+    "chunks_ms": 160.24
+   },
+   "pymupdf4llm 2.1 (PyMuPDF 2.1, with pymupdf-layout)": {
+    "anchors": {
+     "anchors": 12,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [
+      "Expandable \\input equivalent"
+     ],
+     "inversions": []
+    },
+    "chunk_anchors": {
+     "anchors": 12,
+     "found": 11,
+     "pairs": 10,
+     "in_order": 10,
+     "missing": [
+      "Expandable \\input equivalent"
+     ],
+     "inversions": []
+    },
+    "headings": 4,
+    "lists": 0,
+    "pipe_rows": 5,
+    "chunks": 1,
+    "max_chunk_chars": 2259,
+    "markdown_ms": 112.9,
+    "chunks_ms": 113.73
+   }
+  }
+ }
+}

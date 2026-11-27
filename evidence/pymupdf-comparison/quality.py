@@ -15,8 +15,8 @@ API choice rather than an engine error.
 
 ``python quality.py ink`` measures each labeled word's ink box again with
 Ghostscript, inside the seed box that the label gives, and rewrites the
-labels; ``python quality.py crops DIR`` writes each labeled word's crop, for
-checking a label by eye.
+labels; ``python quality.py crops DIR [--pending]`` writes each labeled word's
+crop and a Markdown verification checklist, for checking labels by eye.
 """
 
 from __future__ import annotations
@@ -51,34 +51,65 @@ def normalize(text: str) -> str:
     return "".join(unicodedata.normalize("NFKC", text).split())
 
 
+def _collect_pymupdf_page(source: str, index: int, *, sort: bool, label: dict[str, Any]) -> dict[str, Any]:
+    import pymupdf  # noqa: PLC0415
+
+    with pymupdf.open(source) as doc:
+        page = doc[index]
+        if label.get("mode") == "ocr":
+            language = str(label.get("ocr_language", "eng"))
+            try:
+                tp = page.get_textpage_ocr(flags=0, language=language, dpi=300, full=True)
+            except Exception as exc:  # noqa: BLE001 - optional Tesseract or language data may be absent
+                return {"text": "", "words": [], "tables": [], "skipped": f"{type(exc).__name__}: {exc}"}
+            text = page.get_text(textpage=tp, sort=sort)
+            words = [[w[4], *w[:4]] for w in page.get_text("words", textpage=tp, sort=sort)]
+            return {"text": text, "words": words, "tables": []}
+        text = page.get_text(sort=sort)
+        words = [[w[4], *w[:4]] for w in page.get_text("words", sort=sort)]
+        tables = [table.extract() for table in page.find_tables().tables] if "table" in label else []
+        return {"text": text, "words": words, "tables": tables}
+
+
+def _collect_pyropdf_page(source: str, index: int, *, label: dict[str, Any]) -> dict[str, Any]:
+    import pyropdf  # noqa: PLC0415
+
+    page = pyropdf.open(source).pages[index]
+    if label.get("mode") == "ocr":
+        ocr_words = page.ocr()
+        text = "\n".join(w.text for w in ocr_words)
+        words = [[w.text, *w.bbox] for w in ocr_words]
+        return {"text": text, "words": words, "tables": []}
+    text = page.text()
+    words = [[w.text, *w.bbox] for w in page.words()]
+    tables = [[list(row) for row in table.rows] for table in page.tables()] if "table" in label else []
+    return {"text": text, "words": words, "tables": tables}
+
+
 def collect(engine: str, out: str, *labels: str) -> None:
     """Write the text, words, and tables of every labeled page as ``engine`` reads them."""
     result: dict[str, Any] = {"engine": engine, "python": platform.python_version(), "pages": {}}
     paths = [Path(name) for name in labels] if labels else LABELS
+    if engine in ("pymupdf", "pymupdf-sort"):
+        import pymupdf  # noqa: PLC0415
+
+        sort = engine == "pymupdf-sort"
+        result["version"] = f"PyMuPDF {pymupdf.__version__}" + (" sort=True" if sort else "")
+    else:
+        import pyropdf  # noqa: PLC0415
+
+        sort = False
+        result["version"] = f"pyropdf {pyropdf.__version__}"
+
     for path in paths:
-        label = json.loads(path.read_text())
+        label = json.loads(path.read_text(encoding="utf-8"))
         source = str(CORPUS / label["document"])
         index = label["page"] - 1
         if engine in ("pymupdf", "pymupdf-sort"):
-            import pymupdf  # noqa: PLC0415
-
-            sort = engine == "pymupdf-sort"
-            result["version"] = f"PyMuPDF {pymupdf.__version__}" + (" sort=True" if sort else "")
-            with pymupdf.open(source) as doc:
-                page = doc[index]
-                text = page.get_text(sort=sort)
-                words = [[w[4], *w[:4]] for w in page.get_text("words", sort=sort)]
-                tables = [table.extract() for table in page.find_tables().tables] if "table" in label else []
+            result["pages"][path.stem] = _collect_pymupdf_page(source, index, sort=sort, label=label)
         else:
-            import pyropdf  # noqa: PLC0415
-
-            result["version"] = f"pyropdf {pyropdf.__version__}"
-            page = pyropdf.open(source).pages[index]
-            text = page.text()
-            words = [[w.text, *w.bbox] for w in page.words()]
-            tables = [[list(row) for row in table.rows] for table in page.tables()] if "table" in label else []
-        result["pages"][path.stem] = {"text": text, "words": words, "tables": tables}
-    Path(out).write_text(json.dumps(result, ensure_ascii=False))
+            result["pages"][path.stem] = _collect_pyropdf_page(source, index, label=label)
+    Path(out).write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 
 
 def _render(document: str, page: int) -> tuple[int, int, bytes]:
@@ -150,26 +181,44 @@ def _ink(raster: tuple[int, int, bytes], seed: list[float]) -> list[float] | Non
 def ink() -> None:
     """Measure each labeled word's ink box inside its seed box and write it into the label."""
     for path in LABELS:
-        label = json.loads(path.read_text())
+        label = json.loads(path.read_text(encoding="utf-8"))
+        if not label["words"]:
+            continue
         raster = _render(label["document"], label["page"])
         for word in label["words"]:
             word["ink"] = _ink(raster, word["seed"])
-        path.write_text(json.dumps(label, ensure_ascii=False, indent=1) + "\n")
+        path.write_text(json.dumps(label, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
 
-def crops(directory: str) -> None:
-    """Write a PGM crop of each labeled word's ink box, with a margin, for checking the labels by eye."""
+def crops(directory: str, *flags: str) -> None:
+    """Write a PGM crop of each labeled word's ink box, plus a checklist for visual verification."""
+    pending_only = "--pending" in flags
     out = Path(directory)
     out.mkdir(parents=True, exist_ok=True)
     scale = INK_DPI / 72
+    manifest = ["# Quality label visual verification crops", ""]
     for path in LABELS:
-        label = json.loads(path.read_text())
-        width, _, samples = _render(label["document"], label["page"])
+        label = json.loads(path.read_text(encoding="utf-8"))
+        if pending_only and label.get("checked") is True:
+            continue
+        status = "checked" if label.get("checked") is True else "pending owner visual review"
+        mode = label.get("mode", "native")
+        manifest.append(f"## {path.stem} (`{label['document']}` p{label['page']}, mode={mode}, {status})")
+        manifest.append("")
+        if not label["words"]:
+            manifest.append("- No word crops (anchors/negative-control only).")
+            manifest.append("")
+            continue
+        width, height, samples = _render(label["document"], label["page"])
         for number, word in enumerate(label["words"]):
             x0, y0, x1, y1 = (int(v * scale) for v in word["ink"])
-            x0, y0, x1, y1 = x0 - 8, y0 - 8, x1 + 8, y1 + 8
+            x0, y0, x1, y1 = max(0, x0 - 8), max(0, y0 - 8), min(width, x1 + 8), min(height, y1 + 8)
             rows = b"".join(samples[y * width + x0 : y * width + x1] for y in range(y0, y1))
-            (out / f"{path.stem}-{number}.pgm").write_bytes(b"P5 %d %d 255\n" % (x1 - x0, y1 - y0) + rows)
+            crop_name = f"{path.stem}-{number}.pgm"
+            (out / crop_name).write_bytes(b"P5 %d %d 255\n" % (x1 - x0, y1 - y0) + rows)
+            manifest.append(f"- `{crop_name}`: `{word['text']}` (ink `{word['ink']}`)")
+        manifest.append("")
+    (out / "README.md").write_text("\n".join(manifest), encoding="utf-8")
 
 
 def _anchors(label: dict[str, Any], text: str) -> dict[str, Any]:
@@ -252,25 +301,37 @@ def _table(label: dict[str, Any], tables: list[list[list[Any]]]) -> dict[str, An
 
 def score(stem: str, commit: str, *names: str) -> None:
     """Score the engines' results against the labels and write ``stem``.json and ``stem``.md."""
-    results = [json.loads(Path(name).read_text()) for name in names]
+    results = [json.loads(Path(name).read_text(encoding="utf-8")) for name in names]
     pages: dict[str, Any] = {}
     for path in LABELS:
-        label = json.loads(path.read_text())
-        pages[path.stem] = {"checked": label["checked"]}
+        label = json.loads(path.read_text(encoding="utf-8"))
+        pages[path.stem] = {"checked": label["checked"], "mode": label.get("mode", "native")}
         for result in results:
             page = result["pages"][path.stem]
-            entry = {"anchors": _anchors(label, page["text"]), "words": _words(label, page["words"])}
+            if "skipped" in page:
+                pages[path.stem][result["version"]] = {"skipped": page["skipped"]}
+                continue
+            entry: dict[str, Any] = {
+                "anchors": _anchors(label, page["text"]),
+                "words": _words(label, page["words"]),
+            }
+            if "max_spurious_words" in label:
+                entry["spurious_words"] = len(page["words"])
+                entry["max_spurious_words"] = label["max_spurious_words"]
             if "table" in label:
                 entry["table"] = _table(label, page["tables"])
             pages[path.stem][result["version"]] = entry
     versions = [result["version"] for result in results]
     Path(f"{stem}.json").write_text(
-        json.dumps({"commit": commit, "engines": versions, "pages": pages}, ensure_ascii=False, indent=1) + "\n"
+        json.dumps({"commit": commit, "engines": versions, "pages": pages}, ensure_ascii=False, indent=1) + "\n",
+        encoding="utf-8",
     )
-    Path(f"{stem}.md").write_text("\n".join(_markdown(pages, versions, commit)) + "\n")
+    Path(f"{stem}.md").write_text("\n".join(_markdown(pages, versions, commit)) + "\n", encoding="utf-8")
 
 
 def _row(name: str, version: str, entry: dict[str, Any]) -> str:
+    if "skipped" in entry:
+        return f"| {name} | {version} | skipped ({entry['skipped'].splitlines()[0][:40]}) | | | | | | |"
     a, w, t = entry["anchors"], entry["words"], entry.get("table")
     iou = "" if w["mean_iou"] is None else f"{w['mean_iou']:.2f}"
     table = "| |"
@@ -298,7 +359,11 @@ def _markdown(pages: dict[str, Any], versions: list[str], commit: str) -> list[s
     lines += ["", "## Failures", ""]
     for name, page in pages.items():
         for version in versions:
-            a, w = page[version]["anchors"], page[version]["words"]
+            entry = page[version]
+            if "skipped" in entry:
+                lines.append(f"- {name}, {version}: skipped: `{entry['skipped'].splitlines()[0]}`")
+                continue
+            a, w = entry["anchors"], entry["words"]
             lines += [f"- {name}, {version}: anchor not found: `{anchor}`" for anchor in a["missing"]]
             lines += [f"- {name}, {version}: `{second}` comes before `{first}`" for first, second in a["inversions"]]
             lines += [f"- {name}, {version}: no word `{word}` covers its ink" for word in w["failures"]]
