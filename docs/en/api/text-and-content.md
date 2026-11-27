@@ -204,13 +204,35 @@ Close the current subpath with a line to its start.
 ## `Color`
 
 ```python
-Color(red: float, green: float, blue: float, alpha: float = 1.0)
+Color(
+    red: float,
+    green: float,
+    blue: float,
+    alpha: float = 1.0,
+    *,
+    colorspace: str | None = None,
+    components: tuple[float, ...] | None = None,
+)
 ```
 
-A solid paint, as the sRGB color and alpha that hayro converts it to.
+A solid paint in sRGB with optional stored PDF color space and components.
 
-Components range from 0 to 1. The color space and its own components
-are not exposed yet.
+`red`, `green`, `blue`, and `alpha` range from 0 to 1. Colors
+extracted by `Page.content` or `Page.paths` also populate
+`colorspace` (such as `"DeviceGray"`, `"DeviceRGB"`,
+`"DeviceCMYK"`, `"ICCBased"`, `"CalGray"`, `"CalRGB"`, `"Lab"`,
+`"Indexed"`, `"Separation"`, `"DeviceN"`, or `"Pattern"`) and
+`components` with the PDF component values in that color space. Directly
+constructed colors leave both `None` unless supplied as keyword
+arguments.
+
+Equality and hashing compare `(red, green, blue, alpha)` so extracted
+colors remain equal to `Color(red, green, blue, alpha)` and work
+interchangeably in sets, dictionaries, and `Canvas` drawing.
+
+Note: hayro canonicalizes `ICCBased` color spaces whose profile header
+marks sRGB (`sRGB` at bytes 52..56) and colors with an active transfer
+function to `"DeviceRGB"`.
 
 ### `rgb`
 
@@ -441,13 +463,16 @@ FontRef(
     is_italic: bool,
     is_serif: bool,
     is_monospace: bool,
+    xref: int | None = None,
+    subtype: str = '',
+    is_embedded: bool = False,
 )
 ```
 
-The font that a text run uses, as hayro reads its font program.
+The font that a text run uses, from its PDF font dictionary and font program.
 
-This describes the program. A text run separately retains the source
-PDF font dictionary and character codes that selected its glyphs.
+A text run separately retains the character codes that selected its glyphs
+for `Canvas.draw`.
 
 ## `Glyph`
 
@@ -1079,6 +1104,7 @@ TextRun(
     context: GraphicsContext,
     blend_mode: BlendMode,
     soft_mask: SoftMask | None,
+    writing_mode: WritingMode = WritingMode.HORIZONTAL,
 )
 ```
 
@@ -1148,3 +1174,9 @@ One word of `Page.words`, in reading order.
 `block` and `line` are the indexes of the `Block` of
 `Page.layout` that holds the word and of the `Line` in it, and
 `index` is the word's position in that line.
+
+## `WritingMode`
+
+The writing mode of a text run's font (ISO 32000-2 §9.2.4).
+
+Members: `HORIZONTAL`, `VERTICAL`.

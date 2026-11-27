@@ -31,6 +31,7 @@ from pyropdf import (
     Color,
     CurveTo,
     FillRule,
+    FontRef,
     GraphicsContext,
     ImageMask,
     LineCap,
@@ -47,6 +48,7 @@ from pyropdf import (
     SoftMaskType,
     TextRenderMode,
     TilingPattern,
+    WritingMode,
 )
 
 REAL_WORLD = Path(__file__).parent / "assets" / "real_world"
@@ -600,3 +602,251 @@ def test_selected_kinds_equal_the_full_content_filtered(path: Path) -> None:
 def test_no_kinds_give_empty_content() -> None:
     page = page_with("10 10 20 20 re f BT /F1 12 Tf 10 50 Td (Text) Tj ET")
     assert page.content(text_runs=False, paths=False, images=False).items == ()
+
+
+def test_extracted_colors_expose_stored_colorspace_and_components() -> None:
+    icc_dir = Path(__file__).parent / "assets" / "print-exchange"
+    icc_gray = (icc_dir / "virtual-gray.icc").read_bytes().hex().upper() + ">"
+    icc_rgb = (icc_dir / "virtual-rgb.icc").read_bytes().hex().upper() + ">"
+
+    page = page_with(
+        "0.25 g 0 0 10 10 re f "
+        "0.2 0.4 0.6 rg 12 0 10 10 re f "
+        "0.1 0.2 0.3 0.4 k 24 0 10 10 re f "
+        "/CS_ICCG cs 0.5 scn 36 0 10 10 re f "
+        "/CS_ICCR cs 0.25 0.5 0.75 scn 48 0 10 10 re f "
+        "/CS_CALG cs 0.75 scn 60 0 10 10 re f "
+        "/CS_CALR cs 0.1 0.5 0.9 scn 72 0 10 10 re f "
+        "/CS_LAB cs 50 10 -20 scn 84 0 10 10 re f "
+        "/CS_IDX cs 1 scn 96 0 10 10 re f "
+        "/CS_SEP cs 0.6 scn 108 0 10 10 re f "
+        "/CS_DEVN cs 0.25 0.75 scn 120 0 10 10 re f "
+        "BT /F1 12 Tf 0.1 0.2 0.3 0.4 k 10 50 Td (CMYK) Tj ET",
+        resources=(
+            "/ColorSpace << "
+            "/CS_ICCG [/ICCBased 6 0 R] "
+            "/CS_ICCR [/ICCBased 7 0 R] "
+            "/CS_CALG [/CalGray << /WhitePoint [0.9505 1.0 1.089] /Gamma 2.2 >>] "
+            "/CS_CALR [/CalRGB << /WhitePoint [0.9505 1.0 1.089] >>] "
+            "/CS_LAB [/Lab << /WhitePoint [0.9505 1.0 1.089] /Range [-100 100 -100 100] >>] "
+            "/CS_IDX [/Indexed /DeviceRGB 1 <FF000000FF00>] "
+            "/CS_SEP [/Separation /SpotRed /DeviceRGB 8 0 R] "
+            "/CS_DEVN [/DeviceN [/Cyan /Spot] /DeviceRGB 9 0 R] "
+            ">>"
+        ),
+        objects={
+            6: stream_object(icc_gray, "/N 1 /Filter /ASCIIHexDecode"),
+            7: stream_object(icc_rgb, "/N 3 /Filter /ASCIIHexDecode"),
+            8: "<< /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [1 0 0] /N 1 >>",
+            9: stream_object("{ 1 exch sub 0 }", "/FunctionType 4 /Domain [0 1 0 1] /Range [0 1 0 1 0 1]"),
+        },
+    )
+
+    expected = [
+        ("DeviceGray", (0.25,)),
+        ("DeviceRGB", (0.2, 0.4, 0.6)),
+        ("DeviceCMYK", (0.1, 0.2, 0.3, 0.4)),
+        ("ICCBased", (0.5,)),
+        ("ICCBased", (0.25, 0.5, 0.75)),
+        ("CalGray", (0.75,)),
+        ("CalRGB", (0.1, 0.5, 0.9)),
+        ("Lab", (50.0, 10.0, -20.0)),
+        ("Indexed", (1.0,)),
+        ("Separation", (0.6,)),
+        ("DeviceN", (0.25, 0.75)),
+    ]
+
+    content = page.content()
+    columnar = page.paths()
+    assert len(content.paths) == len(columnar) == len(expected)
+    for path, col_path, (space, comps) in zip(content.paths, columnar, expected, strict=True):
+        for candidate in (path.fill, col_path.fill):
+            assert isinstance(candidate, Color)
+            assert candidate.colorspace == space
+            assert candidate.components == pytest.approx(comps)
+            assert all(0.0 <= channel <= 1.0 for channel in candidate.rgb)
+
+    (run,) = content.text_runs
+    assert isinstance(run.fill, Color)
+    assert run.fill.colorspace == "DeviceCMYK"
+    assert run.fill.components == pytest.approx((0.1, 0.2, 0.3, 0.4))
+
+    # Identical sRGB values painted in distinct PDF color spaces keep their own stored metadata.
+    blacks = page_with("0 g 0 0 10 10 re f 0 0 0 rg 12 0 10 10 re f 0 0 0 1 k 24 0 10 10 re f")
+    for source in (blacks.content().paths, list(blacks.paths())):
+        gray_black, rgb_black, cmyk_black = (p.fill for p in source)
+        assert isinstance(gray_black, Color)
+        assert isinstance(rgb_black, Color)
+        assert isinstance(cmyk_black, Color)
+        assert gray_black == rgb_black == Color(0, 0, 0, 1)
+        assert [(c.colorspace, c.components) for c in (gray_black, rgb_black, cmyk_black)] == [
+            ("DeviceGray", (0.0,)),
+            ("DeviceRGB", (0.0, 0.0, 0.0)),
+            ("DeviceCMYK", (0.0, 0.0, 0.0, 1.0)),
+        ]
+
+
+def test_color_equality_hashing_pickle_and_canvas_round_trip() -> None:
+    plain = Color(0.0, 0.0, 0.0)
+    gray = Color(0.0, 0.0, 0.0, 1.0, colorspace="DeviceGray", components=(0.0,))
+    cmyk = Color(0.0, 0.0, 0.0, 1.0, colorspace="DeviceCMYK", components=(0.0, 0.0, 0.0, 1.0))
+
+    assert plain.colorspace is None
+    assert plain.components is None
+    assert plain == gray == cmyk
+    assert hash(plain) == hash(gray) == hash(cmyk)
+    assert len({plain, gray, cmyk}) == 1
+    assert {plain: "black"}[cmyk] == "black"
+
+    restored = pickle.loads(pickle.dumps(cmyk))  # noqa: S301 - a value pickled here.
+    assert restored == cmyk
+    assert restored.colorspace == "DeviceCMYK"
+    assert restored.components == (0.0, 0.0, 0.0, 1.0)
+
+    source = page_with("0.1 0.2 0.3 0.4 k 10 10 40 20 re f")
+    (extracted_path,) = source.content().paths
+    assert isinstance(extracted_path.fill, Color)
+    assert extracted_path.fill.colorspace == "DeviceCMYK"
+
+    target = pyropdf.Document()
+    page = target.pages.new((200, 100))
+    with page.draw() as canvas:
+        canvas.rect((10, 10, 50, 30), fill=extracted_path.fill)
+        canvas.draw(extracted_path)
+    assert len(page.content().paths) == 2
+
+
+def test_text_run_writing_mode_reports_horizontal_and_vertical() -> None:
+    page = page_with(
+        "BT /FH 20 Tf 10 60 Td <65E5> Tj /FV 20 Tf 80 80 Td <65E5> Tj ET",
+        resources="/Font << /FH 6 0 R /FV 7 0 R >>",
+        objects={
+            6: (
+                "<< /Type /Font /Subtype /Type0 /BaseFont /MS-Gothic /Encoding /UniJIS-UCS2-H "
+                "/DescendantFonts [8 0 R] >>"
+            ),
+            7: (
+                "<< /Type /Font /Subtype /Type0 /BaseFont /MS-Gothic /Encoding /UniJIS-UCS2-V "
+                "/DescendantFonts [8 0 R] >>"
+            ),
+            8: (
+                "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /MS-Gothic "
+                "/CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 2 >> "
+                "/FontDescriptor 9 0 R /DW 1000 >>"
+            ),
+            9: (
+                "<< /Type /FontDescriptor /FontName /MS-Gothic /Flags 4 "
+                "/FontBBox [0 -141 1000 859] /ItalicAngle 0 /Ascent 859 /Descent -141 "
+                "/CapHeight 709 /StemV 80 >>"
+            ),
+        },
+    )
+    horiz, vert = page.content().text_runs
+    assert horiz.writing_mode is WritingMode.HORIZONTAL
+    assert horiz.writing_mode == "horizontal"
+    assert vert.writing_mode is WritingMode.VERTICAL
+    assert vert.writing_mode == "vertical"
+    assert WritingMode.__module__ == "pyropdf"
+
+
+def test_font_ref_reports_object_identity_across_font_types() -> None:
+    # Standard 14 indirect Type 1 font.
+    (std_run,) = page_with("BT /F1 12 Tf 10 50 Td (Hi) Tj ET").content().text_runs
+    assert std_run.font.xref == 5
+    assert std_run.font.subtype == "Type1"
+    assert std_run.font.name == "Helvetica"
+    assert not std_run.font.is_embedded
+    assert not std_run.font.is_type3
+
+    # Direct Type 1 font dictionary (xref is None).
+    direct_page = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>",
+                3: (
+                    "<< /Type /Page /Parent 2 0 R /Contents 4 0 R "
+                    "/Resources << /Font << /FD << /Type /Font /Subtype /Type1 /BaseFont /Courier >> >> >> >>"
+                ),
+                4: stream_object("BT /FD 12 Tf 10 50 Td (Direct) Tj ET"),
+            }
+        )
+    ).pages[0]
+    (direct_run,) = direct_page.content().text_runs
+    assert direct_run.font.xref is None
+    assert direct_run.font.subtype == "Type1"
+    assert direct_run.font.name == "Courier"
+    assert not direct_run.font.is_embedded
+
+    # Real-world direct font dictionary (patent-us223898.pdf).
+    patent_runs = pyropdf.open(REAL_WORLD / "patent-us223898.pdf").pages[0].content().text_runs
+    assert patent_runs
+    assert all(run.font.xref is None and run.font.name == "Courier" and not run.font.is_embedded for run in patent_runs)
+
+    # Two distinct Type 3 fonts on one page keep separate xrefs and names.
+    type3_page = page_with(
+        "BT /T3A 20 Tf 10 50 Td (A) Tj /T3B 20 Tf 40 50 Td (A) Tj ET",
+        resources="/Font << /T3A 6 0 R /T3B 7 0 R >>",
+        objects={
+            6: (
+                "<< /Type /Font /Subtype /Type3 /Name /NamedT3 /FontBBox [0 0 1000 1000] "
+                "/FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /A 8 0 R >> "
+                "/Encoding << /Type /Encoding /Differences [65 /A] >> "
+                "/FirstChar 65 /LastChar 65 /Widths [600] >>"
+            ),
+            7: (
+                "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] "
+                "/FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /A 8 0 R >> "
+                "/Encoding << /Type /Encoding /Differences [65 /A] >> "
+                "/FirstChar 65 /LastChar 65 /Widths [600] >>"
+            ),
+            8: stream_object("600 0 d0 0 0 500 700 re f"),
+        },
+    )
+    t3_a, t3_b = type3_page.content().text_runs
+    assert (t3_a.font.xref, t3_a.font.subtype, t3_a.font.name, t3_a.font.is_type3, t3_a.font.is_embedded) == (
+        6,
+        "Type3",
+        "NamedT3",
+        True,
+        False,
+    )
+    assert (t3_b.font.xref, t3_b.font.subtype, t3_b.font.name, t3_b.font.is_type3, t3_b.font.is_embedded) == (
+        7,
+        "Type3",
+        "",
+        True,
+        False,
+    )
+
+    # Embedded Type 1 (usrguide.pdf), non-embedded Type 1 (pdf20-simple.pdf),
+    # embedded TrueType and Type 0 (mhlw-doc.pdf, nics-background-checks-2015-11.pdf),
+    # and Type 3 (pdfium-type3.pdf) agree with Page.fonts() on xref, subtype, and embedding.
+    seen_subtypes: set[tuple[str, bool]] = set()
+    for corpus_name in (
+        "usrguide.pdf",
+        "bill-hr815.pdf",
+        "pdf20-simple.pdf",
+        "mhlw-doc.pdf",
+        "nics-background-checks-2015-11.pdf",
+        "pdfium-type3.pdf",
+    ):
+        doc = pyropdf.open(REAL_WORLD / corpus_name)
+        page = doc.pages[0]
+        by_xref = {info.xref: info for info in page.fonts() if info.xref is not None}
+        for run in page.content().text_runs:
+            assert isinstance(run.font, FontRef)
+            assert run.font.xref in by_xref
+            info = by_xref[run.font.xref]
+            assert run.font.subtype == info.subtype
+            assert run.font.is_embedded == (info.program is not None)
+            if info.subtype != "Type3":
+                assert run.font.name != ""
+            seen_subtypes.add((run.font.subtype, run.font.is_embedded))
+    assert {
+        ("Type1", False),
+        ("Type1", True),
+        ("TrueType", True),
+        ("Type0", True),
+        ("Type3", False),
+    } <= seen_subtypes

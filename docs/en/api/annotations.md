@@ -857,7 +857,7 @@ Members: `SOLID`, `DASHED`, `BEVELED`, `INSET`, `UNDERLINE`.
 Caret(
     rect: Sequence[float],
     *,
-    color: Color = Color(red=0.0, green=0.0, blue=1.0, alpha=1.0),
+    color: Color = Color(red=0.0, green=0.0, blue=1.0, alpha=1.0, colorspace=None, components=None),
     opacity: float = 1.0,
     contents: str | None = None,
 )
@@ -877,7 +877,7 @@ rotation. `color` fills the caret, `opacity` applies to it, and
 Circle(
     rect: Sequence[float],
     *,
-    color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
+    color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     interior_color: Color | None = None,
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     clouds: float = 0,
@@ -902,7 +902,7 @@ FileAttachment(
     filename: str,
     description: str | None = None,
     icon: AttachmentIcon = AttachmentIcon.PUSH_PIN,
-    color: Color = Color(red=1.0, green=1.0, blue=0.0, alpha=1.0),
+    color: Color = Color(red=1.0, green=1.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     opacity: float = 1.0,
     contents: str | None = None,
     max_size: int | None = 67108864,
@@ -929,7 +929,7 @@ FreeText(
     *,
     font: Font | None = None,
     size: float = 11.0,
-    text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     color: Color | None = None,
     border: Border = Border(width=0.0, style=BorderStyle.SOLID, dashes=()),
     align: Literal['left', 'center', 'right'] = 'left',
@@ -965,7 +965,7 @@ raises `PdfError`.
 Highlight(
     rects: MarkupRects,
     *,
-    color: Color = Color(red=1.0, green=1.0, blue=0.0, alpha=1.0),
+    color: Color = Color(red=1.0, green=1.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     opacity: float = 0.4,
     contents: str | None = None,
 )
@@ -986,7 +986,7 @@ appearance, so every viewer draws it alike.
 Ink(
     strokes: Iterable[Iterable[Point | Sequence[float]]],
     *,
-    color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
+    color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     opacity: float = 1.0,
     blend_mode: BlendMode | None = None,
@@ -1007,7 +1007,7 @@ LineAnnotation(
     end: Point | Sequence[float],
     *,
     details: LineDetails | None = None,
-    color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
+    color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     interior_color: Color | None = None,
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     line_endings: tuple[LineEnding, LineEnding] = (LineEnding.NONE, LineEnding.NONE),
@@ -1173,7 +1173,7 @@ Note(
     *,
     contents: str | None = None,
     icon: NoteIcon = NoteIcon.NOTE,
-    color: Color = Color(red=1.0, green=1.0, blue=0.0, alpha=1.0),
+    color: Color = Color(red=1.0, green=1.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     opacity: float = 1.0,
     is_open: bool = False,
 )
@@ -1200,7 +1200,7 @@ Members: `COMMENT`, `HELP`, `INSERT`, `KEY`, `NEW_PARAGRAPH`, `NOTE`, `PARAGRAPH
 Polygon(
     vertices: Iterable[Point | Sequence[float]],
     *,
-    color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
+    color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     interior_color: Color | None = None,
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     clouds: float = 0,
@@ -1222,7 +1222,7 @@ annotation holds at most 65,536 points.
 PolyLine(
     vertices: Iterable[Point | Sequence[float]],
     *,
-    color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
+    color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     interior_color: Color | None = None,
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     line_endings: tuple[LineEnding, LineEnding] = (LineEnding.NONE, LineEnding.NONE),
@@ -1430,7 +1430,7 @@ Members: `RAW`, `SIGNED`, `MU_LAW`, `A_LAW`.
 Square(
     rect: Sequence[float],
     *,
-    color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
+    color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     interior_color: Color | None = None,
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     clouds: float = 0,
@@ -1455,7 +1455,7 @@ annotation's note.
 Squiggly(
     rects: MarkupRects,
     *,
-    color: Color = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
+    color: Color = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     opacity: float = 1.0,
     contents: str | None = None,
 )
@@ -1501,7 +1501,7 @@ Members: `APPROVED`, `AS_IS`, `CONFIDENTIAL`, `DEPARTMENTAL`, `EXPERIMENTAL`, `E
 StrikeOut(
     rects: MarkupRects,
     *,
-    color: Color = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
+    color: Color = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     opacity: float = 1.0,
     contents: str | None = None,
 )
@@ -1538,7 +1538,7 @@ to share its geometry. Viewers handle 3D rendering.
 Underline(
     rects: MarkupRects,
     *,
-    color: Color = Color(red=0.0, green=0.0, blue=1.0, alpha=1.0),
+    color: Color = Color(red=0.0, green=0.0, blue=1.0, alpha=1.0, colorspace=None, components=None),
     opacity: float = 1.0,
     contents: str | None = None,
 )

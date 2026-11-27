@@ -111,7 +111,7 @@ method and property of its classes with its full description.
 - [`Chunk`](text-and-content.md#chunk): Consecutive elements within one section, joined as Markdown in `text`.
 - [`Clip`](text-and-content.md#clip): A clipping path in display space.
 - [`ClosePath`](text-and-content.md#closepath): Close the current subpath with a line to its start.
-- [`Color`](text-and-content.md#color): A solid paint, as the sRGB color and alpha that hayro converts it to.
+- [`Color`](text-and-content.md#color): A solid paint in sRGB with optional stored PDF color space and components.
 - [`ColorStop`](text-and-content.md#colorstop): A place on a gradient's line, and the color and alpha there.
 - [`Content`](text-and-content.md#content): The items that a page paints, in paint order.
 - [`ContentItem`](text-and-content.md#contentitem): One painted item yielded by `Page.content`: a `TextRun`, `Path`, or `Image`.
@@ -120,7 +120,7 @@ method and property of its classes with its full description.
 - [`ElementKind`](text-and-content.md#elementkind): The kind of a structured page `Element`.
 - [`ExportedImage`](text-and-content.md#exportedimage): One image prepared for Markdown, JSON, or chunk export.
 - [`FillRule`](text-and-content.md#fillrule): The rule that decides which areas a path fills or clips.
-- [`FontRef`](text-and-content.md#fontref): The font that a text run uses, as hayro reads its font program.
+- [`FontRef`](text-and-content.md#fontref): The font that a text run uses, from its PDF font dictionary and font program.
 - [`Glyph`](text-and-content.md#glyph): One glyph of a text run.
 - [`Gradient`](text-and-content.md#gradient): A linear or radial gradient paint for a `Canvas`.
 - [`GradientExtend`](text-and-content.md#gradientextend): What a gradient paints beyond the two ends of its line.
@@ -155,6 +155,7 @@ method and property of its classes with its full description.
 - [`TransparencyGroup`](text-and-content.md#transparencygroup): A transparency group and what it applies to everything inside it.
 - [`Unmapped`](text-and-content.md#unmapped): What text extraction makes of a glyph without Unicode: `"skip"` leaves it out with a `PyropdfWarning`, `"replacement"` gives U+FFFD, and `"glyph_id"` gives the character whose code point is the glyph ID. `"type3_char_code"` treats an unmapped Type 3 font's original character code as a Unicode code point. This heuristic can produce unrelated text for custom encodings. Other unmapped glyphs give U+FFFD. Font Unicode mappings and recognized glyph names take precedence.
 - [`Word`](text-and-content.md#word): One word of `Page.words`, in reading order.
+- [`WritingMode`](text-and-content.md#writingmode): The writing mode of a text run's font (ISO 32000-2 §9.2.4).
 
 ## [OCR](ocr.md)
 

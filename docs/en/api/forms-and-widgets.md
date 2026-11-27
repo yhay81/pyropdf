@@ -20,7 +20,7 @@ CheckBox(
     label: str | None = None,
     flags: FieldFlags = FieldFlags(0),
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
-    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     background_color: Color | None = None,
 )
 ```
@@ -42,12 +42,12 @@ ComboBox(
     default_value: str | None = None,
     font: Font | None = None,
     font_size: float = 0,
-    text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     align: Literal['left', 'center', 'right'] = 'left',
     label: str | None = None,
     flags: FieldFlags = FieldFlags(0),
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
-    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     background_color: Color | None = None,
 )
 ```
@@ -578,12 +578,12 @@ ListBox(
     default_value: str | None = None,
     font: Font | None = None,
     font_size: float = 0,
-    text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     align: Literal['left', 'center', 'right'] = 'left',
     label: str | None = None,
     flags: FieldFlags = FieldFlags(0),
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
-    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     background_color: Color | None = None,
 )
 ```
@@ -643,12 +643,12 @@ PushButton(
     caption: str | None = None,
     font: Font | None = None,
     font_size: float = 0,
-    text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     label: str | None = None,
     flags: FieldFlags = FieldFlags(0),
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
-    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
-    background_color: Color | None = Color(red=0.75, green=0.75, blue=0.75, alpha=1.0),
+    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
+    background_color: Color | None = Color(red=0.75, green=0.75, blue=0.75, alpha=1.0, colorspace=None, components=None),
 )
 ```
 
@@ -670,7 +670,7 @@ RadioButton(
     label: str | None = None,
     flags: FieldFlags = FieldFlags(0),
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
-    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     background_color: Color | None = None,
 )
 ```
@@ -759,7 +759,7 @@ SignatureField(
     label: str | None = None,
     flags: FieldFlags = FieldFlags(0),
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
-    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     background_color: Color | None = None,
 )
 ```
@@ -786,12 +786,12 @@ TextField(
     max_length: int | None = None,
     font: Font | None = None,
     font_size: float = 0,
-    text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     align: Literal['left', 'center', 'right'] = 'left',
     label: str | None = None,
     flags: FieldFlags = FieldFlags(0),
     border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
-    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     background_color: Color | None = None,
 )
 ```

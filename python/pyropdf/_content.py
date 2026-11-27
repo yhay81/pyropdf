@@ -90,6 +90,13 @@ class TextRenderMode(enum.StrEnum):
     INVISIBLE = "invisible"
 
 
+class WritingMode(enum.StrEnum):
+    """The writing mode of a text run's font (ISO 32000-2 §9.2.4)."""
+
+    HORIZONTAL = "horizontal"
+    VERTICAL = "vertical"
+
+
 class ShadingType(enum.IntEnum):
     """A shading type of ISO 32000-2 §8.7.4.5.
 
@@ -174,16 +181,34 @@ Segment: TypeAlias = MoveTo | LineTo | CurveTo | ClosePath
 
 @dataclass(frozen=True, slots=True)
 class Color:
-    """A solid paint, as the sRGB color and alpha that hayro converts it to.
+    """A solid paint in sRGB with optional stored PDF color space and components.
 
-    Components range from 0 to 1. The color space and its own components
-    are not exposed yet.
+    ``red``, ``green``, ``blue``, and ``alpha`` range from 0 to 1. Colors
+    extracted by :meth:`Page.content` or :meth:`Page.paths` also populate
+    ``colorspace`` (such as ``"DeviceGray"``, ``"DeviceRGB"``,
+    ``"DeviceCMYK"``, ``"ICCBased"``, ``"CalGray"``, ``"CalRGB"``, ``"Lab"``,
+    ``"Indexed"``, ``"Separation"``, ``"DeviceN"``, or ``"Pattern"``) and
+    ``components`` with the PDF component values in that color space. Directly
+    constructed colors leave both ``None`` unless supplied as keyword
+    arguments.
+
+    Equality and hashing compare ``(red, green, blue, alpha)`` so extracted
+    colors remain equal to ``Color(red, green, blue, alpha)`` and work
+    interchangeably in sets, dictionaries, and :class:`Canvas` drawing.
+
+    Note: hayro canonicalizes ``ICCBased`` color spaces whose profile header
+    marks sRGB (``sRGB`` at bytes 52..56) and colors with an active transfer
+    function to ``"DeviceRGB"``.
     """
 
     red: float
     green: float
     blue: float
     alpha: float = 1.0
+    colorspace: str | None = field(default=None, kw_only=True, compare=False)
+    """The stored PDF color space family name, or ``None`` when unspecified."""
+    components: tuple[float, ...] | None = field(default=None, kw_only=True, compare=False)
+    """The original PDF color components in :attr:`colorspace`, or ``None`` when unspecified."""
 
     @property
     def rgb(self) -> tuple[float, float, float]:
@@ -446,20 +471,30 @@ class GraphicsContext:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FontRef:
-    """The font that a text run uses, as hayro reads its font program.
+    """The font that a text run uses, from its PDF font dictionary and font program.
 
-    This describes the program. A text run separately retains the source
-    PDF font dictionary and character codes that selected its glyphs.
+    A text run separately retains the character codes that selected its glyphs
+    for :meth:`Canvas.draw`.
     """
 
     name: str
-    """The PostScript name of the font program, or ``""`` when hayro reads
-    none, as for Type 1 and Type 3 fonts."""
+    """The font's PostScript or PDF ``/BaseFont`` name (subset prefix stripped),
+    falling back to ``/Name`` for Type 3 fonts, or ``""`` when absent."""
     is_type3: bool
     weight: int | None
     is_italic: bool
     is_serif: bool
     is_monospace: bool
+    xref: int | None = None
+    """The object number of the PDF font dictionary, or ``None`` for a direct
+    dictionary or a fallback run without a font dictionary."""
+    subtype: str = ""
+    """The PDF font ``/Subtype`` (``"Type1"``, ``"TrueType"``, ``"Type0"``,
+    ``"Type3"``, or ``"MMType1"``), or ``""`` when absent."""
+    is_embedded: bool = False
+    """Whether the font dictionary (or a ``Type0`` font's descendant) embeds a
+    ``FontFile``, ``FontFile2``, or ``FontFile3`` program stream; ``False``
+    for non-embedded, Standard 14, and Type 3 fonts."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -506,6 +541,8 @@ class TextRun:
     context: GraphicsContext
     blend_mode: BlendMode
     soft_mask: SoftMask | None
+    writing_mode: WritingMode = WritingMode.HORIZONTAL
+    """The writing mode of the run's font: horizontal or vertical."""
     _replay: _RunReplay | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
@@ -979,6 +1016,21 @@ _SOFT_MASK_TYPES = tuple(SoftMaskType)
 _LINE_CAPS = (LineCap.BUTT, LineCap.ROUND, LineCap.SQUARE)
 _LINE_JOINS = (LineJoin.MITER, LineJoin.ROUND, LineJoin.BEVEL)
 _RENDER_MODES = tuple(TextRenderMode)
+_WRITING_MODES = (WritingMode.HORIZONTAL, WritingMode.VERTICAL)
+_COLOR_SPACES: tuple[str | None, ...] = (
+    None,
+    "DeviceGray",
+    "DeviceRGB",
+    "DeviceCMYK",
+    "ICCBased",
+    "CalGray",
+    "CalRGB",
+    "Lab",
+    "Indexed",
+    "Separation",
+    "DeviceN",
+    "Pattern",
+)
 _IMAGE_MASKS = (None, ImageMask.SOFT, ImageMask.EXPLICIT, ImageMask.COLOR_KEY)
 _CLOSE_PATH = ClosePath()
 _TEXT_RUN = 0
@@ -1094,21 +1146,32 @@ class _Converter:
                 is_italic=is_italic,
                 is_serif=is_serif,
                 is_monospace=is_monospace,
+                xref=xref,
+                subtype=subtype,
+                is_embedded=is_embedded,
             )
-            for name, is_type3, weight, is_italic, is_serif, is_monospace in fonts
+            for name, is_type3, weight, is_italic, is_serif, is_monospace, xref, subtype, is_embedded in fonts
         ]
         self.states = states
-        self.paints: dict[tuple[int, tuple[float, ...]], Paint] = {
+        self.paints: dict[Any, Paint] = {
             (kind, tuple(values)): _pattern(kind, values, _ShadingSource(columns, index))
-            for index, (kind, values) in enumerate(columns.patterns())
+            for index, (kind, values, _) in enumerate(columns.patterns())
         }
 
-    def paint(self, raw: tuple[int, list[float]]) -> Paint:
-        kind, values = raw
+    def paint(self, raw: tuple[int, list[float], tuple[int, list[float]] | None]) -> Paint:
+        kind, values, stored = raw
+        if kind == _COLOR:
+            space = None if stored is None else _COLOR_SPACES[stored[0]]
+            components = None if stored is None else tuple(stored[1])
+            key: Any = (kind, tuple(values), space, components)
+            paint = self.paints.get(key)
+            if paint is None:
+                paint = self.paints[key] = Color(*values, colorspace=space, components=components)
+            return paint
         key = (kind, tuple(values))
         paint = self.paints.get(key)
         if paint is None:
-            paint = self.paints[key] = Color(*values) if kind == _COLOR else _pattern(kind, values)
+            paint = self.paints[key] = _pattern(kind, values)
         return paint
 
     def stroke(self, raw: Any) -> Stroke | None:  # noqa: ANN401 - a nested core tuple.
@@ -1126,7 +1189,7 @@ class _Converter:
         )
 
     def text_run(self, raw: Any) -> TextRun:  # noqa: ANN401 - a nested core tuple.
-        glyphs, font, render_mode, fill, stroke, bbox, (state, blend, soft_mask), replay = raw
+        glyphs, font, render_mode, fill, stroke, bbox, (state, blend, soft_mask), replay, writing_mode = raw
         ids, texts, matrices, advances, boxes = glyphs
         item = TextRun(
             glyphs=tuple(
@@ -1147,6 +1210,7 @@ class _Converter:
             context=self.states[state],
             blend_mode=_BLEND_MODES[blend],
             soft_mask=_soft_mask(soft_mask),
+            writing_mode=_WRITING_MODES[writing_mode],
         )
 
         object.__setattr__(item, "_replay", _RunReplay(self.font_source, *replay))
@@ -1250,8 +1314,12 @@ class _Contexts:
         return value
 
 
-#: What the columns of :class:`Paths` index: contexts and patterns.
-_PathShared: TypeAlias = tuple[tuple[GraphicsContext, ...], tuple[ShadingPattern | TilingPattern, ...]]
+#: What the columns of :class:`Paths` index: contexts, patterns, and stored colors.
+_PathShared: TypeAlias = tuple[
+    tuple[GraphicsContext, ...],
+    tuple[ShadingPattern | TilingPattern, ...],
+    tuple[tuple[str | None, tuple[float, ...]], ...],
+]
 
 
 class _PathValues:
@@ -1268,10 +1336,10 @@ class _PathValues:
         self._columns = columns
         self._lock = threading.Lock()
         self._shared: _PathShared | None = None
-        self._colors: dict[tuple[float, float, float, float], Color] = {}
+        self._colors: dict[tuple[tuple[float, float, float, float], int], Color] = {}
 
     def shared(self) -> _PathShared:
-        """Return the contexts and patterns."""
+        """Return the contexts, patterns, and stored color metadata."""
         shared = self._shared
         if shared is None:
             with self._lock:
@@ -1283,19 +1351,28 @@ class _PathValues:
                         tuple(contexts[index] for index in range(len(states))),
                         tuple(
                             _pattern(kind, values, _ShadingSource(self._columns, index))
-                            for index, (kind, values) in enumerate(self._columns.patterns())
+                            for index, (kind, values, _) in enumerate(self._columns.patterns())
+                        ),
+                        tuple(
+                            (_COLOR_SPACES[space], tuple(components))
+                            for space, components in self._columns.stored_colors()
                         ),
                     )
         return shared
 
     def paint(self, raw: _PathPaint) -> Paint:
         """Return the paint of a row: a pattern by its index, or else the color."""
-        pattern, rgba = raw
+        pattern, rgba, stored_index = raw
         if pattern >= 0:
             return self.shared()[1][pattern]
-        color = self._colors.get(rgba)
+        key = (rgba, stored_index)
+        color = self._colors.get(key)
         if color is None:
-            color = self._colors.setdefault(rgba, Color(*rgba))
+            if stored_index >= 0:
+                colorspace, components = self.shared()[2][stored_index]
+            else:
+                colorspace, components = None, None
+            color = self._colors.setdefault(key, Color(*rgba, colorspace=colorspace, components=components))
         return color
 
     def stroke(self, raw: _PathStroke) -> Stroke:
@@ -1353,6 +1430,7 @@ for _public in (
     LineCap,
     LineJoin,
     TextRenderMode,
+    WritingMode,
     ShadingType,
     SoftMaskType,
     GradientExtend,

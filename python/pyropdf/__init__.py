@@ -114,6 +114,7 @@ from pyropdf._content import (
     TextRun,
     TilingPattern,
     TransparencyGroup,
+    WritingMode,
 )
 from pyropdf._core import __version__
 from pyropdf._document import Document, Probe, open, probe  # noqa: A004 - pyropdf.open is the entry point.
@@ -705,6 +706,7 @@ __all__ = [
     "Widgets",
     "WindowsLaunch",
     "Word",
+    "WritingMode",
     "__version__",
     "open",
     "parse_fdf",

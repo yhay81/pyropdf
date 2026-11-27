@@ -22,8 +22,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::display::Display;
+use hayro::hayro_interpret::color::ColorSpace as HayroColorSpace;
 use hayro::hayro_interpret::font::{Glyph, GlyphRun, OutlineGlyph, Type3Glyph};
-use hayro::hayro_interpret::hayro_cmap::BfString;
+use hayro::hayro_interpret::hayro_cmap::{BfString, WritingMode};
 use hayro::hayro_interpret::pattern::{Pattern, ShadingPattern};
 use hayro::hayro_interpret::shading::ShadingType;
 use hayro::hayro_interpret::{
@@ -33,8 +34,9 @@ use hayro::hayro_interpret::{
 };
 use hayro::hayro_syntax::Filter;
 use hayro::hayro_syntax::object::dict::keys::{ACTUAL_TEXT, MCID};
-use hayro::hayro_syntax::object::{Array, Dict, Stream, String as PdfString};
+use hayro::hayro_syntax::object::{Array, Dict, Name, Stream, String as PdfString};
 use hayro::hayro_syntax::page::Page;
+use hayro::hayro_syntax::xref::XRef;
 use hayro::kurbo::{Affine, BezPath, Cap, Join, PathEl, Point, Rect, Shape};
 use hayro_font::Font;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
@@ -49,14 +51,19 @@ use crate::render::Fallback;
 pub type BBox = (f64, f64, f64, f64);
 type Coefficients = [f64; 6];
 
-/// A paint: kind 0 is a color (red, green, blue, alpha in sRGB), kind 1 a
-/// shading pattern (shading type, or 0 for a shading that hayro could not
-/// read, the six matrix coefficients, and opacity), and kind 2 a tiling
-/// pattern (the four pattern-space bbox coordinates, x step, y step, the six
-/// matrix coefficients, and opacity). A path pattern appends its stable
-/// identity within the original table, so equal metadata never aliases two
-/// different colour functions or tiling cells after crossing into Python.
-pub type PaintTuple = (u8, Vec<f64>);
+/// Stored PDF color metadata: color space code (`0` when absent, `1..=11` for
+/// PDF color space families) and original component values in that color space.
+pub type StoredColorTuple = (u8, Vec<f64>);
+
+/// A paint: kind 0 is a color (red, green, blue, alpha in sRGB, plus optional
+/// stored PDF color space and original components), kind 1 a shading pattern
+/// (shading type, or 0 for a shading that hayro could not read, the six matrix
+/// coefficients, and opacity), and kind 2 a tiling pattern (the four
+/// pattern-space bbox coordinates, x step, y step, the six matrix coefficients,
+/// and opacity). A path pattern appends its stable identity within the original
+/// table, so equal metadata never aliases two different colour functions or
+/// tiling cells after crossing into Python.
+pub type PaintTuple = (u8, Vec<f64>, Option<StoredColorTuple>);
 /// A stroke: paint, width, cap, join, miter limit, dash lengths, dash offset.
 pub type StrokeTuple = (PaintTuple, f64, u8, u8, f64, Vec<f64>, f64);
 /// What every item carries: its graphics context, blend mode, and the type of
@@ -71,8 +78,9 @@ pub type GlyphsTuple = (
     Vec<Option<f64>>,
     Vec<Option<BBox>>,
 );
-/// A text run: glyphs, font index, render mode, fill paint, stroke, bbox, and
-/// item context.
+/// A text run: glyphs, font index, render mode, fill paint, stroke, bbox,
+/// item context, redraw replay metadata, and writing mode (`0` horizontal,
+/// `1` vertical).
 pub type TextRunTuple = (
     GlyphsTuple,
     u32,
@@ -82,6 +90,7 @@ pub type TextRunTuple = (
     BBox,
     ItemContextTuple,
     super::redraw::Replay,
+    u8,
 );
 /// A path: segment kinds, coordinates, bbox, fill paint, even-odd fill rule,
 /// stroke, and item context.
@@ -110,8 +119,20 @@ pub type ImageTuple = (
     BBox,
     ItemContextTuple,
 );
-/// A font: PostScript name, Type 3 flag, weight, italic, serif, monospace.
-pub type FontTuple = (String, bool, Option<u32>, bool, bool, bool);
+/// A font: name, Type 3 flag, weight, italic, serif, monospace, PDF dictionary
+/// object number (`None` when direct or absent), PDF `/Subtype`, and whether
+/// the font embeds a font program stream.
+pub type FontTuple = (
+    String,
+    bool,
+    Option<u32>,
+    bool,
+    bool,
+    bool,
+    Option<u32>,
+    String,
+    bool,
+);
 /// A clip: segment kinds, coordinates, even-odd fill rule, and bbox.
 pub type ClipTuple = (Vec<u8>, Vec<f64>, bool, BBox);
 /// A transparency group: opacity, blend mode, and soft mask type, as an item's.
@@ -136,6 +157,24 @@ pub const RENDER_FILL: u8 = 0;
 pub const RENDER_STROKE: u8 = 1;
 pub const RENDER_FILL_STROKE: u8 = 2;
 pub const RENDER_INVISIBLE: u8 = 3;
+
+/// Text run writing modes reported by `GlyphRun::writing_mode()`.
+pub const WRITING_HORIZONTAL: u8 = 0;
+pub const WRITING_VERTICAL: u8 = 1;
+
+/// Stored PDF color space family codes reported from `Color::color_space()`.
+const COLOR_SPACE_NONE: u8 = 0;
+const COLOR_SPACE_DEVICE_GRAY: u8 = 1;
+const COLOR_SPACE_DEVICE_RGB: u8 = 2;
+const COLOR_SPACE_DEVICE_CMYK: u8 = 3;
+const COLOR_SPACE_ICC_BASED: u8 = 4;
+const COLOR_SPACE_CAL_GRAY: u8 = 5;
+const COLOR_SPACE_CAL_RGB: u8 = 6;
+const COLOR_SPACE_LAB: u8 = 7;
+const COLOR_SPACE_INDEXED: u8 = 8;
+const COLOR_SPACE_SEPARATION: u8 = 9;
+const COLOR_SPACE_DEVICE_N: u8 = 10;
+const COLOR_SPACE_PATTERN: u8 = 11;
 
 /// Image mask kinds.
 const MASK_NONE: u8 = 0;
@@ -364,12 +403,107 @@ fn segments(path: &BezPath, transform: Affine) -> Result<Option<Segments>, Error
     Ok(segments.read(path, transform)?.then_some(segments))
 }
 
-fn paint_tuple(paint: &Paint<'_>) -> Result<PaintTuple, Error> {
+/// Allocates a `String` copy of `text` charged to `LimitCode::MemorySize`.
+fn fallible_string(text: &str, label: &str, budget: &Budget) -> Result<String, Error> {
+    if text.is_empty() {
+        return Ok(String::new());
+    }
+    budget.charge(LimitCode::MemorySize, text.len() as u64)?;
+    let mut out = String::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "charged to LimitCode::MemorySize above and reserved fallibly"
+    )]
+    out.try_reserve_exact(text.len())
+        .map_err(|error| Error::Allocation(format!("failed to allocate {label}: {error}")))?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "fills the exact capacity reserved above"
+    )]
+    out.push_str(text);
+    Ok(out)
+}
+
+/// Identifies the PDF color space family of `hayro_interpret::ColorSpace` in
+/// O(1) time and zero heap allocations by capturing the outer variant prefix of
+/// its `#[derive(Debug)]` representation before any inner payload is formatted.
+fn color_space_code(space: &HayroColorSpace) -> u8 {
+    use std::fmt::Write as _;
+
+    struct Sniffer {
+        buf: [u8; 32],
+        len: usize,
+        opens: u8,
+    }
+
+    impl std::fmt::Write for Sniffer {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            for &byte in s.as_bytes() {
+                if byte == b'(' {
+                    self.opens += 1;
+                    if self.opens >= 2 {
+                        return Err(std::fmt::Error);
+                    }
+                }
+                if self.len < self.buf.len() {
+                    self.buf[self.len] = byte;
+                    self.len += 1;
+                } else {
+                    return Err(std::fmt::Error);
+                }
+            }
+            Ok(())
+        }
+    }
+
+    let mut sniffer = Sniffer {
+        buf: [0; 32],
+        len: 0,
+        opens: 0,
+    };
+    let _ = write!(&mut sniffer, "{space:?}");
+    let prefix = std::str::from_utf8(&sniffer.buf[..sniffer.len]).unwrap_or("");
+    match prefix.strip_prefix("ColorSpace(") {
+        Some("DeviceGray") => COLOR_SPACE_DEVICE_GRAY,
+        Some("DeviceRgb") => COLOR_SPACE_DEVICE_RGB,
+        Some("DeviceCmyk") => COLOR_SPACE_DEVICE_CMYK,
+        Some("ICCBased") => COLOR_SPACE_ICC_BASED,
+        Some("CalGray") => COLOR_SPACE_CAL_GRAY,
+        Some("CalRgb") => COLOR_SPACE_CAL_RGB,
+        Some("Lab") => COLOR_SPACE_LAB,
+        Some("Indexed") => COLOR_SPACE_INDEXED,
+        Some("Separation") => COLOR_SPACE_SEPARATION,
+        Some("DeviceN") => COLOR_SPACE_DEVICE_N,
+        Some("Pattern") => COLOR_SPACE_PATTERN,
+        _ => COLOR_SPACE_NONE,
+    }
+}
+
+/// Converts a color's stored PDF components to `Vec<f64>` under `budget`.
+fn copy_color_components(components: &[f32], budget: &Budget) -> Result<Vec<f64>, Error> {
+    let bytes = components.len().saturating_mul(std::mem::size_of::<f64>());
+    budget.charge(LimitCode::MemorySize, bytes as u64)?;
+    let mut copy = with_capacity(components.len(), "color components")?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "fills the exact capacity reserved above"
+    )]
+    copy.extend(components.iter().map(|&value| f64::from(value)));
+    Ok(copy)
+}
+
+fn paint_tuple(paint: &Paint<'_>, budget: &Budget) -> Result<PaintTuple, Error> {
     match paint {
         Paint::Color(color) => {
             let [red, green, blue, alpha] = color.to_rgba().components();
             let values = [red, green, blue, alpha].map(f64::from);
-            Ok((COLOR, copy_values(&values, "paint values")?))
+            let space = color_space_code(color.color_space());
+            let components = copy_color_components(color.components(), budget)?;
+            Ok((
+                COLOR,
+                copy_values(&values, "paint values")?,
+                Some((space, components)),
+            ))
         }
         Paint::Pattern(pattern) => match pattern.as_ref() {
             Pattern::Shading(shading) => {
@@ -384,7 +518,7 @@ fn paint_tuple(paint: &Paint<'_>) -> Result<PaintTuple, Error> {
                 };
                 let [a, b, c, d, e, f] = shading.matrix.as_coeffs();
                 let values = [shading_type, a, b, c, d, e, f, f64::from(shading.opacity)];
-                Ok((1, copy_values(&values, "paint values")?))
+                Ok((1, copy_values(&values, "paint values")?, None))
             }
             Pattern::Tiling(tiling) => {
                 let [a, b, c, d, e, f] = tiling.matrix.as_coeffs();
@@ -404,16 +538,20 @@ fn paint_tuple(paint: &Paint<'_>) -> Result<PaintTuple, Error> {
                     f,
                     f64::from(tiling.opacity),
                 ];
-                Ok((2, copy_values(&values, "paint values")?))
+                Ok((2, copy_values(&values, "paint values")?, None))
             }
         },
     }
 }
 
 /// Whether every value of a paint is finite, so that Python can hold its
-/// matrix and box.
+/// matrix, box, and color components.
 fn paint_is_finite(paint: &PaintTuple) -> bool {
     paint.1.iter().all(|value| value.is_finite())
+        && paint
+            .2
+            .as_ref()
+            .is_none_or(|(_, components)| components.iter().all(|value| value.is_finite()))
 }
 
 fn blend_code(mode: BlendMode) -> u8 {
@@ -507,9 +645,14 @@ struct StrokeRecord {
 }
 
 impl StrokeRecord {
-    fn new(paint: &Paint<'_>, stroke: &StrokeProps, transform: Affine) -> Result<Self, Error> {
+    fn new(
+        paint: &Paint<'_>,
+        stroke: &StrokeProps,
+        transform: Affine,
+        budget: &Budget,
+    ) -> Result<Self, Error> {
         Ok(Self {
-            paint: paint_tuple(paint)?,
+            paint: paint_tuple(paint, budget)?,
             style: StrokeStyle::new(stroke, transform)?,
         })
     }
@@ -594,11 +737,11 @@ fn retain_offsets(
     Ok(kept_values)
 }
 
-/// A paint in the form of the path columns: a color's sRGB components and
-/// alpha, or a pattern's index in [`PathTable::patterns`].
+/// A paint in the form of the path columns: a color's sRGB components, alpha,
+/// and interned stored-color index, or a pattern's index in [`PathTable::patterns`].
 #[derive(Clone, Copy)]
 enum PathPaint {
-    Color([f32; 4]),
+    Color([f32; 4], i32),
     Pattern(i32),
 }
 
@@ -612,6 +755,9 @@ pub struct PaintColumns {
     pub green: Vec<f32>,
     pub blue: Vec<f32>,
     pub alpha: Vec<f32>,
+    /// A color's index in [`PathTable::stored_colors`], -1 for a pattern or no
+    /// paint.
+    pub stored_color: Vec<i32>,
     /// A pattern's index in [`PathTable::patterns`], -1 for a color or no
     /// paint.
     pub pattern: Vec<i32>,
@@ -630,6 +776,7 @@ impl PaintColumns {
         push(&mut self.green, f32::NAN, PATH_COLUMNS)?;
         push(&mut self.blue, f32::NAN, PATH_COLUMNS)?;
         push(&mut self.alpha, f32::NAN, PATH_COLUMNS)?;
+        push(&mut self.stored_color, -1, PATH_COLUMNS)?;
         push(&mut self.pattern, -1, PATH_COLUMNS)
     }
 
@@ -637,35 +784,47 @@ impl PaintColumns {
     fn set(&mut self, row: usize, paint: PathPaint) {
         self.present[row] = 1;
         match paint {
-            PathPaint::Color([red, green, blue, alpha]) => {
+            PathPaint::Color([red, green, blue, alpha], stored) => {
                 self.red[row] = red;
                 self.green[row] = green;
                 self.blue[row] = blue;
                 self.alpha[row] = alpha;
+                self.stored_color[row] = stored;
             }
             PathPaint::Pattern(pattern) => self.pattern[row] = pattern,
         }
     }
 
     /// The paint of `row` in the tuple form of the content model.
-    fn tuple(&self, row: usize, patterns: &[PaintTuple]) -> Option<PaintTuple> {
+    fn tuple(
+        &self,
+        row: usize,
+        patterns: &[PaintTuple],
+        stored_colors: &[StoredColorTuple],
+    ) -> Option<PaintTuple> {
         if self.present[row] == 0 {
             return None;
         }
         Some(match usize::try_from(self.pattern[row]) {
             Ok(pattern) => patterns[pattern].clone(),
             #[expect(clippy::disallowed_methods, reason = "a color's four components")]
-            Err(_) => (
-                COLOR,
-                [
-                    self.red[row],
-                    self.green[row],
-                    self.blue[row],
-                    self.alpha[row],
-                ]
-                .map(f64::from)
-                .to_vec(),
-            ),
+            Err(_) => {
+                let stored = usize::try_from(self.stored_color[row])
+                    .ok()
+                    .map(|index| stored_colors[index].clone());
+                (
+                    COLOR,
+                    [
+                        self.red[row],
+                        self.green[row],
+                        self.blue[row],
+                        self.alpha[row],
+                    ]
+                    .map(f64::from)
+                    .to_vec(),
+                    stored,
+                )
+            }
         })
     }
 
@@ -676,6 +835,7 @@ impl PaintColumns {
         retain_rows(&mut self.green, keep);
         retain_rows(&mut self.blue, keep);
         retain_rows(&mut self.alpha, keep);
+        retain_rows(&mut self.stored_color, keep);
         retain_rows(&mut self.pattern, keep);
     }
 
@@ -691,6 +851,7 @@ impl PaintColumns {
         self.green.shrink_to_fit();
         self.blue.shrink_to_fit();
         self.alpha.shrink_to_fit();
+        self.stored_color.shrink_to_fit();
         self.pattern.shrink_to_fit();
         Ok(())
     }
@@ -746,6 +907,9 @@ pub struct PathTable {
     /// The distinct pattern paints that the pattern columns index, in the
     /// order in which the paths first use them.
     pub patterns: Vec<PaintTuple>,
+    /// The distinct stored PDF color spaces and original components that the
+    /// `stored_color` paint columns index.
+    pub stored_colors: Vec<StoredColorTuple>,
     /// Owned hayro paints, shared by the rows, without evaluating their
     /// functions while extracting content. Non-shading patterns have no source.
     shadings: Vec<Option<ShadingPattern>>,
@@ -941,19 +1105,21 @@ impl PathTable {
             self.verb[self.segments_of(row)].to_vec(),
             self.coordinates(row),
             (self.x0[row], self.y0[row], self.x1[row], self.y1[row]),
-            self.fill.tuple(row, &self.patterns),
+            self.fill.tuple(row, &self.patterns, &self.stored_colors),
             self.fill_rule[row] != 0,
-            self.stroke.tuple(row, &self.patterns).map(|paint| {
-                (
-                    paint,
-                    self.stroke_width[row],
-                    self.stroke_cap[row],
-                    self.stroke_join[row],
-                    self.stroke_miter_limit[row],
-                    self.stroke_dashes[self.dashes_of(row)].to_vec(),
-                    self.stroke_dash_offset[row],
-                )
-            }),
+            self.stroke
+                .tuple(row, &self.patterns, &self.stored_colors)
+                .map(|paint| {
+                    (
+                        paint,
+                        self.stroke_width[row],
+                        self.stroke_cap[row],
+                        self.stroke_join[row],
+                        self.stroke_miter_limit[row],
+                        self.stroke_dashes[self.dashes_of(row)].to_vec(),
+                        self.stroke_dash_offset[row],
+                    )
+                }),
             (
                 self.context[row],
                 self.blend_mode[row],
@@ -1116,7 +1282,8 @@ impl PathTable {
                 self.path[segment] = row as u32;
             }
         }
-        self.retain_patterns()
+        self.retain_patterns()?;
+        self.retain_stored_colors()
     }
 
     /// Keep the patterns that the rows use, in the order in which they first
@@ -1142,6 +1309,32 @@ impl PathTable {
                     push(&mut self.shadings, shadings[pattern].take(), PATH_COLUMNS)?;
                 }
                 column[row] = indexes[pattern];
+            }
+        }
+        Ok(())
+    }
+
+    /// Keep the stored colors that the rows use, in the order in which they
+    /// first use them.
+    fn retain_stored_colors(&mut self) -> Result<(), Error> {
+        let mut stored_colors = std::mem::take(&mut self.stored_colors);
+        let mut indexes = with_capacity(stored_colors.len(), PATH_COLUMNS)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above"
+        )]
+        indexes.resize(stored_colors.len(), -1);
+        for row in 0..self.rows() {
+            for column in [&mut self.fill.stored_color, &mut self.stroke.stored_color] {
+                let Ok(color) = usize::try_from(column[row]) else {
+                    continue;
+                };
+                if indexes[color] < 0 {
+                    indexes[color] = offset(self.stored_colors.len())?;
+                    let entry = std::mem::take(&mut stored_colors[color]);
+                    push(&mut self.stored_colors, entry, PATH_COLUMNS)?;
+                }
+                column[row] = indexes[color];
             }
         }
         Ok(())
@@ -1182,6 +1375,7 @@ impl PathTable {
         self.c2_y.shrink_to_fit();
         self.stroke_dashes.shrink_to_fit();
         self.patterns.shrink_to_fit();
+        self.stored_colors.shrink_to_fit();
         self.shadings.shrink_to_fit();
         Ok(())
     }
@@ -1223,6 +1417,7 @@ struct TextRunRecord {
     /// The place of the run's first glyph among those that hayro showed.
     first_shown: usize,
     context: ItemContext,
+    writing_mode: u8,
 }
 
 impl TextRunRecord {
@@ -1286,6 +1481,7 @@ impl Record {
                     bbox_tuple(run.bbox),
                     run.context.into_tuple(),
                     run.replay,
+                    run.writing_mode,
                 )))
             }
             Self::Path(_) => ContentItem::Path(path_row),
@@ -1341,6 +1537,8 @@ pub struct GlyphStyle {
 /// The font key of the runs that hayro shows with its fallback font, which
 /// no font dictionary describes.
 pub(super) const FALLBACK_FONT_KEY: u128 = 1;
+/// The font key of a Type 3 run when hayro reports no font dictionary.
+const FALLBACK_TYPE3_FONT_KEY: u128 = 2;
 
 /// The [`GlyphStyle::font`] of a run. Fonts over one program have different
 /// keys, although their glyphs' identifiers agree.
@@ -1421,12 +1619,16 @@ struct FaceGlyph {
     ink: Option<Rect>,
 }
 
+/// Program-derived font metrics read from a fallback face: PostScript name,
+/// weight, italic, serif, and monospace.
+type FaceFontMetrics = (String, Option<u32>, bool, bool, bool);
+
 /// The sink of an interpretation through the fallback faces, which reads the
 /// glyph that each face draws for each glyph of the page, and the fonts as the
 /// faces describe them, by the key of the font's dictionary.
 struct FaceGlyphs<'b> {
     glyphs: BudgetVec<'b, FaceGlyph>,
-    fonts: HashMap<u128, FontTuple>,
+    fonts: HashMap<u128, FaceFontMetrics>,
     /// The font of a run whose first glyph has yet to arrive.
     font: Option<u128>,
     error: Option<Error>,
@@ -1442,7 +1644,7 @@ impl FaceGlyphs<'_> {
             self.fonts.try_reserve(1).map_err(|error| {
                 Error::Allocation(format!("failed to grow the fonts of the faces: {error}"))
             })?;
-            self.fonts.insert(key, font_tuple(glyph));
+            self.fonts.insert(key, face_font_metrics(glyph));
         }
         Ok(())
     }
@@ -1594,13 +1796,15 @@ pub(crate) struct ContentCollector<'a, 'b, 'c, S> {
     /// The index of each pattern by hayro's key, including its source,
     /// matrix, and opacity. Repeated paints need no new tuple allocation.
     pattern_indexes: HashMap<u128, i32>,
+    /// The index of each unique stored PDF color `(space_code, f32 bit patterns)`
+    /// in [`PathTable::stored_colors`].
+    stored_color_indexes: HashMap<(u8, Vec<u32>), i32>,
     /// The segments of the path being recorded, in a buffer that is reused.
     segments: Segments,
     /// The segments of the fill path that a stroke may complete.
     pending_segments: Segments,
     fonts: Vec<FontTuple>,
     font_indexes: HashMap<u128, u32>,
-    type3_font: Option<u32>,
     clips: Vec<ClipTuple>,
     groups: Vec<GroupTuple>,
     marks: Vec<MarkTuple>,
@@ -1633,6 +1837,7 @@ pub(crate) struct ContentCollector<'a, 'b, 'c, S> {
     recent_font_next: usize,
     /// The images recorded so far, the ordinal of the next one.
     images: usize,
+    xref: &'a XRef,
     budget: &'b Budget,
     error: Option<Error>,
 }
@@ -1644,6 +1849,7 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         sink: S,
         kinds: ItemKinds,
         stretches: &'c Stretches<'a>,
+        xref: &'a XRef,
         budget: &'b Budget,
     ) -> Self {
         Self {
@@ -1652,11 +1858,11 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
             records: Vec::new(),
             paths: PathTable::new(),
             pattern_indexes: HashMap::new(),
+            stored_color_indexes: HashMap::new(),
             segments: Segments::default(),
             pending_segments: Segments::default(),
             fonts: Vec::new(),
             font_indexes: HashMap::new(),
-            type3_font: None,
             clips: Vec::new(),
             groups: Vec::new(),
             marks: Vec::new(),
@@ -1678,6 +1884,7 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
             recent_font_keys: [(0, 0, 0); 8],
             recent_font_next: 0,
             images: 0,
+            xref,
             budget,
             error: None,
         }
@@ -1745,16 +1952,21 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
     }
 
     /// The index of the font with key `key` in the fonts table, adding it
-    /// with what `glyph`'s program says about it.
+    /// with what `glyph`'s program and `font_dict` say about it.
     #[expect(
         clippy::disallowed_methods,
         reason = "one font per text run at most, which the caller has charged to content_element_count"
     )]
-    fn outline_font(&mut self, key: u128, glyph: &OutlineGlyph) -> Result<u32, Error> {
+    fn outline_font(
+        &mut self,
+        key: u128,
+        glyph: &OutlineGlyph,
+        font_dict: Option<&Dict<'_>>,
+    ) -> Result<u32, Error> {
         if let Some(index) = self.font_indexes.get(&key) {
             return Ok(*index);
         }
-        let font = font_tuple(glyph);
+        let font = outline_font_tuple(glyph, font_dict, self.xref, self.budget)?;
         let index = index_of(self.fonts.len())?;
         self.font_indexes.try_reserve(1).map_err(|error| {
             Error::Allocation(format!("failed to grow the font index: {error}"))
@@ -1764,17 +1976,24 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         Ok(index)
     }
 
-    fn type3_font(&mut self) -> Result<u32, Error> {
-        if let Some(index) = self.type3_font {
-            return Ok(index);
+    /// The index of a Type 3 font in the fonts table, keyed by its PDF font
+    /// dictionary so distinct Type 3 fonts keep distinct identities.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one font per text run at most, which the caller has charged to content_element_count"
+    )]
+    fn type3_font(&mut self, font_dict: Option<&Dict<'_>>) -> Result<u32, Error> {
+        let key = font_dict.map_or(FALLBACK_TYPE3_FONT_KEY, |dict| dict.cache_key());
+        if let Some(index) = self.font_indexes.get(&key) {
+            return Ok(*index);
         }
+        let font = type3_font_tuple(font_dict, self.xref, self.budget)?;
         let index = index_of(self.fonts.len())?;
-        push(
-            &mut self.fonts,
-            (String::new(), true, None, false, false, false),
-            "fonts",
-        )?;
-        self.type3_font = Some(index);
+        self.font_indexes.try_reserve(1).map_err(|error| {
+            Error::Allocation(format!("failed to grow the font index: {error}"))
+        })?;
+        push(&mut self.fonts, font, "fonts")?;
+        self.font_indexes.insert(key, index);
         Ok(index)
     }
 
@@ -1848,13 +2067,57 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         Ok(bbox.map(|bbox| transformed_rect(bbox, transform)))
     }
 
-    /// The form of `paint` in the path columns, adding a pattern to the table
-    /// when it is new, or `None` when a value of the paint is not finite.
+    /// Interns a path color's stored PDF color space and original component
+    /// values in [`PathTable::stored_colors`], charging new entries to
+    /// `LimitCode::MemorySize`.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "interned stored color is bounded by path count (content_element_count) and \
+                  charged to memory_size before allocation"
+    )]
+    fn intern_stored_color(&mut self, space: u8, components: &[f32]) -> Result<i32, Error> {
+        let mut bits = with_capacity(components.len(), "stored color key")?;
+        bits.extend(components.iter().map(|&value| value.to_bits()));
+        let key = (space, bits);
+        if let Some(&index) = self.stored_color_indexes.get(&key) {
+            return Ok(index);
+        }
+        let stored_components = copy_color_components(components, self.budget)?;
+        let key_bytes = key
+            .1
+            .len()
+            .saturating_mul(std::mem::size_of::<u32>())
+            .saturating_add(std::mem::size_of::<StoredColorTuple>());
+        self.budget
+            .charge(LimitCode::MemorySize, key_bytes as u64)?;
+        let index = offset(self.paths.stored_colors.len())?;
+        self.stored_color_indexes.try_reserve(1).map_err(|error| {
+            Error::Allocation(format!("failed to grow the stored color index: {error}"))
+        })?;
+        push(
+            &mut self.paths.stored_colors,
+            (space, stored_components),
+            PATH_COLUMNS,
+        )?;
+        self.stored_color_indexes.insert(key, index);
+        Ok(index)
+    }
+
+    /// The form of `paint` in the path columns, adding a pattern or stored
+    /// color to the table when it is new, or `None` when a value of the paint
+    /// is not finite.
     fn path_paint(&mut self, paint: &Paint<'_>) -> Result<Option<PathPaint>, Error> {
         if let Paint::Color(color) = paint {
             let rgba = color.to_rgba().components();
-            let finite = rgba.iter().all(|value| value.is_finite());
-            return Ok(finite.then_some(PathPaint::Color(rgba)));
+            let raw_components = color.components();
+            let finite = rgba.iter().all(|value| value.is_finite())
+                && raw_components.iter().all(|value| value.is_finite());
+            if !finite {
+                return Ok(None);
+            }
+            let space = color_space_code(color.color_space());
+            let stored = self.intern_stored_color(space, raw_components)?;
+            return Ok(Some(PathPaint::Color(rgba, stored)));
         }
         let Paint::Pattern(pattern) = paint else {
             unreachable!("colors returned above");
@@ -1870,7 +2133,7 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         if cacheable && let Some(&index) = self.pattern_indexes.get(&key) {
             return Ok(Some(PathPaint::Pattern(index)));
         }
-        let mut paint = paint_tuple(paint)?;
+        let mut paint = paint_tuple(paint, self.budget)?;
         if !paint_is_finite(&paint) {
             return Ok(None);
         }
@@ -2093,16 +2356,30 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
             return Ok(());
         }
         let (render_mode, fill, stroke) = match mode {
-            DrawMode::Fill(_) => (RENDER_FILL, Some(paint_tuple(&props.paint)?), None),
+            DrawMode::Fill(_) => (
+                RENDER_FILL,
+                Some(paint_tuple(&props.paint, self.budget)?),
+                None,
+            ),
             DrawMode::Stroke(stroke) => (
                 RENDER_STROKE,
                 None,
-                Some(StrokeRecord::new(&props.paint, stroke, props.transform)?),
+                Some(StrokeRecord::new(
+                    &props.paint,
+                    stroke,
+                    props.transform,
+                    self.budget,
+                )?),
             ),
             DrawMode::FillAndStroke(_, stroke) => (
                 RENDER_FILL_STROKE,
-                Some(paint_tuple(&props.paint)?),
-                Some(StrokeRecord::new(&props.paint, stroke, props.transform)?),
+                Some(paint_tuple(&props.paint, self.budget)?),
+                Some(StrokeRecord::new(
+                    &props.paint,
+                    stroke,
+                    props.transform,
+                    self.budget,
+                )?),
             ),
             DrawMode::Invisible => (RENDER_INVISIBLE, None, None),
         };
@@ -2124,8 +2401,12 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         let context = self.item_context(props.blend_mode, props.soft_mask.as_ref())?;
         self.charge(1 + glyphs.len())?;
         let font = match &**first {
-            Glyph::Outline(outline) => self.outline_font(font_key, outline)?,
-            Glyph::Type3(_) => self.type3_font()?,
+            Glyph::Outline(outline) => self.outline_font(font_key, outline, run.font_dict())?,
+            Glyph::Type3(_) => self.type3_font(run.font_dict())?,
+        };
+        let writing_mode = match run.writing_mode() {
+            WritingMode::Horizontal => WRITING_HORIZONTAL,
+            WritingMode::Vertical => WRITING_VERTICAL,
         };
         let mut ids = with_capacity(glyphs.len(), "glyph IDs")?;
         let mut texts = with_capacity(glyphs.len(), "glyph text")?;
@@ -2190,6 +2471,7 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
             extent,
             first_shown: self.first_shown,
             context,
+            writing_mode,
         };
         push(
             &mut self.records,
@@ -2391,8 +2673,16 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
             }
         }
         for (key, index) in &self.font_indexes {
-            if let Some(font) = fonts.remove(key) {
-                self.fonts[*index as usize] = font;
+            if let Some((face_name, weight, is_italic, is_serif, is_monospace)) = fonts.remove(key)
+            {
+                let entry = &mut self.fonts[*index as usize];
+                if entry.0.is_empty() && !face_name.is_empty() {
+                    entry.0 = face_name;
+                }
+                entry.2 = weight;
+                entry.3 = is_italic;
+                entry.4 = is_serif;
+                entry.5 = is_monospace;
             }
         }
         Ok(())
@@ -2437,19 +2727,128 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
     }
 }
 
-/// The font of an outline glyph.
-fn font_tuple(glyph: &OutlineGlyph) -> FontTuple {
+/// Strips a six-uppercase-letter subset tag (`ABCDEF+`, ISO 32000-2 §9.9.2).
+fn strip_subset_prefix(name: &str) -> &str {
+    let bytes = name.as_bytes();
+    if bytes.len() > 7 && bytes[6] == b'+' && bytes[..6].iter().all(u8::is_ascii_uppercase) {
+        &name[7..]
+    } else {
+        name
+    }
+}
+
+/// Whether `font` has an embedded font program stream in its `/FontDescriptor`.
+fn dict_has_font_file(font: &Dict<'_>) -> bool {
+    font.get::<Dict<'_>>(b"FontDescriptor")
+        .is_some_and(|descriptor| {
+            [b"FontFile".as_slice(), b"FontFile2", b"FontFile3"]
+                .iter()
+                .any(|key| descriptor.get::<Stream<'_>>(key).is_some())
+        })
+}
+
+/// Whether the PDF font dictionary embeds an external font program stream.
+/// Type 3 fonts draw glyph procedures from `/CharProcs` and have no font file.
+fn font_dict_is_embedded(dict: &Dict<'_>, subtype: &str) -> bool {
+    match subtype {
+        "Type0" => dict
+            .get::<Array<'_>>(b"DescendantFonts")
+            .and_then(|array| array.iter::<Dict<'_>>().next())
+            .is_some_and(|descendant| dict_has_font_file(&descendant)),
+        "Type3" => false,
+        _ => dict_has_font_file(dict),
+    }
+}
+
+/// Reads PDF object identity (`xref`, `/Subtype`, `/BaseFont` or Type 3 `/Name`,
+/// and embedded status) from `font_dict`, charging allocated strings to `budget`.
+///
+/// `hayro_syntax::Dict::obj_id()` inherits the enclosing indirect object's ID
+/// for direct sub-dictionaries, so `xref` is reported only when resolving that
+/// object number yields the exact same dictionary bytes.
+fn font_dict_identity(
+    font_dict: Option<&Dict<'_>>,
+    page_xref: &XRef,
+    budget: &Budget,
+) -> Result<(Option<u32>, String, String, bool), Error> {
+    let Some(dict) = font_dict else {
+        return Ok((None, String::new(), String::new(), false));
+    };
+    let xref = dict
+        .obj_id()
+        .filter(|&id| {
+            page_xref
+                .get::<Dict<'_>>(id)
+                .is_some_and(|indirect| indirect.data() == dict.data())
+        })
+        .map(|id| id.obj_number);
+    let subtype_name = dict.get::<Name<'_>>(b"Subtype");
+    let subtype_str = subtype_name.as_ref().map_or("", Name::as_str);
+    let subtype = fallible_string(subtype_str, "font subtype", budget)?;
+    let base_font = dict.get::<Name<'_>>(b"BaseFont").or_else(|| {
+        (subtype_str == "Type3")
+            .then(|| dict.get::<Name<'_>>(b"Name"))
+            .flatten()
+    });
+    let base_str = base_font
+        .as_ref()
+        .map_or("", |name| strip_subset_prefix(name.as_str()));
+    let base_name = fallible_string(base_str, "font base name", budget)?;
+    let is_embedded = font_dict_is_embedded(dict, subtype_str);
+    Ok((xref, subtype, base_name, is_embedded))
+}
+
+/// Program-derived metrics of an outline glyph.
+fn face_font_metrics(glyph: &OutlineGlyph) -> FaceFontMetrics {
     match glyph.font_data() {
         Some(data) => (
             data.postscript_name.unwrap_or_default(),
-            false,
             data.weight,
             data.is_italic,
             data.is_serif,
             data.is_monospace,
         ),
-        None => (String::new(), false, None, false, false, false),
+        None => (String::new(), None, false, false, false),
     }
+}
+
+/// The font of an outline glyph combined with its PDF font dictionary identity.
+fn outline_font_tuple(
+    glyph: &OutlineGlyph,
+    font_dict: Option<&Dict<'_>>,
+    page_xref: &XRef,
+    budget: &Budget,
+) -> Result<FontTuple, Error> {
+    let (xref, subtype, base_name, is_embedded) = font_dict_identity(font_dict, page_xref, budget)?;
+    let (program_name, weight, is_italic, is_serif, is_monospace) = face_font_metrics(glyph);
+    let name = if program_name.is_empty() {
+        base_name
+    } else {
+        program_name
+    };
+    Ok((
+        name,
+        false,
+        weight,
+        is_italic,
+        is_serif,
+        is_monospace,
+        xref,
+        subtype,
+        is_embedded,
+    ))
+}
+
+/// The font of a Type 3 glyph from its PDF font dictionary.
+fn type3_font_tuple(
+    font_dict: Option<&Dict<'_>>,
+    page_xref: &XRef,
+    budget: &Budget,
+) -> Result<FontTuple, Error> {
+    let (xref, subtype, base_name, _) = font_dict_identity(font_dict, page_xref, budget)?;
+    Ok((
+        base_name, true, None, false, false, false, xref, subtype, false,
+    ))
 }
 
 fn index_of(length: usize) -> Result<u32, Error> {
@@ -2616,7 +3015,7 @@ pub(crate) fn collect_page_content_with_stretches<'a, S: ContentSink>(
     budget: &Budget,
 ) -> Result<(PageContent, S), Error> {
     let mut context = extraction_context(page, display, cache, settings);
-    let mut collector = ContentCollector::new(sink, kinds, stretches, budget);
+    let mut collector = ContentCollector::new(sink, kinds, stretches, page.xref(), budget);
     interpret_page(page, &mut context, &mut collector);
     collector.finish(clip)
 }
@@ -2656,7 +3055,7 @@ pub(crate) fn collect_page_content_on_faces<'a, S: ContentSink>(
     let cache = InterpreterCache::new();
     let stretches = Stretches::new(&settings);
     let mut context = extraction_context(page, display, &cache, settings);
-    let mut collector = ContentCollector::new(sink, kinds, &stretches, budget);
+    let mut collector = ContentCollector::new(sink, kinds, &stretches, page.xref(), budget);
     interpret_page(page, &mut context, &mut collector);
     if collector.error.is_none() && asked.load(Ordering::Relaxed) {
         let settings = InterpreterSettings {
@@ -2782,5 +3181,121 @@ mod tests {
         rect.move_to((0.0, 0.0));
         rect.line_to((10.0, 10.0));
         assert!(path_bbox(&rect, Affine::new([0.0; 6]).inverse()).is_none());
+    }
+
+    #[test]
+    fn stored_color_spaces_and_memory_budget_are_reported() {
+        let icc = include_bytes!("../../../../tests/assets/print-exchange/virtual-gray.icc");
+        let mut icc_hex = String::with_capacity(icc.len() * 2 + 1);
+        for &byte in icc {
+            use std::fmt::Write as _;
+            let _ = write!(&mut icc_hex, "{byte:02X}");
+        }
+        icc_hex.push('>');
+
+        let content = concat!(
+            "0.25 g 0 0 10 10 re f ",
+            "0.2 0.4 0.6 rg 10 0 10 10 re f ",
+            "0.1 0.2 0.3 0.4 k 20 0 10 10 re f ",
+            "/CS_ICC cs 0.5 scn 30 0 10 10 re f ",
+            "/CS_CALG cs 0.75 scn 40 0 10 10 re f ",
+            "/CS_CALR cs 0.1 0.5 0.9 scn 50 0 10 10 re f ",
+            "/CS_LAB cs 50 10 -20 scn 60 0 10 10 re f ",
+            "/CS_IDX cs 1 scn 70 0 10 10 re f ",
+            "/CS_SEP cs 0.6 scn 80 0 10 10 re f ",
+            "/CS_DEVN cs 0.25 0.75 scn 90 0 10 10 re f",
+        );
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /ColorSpace << \
+             /CS_ICC [/ICCBased 5 0 R] \
+             /CS_CALG [/CalGray << /WhitePoint [0.9505 1.0 1.089] /Gamma 2.2 >>] \
+             /CS_CALR [/CalRGB << /WhitePoint [0.9505 1.0 1.089] >>] \
+             /CS_LAB [/Lab << /WhitePoint [0.9505 1.0 1.089] /Range [-100 100 -100 100] >>] \
+             /CS_IDX [/Indexed /DeviceRGB 1 <FF000000FF00>] \
+             /CS_SEP [/Separation /SpotRed /DeviceRGB 6 0 R] \
+             /CS_DEVN [/DeviceN [/Cyan /Spot] /DeviceRGB 7 0 R] \
+             >> >> >>"
+                .to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
+            format!(
+                "<< /N 1 /Filter /ASCIIHexDecode /Length {} >>\nstream\n{icc_hex}\nendstream",
+                icc_hex.len()
+            ),
+            "<< /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [1 0 0] /N 1 >>".to_owned(),
+            "<< /FunctionType 4 /Domain [0 1 0 1] /Range [0 1 0 1 0 1] /Length 17 >>\nstream\n{ 1 exch sub 0 } \nendstream"
+                .to_owned(),
+        ];
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (at, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", at + 1).as_bytes());
+        }
+        let xref = out.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+
+        let bridged = Bridged::of_bytes(out);
+        let kinds = ItemKinds {
+            text_runs: false,
+            paths: true,
+            images: false,
+        };
+        let content = page_content(
+            &bridged,
+            &Fallback::default(),
+            0,
+            kinds,
+            true,
+            None,
+            &Budget::default(),
+        )
+        .unwrap();
+        assert_eq!(content.paths.rows(), 10);
+        let expected_spaces = [
+            COLOR_SPACE_DEVICE_GRAY,
+            COLOR_SPACE_DEVICE_RGB,
+            COLOR_SPACE_DEVICE_CMYK,
+            COLOR_SPACE_ICC_BASED,
+            COLOR_SPACE_CAL_GRAY,
+            COLOR_SPACE_CAL_RGB,
+            COLOR_SPACE_LAB,
+            COLOR_SPACE_INDEXED,
+            COLOR_SPACE_SEPARATION,
+            COLOR_SPACE_DEVICE_N,
+        ];
+        let actual_spaces: Vec<u8> = (0..content.paths.rows())
+            .map(|row| content.paths.tuple(row).3.unwrap().2.unwrap().0)
+            .collect();
+        assert_eq!(actual_spaces, expected_spaces);
+
+        // A tight memory budget refuses stored color allocation cleanly.
+        let limits = pyropdf_store::budget::DocumentLimits {
+            max_memory_size: Some(16),
+            ..Default::default()
+        };
+        let tight = Budget::new(&limits);
+        let err =
+            page_content(&bridged, &Fallback::default(), 0, kinds, true, None, &tight).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Limit(refusal) if refusal.code() == LimitCode::MemorySize
+        ));
     }
 }
