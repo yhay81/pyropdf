@@ -137,6 +137,7 @@ method and property of its classes with its full description.
 - [`MoveTo`](text-and-content.md#moveto): Start a new subpath at `to`.
 - [`Paint`](text-and-content.md#paint): A solid color, pattern, shading, or gradient paint; a canvas also repaints axial/radial `ShadingPattern` values.
 - [`Path`](text-and-content.md#path): A path that is filled, stroked, or both.
+- [`PathCluster`](text-and-content.md#pathcluster): A display-space cluster of nearby vector paths.
 - [`Paths`](text-and-content.md#paths_1): The paths of a page as columns, from `Page.paths`.
 - [`PatternPaint`](text-and-content.md#patternpaint): Paint with an indirect tiling or shading pattern in the canvas document.
 - [`RadialGradient`](text-and-content.md#radialgradient): A paint for a `Canvas` that changes color between two circles.

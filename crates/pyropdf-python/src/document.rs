@@ -120,6 +120,11 @@ impl _Document {
         self.check_at_open
     }
 
+    /// Returns the document's configured operational limits.
+    pub(crate) const fn limits(&self) -> &DocumentLimits {
+        &self.limits
+    }
+
     fn with_history(
         document: Document,
         limits: DocumentLimits,

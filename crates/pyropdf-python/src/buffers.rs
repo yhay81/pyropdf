@@ -17,11 +17,12 @@ use pyropdf_engine::extract::buffers::{
     clear_bitmap_bits, column_buffer_view, plain_bytes as bytes, row_range_valid, set_bitmap_bit,
 };
 use pyropdf_engine::extract::{
-    BBox, BlockTuple, ClipTuple, Contexts, GroupTuple, MarkTuple, PageContent, PaintColumns,
-    PaintTuple, PathTable, StateTuple, StoredColorTuple,
+    BBox, BlockTuple, ClipTuple, ClusterOptions, Contexts, GroupTuple, MarkTuple, PageContent,
+    PaintColumns, PaintTuple, PathClusterTuple, PathTable, StateTuple, StoredColorTuple,
+    cluster_path_table,
 };
 use pyropdf_store::LimitExceeded;
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, DocumentLimits, LimitCode};
 
 use crate::errors::{PdfError, limit_error};
 use crate::history::OperationBudget;
@@ -497,14 +498,16 @@ impl Columns for PathTable {
 pub struct PathColumns {
     table: Arc<PathTable>,
     contexts: Arc<Contexts>,
+    limits: DocumentLimits,
 }
 
 impl PathColumns {
-    /// Returns the columns of the paths of `content`.
-    pub(crate) fn new(content: &PageContent) -> Self {
+    /// Returns the columns of the paths of `content` under `limits`.
+    pub(crate) fn new(content: &PageContent, limits: DocumentLimits) -> Self {
         Self {
             table: Arc::clone(&content.paths),
             contexts: Arc::clone(&content.contexts),
+            limits,
         }
     }
 }
@@ -573,6 +576,43 @@ impl PathColumns {
     /// that path color paints index.
     fn stored_colors(&self) -> PyResult<&[StoredColorTuple]> {
         crate::errors::boundary(|| self.table.stored_colors.as_slice())
+    }
+
+    /// Clusters rows `start..stop` into display-space bounding boxes and
+    /// ascending zero-based path indices relative to `start`, with the GIL
+    /// released and honoring the document's operational limits.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the options of Paths.clusters and Content.path_clusters"
+    )]
+    fn clusters(
+        &self,
+        py: Python<'_>,
+        start: usize,
+        stop: usize,
+        x_tolerance: f64,
+        y_tolerance: f64,
+        exclude_background: bool,
+        max_clusters: Option<usize>,
+    ) -> PyResult<Vec<PathClusterTuple>> {
+        crate::errors::boundary(|| {
+            rows_of(start, stop, self.table.rows())?;
+            let options = ClusterOptions {
+                x_tolerance,
+                y_tolerance,
+                exclude_background,
+                max_clusters,
+            };
+            py.detach(|| {
+                let budget = Budget::new(&self.limits);
+                cluster_path_table(&self.table, start, stop, options, &budget).map_err(|error| {
+                    match error {
+                        pyropdf_engine::extract::Error::Limit(refusal) => limit_error(&refusal),
+                        other => PdfError::new_err(other.to_string()),
+                    }
+                })
+            })
+        })?
     }
 
     /// Samples a retained axial/radial shading only when a canvas repaints it.

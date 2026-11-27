@@ -17,7 +17,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, overload
 
+from pyropdf import _core
 from pyropdf._geometry import Matrix, Point, Rect
+from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._pixmap import Colorspace
 
 if TYPE_CHECKING:
@@ -572,6 +574,26 @@ class Path:
     soft_mask: SoftMask | None
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PathCluster:
+    """A display-space cluster of nearby vector paths.
+
+    Returned by :meth:`Paths.clusters` and :meth:`Content.path_clusters`.
+    :attr:`path_indices` holds the zero-based paint-order positions of the
+    clustered paths in the source :class:`Paths` view or :attr:`Content.paths`.
+    """
+
+    bbox: Rect
+    """The union of the clustered paths' painted boxes in display coordinates."""
+    path_indices: tuple[int, ...]
+    """Zero-based paint-order indices of the paths belonging to this cluster."""
+
+    @property
+    def count(self) -> int:
+        """Return the number of paths in this cluster."""
+        return len(self.path_indices)
+
+
 class _Source:
     """The document that read an item, which a pickle leaves out."""
 
@@ -637,7 +659,8 @@ ContentItem: TypeAlias = TextRun | Path | Image
 class _ContentOrigin:
     """Keep playback provenance outside the public dataclass fields and pickle."""
 
-    __slots__ = ("_page",)
+    __slots__ = ("_columns", "_page")
+    _columns: PathColumns
     _page: _RetainedPage
 
 
@@ -721,24 +744,58 @@ class Content(_ContentOrigin, Sequence[ContentItem]):
         """Return the images in paint order."""
         return tuple(item for item in self.items if isinstance(item, Image))
 
-    def path_clusters(self, *, x_tolerance: float = 3, y_tolerance: float = 3) -> list[Rect]:
-        """Return the boxes of the groups of paths that lie near one another.
+    def path_clusters(
+        self,
+        *,
+        x_tolerance: float = 3.0,
+        y_tolerance: float = 3.0,
+        exclude_background: bool = True,
+        max_clusters: int | None = 4096,
+    ) -> list[PathCluster]:
+        """Group nearby vector paths into display-space :class:`PathCluster` regions.
 
-        A group's box grows by every path whose box overlaps it or comes
-        within ``x_tolerance`` points horizontally and ``y_tolerance`` points
-        vertically, until no path and no other group comes that near; the
-        boxes are sorted from top to bottom and left to right. Paths whose box
-        holds no area once widened by half their stroke width are left out. Use
-        this to group the vector strokes and fills of a figure or diagram; call
-        ``page.content(clip=page.rect).path_clusters()`` to exclude paths
-        outside the page box.
+        Each path's painted box is widened by half its stroke width (keeping
+        hairline strokes of positive length and dropping zero-area fills).
+        Paths whose boxes overlap or come within ``x_tolerance`` points
+        horizontally and ``y_tolerance`` points vertically are merged
+        transitively until no cluster box reaches another; clusters are sorted
+        from top to bottom and left to right, and each cluster's
+        :attr:`~PathCluster.path_indices` indexes :attr:`paths` in paint order.
+
+        With ``exclude_background=True`` (the default) on page-captured content,
+        axis-aligned full-page background rectangles covering at least 95% of
+        both the visible page width and height are omitted before clustering.
+        More than ``max_clusters`` resulting clusters raise :class:`LimitError`
+        with code ``content_element_count`` (``None`` lifts the cap for trusted
+        input). Working buffers and execution honor the source document's
+        :class:`DocumentLimits`.
         """
-        for name, value in (("x_tolerance", x_tolerance), ("y_tolerance", y_tolerance)):
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
-                msg = f"{name} must be a finite number of points, at least 0: {value!r}"
-                raise ValueError(msg)
-        boxes = [box for item in self.items if isinstance(item, Path) and (box := _painted_box(item)) is not None]
-        return _clusters(boxes, float(x_tolerance), float(y_tolerance))
+        xt, yt = _validate_cluster_options(
+            x_tolerance=x_tolerance,
+            y_tolerance=y_tolerance,
+            exclude_background=exclude_background,
+            max_clusters=max_clusters,
+        )
+        columns = getattr(self, "_columns", None)
+        if columns is not None:
+            raw = columns.clusters(0, len(columns), xt, yt, exclude_background, max_clusters)
+        else:
+            boxes = [
+                (
+                    item.bbox.x0,
+                    item.bbox.y0,
+                    item.bbox.x1,
+                    item.bbox.y1,
+                    item.fill is not None,
+                    item.stroke is not None,
+                    0.0 if item.stroke is None else item.stroke.width,
+                    _path_is_axis_aligned_rect(item),
+                )
+                for item in self.items
+                if isinstance(item, Path)
+            ]
+            raw = _core.cluster_path_boxes(boxes, None, xt, yt, exclude_background, max_clusters)
+        return [PathCluster(bbox=_rect(bbox), path_indices=tuple(indices)) for bbox, indices in raw]
 
 
 class Paths(Sequence[Path]):
@@ -928,6 +985,42 @@ class Paths(Sequence[Path]):
         """Return the column ``name`` of :attr:`names` as a read-only ``memoryview``, without a copy."""
         return memoryview(self._columns.column(name, self._start, self._stop))
 
+    def clusters(
+        self,
+        *,
+        x_tolerance: float = 3.0,
+        y_tolerance: float = 3.0,
+        exclude_background: bool = True,
+        max_clusters: int | None = 4096,
+    ) -> list[PathCluster]:
+        """Group nearby vector paths in this view into display-space :class:`PathCluster` regions.
+
+        Clustering runs directly over the columnar buffers in Rust without
+        materializing Python :class:`Path` objects, releasing the GIL and
+        honoring the source document's :class:`DocumentLimits`. Each path's
+        painted box is widened by half its stroke width (keeping hairline
+        strokes of positive length and dropping zero-area fills). Paths within
+        ``x_tolerance`` points horizontally and ``y_tolerance`` points
+        vertically are merged transitively until no cluster box reaches
+        another; clusters are sorted from top to bottom and left to right, and
+        :attr:`~PathCluster.path_indices` holds zero-based indices into this
+        :class:`Paths` view.
+
+        With ``exclude_background=True`` (the default), axis-aligned full-page
+        background rectangles covering at least 95% of both the visible page
+        width and height are omitted before clustering. More than
+        ``max_clusters`` resulting clusters raise :class:`LimitError` with code
+        ``content_element_count`` (``None`` lifts the cap for trusted input).
+        """
+        xt, yt = _validate_cluster_options(
+            x_tolerance=x_tolerance,
+            y_tolerance=y_tolerance,
+            exclude_background=exclude_background,
+            max_clusters=max_clusters,
+        )
+        raw = self._columns.clusters(self._start, self._stop, xt, yt, exclude_background, max_clusters)
+        return [PathCluster(bbox=_rect(bbox), path_indices=tuple(indices)) for bbox, indices in raw]
+
     def __arrow_c_schema__(self) -> object:
         """Return the Arrow schema of the rows as a PyCapsule."""
         return self._columns.arrow_schema()
@@ -946,69 +1039,66 @@ class Paths(Sequence[Path]):
 _PATH_ROWS_PER_READ = 4096
 
 
-def _painted_box(path: Path) -> Rect | None:
-    """Return a path's box, widened by half its stroke's width, or ``None`` when it holds no area."""
-    x0, y0, x1, y1 = path.bbox
-    if path.stroke is not None:
-        half = path.stroke.width / 2
-        x0, y0, x1, y1 = x0 - half, y0 - half, x1 + half, y1 + half
-    if x1 <= x0 or y1 <= y0:
+#: Bitmask with all four corners of an axis-aligned rectangle visited.
+_ALL_RECT_CORNERS = 0b1111
+
+
+def _validate_cluster_options(
+    *,
+    x_tolerance: float,
+    y_tolerance: float,
+    exclude_background: bool,
+    max_clusters: int | None,
+) -> tuple[float, float]:
+    """Validate keyword options shared by :meth:`Paths.clusters` and :meth:`Content.path_clusters`."""
+    for name, value in (("x_tolerance", x_tolerance), ("y_tolerance", y_tolerance)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+            msg = f"{name} must be a finite number of points, at least 0: {value!r}"
+            raise ValueError(msg)
+    if not isinstance(exclude_background, bool):
+        msg = f"exclude_background must be a bool: {exclude_background!r}"
+        raise TypeError(msg)
+    _validate_optional_positive_int("max_clusters", max_clusters)
+    return float(x_tolerance), float(y_tolerance)
+
+
+def _rect_corner_bit(x: float, y: float, bbox: Rect, eps: float) -> int | None:
+    """Return the bit for ``(x, y)`` if it sits on a corner of ``bbox`` within ``eps``."""
+    left, right = abs(x - bbox.x0) <= eps, abs(x - bbox.x1) <= eps
+    top, bottom = abs(y - bbox.y0) <= eps, abs(y - bbox.y1) <= eps
+    if not (left or right) or not (top or bottom):
         return None
-    return Rect(x0, y0, x1, y1)
+    return 1 << ((int(right) << 1) | int(bottom))
 
 
-def _near_pair(boxes: list[Rect], x_tolerance: float, y_tolerance: float) -> tuple[int, int] | None:
-    """Return the indexes of two boxes that come within the tolerances, the second after the first."""
-    for first, a in enumerate(boxes):
-        for second in range(first + 1, len(boxes)):
-            b = boxes[second]
-            if (
-                a.x0 - x_tolerance <= b.x1
-                and b.x0 - x_tolerance <= a.x1
-                and a.y0 - y_tolerance <= b.y1
-                and b.y0 - y_tolerance <= a.y1
-            ):
-                return first, second
-    return None
-
-
-def _clusters(boxes: list[Rect], x_tolerance: float, y_tolerance: float) -> list[Rect]:
-    """Return the union of each group of boxes that come within the tolerances.
-
-    A sweep over the boxes sorted by their left edge compares each box only
-    with the boxes whose right edge it can still reach, and a disjoint-set
-    forest gathers the groups.
-    """
-    order = sorted(range(len(boxes)), key=lambda index: boxes[index].x0)
-    parent = list(range(len(boxes)))
-
-    def root(index: int) -> int:
-        while parent[index] != index:
-            parent[index] = parent[parent[index]]
-            index = parent[index]
-        return index
-
-    active: list[int] = []
-    for index in order:
-        box = boxes[index]
-        reach = box.x0 - x_tolerance
-        active = [other for other in active if boxes[other].x1 >= reach]
-        for other in active:
-            near = boxes[other]
-            if near.y0 - y_tolerance <= box.y1 and box.y0 - y_tolerance <= near.y1:
-                parent[root(other)] = root(index)
-        active.append(index)
-    groups: dict[int, Rect] = {}
-    for index, box in enumerate(boxes):
-        group = root(index)
-        groups[group] = groups[group] | box if group in groups else box
-    # A group's box can reach paths, or other groups, that none of its own
-    # paths does; merge such groups until none comes near another.
-    clusters = list(groups.values())
-    while (pair := _near_pair(clusters, x_tolerance, y_tolerance)) is not None:
-        first, second = pair
-        clusters[first] |= clusters.pop(second)
-    return sorted(clusters, key=lambda box: (box.y0, box.x0))
+def _path_is_axis_aligned_rect(path: Path) -> bool:
+    """Return whether ``path`` consists of axis-aligned straight edges visiting all four bbox corners."""
+    bbox = path.bbox
+    if not (bbox.x1 > bbox.x0 and bbox.y1 > bbox.y0):
+        return False
+    eps = max(1e-3, 1e-6 * max(bbox.x1 - bbox.x0, bbox.y1 - bbox.y0))
+    corners = 0
+    start: tuple[float, float] | None = None
+    current: tuple[float, float] | None = None
+    for segment in path.segments:
+        if isinstance(segment, MoveTo):
+            bit = _rect_corner_bit(segment.to.x, segment.to.y, bbox, eps)
+            if bit is None:
+                return False
+            corners |= bit
+            start = current = (segment.to.x, segment.to.y)
+        elif isinstance(segment, LineTo | ClosePath):
+            target = start if isinstance(segment, ClosePath) else (segment.to.x, segment.to.y)
+            if current is None or target is None:
+                return False
+            bit = _rect_corner_bit(target[0], target[1], bbox, eps)
+            if bit is None or (abs(target[0] - current[0]) > eps and abs(target[1] - current[1]) > eps):
+                return False
+            corners |= bit
+            current = target
+        else:
+            return False
+    return corners == _ALL_RECT_CORNERS
 
 
 _BLEND_MODES = tuple(BlendMode)
@@ -1420,7 +1510,9 @@ def _content_from_core(
             converted.append(converter.path(item))
         else:
             converted.append(converter.image(item))
-    return Content(items=tuple(converted))
+    content = Content(items=tuple(converted))
+    object.__setattr__(content, "_columns", columns)
+    return content
 
 
 # The package re-exports these names; reprs, pickles, and documentation name it.
@@ -1456,6 +1548,7 @@ for _public in (
     Glyph,
     TextRun,
     Path,
+    PathCluster,
     Image,
     Content,
     Paths,

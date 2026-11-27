@@ -913,6 +913,8 @@ pub struct PathTable {
     /// Owned hayro paints, shared by the rows, without evaluating their
     /// functions while extracting content. Non-shading patterns have no source.
     shadings: Vec<Option<ShadingPattern>>,
+    /// Visible display size of the page `(width, height)` in points.
+    pub page_size: (f64, f64),
 }
 
 /// Whether the gradient is axial, its coordinates and extension flags, and
@@ -1045,10 +1047,11 @@ impl PathTable {
         )))
     }
 
-    fn new() -> Self {
+    fn new(page_size: (f64, f64)) -> Self {
         Self {
             segment_offsets: vec![0],
             stroke_dashes_offsets: vec![0],
+            page_size,
             ..Self::default()
         }
     }
@@ -1850,13 +1853,14 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         kinds: ItemKinds,
         stretches: &'c Stretches<'a>,
         xref: &'a XRef,
+        page_size: (f64, f64),
         budget: &'b Budget,
     ) -> Self {
         Self {
             sink,
             kinds,
             records: Vec::new(),
-            paths: PathTable::new(),
+            paths: PathTable::new(page_size),
             pattern_indexes: HashMap::new(),
             stored_color_indexes: HashMap::new(),
             segments: Segments::default(),
@@ -3015,7 +3019,8 @@ pub(crate) fn collect_page_content_with_stretches<'a, S: ContentSink>(
     budget: &Budget,
 ) -> Result<(PageContent, S), Error> {
     let mut context = extraction_context(page, display, cache, settings);
-    let mut collector = ContentCollector::new(sink, kinds, stretches, page.xref(), budget);
+    let mut collector =
+        ContentCollector::new(sink, kinds, stretches, page.xref(), display.size(), budget);
     interpret_page(page, &mut context, &mut collector);
     collector.finish(clip)
 }
@@ -3055,7 +3060,8 @@ pub(crate) fn collect_page_content_on_faces<'a, S: ContentSink>(
     let cache = InterpreterCache::new();
     let stretches = Stretches::new(&settings);
     let mut context = extraction_context(page, display, &cache, settings);
-    let mut collector = ContentCollector::new(sink, kinds, &stretches, page.xref(), budget);
+    let mut collector =
+        ContentCollector::new(sink, kinds, &stretches, page.xref(), display.size(), budget);
     interpret_page(page, &mut context, &mut collector);
     if collector.error.is_none() && asked.load(Ordering::Relaxed) {
         let settings = InterpreterSettings {

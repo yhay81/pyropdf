@@ -162,6 +162,16 @@ class PathColumns:
     def contexts(self) -> tuple[list[Any], list[Any], list[Any], list[Any]]: ...
     def patterns(self) -> list[tuple[int, list[float], _StoredColor | None]]: ...
     def stored_colors(self) -> list[_StoredColor]: ...
+    def clusters(
+        self,
+        start: int,
+        stop: int,
+        x_tolerance: float,
+        y_tolerance: float,
+        exclude_background: bool,
+        max_clusters: int | None,
+        /,
+    ) -> list[tuple[tuple[float, float, float, float], list[int]]]: ...
     def sample_shading(
         self, pattern: int, operation: _OperationBudget
     ) -> (
@@ -831,6 +841,15 @@ def page_paths(
     max_elements: int | None,
     /,
 ) -> PathColumns: ...
+def cluster_path_boxes(
+    boxes: list[tuple[float, float, float, float, bool, bool, float, bool]],
+    page_size: tuple[float, float] | None,
+    x_tolerance: float,
+    y_tolerance: float,
+    exclude_background: bool,
+    max_clusters: int | None,
+    /,
+) -> list[tuple[tuple[float, float, float, float], list[int]]]: ...
 
 _Box: TypeAlias = tuple[float, float, float, float]
 _CoreTable: TypeAlias = tuple[

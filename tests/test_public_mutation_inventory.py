@@ -796,7 +796,7 @@ READ_ONLY = {
     "PageImage": "pixmap stored",
     "PageLabelRange": "label",
     "Pages": "labeled index",
-    "Paths": "column",
+    "Paths": "column clusters",
     "Pixmap": (
         "invert gamma tint to_gray to_rgb with_alpha without_alpha crop scale rotate flip warp "
         "pixel with_pixel fill color_count colors top_color from_bytes open to_pil to_bytes "

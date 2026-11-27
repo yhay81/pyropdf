@@ -334,19 +334,32 @@ The images in paint order.
 ### `path_clusters`
 
 ```python
-Content.path_clusters(*, x_tolerance: float = 3, y_tolerance: float = 3) -> list[Rect]
+Content.path_clusters(
+    *,
+    x_tolerance: float = 3.0,
+    y_tolerance: float = 3.0,
+    exclude_background: bool = True,
+    max_clusters: int | None = 4096,
+) -> list[PathCluster]
 ```
 
-Return the boxes of the groups of paths that lie near one another.
+Group nearby vector paths into display-space `PathCluster` regions.
 
-A group's box grows by every path whose box overlaps it or comes
-within `x_tolerance` points horizontally and `y_tolerance` points
-vertically, until no path and no other group comes that near; the
-boxes are sorted from top to bottom and left to right. Paths whose box
-holds no area once widened by half their stroke width are left out. Use
-this to group the vector strokes and fills of a figure or diagram; call
-`page.content(clip=page.rect).path_clusters()` to exclude paths
-outside the page box.
+Each path's painted box is widened by half its stroke width (keeping
+hairline strokes of positive length and dropping zero-area fills).
+Paths whose boxes overlap or come within `x_tolerance` points
+horizontally and `y_tolerance` points vertically are merged
+transitively until no cluster box reaches another; clusters are sorted
+from top to bottom and left to right, and each cluster's
+`PathCluster.path_indices` indexes `paths` in paint order.
+
+With `exclude_background=True` (the default) on page-captured content,
+axis-aligned full-page background rectangles covering at least 95% of
+both the visible page width and height are omitted before clustering.
+More than `max_clusters` resulting clusters raise `LimitError`
+with code `content_element_count` (`None` lifts the cap for trusted
+input). Working buffers and execution honor the source document's
+`DocumentLimits`.
 
 ## `ContentItem`
 
@@ -753,6 +766,26 @@ Path(
 
 A path that is filled, stroked, or both.
 
+## `PathCluster`
+
+```python
+PathCluster(*, bbox: Rect, path_indices: tuple[int, ...])
+```
+
+A display-space cluster of nearby vector paths.
+
+Returned by `Paths.clusters` and `Content.path_clusters`.
+`path_indices` holds the zero-based paint-order positions of the
+clustered paths in the source `Paths` view or `Content.paths`.
+
+### `count`
+
+```python
+PathCluster.count: int
+```
+
+The number of paths in this cluster.
+
 ## `Paths`
 
 ```python
@@ -874,6 +907,37 @@ Paths.column(name: str) -> memoryview
 ```
 
 Return the column `name` of `names` as a read-only `memoryview`, without a copy.
+
+### `clusters`
+
+```python
+Paths.clusters(
+    *,
+    x_tolerance: float = 3.0,
+    y_tolerance: float = 3.0,
+    exclude_background: bool = True,
+    max_clusters: int | None = 4096,
+) -> list[PathCluster]
+```
+
+Group nearby vector paths in this view into display-space `PathCluster` regions.
+
+Clustering runs directly over the columnar buffers in Rust without
+materializing Python `Path` objects, releasing the GIL and
+honoring the source document's `DocumentLimits`. Each path's
+painted box is widened by half its stroke width (keeping hairline
+strokes of positive length and dropping zero-area fills). Paths within
+`x_tolerance` points horizontally and `y_tolerance` points
+vertically are merged transitively until no cluster box reaches
+another; clusters are sorted from top to bottom and left to right, and
+`PathCluster.path_indices` holds zero-based indices into this
+`Paths` view.
+
+With `exclude_background=True` (the default), axis-aligned full-page
+background rectangles covering at least 95% of both the visible page
+width and height are omitted before clustering. More than
+`max_clusters` resulting clusters raise `LimitError` with code
+`content_element_count` (`None` lifts the cap for trusted input).
 
 ### `__arrow_c_schema__`
 
