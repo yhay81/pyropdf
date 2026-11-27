@@ -199,7 +199,10 @@ impl Bridged {
         };
         let (bytes, update) = match (handler, version.base().file()) {
             (Some(_), Some(file))
-                if bridge.is_none() && !version.has_changes() && extra.is_empty() =>
+                if bridge.is_none()
+                    && !version.has_changes()
+                    && extra.is_empty()
+                    && !file.is_repaired() =>
             {
                 (copy(file.bytes(), budget)?, 0)
             }
@@ -481,7 +484,7 @@ fn update(
                     version,
                 )?
             }
-            (None, None) => base_row(version, number, &mut out, budget)?,
+            (None, None) => base_row(version, number, &mut out, handler, budget)?,
         };
         rows.try_push(entry)?;
     }
@@ -604,6 +607,7 @@ fn base_row(
     version: &Version,
     number: u32,
     out: &mut BudgetVec<'_, u8>,
+    handler: Option<&Handler>,
     budget: &Budget,
 ) -> Result<[u8; 13]> {
     let base = version.base();
@@ -632,7 +636,21 @@ fn base_row(
             // stream that does not decode, is absent to the store.
             match file.object_stream(stream, budget) {
                 Ok(Some(objects)) if objects.mismatched().binary_search(&number).is_err() => {
-                    row(2, u64::from(stream), index)
+                    if file.is_repaired() {
+                        let reference = Reference::new(number, generation);
+                        if let Some(bytes) = base.object(reference, budget)? {
+                            return object(
+                                out,
+                                reference,
+                                Body::Serialized(&bytes),
+                                handler,
+                                version,
+                            );
+                        }
+                        row(0, 0, 0)
+                    } else {
+                        row(2, u64::from(stream), index)
+                    }
                 }
                 Err(error) if error.limit().is_some() => return Err(error.into()),
                 _ => row(0, 0, 0),
