@@ -11,6 +11,9 @@ Ported from pylopdf 036be111 ``tests/test_tables.py``. The differences:
 
 from __future__ import annotations
 
+import sys
+import types
+
 import pytest
 from test_content import build_raw_pdf
 from test_text import build_text_pdf
@@ -634,3 +637,300 @@ def test_tables_read_the_current_version_within_the_text_budgets() -> None:
     del document.pages[0]
     with pytest.raises(pyropdf.StalePageError):
         page.tables()
+
+
+def test_explicit_line_guides_extract_borderless_and_rotated_tables() -> None:
+    """Extract borderless tables using display-space explicit line guides across rotations."""
+    doc = pyropdf.open(_borderless_table_pdf())
+    page = doc.pages[0]
+    assert page.tables() == []
+
+    # Full explicit grid (display y = 300 - pdf_y; rows at pdf_y 240, 210, 180 -> display y 60, 90, 120).
+    [full] = page.tables(horizontal_lines=[45, 75, 105, 135], vertical_lines=[35, 150, 260])
+    assert full.rows == (("Name", "Value"), ("Alpha", "42"), ("Beta", "7"))
+    assert full.bbox == pytest.approx(pyropdf.Rect(35, 45, 260, 135))
+    assert full.header_rows == 1
+    assert full.headers == ("Name", "Value")
+
+    # Vertical guides alone derive row bounds from aligned text lines.
+    [vert_only] = page.tables(vertical_lines=[35, 150, 260])
+    assert vert_only.rows == (("Name", "Value"), ("Alpha", "42"), ("Beta", "7"))
+
+    # Horizontal guides alone derive column bounds from separated text segments.
+    [horiz_only] = page.tables(horizontal_lines=[45, 75, 105, 135])
+    assert horiz_only.rows == (("Name", "Value"), ("Alpha", "42"), ("Beta", "7"))
+
+    # Rotated 90 deg CW: display_x = pdf_y, display_y = pdf_x (page size 300 x 340).
+    page.rotation = 90
+    [rotated] = page.tables(horizontal_lines=[35, 150, 260], vertical_lines=[165, 195, 225, 255])
+    assert (len(rotated.rows), len(rotated.rows[0])) == (2, 3)
+    assert rotated.rows == (("Beta", "Alpha", "Name"), ("7", "42", "Value"))
+
+
+def test_explicit_guide_augments_partially_ruled_grid() -> None:
+    """Add a missing internal horizontal rule to an otherwise ruled table."""
+    # Remove the middle horizontal rule at pdf y=220 (display y=80).
+    pdf = _bordered_table_pdf().replace(b"40 220 m 300 220 l\n", b"")
+    page = pyropdf.open(pdf).pages[0]
+    assert page.tables() == []
+
+    [table] = page.tables(horizontal_lines=[80])
+    assert table.rows == (("Name", "Value"), ("Alpha", "42"))
+
+
+def test_tolerance_options_tune_near_miss_rules_and_tight_gutters() -> None:
+    """Tune join_tolerance, snap_tolerance, min_gutter, and min_words options."""
+    # 1. Near-miss rule corners: horizontal rules end 2.5 pt short of vertical edges (42.5..297.5 vs 40..300).
+    near_miss_pdf = _table_pdf(
+        "q 0 G 1 w\n"
+        "42.5 260 m 297.5 260 l\n"
+        "42.5 220 m 297.5 220 l\n"
+        "42.5 180 m 297.5 180 l\n"
+        "40 180 m 40 260 l\n"
+        "170 180 m 170 260 l\n"
+        "300 180 m 300 260 l\n"
+        f"S Q\n{_CELLS}"
+    )
+    near_miss_page = pyropdf.open(near_miss_pdf).pages[0]
+    assert near_miss_page.tables() == []
+    [joined] = near_miss_page.tables(join_tolerance=3.0)
+    assert joined.rows == (("Name", "Value"), ("Alpha", "42"))
+
+    # 2. Misaligned collinear rule segments shifted by 2.2 pt in y.
+    misaligned_pdf = _table_pdf(
+        "q 0 G 1 w\n"
+        "40 260 m 170 260 l 170 262.2 m 300 262.2 l\n"
+        "40 220 m 300 220 l\n"
+        "40 180 m 300 180 l\n"
+        "40 180 m 40 262.2 l\n"
+        "170 180 m 170 262.2 l\n"
+        "300 180 m 300 262.2 l\n"
+        f"S Q\n{_CELLS}"
+    )
+    misaligned_page = pyropdf.open(misaligned_pdf).pages[0]
+    assert misaligned_page.tables() == []
+    [snapped] = misaligned_page.tables(snap_tolerance=3.0)
+    assert snapped.rows == (("Name", "Value"), ("Alpha", "42"))
+
+    # 3. Tight column gutter (~1.1 em at 12pt font: left ends near x=56, right starts at x=70 -> 14pt = 1.17 em).
+    tight_stream = "\n".join(
+        f"BT /F1 12 Tf 40 {240 - row * 20} Td ({left}) Tj ET\nBT /F1 12 Tf 70 {240 - row * 20} Td ({right}) Tj ET"
+        for row, (left, right) in enumerate([("ID", "Val"), ("A1", "10"), ("B2", "20")])
+    )
+    tight_page = pyropdf.open(_table_pdf(tight_stream)).pages[0]
+    assert tight_page.tables(strategy="text") == []
+    [tight] = tight_page.tables(strategy="text", min_gutter=0.9)
+    assert tight.rows == (("ID", "Val"), ("A1", "10"), ("B2", "20"))
+
+    # 4. min_words_vertical and min_words_horizontal on borderless tables.
+    two_row_page = pyropdf.open(_borderless_table_pdf(rows=2)).pages[0]
+    assert two_row_page.tables(strategy="text") == []
+    [two_row] = two_row_page.tables(strategy="text", min_words_vertical=2)
+    assert two_row.rows == (("Name", "Value"), ("Alpha", "42"))
+
+    three_row_page = pyropdf.open(_borderless_table_pdf(rows=3)).pages[0]
+    assert three_row_page.tables(strategy="text", min_words_horizontal=3) == []
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error", "code"),
+    [
+        ({"horizontal_lines": [float("nan")]}, ValueError, None),
+        ({"vertical_lines": [float("inf")]}, ValueError, None),
+        ({"horizontal_lines": "10,20"}, TypeError, None),
+        ({"vertical_lines": [True, False]}, TypeError, None),
+        ({"horizontal_lines": list(range(4097))}, pyropdf.LimitError, "text_rule_count"),
+        (
+            {"horizontal_lines": list(range(2049)), "vertical_lines": list(range(2048))},
+            pyropdf.LimitError,
+            "text_rule_count",
+        ),
+        ({"snap_tolerance": -1.0}, ValueError, None),
+        ({"snap_tolerance": float("inf")}, ValueError, None),
+        ({"snap_tolerance": 1001.0}, ValueError, None),
+        ({"snap_tolerance": True}, TypeError, None),
+        ({"join_tolerance": -0.5}, ValueError, None),
+        ({"join_tolerance": float("nan")}, ValueError, None),
+        ({"min_gutter": 0.0}, ValueError, None),
+        ({"min_gutter": -1.0}, ValueError, None),
+        ({"min_gutter": 200.0}, ValueError, None),
+        ({"min_words_vertical": 0}, ValueError, None),
+        ({"min_words_vertical": True}, TypeError, None),
+        ({"min_words_vertical": 4097}, pyropdf.LimitError, "table_cell_count"),
+        ({"min_words_horizontal": 0}, ValueError, None),
+        ({"min_words_horizontal": 33}, pyropdf.LimitError, "table_column_count"),
+    ],
+)
+def test_tables_validates_guide_and_tolerance_bounds(
+    kwargs: dict[str, object], error: type[Exception], code: str | None
+) -> None:
+    page = pyropdf.open(_bordered_table_pdf()).pages[0]
+    with pytest.raises(error) as caught:
+        page.tables(**kwargs)  # ty: ignore[invalid-argument-type]
+    if code is not None:
+        assert isinstance(caught.value, pyropdf.LimitError)
+        assert caught.value.code == code
+
+
+def test_header_detection_distinguishes_single_multirow_bold_and_headerless() -> None:
+    """Detect single-row, multi-row merged, bold all-text, and headerless tables."""
+    # 1. Standard single-row header via text-to-numeric transition.
+    [single] = pyropdf.open(_bordered_table_pdf()).pages[0].tables()
+    assert single.header_rows == 1
+    assert single.headers == ("Name", "Value")
+
+    # 2. Headerless table (numeric values in row 0 matching body rows, uniform regular font).
+    headerless_pdf = _table_pdf(
+        "q 0 G 1 w\n"
+        "40 260 m 300 260 l 40 230 m 300 230 l 40 200 m 300 200 l 40 170 m 300 170 l\n"
+        "40 170 m 40 260 l 170 170 m 170 260 l 300 170 m 300 260 l S Q\n"
+        "BT /F1 12 Tf 50 242 Td (Alpha) Tj ET BT /F1 12 Tf 180 242 Td (10) Tj ET\n"
+        "BT /F1 12 Tf 50 212 Td (Beta) Tj ET BT /F1 12 Tf 180 212 Td (20) Tj ET\n"
+        "BT /F1 12 Tf 50 182 Td (Gamma) Tj ET BT /F1 12 Tf 180 182 Td (30) Tj ET"
+    )
+    [headerless] = pyropdf.open(headerless_pdf).pages[0].tables()
+    assert headerless.header_rows == 0
+    assert headerless.headers == ()
+
+    # 3. Bold all-text header (no numeric columns, bold font distinguishes row 0).
+    bold_stream = (
+        "q 0 G 1 w\n"
+        "40 260 m 300 260 l 40 230 m 300 230 l 40 200 m 300 200 l 40 170 m 300 170 l\n"
+        "40 170 m 40 260 l 170 170 m 170 260 l 300 170 m 300 260 l S Q\n"
+        "BT /F2 12 Tf 50 242 Td (Name) Tj ET BT /F2 12 Tf 180 242 Td (City) Tj ET\n"
+        "BT /F1 12 Tf 50 212 Td (Alice) Tj ET BT /F1 12 Tf 180 212 Td (Tokyo) Tj ET\n"
+        "BT /F1 12 Tf 50 182 Td (Bob) Tj ET BT /F1 12 Tf 180 182 Td (Osaka) Tj ET"
+    )
+    bold_pdf = build_raw_pdf({
+        1: "<< /Type /Catalog /Pages 2 0 R >>",
+        2: "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 340 300]"
+        " /Resources << /Font << /F1 3 0 R /F2 6 0 R >> >> >>",
+        3: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+        5: f"<< /Length {len(bold_stream)} >>\nstream\n{bold_stream}\nendstream",
+        6: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+    })  # fmt: skip
+    [bold_table] = pyropdf.open(bold_pdf).pages[0].tables()
+    assert bold_table.header_rows == 1
+    assert bold_table.headers == ("Name", "City")
+
+    # 4. Multi-row merged group header:
+    # Row 0: "Metric" (rowspan 2) | "2025" (colspan 2)
+    # Row 1: (covered)            | "Rev" | "Cost"
+    # Row 2: "Sales"              | "100" | "60"
+    # Row 3: "Profit"             | "40"  | "20"
+    multi_pdf = _table_pdf(
+        "q 0 G 1 w\n"
+        "40 260 m 300 260 l\n"
+        "140 230 m 300 230 l\n"
+        "40 200 m 300 200 l\n"
+        "40 170 m 300 170 l\n"
+        "40 140 m 300 140 l\n"
+        "40 140 m 40 260 l\n"
+        "140 140 m 140 260 l\n"
+        "220 140 m 220 230 l\n"
+        "300 140 m 300 260 l\n"
+        "S Q\n"
+        "BT /F1 12 Tf 50 225 Td (Metric) Tj ET\n"
+        "BT /F1 12 Tf 190 242 Td (2025) Tj ET\n"
+        "BT /F1 12 Tf 150 212 Td (Rev) Tj ET\n"
+        "BT /F1 12 Tf 230 212 Td (Cost) Tj ET\n"
+        "BT /F1 12 Tf 50 182 Td (Sales) Tj ET\n"
+        "BT /F1 12 Tf 150 182 Td (100) Tj ET\n"
+        "BT /F1 12 Tf 230 182 Td (60) Tj ET\n"
+        "BT /F1 12 Tf 50 152 Td (Profit) Tj ET\n"
+        "BT /F1 12 Tf 150 152 Td (40) Tj ET\n"
+        "BT /F1 12 Tf 230 152 Td (20) Tj ET"
+    )
+    [multi] = pyropdf.open(multi_pdf).pages[0].tables()
+    assert multi.header_rows == 2
+    assert multi.headers == ("Metric", "2025 Rev", "2025 Cost")
+    assert multi.to_dicts() == [
+        {"Metric": "Sales", "2025 Rev": "100", "2025 Cost": "60"},
+        {"Metric": "Profit", "2025 Rev": "40", "2025 Cost": "20"},
+    ]
+
+    # 5. Structural two-row merged header in real corpus table.
+    [senate] = pyropdf.open("tests/assets/real_world/senate-expenditures.pdf").pages[0].tables()
+    assert senate.header_rows == 2
+    assert senate.headers == (
+        "DOCUMENT NO.",
+        "DATE POSTED",
+        "PAYEE NAME",
+        "OBLIGATION/SERVICE DATES START",
+        "OBLIGATION/SERVICE DATES END",
+        "DESCRIPTION",
+        "AMOUNT ($)",
+    )
+    assert senate.to_dicts()[0]["PAYEE NAME"] == "BAIN, J MATTHEW"
+    assert senate.to_dicts()[0]["AMOUNT ($)"] == "37,499.96"
+
+
+def test_table_to_dicts_and_to_dataframe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Export rows via to_dicts() and optional to_dataframe() with header & span controls."""
+    [table] = pyropdf.open(_bordered_table_pdf()).pages[0].tables()
+    assert table.to_dicts() == [{"Name": "Alpha", "Value": "42"}]
+    assert table.to_dicts(header_rows=0) == [
+        {"column_0": "Name", "column_1": "Value"},
+        {"column_0": "Alpha", "column_1": "42"},
+    ]
+    assert table.to_dicts(header_rows=2) == []
+
+    # Duplicate and empty headers are disambiguated deterministically.
+    diag = pyropdf.TableDiagnostics(
+        strategy="lines", confidence=1.0, alignment_error_em=None, minimum_gutter_em=None, row_gap_variation_em=None
+    )
+    rect = pyropdf.Rect(0, 0, 10, 10)
+    dup_table = pyropdf.Table(
+        bbox=rect,
+        rows=(("Amount", "Amount", ""), ("1", "2", "3")),
+        cells=((rect, rect, rect), (rect, rect, rect)),
+        diagnostics=diag,
+        header_rows=1,
+        headers=("Amount", "Amount", ""),
+    )
+    assert dup_table.to_dicts() == [{"Amount": "1", "Amount_2": "2", "column_2": "3"}]
+
+    # Merged cell export honors fill_empty.
+    rowspan_pdf = _bordered_table_pdf().replace(b"40 220 m 300 220 l", b"80 220 m 300 220 l")
+    [rowspan] = pyropdf.open(rowspan_pdf).pages[0].tables()
+    assert rowspan.to_dicts(header_rows=0, fill_empty=False) == [
+        {"column_0": "Name\nAlpha", "column_1": "Value"},
+        {"column_0": None, "column_1": "42"},
+    ]
+    assert rowspan.to_dicts(header_rows=0, fill_empty=True) == [
+        {"column_0": "Name\nAlpha", "column_1": "Value"},
+        {"column_0": "Name\nAlpha", "column_1": "42"},
+    ]
+
+    # Validation errors on export helpers.
+    with pytest.raises(TypeError, match="header_rows"):
+        table.to_dicts(header_rows=True)
+    with pytest.raises(ValueError, match="header_rows"):
+        table.to_dicts(header_rows=5)
+    with pytest.raises(TypeError, match="fill_empty"):
+        table.to_dicts(fill_empty=1)  # ty: ignore[invalid-argument-type]
+
+    # to_dataframe() raises ImportError when pandas is absent.
+    monkeypatch.setitem(sys.modules, "pandas", None)
+    with pytest.raises(ImportError, match="pandas"):
+        table.to_dataframe()
+
+    # to_dataframe() delegates to pandas.DataFrame when pandas is installed.
+    captured: dict[str, object] = {}
+
+    class _FakeDataFrame:
+        def __init__(self, data: object, columns: object) -> None:
+            captured["data"] = data
+            captured["columns"] = columns
+
+    fake_pandas = types.ModuleType("pandas")
+    fake_pandas.DataFrame = _FakeDataFrame  # ty: ignore[missing-attribute]
+    monkeypatch.setitem(sys.modules, "pandas", fake_pandas)
+
+    df = table.to_dataframe()
+    assert isinstance(df, _FakeDataFrame)
+    assert captured == {"data": [["Alpha", "42"]], "columns": ["Name", "Value"]}
+    assert isinstance(table, pyropdf.Table)
+    with pytest.raises(AttributeError):
+        table.header_rows = 2  # ty: ignore[invalid-assignment]

@@ -59,7 +59,12 @@ with pyropdf.open("input.pdf") as doc:
 ## 表と Markdown
 
 `page.tables()` は罫線から表を見つけます。`strategy="text"` ならテキストの揃いから
-見つけます。`page.markdown()` と `doc.markdown()` は表も含めてページを Markdown にします。
+見つけます。罫線のない表や一部のみ罫線のある表では、表示座標の
+`horizontal_lines` / `vertical_lines` ガイドや、`snap_tolerance`・`join_tolerance`・
+`min_gutter`・`min_words_vertical`・`min_words_horizontal` の各種許容値を指定できます。
+各 `Table` は検出した `header_rows`・`headers` に加え、`to_dicts()`、任意の `pandas`
+を使う `to_dataframe()`、`markdown()` を提供します。`page.markdown()` と `doc.markdown()`
+は表も含めてページを Markdown にします。
 
 文書がタグ付きで信頼性チェック（`/MarkInfo << /Marked true >>`、`/Suspects` なし、
 正常な構造ツリー、非アーティファクト本文の十分な網羅率）を満たす場合、既定の
@@ -77,6 +82,7 @@ import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
     for table in doc.pages[0].tables():
+        print(table.headers, table.to_dicts())
         print(table.markdown())
     print(doc.markdown())
     print(doc.markdown(use_structure="never"))  # 幾何レイアウトを強制

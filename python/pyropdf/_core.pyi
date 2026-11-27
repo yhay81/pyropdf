@@ -834,8 +834,15 @@ def page_paths(
 
 _Box: TypeAlias = tuple[float, float, float, float]
 _CoreTable: TypeAlias = tuple[
-    _Box, int, int, list[tuple[_Box, str] | None], list[int], tuple[float, float | None, float | None, float | None]
+    _Box,
+    int,
+    int,
+    list[tuple[_Box, str] | None],
+    list[int],
+    tuple[float, float | None, float | None, float | None],
+    int,
 ]
+_TableOptions: TypeAlias = tuple[bool, _Box | None, list[float], list[float], float, float, float, int, int]
 _TextOptions: TypeAlias = tuple[tuple[float, float, float, float] | None, bool, int, bool, bool, bool, bool, bool, bool]
 
 def page_text(
@@ -911,8 +918,7 @@ def page_tables(
     document: _Document | _PageSnapshot,
     number: int,
     generation: int,
-    text_strategy: bool,
-    clip: tuple[float, float, float, float] | None,
+    options: _TableOptions,
     max_glyphs: int | None,
     max_size: int | None,
     /,

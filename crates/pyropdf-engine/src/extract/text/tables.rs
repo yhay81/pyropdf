@@ -8,9 +8,9 @@ use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 
 use super::layout::{RuleSegment, glyphs_bbox};
 use super::{
-    BBox, Error, GlyphRecord, LINE_SEGMENT_GAP, LINE_TOLERANCE, RtlLineOrder, TextOptions, as_u64,
-    cluster_lines, collect_page_glyphs, glyph_end, glyph_is_nonspacing_mark, glyph_progress,
-    glyphs_rtl_order, has_vertical_baseline, line_bbox, line_segment_count, needs_gap,
+    BBox, Error, FontInfo, GlyphRecord, LINE_SEGMENT_GAP, LINE_TOLERANCE, RtlLineOrder,
+    TextOptions, as_u64, cluster_lines, collect_page_glyphs, glyph_end, glyph_is_nonspacing_mark,
+    glyph_progress, glyphs_rtl_order, has_vertical_baseline, line_bbox, needs_gap,
     try_push_glyph_text, try_push_str_text, try_push_text,
 };
 use crate::bridge::Bridged;
@@ -22,8 +22,6 @@ const MIN_TEXT_TABLE_ROWS: usize = 3;
 const TEXT_TABLE_ALIGNMENT_TOLERANCE: f64 = 1.0;
 /// The widest gap, in ems, between two rows of one text table.
 const TEXT_TABLE_ROW_GAP: f64 = 2.5;
-/// Fewest evenly led text records that split a coarse grid span.
-const MIN_HYBRID_GRID_ROWS: usize = 3;
 /// The share of a grid's slots that the inferred records occupy.
 const HYBRID_GRID_OCCUPANCY_RATIO: f64 = 0.5;
 /// How alike the occupied slots of two inferred records are.
@@ -48,6 +46,70 @@ const BORDERLESS_BODY_SLOT_SIMILARITY: f64 = 0.6;
 /// attach to the preceding record.
 const CONTINUATION_MAX_EDGE_GAP: f64 = 1.25;
 
+/// Caller-supplied geometry and detection tuning for [`page_tables`].
+#[derive(Clone, Debug)]
+pub struct TableOptions {
+    pub text_strategy: bool,
+    pub clip: Option<BBox>,
+    pub horizontal_lines: Vec<f64>,
+    pub vertical_lines: Vec<f64>,
+    pub snap_tolerance: f64,
+    pub join_tolerance: f64,
+    pub min_gutter: f64,
+    pub min_words_vertical: usize,
+    pub min_words_horizontal: usize,
+}
+
+impl Default for TableOptions {
+    fn default() -> Self {
+        Self {
+            text_strategy: false,
+            clip: None,
+            horizontal_lines: Vec::new(),
+            vertical_lines: Vec::new(),
+            snap_tolerance: TABLE_SNAP_TOLERANCE,
+            join_tolerance: TABLE_SNAP_TOLERANCE,
+            min_gutter: LINE_SEGMENT_GAP,
+            min_words_vertical: MIN_TEXT_TABLE_ROWS,
+            min_words_horizontal: 2,
+        }
+    }
+}
+
+/// Scalar geometric tolerances copied from [`TableOptions`].
+#[derive(Clone, Copy, Debug)]
+struct TableTolerances {
+    snap: f64,
+    join: f64,
+    min_gutter: f64,
+    min_words_vertical: usize,
+    min_words_horizontal: usize,
+}
+
+impl Default for TableTolerances {
+    fn default() -> Self {
+        Self {
+            snap: TABLE_SNAP_TOLERANCE,
+            join: TABLE_SNAP_TOLERANCE,
+            min_gutter: LINE_SEGMENT_GAP,
+            min_words_vertical: MIN_TEXT_TABLE_ROWS,
+            min_words_horizontal: 2,
+        }
+    }
+}
+
+impl From<&TableOptions> for TableTolerances {
+    fn from(options: &TableOptions) -> Self {
+        Self {
+            snap: options.snap_tolerance,
+            join: options.join_tolerance,
+            min_gutter: options.min_gutter,
+            min_words_vertical: options.min_words_vertical,
+            min_words_horizontal: options.min_words_horizontal,
+        }
+    }
+}
+
 /// A table slot: its box and text, or `None` for a slot that a merged cell
 /// covers.
 pub type TableCell = Option<(BBox, String)>;
@@ -57,7 +119,8 @@ type BorrowedWord<'a> = (BBox, &'a [GlyphRecord]);
 /// gutter, and row gap variation in ems.
 pub type TableDiagnosticsTuple = (f64, Option<f64>, Option<f64>, Option<f64>);
 /// A table: its box, row and column counts, row-major slots, the slot that
-/// anchors the cell covering each slot, and its diagnostics.
+/// anchors the cell covering each slot, its diagnostics, and the detected
+/// leading header row count.
 pub type TableTuple = (
     BBox,
     u32,
@@ -65,11 +128,11 @@ pub type TableTuple = (
     Vec<TableCell>,
     Vec<u32>,
     TableDiagnosticsTuple,
+    u32,
 );
 
-/// Returns the tables of the page at `index` whose whole box lies inside
-/// `clip`, from its vector rules or, with `text_strategy`, from its aligned
-/// borderless rows; and the number of glyphs without Unicode left out.
+/// Returns the tables of the page at `index` according to `options`, and the
+/// number of glyphs without Unicode left out.
 ///
 /// The page's glyphs count against the budgets of [`super::page_text`]
 /// while detection runs, and the text of the cells of a ruled table against
@@ -77,36 +140,155 @@ pub type TableTuple = (
 pub fn page_tables(
     bridged: &Arc<Bridged>,
     index: usize,
-    text_strategy: bool,
-    clip: Option<BBox>,
+    options: &TableOptions,
     budget: &Budget,
 ) -> Result<(Vec<TableTuple>, usize), Error> {
-    let options = TextOptions {
-        styles: !text_strategy,
+    let tol = TableTolerances::from(options);
+    let explicit_xs = clustered_coordinates(
+        copy_f64_slice(&options.vertical_lines, "explicit vertical table lines")?,
+        tol.snap,
+    );
+    let explicit_ys = clustered_coordinates(
+        copy_f64_slice(&options.horizontal_lines, "explicit horizontal table lines")?,
+        tol.snap,
+    );
+    let full_explicit = explicit_xs.len() >= 2 && explicit_ys.len() >= 2;
+    let text_options = TextOptions {
+        styles: !options.text_strategy && !full_explicit,
         ..TextOptions::default()
     };
-    let collected =
-        collect_page_glyphs(bridged, &Fallback::default(), index, &options, None, budget)?;
+    let collected = collect_page_glyphs(
+        bridged,
+        &Fallback::default(),
+        index,
+        &text_options,
+        None,
+        budget,
+    )?;
     let charge = collected.charge;
+    let fonts = collected.fonts;
+    let page_box = (
+        collected.page_box.x0,
+        collected.page_box.y0,
+        collected.page_box.x1,
+        collected.page_box.y1,
+    );
+    let rules = collected.rules;
     let detected = cluster_lines(collected.glyphs).and_then(|lines| {
-        if text_strategy {
-            detect_text_tables(&lines, budget)
-        } else {
-            detect_grid_tables(&lines, &collected.rules, budget)
+        budget.check(
+            LimitCode::TextRuleCount,
+            as_u64(rules.len())
+                .saturating_add(as_u64(options.horizontal_lines.len()))
+                .saturating_add(as_u64(options.vertical_lines.len())),
+        )?;
+        if full_explicit {
+            let word_lines = build_word_lines(&lines)?;
+            let mut tables = Vec::new();
+            if let Some(table) = materialize_explicit_grid(
+                &explicit_xs,
+                &explicit_ys,
+                &word_lines,
+                tol,
+                &fonts,
+                budget,
+            )? {
+                try_push_text(&mut tables, table, "explicit grid tables")?;
+            }
+            return Ok(tables);
         }
+        if options.text_strategy {
+            if !explicit_xs.is_empty() || !explicit_ys.is_empty() {
+                let word_lines = build_word_lines(&lines)?;
+                let mut tables = Vec::new();
+                if let Some(table) = detect_single_axis_explicit_table(
+                    &lines,
+                    &word_lines,
+                    &explicit_xs,
+                    &explicit_ys,
+                    options.clip,
+                    tol,
+                    &fonts,
+                    budget,
+                )? {
+                    try_push_text(&mut tables, table, "explicit guide tables")?;
+                }
+                return Ok(tables);
+            }
+            return detect_text_tables(&lines, tol, &fonts, budget);
+        }
+        if !explicit_xs.is_empty() || !explicit_ys.is_empty() {
+            let combined_rules = augment_rules_with_guides(
+                &rules,
+                &lines,
+                &explicit_xs,
+                &explicit_ys,
+                options.clip,
+                page_box,
+                budget,
+            )?;
+            let tables = detect_grid_tables(&lines, &combined_rules, tol, &fonts, true, budget)?;
+            if !tables.is_empty() {
+                return Ok(tables);
+            }
+            let word_lines = build_word_lines(&lines)?;
+            let mut fallback_tables = Vec::new();
+            if let Some(table) = detect_single_axis_explicit_table(
+                &lines,
+                &word_lines,
+                &explicit_xs,
+                &explicit_ys,
+                options.clip,
+                tol,
+                &fonts,
+                budget,
+            )? {
+                try_push_text(&mut fallback_tables, table, "explicit guide tables")?;
+            }
+            return Ok(fallback_tables);
+        }
+        detect_grid_tables(&lines, &rules, tol, &fonts, false, budget)
     });
     charge.release(budget);
     let mut tables = detected?;
-    tables.retain(|table| clip.is_none_or(|clip| bbox_is_inside(table.0, clip)));
+    tables.retain(|table| {
+        options
+            .clip
+            .is_none_or(|clip| bbox_is_inside(table.0, clip, tol.snap))
+    });
     Ok((tables, collected.skipped))
 }
 
+/// Copies a slice of `f64` values through fallible allocation.
+fn copy_f64_slice(values: &[f64], label: &str) -> Result<Vec<f64>, Error> {
+    let mut out = Vec::new();
+    for &value in values {
+        try_push_text(&mut out, value, label)?;
+    }
+    Ok(out)
+}
+
+/// Splits every clustered physical line into borrowed words once.
+fn build_word_lines<'a>(
+    physical_lines: &'a [Vec<GlyphRecord>],
+) -> Result<Vec<Vec<BorrowedWord<'a>>>, Error> {
+    let mut word_lines = Vec::new();
+    for line in physical_lines {
+        try_push_text(
+            &mut word_lines,
+            split_word_slices(line)?,
+            "bordered table word lines",
+        )?;
+    }
+    Ok(word_lines)
+}
+
 /// Returns whether a box lies inside a display-space clip.
-fn bbox_is_inside((x0, y0, x1, y1): BBox, (clip_x0, clip_y0, clip_x1, clip_y1): BBox) -> bool {
-    x0 >= clip_x0 - TABLE_SNAP_TOLERANCE
-        && y0 >= clip_y0 - TABLE_SNAP_TOLERANCE
-        && x1 <= clip_x1 + TABLE_SNAP_TOLERANCE
-        && y1 <= clip_y1 + TABLE_SNAP_TOLERANCE
+fn bbox_is_inside(
+    (x0, y0, x1, y1): BBox,
+    (clip_x0, clip_y0, clip_x1, clip_y1): BBox,
+    snap: f64,
+) -> bool {
+    x0 >= clip_x0 - snap && y0 >= clip_y0 - snap && x1 <= clip_x1 + snap && y1 <= clip_y1 + snap
 }
 
 #[expect(
@@ -132,14 +314,33 @@ fn table_slots(rows: usize, columns: usize, budget: &Budget) -> Result<usize, Er
         .ok_or_else(|| Error::Allocation("table slots exceed the address space".to_owned()))
 }
 
+/// Count widely separated segments along one line using `min_gutter` ems.
+fn line_segment_count_with(line: &[GlyphRecord], min_gutter: f64) -> usize {
+    let mut count = usize::from(!line.is_empty());
+    let mut previous_end: Option<f64> = None;
+    let mut previous_size = 0.0_f64;
+    for glyph in line {
+        let threshold = previous_size.max(glyph.size).max(1.0) * min_gutter;
+        if previous_end.is_some_and(|end| glyph_progress(glyph) - end > threshold) {
+            count += 1;
+        }
+        previous_end = Some(glyph_end(glyph));
+        previous_size = glyph.size;
+    }
+    count
+}
+
 /// Borrows the independently positioned columns or cells of one line.
-fn split_line_segment_slices(line: &[GlyphRecord]) -> Result<Vec<&[GlyphRecord]>, Error> {
+fn split_line_segment_slices(
+    line: &[GlyphRecord],
+    min_gutter: f64,
+) -> Result<Vec<&[GlyphRecord]>, Error> {
     let mut segments = Vec::new();
     let mut segment_start = 0;
     let mut previous_end: Option<f64> = None;
     let mut previous_size = 0.0_f64;
     for (index, glyph) in line.iter().enumerate() {
-        let threshold = previous_size.max(glyph.size).max(1.0) * LINE_SEGMENT_GAP;
+        let threshold = previous_size.max(glyph.size).max(1.0) * min_gutter;
         if previous_end.is_some_and(|end| glyph_progress(glyph) - end > threshold) {
             try_push_text(
                 &mut segments,
@@ -262,16 +463,16 @@ impl RuleComponents {
     }
 }
 
-/// Return whether perpendicular rule segments meet within snap tolerance.
-fn rules_intersect(horizontal: RuleSegment, vertical: RuleSegment) -> bool {
-    vertical.x0 >= horizontal.x0 - TABLE_SNAP_TOLERANCE
-        && vertical.x0 <= horizontal.x1 + TABLE_SNAP_TOLERANCE
-        && horizontal.y0 >= vertical.y0 - TABLE_SNAP_TOLERANCE
-        && horizontal.y0 <= vertical.y1 + TABLE_SNAP_TOLERANCE
+/// Return whether perpendicular rule segments meet within join tolerance.
+fn rules_intersect(horizontal: RuleSegment, vertical: RuleSegment, join: f64) -> bool {
+    vertical.x0 >= horizontal.x0 - join
+        && vertical.x0 <= horizontal.x1 + join
+        && horizontal.y0 >= vertical.y0 - join
+        && horizontal.y0 <= vertical.y1 + join
 }
 
 /// Snap nearby line coordinates to one stable grid coordinate.
-fn clustered_coordinates(mut values: Vec<f64>) -> Vec<f64> {
+fn clustered_coordinates(mut values: Vec<f64>, snap: f64) -> Vec<f64> {
     values.sort_unstable_by(f64::total_cmp);
     if values.is_empty() {
         return values;
@@ -281,7 +482,7 @@ fn clustered_coordinates(mut values: Vec<f64>) -> Vec<f64> {
     let mut count = 1usize;
     for read in 1..values.len() {
         let value = values[read];
-        if (value - sum / count as f64).abs() <= TABLE_SNAP_TOLERANCE {
+        if (value - sum / count as f64).abs() <= snap {
             sum += value;
             count += 1;
         } else {
@@ -303,6 +504,7 @@ fn rule_covers(
     fixed: f64,
     start: f64,
     end: f64,
+    tol: TableTolerances,
 ) -> Result<bool, Error> {
     let mut intervals = Vec::new();
     for rule in rules {
@@ -310,7 +512,7 @@ fn rule_covers(
             continue;
         }
         let rule_fixed = if horizontal { rule.y0 } else { rule.x0 };
-        if (rule_fixed - fixed).abs() > TABLE_SNAP_TOLERANCE {
+        if (rule_fixed - fixed).abs() > tol.snap {
             continue;
         }
         let (rule_start, rule_end) = if horizontal {
@@ -318,7 +520,7 @@ fn rule_covers(
         } else {
             (rule.y0, rule.y1)
         };
-        if rule_end >= start - TABLE_SNAP_TOLERANCE && rule_start <= end + TABLE_SNAP_TOLERANCE {
+        if rule_end >= start - tol.join && rule_start <= end + tol.join {
             try_push_text(
                 &mut intervals,
                 (rule_start, rule_end),
@@ -330,11 +532,11 @@ fn rule_covers(
 
     let mut covered = start;
     for (interval_start, interval_end) in intervals {
-        if interval_start > covered + TABLE_SNAP_TOLERANCE {
+        if interval_start > covered + tol.join {
             break;
         }
         covered = covered.max(interval_end);
-        if covered >= end - TABLE_SNAP_TOLERANCE {
+        if covered >= end - tol.join {
             return Ok(true);
         }
     }
@@ -342,14 +544,22 @@ fn rule_covers(
 }
 
 /// Return whether a candidate cell has all four outer borders.
-fn cell_is_bounded(rules: &[RuleSegment], (x0, y0, x1, y1): BBox) -> Result<bool, Error> {
-    Ok(rule_covers(rules, true, y0, x0, x1)?
-        && rule_covers(rules, true, y1, x0, x1)?
-        && rule_covers(rules, false, x0, y0, y1)?
-        && rule_covers(rules, false, x1, y0, y1)?)
+fn cell_is_bounded(
+    rules: &[RuleSegment],
+    (x0, y0, x1, y1): BBox,
+    tol: TableTolerances,
+) -> Result<bool, Error> {
+    Ok(rule_covers(rules, true, y0, x0, x1, tol)?
+        && rule_covers(rules, true, y1, x0, x1, tol)?
+        && rule_covers(rules, false, x0, y0, y1, tol)?
+        && rule_covers(rules, false, x1, y0, y1, tol)?)
 }
 
 /// Reject a spanning candidate if a complete internal rule splits it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "grid rules, bounds, candidate cell span, and tolerances"
+)]
 fn cell_has_internal_split(
     rules: &[RuleSegment],
     xs: &[f64],
@@ -358,16 +568,17 @@ fn cell_has_internal_split(
     row_end: usize,
     column_start: usize,
     column_end: usize,
+    tol: TableTolerances,
 ) -> Result<bool, Error> {
     let (x0, x1) = (xs[column_start], xs[column_end]);
     let (y0, y1) = (ys[row_start], ys[row_end]);
     for &x in &xs[column_start + 1..column_end] {
-        if rule_covers(rules, false, x, y0, y1)? {
+        if rule_covers(rules, false, x, y0, y1, tol)? {
             return Ok(true);
         }
     }
     for &y in &ys[row_start + 1..row_end] {
-        if rule_covers(rules, true, y, x0, x1)? {
+        if rule_covers(rules, true, y, x0, x1, tol)? {
             return Ok(true);
         }
     }
@@ -384,10 +595,11 @@ fn materialize_grid_cells(
     xs: &[f64],
     ys: &[f64],
     word_lines: &[Vec<BorrowedWord<'_>>],
+    tol: TableTolerances,
     budget: &Budget,
 ) -> Result<Option<MaterializedGrid>, Error> {
     let mut charged = 0;
-    let grid = tile_grid_cells(rules, xs, ys, word_lines, budget, &mut charged);
+    let grid = tile_grid_cells(rules, xs, ys, word_lines, tol, budget, &mut charged);
     if !matches!(grid, Ok(Some(_))) {
         budget.release(LimitCode::TextSize, as_u64(charged));
     }
@@ -401,6 +613,7 @@ fn tile_grid_cells(
     xs: &[f64],
     ys: &[f64],
     word_lines: &[Vec<BorrowedWord<'_>>],
+    tol: TableTolerances,
     budget: &Budget,
     charged: &mut usize,
 ) -> Result<Option<MaterializedGrid>, Error> {
@@ -427,8 +640,11 @@ fn tile_grid_cells(
                 xs[column_start + 1],
                 ys[row_start + 1],
             );
-            let mut best =
-                cell_is_bounded(rules, base_bbox)?.then_some((1, row_start + 1, column_start + 1));
+            let mut best = cell_is_bounded(rules, base_bbox, tol)?.then_some((
+                1,
+                row_start + 1,
+                column_start + 1,
+            ));
             if best.is_none() {
                 for row_end in row_start + 1..=row_count {
                     for column_end in column_start + 1..=column_count {
@@ -442,7 +658,7 @@ fn tile_grid_cells(
                             continue;
                         }
                         let bbox = (xs[column_start], ys[row_start], xs[column_end], ys[row_end]);
-                        if !cell_is_bounded(rules, bbox)?
+                        if !cell_is_bounded(rules, bbox, tol)?
                             || cell_has_internal_split(
                                 rules,
                                 xs,
@@ -451,6 +667,7 @@ fn tile_grid_cells(
                                 row_end,
                                 column_start,
                                 column_end,
+                                tol,
                             )?
                         {
                             continue;
@@ -467,7 +684,10 @@ fn tile_grid_cells(
                 return Ok(None);
             };
             let bbox = (xs[column_start], ys[row_start], xs[column_end], ys[row_end]);
-            cells[slot] = Some((bbox, cell_text(word_lines, bbox, budget, charged)?));
+            cells[slot] = Some((
+                bbox,
+                cell_text(word_lines, bbox, tol.snap, budget, charged)?,
+            ));
             let Ok(anchor) = u32::try_from(slot) else {
                 return Ok(None);
             };
@@ -487,10 +707,10 @@ fn tile_grid_cells(
 }
 
 /// Return the interval containing one coordinate within snapped grid bounds.
-fn grid_interval(bounds: &[f64], coordinate: f64) -> Option<usize> {
-    bounds.windows(2).position(|pair| {
-        coordinate >= pair[0] - TABLE_SNAP_TOLERANCE && coordinate <= pair[1] + TABLE_SNAP_TOLERANCE
-    })
+fn grid_interval(bounds: &[f64], coordinate: f64, snap: f64) -> Option<usize> {
+    bounds
+        .windows(2)
+        .position(|pair| coordinate >= pair[0] - snap && coordinate <= pair[1] + snap)
 }
 
 /// Return the cross-axis grid slots occupied by one physical text line.
@@ -498,6 +718,7 @@ fn line_grid_slots<'b>(
     line: &[GlyphRecord],
     bounds: &[f64],
     horizontal: bool,
+    snap: f64,
     budget: &'b Budget,
 ) -> Result<BudgetVec<'b, bool>, Error> {
     let mut occupied = BudgetVec::new(budget);
@@ -508,7 +729,7 @@ fn line_grid_slots<'b>(
         } else {
             (y0 + y1) * 0.5
         };
-        if let Some(index) = grid_interval(bounds, coordinate) {
+        if let Some(index) = grid_interval(bounds, coordinate, snap) {
             occupied[index] = true;
         }
     }
@@ -546,6 +767,7 @@ fn infer_hybrid_grid_rules(
     axis_bounds: &[f64],
     cross_bounds: &[f64],
     horizontal: bool,
+    tol: TableTolerances,
     budget: &Budget,
 ) -> Result<Vec<RuleSegment>, Error> {
     let cross_count = cross_bounds.len().saturating_sub(1);
@@ -554,6 +776,7 @@ fn infer_hybrid_grid_rules(
     }
     let minimum_occupancy =
         ((cross_count as f64 * HYBRID_GRID_OCCUPANCY_RATIO).ceil() as usize).max(2);
+    let min_rows = tol.min_words_vertical.max(2);
     let mut inferred = Vec::new();
     for interval in axis_bounds.windows(2) {
         budget.poll()?;
@@ -569,19 +792,17 @@ fn infer_hybrid_grid_rules(
             let (x0, y0, x1, y1) = line_bbox(line);
             let (start, end) = if horizontal { (y0, y1) } else { (x0, x1) };
             let center = (start + end) * 0.5;
-            if center < interval[0] - TABLE_SNAP_TOLERANCE
-                || center > interval[1] + TABLE_SNAP_TOLERANCE
-            {
+            if center < interval[0] - tol.snap || center > interval[1] + tol.snap {
                 continue;
             }
-            let slots = line_grid_slots(line, cross_bounds, horizontal, budget)?;
+            let slots = line_grid_slots(line, cross_bounds, horizontal, tol.snap, budget)?;
             if slots.iter().filter(|occupied| **occupied).count() < minimum_occupancy {
                 continue;
             }
             let size = line.iter().map(|glyph| glyph.size).fold(0.0, f64::max);
             candidates.try_push((center, size, slots))?;
         }
-        if candidates.len() < MIN_HYBRID_GRID_ROWS {
+        if candidates.len() < min_rows {
             continue;
         }
         candidates.sort_unstable_by(|left, right| left.0.total_cmp(&right.0));
@@ -653,10 +874,11 @@ fn infer_hybrid_grid_rules(
 fn cell_text(
     lines: &[Vec<BorrowedWord<'_>>],
     bbox: BBox,
+    snap: f64,
     budget: &Budget,
     charged: &mut usize,
 ) -> Result<String, Error> {
-    let text = physical_cell_text(lines, bbox, budget)?;
+    let text = physical_cell_text(lines, bbox, snap, budget)?;
     budget.charge(LimitCode::TextSize, as_u64(text.len()))?;
     *charged += text.len();
     Ok(text)
@@ -667,6 +889,7 @@ fn cell_text(
 fn physical_cell_text(
     lines: &[Vec<BorrowedWord<'_>>],
     (x0, y0, x1, y1): BBox,
+    snap: f64,
     budget: &Budget,
 ) -> Result<String, Error> {
     let mut text = String::new();
@@ -677,10 +900,10 @@ fn physical_cell_text(
         let inside_cell = |&&((word_x0, word_y0, word_x1, word_y1), _): &&BorrowedWord<'_>| {
             let center_x = (word_x0 + word_x1) * 0.5;
             let center_y = (word_y0 + word_y1) * 0.5;
-            center_x >= x0 - TABLE_SNAP_TOLERANCE
-                && center_x <= x1 + TABLE_SNAP_TOLERANCE
-                && center_y >= y0 - TABLE_SNAP_TOLERANCE
-                && center_y <= y1 + TABLE_SNAP_TOLERANCE
+            center_x >= x0 - snap
+                && center_x <= x1 + snap
+                && center_y >= y0 - snap
+                && center_y <= y1 + snap
         };
         let logical_rtl = glyphs_rtl_order(
             line.iter()
@@ -691,10 +914,10 @@ fn physical_cell_text(
             |&((word_x0, word_y0, word_x1, word_y1), glyphs): &BorrowedWord<'_>| {
                 let center_x = (word_x0 + word_x1) * 0.5;
                 let center_y = (word_y0 + word_y1) * 0.5;
-                if center_x < x0 - TABLE_SNAP_TOLERANCE
-                    || center_x > x1 + TABLE_SNAP_TOLERANCE
-                    || center_y < y0 - TABLE_SNAP_TOLERANCE
-                    || center_y > y1 + TABLE_SNAP_TOLERANCE
+                if center_x < x0 - snap
+                    || center_x > x1 + snap
+                    || center_y < y0 - snap
+                    || center_y > y1 + snap
                 {
                     return Ok(());
                 }
@@ -800,7 +1023,10 @@ fn text_rows_compatible(
 /// Confidence is a deterministic ranking heuristic, not a calibrated
 /// probability. The component metrics stay public so callers can apply their
 /// own thresholds.
-fn text_table_diagnostics(rows: &[Vec<&[GlyphRecord]>]) -> TableDiagnosticsTuple {
+fn text_table_diagnostics(
+    rows: &[Vec<&[GlyphRecord]>],
+    tol: TableTolerances,
+) -> TableDiagnosticsTuple {
     let anchor = &rows[0];
     let mut alignment_error_em = 0.0_f64;
     for row in rows.iter().skip(1) {
@@ -847,11 +1073,11 @@ fn text_table_diagnostics(rows: &[Vec<&[GlyphRecord]>]) -> TableDiagnosticsTuple
     }
     let row_gap_variation_em = maximum_row_gap - minimum_row_gap;
 
-    let row_depth = (rows.len().saturating_sub(MIN_TEXT_TABLE_ROWS) as f64 + 1.0) / 3.0;
+    let row_depth = (rows.len().saturating_sub(tol.min_words_vertical) as f64 + 1.0) / 3.0;
     let alignment_quality =
         (1.0 - alignment_error_em / TEXT_TABLE_ALIGNMENT_TOLERANCE).clamp(0.0, 1.0);
     let spacing_quality = (1.0 - row_gap_variation_em / TEXT_TABLE_ROW_GAP).clamp(0.0, 1.0);
-    let gutter_quality = (minimum_gutter_em / (LINE_SEGMENT_GAP * 2.0)).clamp(0.0, 1.0);
+    let gutter_quality = (minimum_gutter_em / (tol.min_gutter * 2.0)).clamp(0.0, 1.0);
     let confidence = (0.65
         + 0.10 * row_depth.clamp(0.0, 1.0)
         + 0.10 * alignment_quality
@@ -869,14 +1095,16 @@ fn text_table_diagnostics(rows: &[Vec<&[GlyphRecord]>]) -> TableDiagnosticsTuple
 /// Materialize one run of aligned borderless rows.
 fn text_table_from_rows(
     rows: &[Vec<&[GlyphRecord]>],
+    tol: TableTolerances,
+    fonts: &[FontInfo],
     budget: &Budget,
 ) -> Result<Option<TableTuple>, Error> {
-    if rows.len() < MIN_TEXT_TABLE_ROWS {
+    if rows.len() < tol.min_words_vertical {
         return Ok(None);
     }
     let row_count_usize = rows.len();
     let column_count_usize = rows[0].len();
-    if column_count_usize < 2 {
+    if column_count_usize < tol.min_words_horizontal {
         return Ok(None);
     }
     budget.check(LimitCode::TableColumnCount, as_u64(column_count_usize))?;
@@ -944,8 +1172,14 @@ fn text_table_from_rows(
     )?;
 
     let mut cells = Vec::new();
+    let mut row_styles = Vec::new();
     for (row_index, row) in rows.iter().enumerate() {
         budget.poll()?;
+        try_push_text(
+            &mut row_styles,
+            segmented_row_style(row, fonts),
+            "borderless table row styles",
+        )?;
         for (column_index, segment) in row.iter().enumerate() {
             let cell = Some((
                 (
@@ -965,7 +1199,7 @@ fn text_table_from_rows(
     let Ok(column_count) = u32::try_from(column_count_usize) else {
         return Ok(None);
     };
-    let diagnostics = text_table_diagnostics(rows);
+    let diagnostics = text_table_diagnostics(rows, tol);
     let Ok(slot_count) = u32::try_from(slot_count) else {
         return Ok(None);
     };
@@ -973,6 +1207,14 @@ fn text_table_from_rows(
     for anchor in 0..slot_count {
         try_push_text(&mut cell_anchors, anchor, "borderless table cell anchors")?;
     }
+    let header_rows = detect_header_rows(
+        row_count_usize,
+        column_count_usize,
+        &cells,
+        &cell_anchors,
+        &row_styles,
+        None,
+    );
     Ok(Some((
         (
             x_bounds[0],
@@ -985,15 +1227,18 @@ fn text_table_from_rows(
         cells,
         cell_anchors,
         diagnostics,
+        header_rows,
     )))
 }
 
 fn flush_text_table_run(
     run: &mut Vec<Vec<&[GlyphRecord]>>,
     tables: &mut Vec<TableTuple>,
+    tol: TableTolerances,
+    fonts: &[FontInfo],
     budget: &Budget,
 ) -> Result<(), Error> {
-    if let Some(table) = text_table_from_rows(run, budget)? {
+    if let Some(table) = text_table_from_rows(run, tol, fonts, budget)? {
         try_push_text(tables, table, "borderless tables")?;
     }
     run.clear();
@@ -1003,6 +1248,8 @@ fn flush_text_table_run(
 /// Detect opt-in borderless tables from sustained aligned text segments.
 fn detect_text_tables(
     physical_lines: &[Vec<GlyphRecord>],
+    tol: TableTolerances,
+    fonts: &[FontInfo],
     budget: &Budget,
 ) -> Result<Vec<TableTuple>, Error> {
     let mut tables = Vec::new();
@@ -1010,17 +1257,19 @@ fn detect_text_tables(
 
     for line in physical_lines {
         budget.poll()?;
-        let segment_count = line_segment_count(line);
-        let segments = if !line.is_empty() && !has_vertical_baseline(&line[0]) && segment_count >= 2
+        let segment_count = line_segment_count_with(line, tol.min_gutter);
+        let segments = if !line.is_empty()
+            && !has_vertical_baseline(&line[0])
+            && segment_count >= tol.min_words_horizontal
         {
             budget.check(LimitCode::TableColumnCount, as_u64(segment_count))?;
-            let segments = split_line_segment_slices(line)?;
+            let segments = split_line_segment_slices(line, tol.min_gutter)?;
             (segments.len() == segment_count).then_some(segments)
         } else {
             None
         };
         let Some(segments) = segments else {
-            flush_text_table_run(&mut run, &mut tables, budget)?;
+            flush_text_table_run(&mut run, &mut tables, tol, fonts, budget)?;
             continue;
         };
         if run.is_empty()
@@ -1033,11 +1282,11 @@ fn detect_text_tables(
             table_slots(run.len() + 1, segment_count, budget)?;
             try_push_text(&mut run, segments, "borderless table row run")?;
         } else {
-            flush_text_table_run(&mut run, &mut tables, budget)?;
+            flush_text_table_run(&mut run, &mut tables, tol, fonts, budget)?;
             try_push_text(&mut run, segments, "borderless table row run")?;
         }
     }
-    flush_text_table_run(&mut run, &mut tables, budget)?;
+    flush_text_table_run(&mut run, &mut tables, tol, fonts, budget)?;
     Ok(tables)
 }
 
@@ -1179,6 +1428,7 @@ fn body_text_orientation(
     physical_lines: &[Vec<GlyphRecord>],
     bbox: BBox,
     horizontal: bool,
+    snap: f64,
 ) -> Option<BodyOrientation> {
     let (axis_lo, axis_hi) = bbox_axis_span(bbox, horizontal);
     let (cross_lo, cross_hi) = bbox_cross_span(bbox, horizontal);
@@ -1197,10 +1447,10 @@ fn body_text_orientation(
         let (line_c0, line_c1) = bbox_cross_span(line_box, horizontal);
         let axis_center = (line_a0 + line_a1) * 0.5;
         let cross_center = (line_c0 + line_c1) * 0.5;
-        if axis_center < axis_lo - TABLE_SNAP_TOLERANCE
-            || axis_center > axis_hi + TABLE_SNAP_TOLERANCE
-            || cross_center < cross_lo - TABLE_SNAP_TOLERANCE
-            || cross_center > cross_hi + TABLE_SNAP_TOLERANCE
+        if axis_center < axis_lo - snap
+            || axis_center > axis_hi + snap
+            || cross_center < cross_lo - snap
+            || cross_center > cross_hi + snap
         {
             continue;
         }
@@ -1245,6 +1495,7 @@ fn phrase_column(
     col_bounds: &[f64],
     horizontal: bool,
     is_rtl: bool,
+    snap: f64,
 ) -> Option<usize> {
     let col_count = col_bounds.len().saturating_sub(1);
     if col_count == 0 || word_start >= word_end {
@@ -1271,12 +1522,12 @@ fn phrase_column(
         if let Some((col, _)) = best {
             return Some(col);
         }
-        grid_interval(col_bounds, (lo + hi) * 0.5)
+        grid_interval(col_bounds, (lo + hi) * 0.5, snap)
     };
 
     // Logical-first word: `words` is in `glyph_progress` order, so index
     // `word_start` is logical-first for LTR and `word_end - 1` for pure RTL.
-    let min_anchor_width = TABLE_SNAP_TOLERANCE * 2.0;
+    let min_anchor_width = snap * 2.0;
     let anchor_index = if is_rtl {
         (word_start..word_end).rev().find(|&idx| {
             let (s, e) = bbox_cross_span(words[idx].0, horizontal);
@@ -1304,14 +1555,15 @@ fn parse_body_line<'b>(
     words: &[BorrowedWord<'_>],
     col_bounds: &[f64],
     orientation: BodyOrientation,
+    tol: TableTolerances,
     budget: &'b Budget,
 ) -> Result<Option<ParsedBodyLine<'b>>, Error> {
     let col_count = col_bounds.len().saturating_sub(1);
     if col_count < 2 || line.is_empty() || words.is_empty() {
         return Ok(None);
     }
-    let cross_min = col_bounds[0] - TABLE_SNAP_TOLERANCE;
-    let cross_max = col_bounds[col_count] + TABLE_SNAP_TOLERANCE;
+    let cross_min = col_bounds[0] - tol.snap;
+    let cross_max = col_bounds[col_count] + tol.snap;
 
     // Collect indices into `words` whose center lies inside the table's
     // cross-axis span. `words` is already in `glyph_progress` order.
@@ -1361,11 +1613,10 @@ fn parse_body_line<'b>(
             let (next_inline_start, _) = word_inline_span(next_box);
             let gap = next_inline_start - prev_inline_end;
             let scale = word_size(prev_glyphs).max(word_size(next_glyphs)).max(1.0);
-            let wide_gutter = gap > scale * LINE_SEGMENT_GAP;
+            let wide_gutter = gap > scale * tol.min_gutter;
             let crosses_divider = col_bounds[1..col_count].iter().any(|&divider| {
                 let d = divider * orientation.inline_sign;
-                prev_inline_end <= d + TABLE_SNAP_TOLERANCE
-                    && next_inline_start >= d - TABLE_SNAP_TOLERANCE
+                prev_inline_end <= d + tol.snap && next_inline_start >= d - tol.snap
             });
             if wide_gutter || (crosses_divider && gap > scale * BODY_COLUMN_RULE_GAP) {
                 break;
@@ -1381,6 +1632,7 @@ fn parse_body_line<'b>(
             col_bounds,
             orientation.horizontal,
             is_rtl,
+            tol.snap,
         ) {
             let mut cross_start = f64::INFINITY;
             let mut cross_end = f64::NEG_INFINITY;
@@ -1434,6 +1686,7 @@ fn is_wrapped_continuation(
     curr: &ParsedBodyLine<'_>,
     next: Option<&ParsedBodyLine<'_>>,
     orientation: BodyOrientation,
+    snap: f64,
 ) -> bool {
     let start = &record.lines[0];
     let prev = &record.lines[record.lines.len() - 1];
@@ -1474,7 +1727,7 @@ fn is_wrapped_continuation(
             }
             if let Some((other_start, other_end)) = start.column_span(other_col) {
                 let overlap = phrase.cross_end.min(other_end) - phrase.cross_start.max(other_start);
-                if overlap > TABLE_SNAP_TOLERANCE {
+                if overlap > snap {
                     return false;
                 }
             }
@@ -1536,6 +1789,7 @@ fn group_band_records<'b>(
     (band_start, band_end): (f64, f64),
     col_bounds: &[f64],
     orientation: BodyOrientation,
+    tol: TableTolerances,
     budget: &'b Budget,
 ) -> Result<BodyBandPlan<'b>, Error> {
     let mut parsed: BudgetVec<'b, ParsedBodyLine<'b>> = BudgetVec::new(budget);
@@ -1558,14 +1812,18 @@ fn group_band_records<'b>(
         }
         let (line_a0, line_a1) = bbox_axis_span(line_bbox(line), orientation.horizontal);
         let axis_center = (line_a0 + line_a1) * 0.5;
-        if axis_center < band_start - TABLE_SNAP_TOLERANCE
-            || axis_center > band_end + TABLE_SNAP_TOLERANCE
-        {
+        if axis_center < band_start - tol.snap || axis_center > band_end + tol.snap {
             continue;
         }
-        if let Some(entry) =
-            parse_body_line(line_index, line, words, col_bounds, orientation, budget)?
-        {
+        if let Some(entry) = parse_body_line(
+            line_index,
+            line,
+            words,
+            col_bounds,
+            orientation,
+            tol,
+            budget,
+        )? {
             parsed.try_push(entry)?;
         }
     }
@@ -1580,7 +1838,7 @@ fn group_band_records<'b>(
     while let Some(line) = parsed.pop() {
         budget.poll()?;
         let attaches = records.last().is_some_and(|record| {
-            is_wrapped_continuation(record, &line, parsed.last(), orientation)
+            is_wrapped_continuation(record, &line, parsed.last(), orientation, tol.snap)
         });
         if attaches {
             let record = records
@@ -1671,12 +1929,13 @@ fn full_width_axis_bounds(
     cross_start: f64,
     cross_end: f64,
     horizontal: bool,
+    tol: TableTolerances,
     budget: &Budget,
 ) -> Result<Vec<f64>, Error> {
     let mut kept = Vec::new();
     for &coord in axis_bounds {
         budget.poll()?;
-        if rule_covers(rules, horizontal, coord, cross_start, cross_end)? {
+        if rule_covers(rules, horizontal, coord, cross_start, cross_end, tol)? {
             try_push_text(&mut kept, coord, "body band axis bounds")?;
         }
     }
@@ -1686,6 +1945,10 @@ fn full_width_axis_bounds(
 /// Try to pair header component `header_index` with one or more adjacent
 /// outer-bordered body components across a narrow double-rule gap along
 /// `horizontal`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "components, state, geometry, tolerances, and budget"
+)]
 fn plan_double_rule_body<'b>(
     components: &[RuleComponent],
     consumed: &[bool],
@@ -1693,6 +1956,7 @@ fn plan_double_rule_body<'b>(
     horizontal: bool,
     physical_lines: &[Vec<GlyphRecord>],
     word_lines: &[Vec<BorrowedWord<'_>>],
+    tol: TableTolerances,
     budget: &'b Budget,
 ) -> Result<Option<AttachedBodyPlan<'b>>, Error> {
     let header = &components[header_index];
@@ -1733,8 +1997,8 @@ fn plan_double_rule_body<'b>(
                 if cand_cross.len() != 2 || cand_axis.len() < 2 {
                     continue;
                 }
-                if (cand_cross[0] - cross_lo).abs() > TABLE_SNAP_TOLERANCE
-                    || (cand_cross[1] - cross_hi).abs() > TABLE_SNAP_TOLERANCE
+                if (cand_cross[0] - cross_lo).abs() > tol.snap
+                    || (cand_cross[1] - cross_hi).abs() > tol.snap
                 {
                     continue;
                 }
@@ -1743,14 +2007,14 @@ fn plan_double_rule_body<'b>(
                 } else {
                     frontier - cand_axis[cand_axis.len() - 1]
                 };
-                if gap < -TABLE_SNAP_TOLERANCE || gap > MAX_DOUBLE_RULE_GAP {
+                if gap < -tol.snap || gap > MAX_DOUBLE_RULE_GAP {
                     continue;
                 }
                 let Some(cand_bbox) = candidate.bbox() else {
                     continue;
                 };
                 let Some(cand_orientation) =
-                    body_text_orientation(physical_lines, cand_bbox, horizontal)
+                    body_text_orientation(physical_lines, cand_bbox, horizontal, tol.snap)
                 else {
                     continue;
                 };
@@ -1800,6 +2064,7 @@ fn plan_double_rule_body<'b>(
                 cross_lo,
                 cross_hi,
                 horizontal,
+                tol,
                 budget,
             )?;
             if body_axis.len() < 2 {
@@ -1812,6 +2077,7 @@ fn plan_double_rule_body<'b>(
                     (pair[0], pair[1]),
                     header_cross,
                     orientation,
+                    tol,
                     budget,
                 )?;
                 if plan.records.is_empty() && pair[1] - pair[0] <= MAX_DOUBLE_RULE_GAP {
@@ -1871,6 +2137,7 @@ fn plan_connected_borderless_body<'b>(
     horizontal: bool,
     physical_lines: &[Vec<GlyphRecord>],
     word_lines: &[Vec<BorrowedWord<'_>>],
+    tol: TableTolerances,
     budget: &'b Budget,
 ) -> Result<Option<AttachedBodyPlan<'b>>, Error> {
     let cross = component.cross_bounds(horizontal);
@@ -1886,6 +2153,7 @@ fn plan_connected_borderless_body<'b>(
         cross_lo,
         cross_hi,
         horizontal,
+        tol,
         budget,
     )?;
     if full_axis.len() < 3 {
@@ -1898,7 +2166,14 @@ fn plan_connected_borderless_body<'b>(
     for pair in full_axis.windows(2) {
         let mut has_col = false;
         for &divider in &cross[1..cross.len() - 1] {
-            if rule_covers(&component.rules, !horizontal, divider, pair[0], pair[1])? {
+            if rule_covers(
+                &component.rules,
+                !horizontal,
+                divider,
+                pair[0],
+                pair[1],
+                tol,
+            )? {
                 has_col = true;
                 break;
             }
@@ -1944,7 +2219,9 @@ fn plan_connected_borderless_body<'b>(
         } else {
             (body_axis_lo, cross_lo, body_axis_hi, cross_hi)
         };
-        let Some(orientation) = body_text_orientation(physical_lines, body_bbox, horizontal) else {
+        let Some(orientation) =
+            body_text_orientation(physical_lines, body_bbox, horizontal, tol.snap)
+        else {
             continue;
         };
         if orientation.block_sign != side {
@@ -1955,9 +2232,9 @@ fn plan_connected_borderless_body<'b>(
         let mut header_axis_coords = Vec::new();
         for &coord in axis {
             let in_header = if side > 0.0 {
-                coord <= split_coord + TABLE_SNAP_TOLERANCE
+                coord <= split_coord + tol.snap
             } else {
-                coord >= split_coord - TABLE_SNAP_TOLERANCE
+                coord >= split_coord - tol.snap
             };
             if in_header {
                 try_push_text(
@@ -1989,6 +2266,7 @@ fn plan_connected_borderless_body<'b>(
                 (b0, b1),
                 cross,
                 orientation,
+                tol,
                 budget,
             )?;
             if plan.records.is_empty() && b1 - b0 <= MAX_DOUBLE_RULE_GAP {
@@ -2128,11 +2406,21 @@ fn materialize_attached_body_table(
     header_rules: &[RuleSegment],
     plan: &AttachedBodyPlan<'_>,
     word_lines: &[Vec<BorrowedWord<'_>>],
+    tol: TableTolerances,
+    fonts: &[FontInfo],
     budget: &Budget,
 ) -> Result<Option<TableTuple>, Error> {
     budget.check(LimitCode::TextRuleCount, as_u64(plan.total_rule_count))?;
     let mut charged = 0usize;
-    let result = build_attached_body_table(header_rules, plan, word_lines, budget, &mut charged);
+    let result = build_attached_body_table(
+        header_rules,
+        plan,
+        word_lines,
+        tol,
+        fonts,
+        budget,
+        &mut charged,
+    );
     if !matches!(result, Ok(Some(_))) {
         budget.release(LimitCode::TextSize, as_u64(charged));
     }
@@ -2143,6 +2431,8 @@ fn build_attached_body_table(
     header_rules: &[RuleSegment],
     plan: &AttachedBodyPlan<'_>,
     word_lines: &[Vec<BorrowedWord<'_>>],
+    tol: TableTolerances,
+    fonts: &[FontInfo],
     budget: &Budget,
     charged: &mut usize,
 ) -> Result<Option<TableTuple>, Error> {
@@ -2167,6 +2457,7 @@ fn build_attached_body_table(
         &plan.header_xs,
         &plan.header_ys,
         word_lines,
+        tol,
         budget,
         charged,
     )?
@@ -2256,6 +2547,18 @@ fn build_attached_body_table(
         )
     };
 
+    let structural_headers =
+        (horizontal && plan.orientation.block_sign >= 0.0).then_some(header_rows);
+    let row_styles = grid_row_styles(total_rows, total_cols, &cells, word_lines, fonts, tol.snap)?;
+    let detected_headers = detect_header_rows(
+        total_rows,
+        total_cols,
+        &cells,
+        &anchors,
+        &row_styles,
+        structural_headers,
+    );
+
     Ok(Some((
         (x0, y0, x1, y1),
         row_count_u32,
@@ -2263,6 +2566,7 @@ fn build_attached_body_table(
         cells,
         anchors,
         (0.95, None, None, None),
+        detected_headers,
     )))
 }
 
@@ -2270,17 +2574,13 @@ fn build_attached_body_table(
 fn detect_grid_tables(
     physical_lines: &[Vec<GlyphRecord>],
     rules: &[RuleSegment],
+    tol: TableTolerances,
+    fonts: &[FontInfo],
+    allow_small_explicit: bool,
     budget: &Budget,
 ) -> Result<Vec<TableTuple>, Error> {
     budget.check(LimitCode::TextRuleCount, as_u64(rules.len()))?;
-    let mut word_lines = Vec::new();
-    for line in physical_lines {
-        try_push_text(
-            &mut word_lines,
-            split_word_slices(line)?,
-            "bordered table word lines",
-        )?;
-    }
+    let word_lines = build_word_lines(physical_lines)?;
     let mut horizontal_indices = Vec::new();
     let mut vertical_indices = Vec::new();
     for (index, rule) in rules.iter().enumerate() {
@@ -2298,7 +2598,7 @@ fn detect_grid_tables(
     for &horizontal_index in &horizontal_indices {
         budget.poll()?;
         for &vertical_index in &vertical_indices {
-            if rules_intersect(rules[horizontal_index], rules[vertical_index]) {
+            if rules_intersect(rules[horizontal_index], rules[vertical_index], tol.join) {
                 components.union(horizontal_index, vertical_index);
             }
         }
@@ -2325,13 +2625,14 @@ fn detect_grid_tables(
             try_push_text(&mut component_rules, rule, "table component rules")?;
         }
         group_start = group_end;
-        let xs = clustered_coordinates(rule_coordinates(&component_rules, false)?);
-        let ys = clustered_coordinates(rule_coordinates(&component_rules, true)?);
+        let xs = clustered_coordinates(rule_coordinates(&component_rules, false)?, tol.snap);
+        let ys = clustered_coordinates(rule_coordinates(&component_rules, true)?, tol.snap);
         let bounded = xs.len() >= 2
             && ys.len() >= 2
             && cell_is_bounded(
                 &component_rules,
                 (xs[0], ys[0], xs[xs.len() - 1], ys[ys.len() - 1]),
+                tol,
             )?;
         try_push_text(
             &mut rule_components,
@@ -2369,6 +2670,7 @@ fn detect_grid_tables(
                 horizontal,
                 physical_lines,
                 &word_lines,
+                tol,
                 budget,
             )? {
                 plan = Some(found);
@@ -2382,6 +2684,7 @@ fn detect_grid_tables(
                     horizontal,
                     physical_lines,
                     &word_lines,
+                    tol,
                     budget,
                 )? {
                     plan = Some(found);
@@ -2394,6 +2697,8 @@ fn detect_grid_tables(
                 &rule_components[index].rules,
                 &plan,
                 &word_lines,
+                tol,
+                fonts,
                 budget,
             )?
         {
@@ -2405,6 +2710,7 @@ fn detect_grid_tables(
         }
     }
 
+    let min_grid_lines = if allow_small_explicit { 2 } else { 3 };
     for (index, component) in rule_components.into_iter().enumerate() {
         budget.poll()?;
         if consumed[index] {
@@ -2413,15 +2719,38 @@ fn detect_grid_tables(
         let mut component_rules = component.rules;
         let original_xs = component.xs;
         let original_ys = component.ys;
-        if original_xs.len() < 3 || original_ys.len() < 3 {
+        if original_xs.len() < min_grid_lines || original_ys.len() < min_grid_lines {
             continue;
         }
         table_slots(original_ys.len() - 1, original_xs.len() - 1, budget)?;
-        let mut inferred_rules =
-            infer_hybrid_grid_rules(physical_lines, &original_ys, &original_xs, true, budget)?;
-        for rule in
-            infer_hybrid_grid_rules(physical_lines, &original_xs, &original_ys, false, budget)?
-        {
+        let horizontal_inferred = infer_hybrid_grid_rules(
+            physical_lines,
+            &original_ys,
+            &original_xs,
+            true,
+            tol,
+            budget,
+        )?;
+        let structural_headers = horizontal_inferred
+            .iter()
+            .map(|r| r.y0)
+            .reduce(f64::min)
+            .and_then(|first_inferred_y| {
+                let top_bands = original_ys
+                    .windows(2)
+                    .take_while(|pair| pair[1] <= first_inferred_y + tol.snap)
+                    .count();
+                (top_bands > 0).then_some(top_bands)
+            });
+        let mut inferred_rules = horizontal_inferred;
+        for rule in infer_hybrid_grid_rules(
+            physical_lines,
+            &original_xs,
+            &original_ys,
+            false,
+            tol,
+            budget,
+        )? {
             budget.check(
                 LimitCode::TextRuleCount,
                 as_u64(inferred_rules.len()).saturating_add(1),
@@ -2436,12 +2765,12 @@ fn detect_grid_tables(
         for rule in inferred_rules {
             try_push_text(&mut component_rules, rule, "table component rules")?;
         }
-        let xs = clustered_coordinates(rule_coordinates(&component_rules, false)?);
-        let ys = clustered_coordinates(rule_coordinates(&component_rules, true)?);
+        let xs = clustered_coordinates(rule_coordinates(&component_rules, false)?, tol.snap);
+        let ys = clustered_coordinates(rule_coordinates(&component_rules, true)?, tol.snap);
         let row_count_usize = ys.len() - 1;
         let column_count_usize = xs.len() - 1;
         let Some((cells, cell_anchors)) =
-            materialize_grid_cells(&component_rules, &xs, &ys, &word_lines, budget)?
+            materialize_grid_cells(&component_rules, &xs, &ys, &word_lines, tol, budget)?
         else {
             continue;
         };
@@ -2451,20 +2780,37 @@ fn detect_grid_tables(
         let Ok(column_count) = u32::try_from(column_count_usize) else {
             continue;
         };
+        let row_styles = grid_row_styles(
+            row_count_usize,
+            column_count_usize,
+            &cells,
+            &word_lines,
+            fonts,
+            tol.snap,
+        )?;
+        let header_rows = detect_header_rows(
+            row_count_usize,
+            column_count_usize,
+            &cells,
+            &cell_anchors,
+            &row_styles,
+            structural_headers,
+        );
         try_push_text(
             &mut tables,
             (
                 (
                     xs[0],
                     ys[0],
-                    *xs.last().expect("three coordinates were checked above"),
-                    *ys.last().expect("three coordinates were checked above"),
+                    *xs.last().expect("at least two coordinates were checked"),
+                    *ys.last().expect("at least two coordinates were checked"),
                 ),
                 row_count,
                 column_count,
                 cells,
                 cell_anchors,
                 (if is_hybrid { 0.95 } else { 1.0 }, None, None, None),
+                header_rows,
             ),
             "bordered tables",
         )?;
@@ -2478,6 +2824,629 @@ fn detect_grid_tables(
             .then(left.2.cmp(&right.2))
     });
     Ok(tables)
+}
+
+/// Materialize one table directly from caller-specified display-space `xs` and
+/// `ys` grid coordinates.
+fn materialize_explicit_grid(
+    xs: &[f64],
+    ys: &[f64],
+    word_lines: &[Vec<BorrowedWord<'_>>],
+    tol: TableTolerances,
+    fonts: &[FontInfo],
+    budget: &Budget,
+) -> Result<Option<TableTuple>, Error> {
+    if xs.len() < 2 || ys.len() < 2 {
+        return Ok(None);
+    }
+    let row_count_usize = ys.len() - 1;
+    let column_count_usize = xs.len() - 1;
+    table_slots(row_count_usize, column_count_usize, budget)?;
+    budget.check(
+        LimitCode::TextRuleCount,
+        as_u64(xs.len()).saturating_add(as_u64(ys.len())),
+    )?;
+    let (x0, x1) = (xs[0], xs[xs.len() - 1]);
+    let (y0, y1) = (ys[0], ys[ys.len() - 1]);
+    let mut rules = Vec::new();
+    for &y in ys {
+        try_push_text(
+            &mut rules,
+            RuleSegment {
+                x0,
+                y0: y,
+                x1,
+                y1: y,
+                horizontal: true,
+            },
+            "explicit horizontal table rules",
+        )?;
+    }
+    for &x in xs {
+        try_push_text(
+            &mut rules,
+            RuleSegment {
+                x0: x,
+                y0,
+                x1: x,
+                y1,
+                horizontal: false,
+            },
+            "explicit vertical table rules",
+        )?;
+    }
+    let Some((cells, cell_anchors)) =
+        materialize_grid_cells(&rules, xs, ys, word_lines, tol, budget)?
+    else {
+        return Ok(None);
+    };
+    let Ok(row_count) = u32::try_from(row_count_usize) else {
+        return Ok(None);
+    };
+    let Ok(column_count) = u32::try_from(column_count_usize) else {
+        return Ok(None);
+    };
+    let row_styles = grid_row_styles(
+        row_count_usize,
+        column_count_usize,
+        &cells,
+        word_lines,
+        fonts,
+        tol.snap,
+    )?;
+    let header_rows = detect_header_rows(
+        row_count_usize,
+        column_count_usize,
+        &cells,
+        &cell_anchors,
+        &row_styles,
+        None,
+    );
+    Ok(Some((
+        (x0, y0, x1, y1),
+        row_count,
+        column_count,
+        cells,
+        cell_anchors,
+        (1.0, None, None, None),
+        header_rows,
+    )))
+}
+
+/// Augment detected page rules with synthetic spanning rules for caller guides.
+fn augment_rules_with_guides(
+    rules: &[RuleSegment],
+    physical_lines: &[Vec<GlyphRecord>],
+    explicit_xs: &[f64],
+    explicit_ys: &[f64],
+    clip: Option<BBox>,
+    page_box: BBox,
+    budget: &Budget,
+) -> Result<Vec<RuleSegment>, Error> {
+    let mut x_lo = f64::INFINITY;
+    let mut x_hi = f64::NEG_INFINITY;
+    let mut y_lo = f64::INFINITY;
+    let mut y_hi = f64::NEG_INFINITY;
+    if let Some((cx0, cy0, cx1, cy1)) = clip {
+        x_lo = cx0;
+        x_hi = cx1;
+        y_lo = cy0;
+        y_hi = cy1;
+    } else {
+        for rule in rules {
+            x_lo = x_lo.min(rule.x0).min(rule.x1);
+            x_hi = x_hi.max(rule.x0).max(rule.x1);
+            y_lo = y_lo.min(rule.y0).min(rule.y1);
+            y_hi = y_hi.max(rule.y0).max(rule.y1);
+        }
+        for line in physical_lines {
+            if line.is_empty() {
+                continue;
+            }
+            let (lx0, ly0, lx1, ly1) = line_bbox(line);
+            x_lo = x_lo.min(lx0);
+            x_hi = x_hi.max(lx1);
+            y_lo = y_lo.min(ly0);
+            y_hi = y_hi.max(ly1);
+        }
+    }
+    if explicit_xs.len() >= 2 {
+        x_lo = explicit_xs[0];
+        x_hi = explicit_xs[explicit_xs.len() - 1];
+    }
+    if explicit_ys.len() >= 2 {
+        y_lo = explicit_ys[0];
+        y_hi = explicit_ys[explicit_ys.len() - 1];
+    }
+    if !x_lo.is_finite() || !x_hi.is_finite() || x_hi <= x_lo {
+        x_lo = page_box.0;
+        x_hi = page_box.2;
+    }
+    if !y_lo.is_finite() || !y_hi.is_finite() || y_hi <= y_lo {
+        y_lo = page_box.1;
+        y_hi = page_box.3;
+    }
+
+    let total = rules
+        .len()
+        .saturating_add(explicit_xs.len())
+        .saturating_add(explicit_ys.len());
+    budget.check(LimitCode::TextRuleCount, as_u64(total))?;
+    let mut combined = Vec::new();
+    for &rule in rules {
+        try_push_text(&mut combined, rule, "augmented table rules")?;
+    }
+    for &y in explicit_ys {
+        try_push_text(
+            &mut combined,
+            RuleSegment {
+                x0: x_lo,
+                y0: y,
+                x1: x_hi,
+                y1: y,
+                horizontal: true,
+            },
+            "augmented horizontal table rules",
+        )?;
+    }
+    for &x in explicit_xs {
+        try_push_text(
+            &mut combined,
+            RuleSegment {
+                x0: x,
+                y0: y_lo,
+                x1: x,
+                y1: y_hi,
+                horizontal: false,
+            },
+            "augmented vertical table rules",
+        )?;
+    }
+    Ok(combined)
+}
+
+/// Derive the missing axis of a borderless table when the caller supplied
+/// explicit guides on exactly one axis (`vertical_lines` or `horizontal_lines`).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "lines, words, single-axis guides, clip, tolerances, fonts, and budget"
+)]
+fn detect_single_axis_explicit_table(
+    physical_lines: &[Vec<GlyphRecord>],
+    word_lines: &[Vec<BorrowedWord<'_>>],
+    explicit_xs: &[f64],
+    explicit_ys: &[f64],
+    clip: Option<BBox>,
+    tol: TableTolerances,
+    fonts: &[FontInfo],
+    budget: &Budget,
+) -> Result<Option<TableTuple>, Error> {
+    if explicit_xs.len() >= 2 && explicit_ys.is_empty() {
+        let (x_lo, x_hi) = (explicit_xs[0], explicit_xs[explicit_xs.len() - 1]);
+        let mut row_spans = Vec::new();
+        for words in word_lines {
+            budget.poll()?;
+            let mut y0 = f64::INFINITY;
+            let mut y1 = f64::NEG_INFINITY;
+            for &((wx0, wy0, wx1, wy1), _) in words {
+                let cx = (wx0 + wx1) * 0.5;
+                let cy = (wy0 + wy1) * 0.5;
+                if cx < x_lo - tol.snap || cx > x_hi + tol.snap {
+                    continue;
+                }
+                if let Some((_, cy0, _, cy1)) = clip
+                    && (cy < cy0 - tol.snap || cy > cy1 + tol.snap)
+                {
+                    continue;
+                }
+                y0 = y0.min(wy0);
+                y1 = y1.max(wy1);
+            }
+            if y0 <= y1 {
+                try_push_text(
+                    &mut row_spans,
+                    (y0, y1),
+                    "explicit vertical guide row spans",
+                )?;
+            }
+        }
+        if row_spans.is_empty() {
+            return Ok(None);
+        }
+        row_spans.sort_unstable_by(|left, right| left.0.total_cmp(&right.0));
+        let mut ys = Vec::new();
+        try_push_text(
+            &mut ys,
+            row_spans[0].0,
+            "explicit vertical guide row bounds",
+        )?;
+        for pair in row_spans.windows(2) {
+            let mid = (pair[0].1 + pair[1].0) * 0.5;
+            let prev = *ys.last().expect("start bound pushed");
+            if mid > prev + tol.snap {
+                try_push_text(&mut ys, mid, "explicit vertical guide row bounds")?;
+            }
+        }
+        let last_y = row_spans[row_spans.len() - 1].1;
+        if last_y > *ys.last().expect("start bound pushed") {
+            try_push_text(&mut ys, last_y, "explicit vertical guide row bounds")?;
+        }
+        if ys.len() < 2 {
+            return Ok(None);
+        }
+        return materialize_explicit_grid(explicit_xs, &ys, word_lines, tol, fonts, budget);
+    }
+
+    if explicit_ys.len() >= 2 && explicit_xs.is_empty() {
+        let (y_lo, y_hi) = (explicit_ys[0], explicit_ys[explicit_ys.len() - 1]);
+        let mut intervals = Vec::new();
+        for line in physical_lines {
+            budget.poll()?;
+            if line.is_empty() {
+                continue;
+            }
+            let (_, ly0, _, ly1) = line_bbox(line);
+            let cy = (ly0 + ly1) * 0.5;
+            if cy < y_lo - tol.snap || cy > y_hi + tol.snap {
+                continue;
+            }
+            for segment in split_line_segment_slices(line, tol.min_gutter)? {
+                let (sx0, _, sx1, _) = line_bbox(segment);
+                let cx = (sx0 + sx1) * 0.5;
+                if let Some((cx0, _, cx1, _)) = clip
+                    && (cx < cx0 - tol.snap || cx > cx1 + tol.snap)
+                {
+                    continue;
+                }
+                try_push_text(&mut intervals, (sx0, sx1), "explicit horizontal guide cols")?;
+            }
+        }
+        if intervals.is_empty() {
+            return Ok(None);
+        }
+        intervals.sort_unstable_by(|left, right| left.0.total_cmp(&right.0));
+        let mut merged: Vec<(f64, f64)> = Vec::new();
+        for (start, end) in intervals {
+            if let Some(last) = merged.last_mut()
+                && start <= last.1 + tol.snap
+            {
+                last.1 = last.1.max(end);
+            } else {
+                try_push_text(&mut merged, (start, end), "explicit horizontal guide cols")?;
+            }
+        }
+        budget.check(LimitCode::TableColumnCount, as_u64(merged.len()))?;
+        let mut xs = Vec::new();
+        try_push_text(&mut xs, merged[0].0, "explicit horizontal guide x bounds")?;
+        for pair in merged.windows(2) {
+            try_push_text(
+                &mut xs,
+                (pair[0].1 + pair[1].0) * 0.5,
+                "explicit horizontal guide x bounds",
+            )?;
+        }
+        try_push_text(
+            &mut xs,
+            merged[merged.len() - 1].1,
+            "explicit horizontal guide x bounds",
+        )?;
+        if xs.len() < 2 {
+            return Ok(None);
+        }
+        return materialize_explicit_grid(&xs, explicit_ys, word_lines, tol, fonts, budget);
+    }
+
+    Ok(None)
+}
+
+/// Returns whether a cell string represents a numeric/formatted-number value.
+fn is_numeric_like(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let mut has_digit = false;
+    for ch in trimmed.chars() {
+        if ch.is_ascii_digit() {
+            has_digit = true;
+        } else if matches!(
+            ch,
+            '$' | '€' | '£' | '¥' | '%' | ',' | '.' | '+' | '-' | '−' | '(' | ')' | '/' | ':' | ' '
+        ) {
+            continue;
+        } else {
+            return false;
+        }
+    }
+    has_digit
+}
+
+#[derive(Clone, Copy)]
+struct RowStyle {
+    is_bold: bool,
+    max_size: f64,
+    uniform_font_id: Option<u32>,
+}
+
+/// Summarize style flags for one text-strategy row.
+fn segmented_row_style(row: &[&[GlyphRecord]], fonts: &[FontInfo]) -> RowStyle {
+    let mut bold = 0usize;
+    let mut total = 0usize;
+    let mut max_size = 0.0_f64;
+    let mut first_font: Option<u32> = None;
+    let mut mixed_font = false;
+    for segment in row {
+        for glyph in *segment {
+            if glyph.text.chars().all(char::is_whitespace) {
+                continue;
+            }
+            total += 1;
+            max_size = max_size.max(glyph.size);
+            if let Some(prev) = first_font {
+                if prev != glyph.font_id {
+                    mixed_font = true;
+                }
+            } else {
+                first_font = Some(glyph.font_id);
+            }
+            if fonts
+                .get(glyph.font_id as usize)
+                .is_some_and(|font| font.flags & 16 != 0)
+            {
+                bold += 1;
+            }
+        }
+    }
+    RowStyle {
+        is_bold: total > 0 && bold * 2 >= total,
+        max_size,
+        uniform_font_id: if mixed_font { None } else { first_font },
+    }
+}
+
+/// Summarize style flags for each row of a grid table.
+fn grid_row_styles(
+    row_count: usize,
+    col_count: usize,
+    cells: &[TableCell],
+    word_lines: &[Vec<BorrowedWord<'_>>],
+    fonts: &[FontInfo],
+    snap: f64,
+) -> Result<Vec<RowStyle>, Error> {
+    let mut styles = Vec::new();
+    for row in 0..row_count {
+        let mut row_y0 = f64::INFINITY;
+        let mut row_y1 = f64::NEG_INFINITY;
+        let mut row_x0 = f64::INFINITY;
+        let mut row_x1 = f64::NEG_INFINITY;
+        for col in 0..col_count {
+            if let Some(((x0, y0, x1, y1), _)) = &cells[row * col_count + col] {
+                row_x0 = row_x0.min(*x0);
+                row_y0 = row_y0.min(*y0);
+                row_x1 = row_x1.max(*x1);
+                row_y1 = row_y1.max(*y1);
+            }
+        }
+        let mut bold = 0usize;
+        let mut total = 0usize;
+        let mut max_size = 0.0_f64;
+        let mut first_font: Option<u32> = None;
+        let mut mixed_font = false;
+        if row_x0 <= row_x1 && row_y0 <= row_y1 {
+            for line in word_lines {
+                for &((wx0, wy0, wx1, wy1), glyphs) in line {
+                    let cx = (wx0 + wx1) * 0.5;
+                    let cy = (wy0 + wy1) * 0.5;
+                    if cx < row_x0 - snap
+                        || cx > row_x1 + snap
+                        || cy < row_y0 - snap
+                        || cy > row_y1 + snap
+                    {
+                        continue;
+                    }
+                    for glyph in glyphs {
+                        if glyph.text.chars().all(char::is_whitespace) {
+                            continue;
+                        }
+                        total += 1;
+                        max_size = max_size.max(glyph.size);
+                        if let Some(prev) = first_font {
+                            if prev != glyph.font_id {
+                                mixed_font = true;
+                            }
+                        } else {
+                            first_font = Some(glyph.font_id);
+                        }
+                        if fonts
+                            .get(glyph.font_id as usize)
+                            .is_some_and(|font| font.flags & 16 != 0)
+                        {
+                            bold += 1;
+                        }
+                    }
+                }
+            }
+        }
+        try_push_text(
+            &mut styles,
+            RowStyle {
+                is_bold: total > 0 && bold * 2 >= total,
+                max_size,
+                uniform_font_id: if mixed_font { None } else { first_font },
+            },
+            "table header row styles",
+        )?;
+    }
+    Ok(styles)
+}
+
+/// Detect the number of leading header rows (`0` for headerless tables, `1`
+/// for a standard single-row header, `>= 2` for multi-row grouped headers).
+fn detect_header_rows(
+    row_count: usize,
+    col_count: usize,
+    cells: &[TableCell],
+    anchors: &[u32],
+    row_styles: &[RowStyle],
+    structural_header_rows: Option<usize>,
+) -> u32 {
+    if row_count < 2 || col_count == 0 {
+        return 0;
+    }
+    if let Some(structural) = structural_header_rows
+        && structural > 0
+        && structural < row_count
+    {
+        return u32::try_from(structural).unwrap_or(0);
+    }
+
+    let cell_str = |row: usize, col: usize| -> &str {
+        let slot = row * col_count + col;
+        let anchor = anchors.get(slot).copied().unwrap_or(slot as u32) as usize;
+        cells
+            .get(anchor)
+            .and_then(|cell| cell.as_ref())
+            .map_or("", |(_, text)| text.as_str())
+            .trim()
+    };
+    let row_has_colspan = |row: usize| -> bool {
+        (1..col_count).any(|col| {
+            let prev = anchors[row * col_count + col - 1] as usize;
+            let curr = anchors[row * col_count + col] as usize;
+            curr == prev && curr / col_count == row
+        })
+    };
+    let row_continues_rowspan = |row: usize| -> bool {
+        row > 0
+            && (0..col_count).any(|col| (anchors[row * col_count + col] as usize) / col_count < row)
+    };
+    let body_col_is_numeric = |start_row: usize, col: usize| -> bool {
+        let mut non_empty = 0usize;
+        let mut numeric = 0usize;
+        for row in start_row..row_count {
+            let value = cell_str(row, col);
+            if !value.is_empty() {
+                non_empty += 1;
+                if is_numeric_like(value) {
+                    numeric += 1;
+                }
+            }
+        }
+        non_empty > 0 && numeric * 2 >= non_empty
+    };
+    let row_has_numeric =
+        |row: usize| -> bool { (0..col_count).any(|col| is_numeric_like(cell_str(row, col))) };
+
+    let max_header = (row_count - 1).min(4);
+
+    // 1. Typographical header distinction (bold rows, notably larger font, or a
+    // distinct uniform font such as unembedded Standard 14 bold headers).
+    if row_styles.len() == row_count {
+        if row_styles[0].is_bold {
+            let bold_run = row_styles[..max_header]
+                .iter()
+                .take_while(|style| style.is_bold)
+                .count();
+            if bold_run > 0 && bold_run < row_count {
+                let body_rows = row_count - bold_run;
+                let non_bold_body = row_styles[bold_run..]
+                    .iter()
+                    .filter(|style| !style.is_bold)
+                    .count();
+                if non_bold_body * 2 > body_rows {
+                    return bold_run as u32;
+                }
+            }
+        }
+        let body_max_size = row_styles[1..]
+            .iter()
+            .map(|style| style.max_size)
+            .fold(0.0_f64, f64::max);
+        if body_max_size > 0.0 && row_styles[0].max_size > body_max_size * 1.12 {
+            let large_run = row_styles[..max_header]
+                .iter()
+                .take_while(|style| style.max_size > body_max_size * 1.12)
+                .count();
+            if large_run > 0 && large_run < row_count {
+                return large_run as u32;
+            }
+        }
+        if let Some(head_font) = row_styles[0].uniform_font_id
+            && !row_has_numeric(0)
+        {
+            let font_run = row_styles[..max_header]
+                .iter()
+                .take_while(|style| style.uniform_font_id == Some(head_font))
+                .count();
+            if font_run > 0
+                && font_run < row_count
+                && (0..font_run).all(|row| !row_has_numeric(row))
+                && let Some(body_font) = row_styles[font_run..]
+                    .iter()
+                    .find_map(|style| style.uniform_font_id)
+                && body_font != head_font
+            {
+                let body_rows = row_count - font_run;
+                let uniform_body_matches = row_styles[font_run..]
+                    .iter()
+                    .filter(|style| style.uniform_font_id == Some(body_font))
+                    .count();
+                let body_reuses_head = row_styles[font_run..]
+                    .iter()
+                    .any(|style| style.uniform_font_id == Some(head_font));
+                if !body_reuses_head && uniform_body_matches * 2 > body_rows {
+                    return font_run as u32;
+                }
+            }
+        }
+    }
+
+    // 2. Multi-row merged group header (column spans or vertical row spans in
+    // leading rows above data rows).
+    if row_count >= 3 && (row_has_colspan(0) || row_continues_rowspan(1)) {
+        let mut h = 1usize;
+        while h < max_header {
+            let spans_from_above = row_continues_rowspan(h);
+            let subheader_under_span = row_has_colspan(h - 1)
+                && !row_has_numeric(h)
+                && (0..col_count).any(|col| body_col_is_numeric(h + 1, col));
+            if spans_from_above || subheader_under_span {
+                h += 1;
+            } else {
+                break;
+            }
+        }
+        if h >= 2 && !row_has_numeric(h - 1) {
+            let has_numeric_body = (0..col_count).any(|col| body_col_is_numeric(h, col));
+            let distinct_subheaders = (0..col_count).any(|col| {
+                let slot = (h - 1) * col_count + col;
+                (anchors[slot] as usize) / col_count == h - 1 && !cell_str(h - 1, col).is_empty()
+            });
+            if has_numeric_body || distinct_subheaders {
+                return h as u32;
+            }
+        }
+    }
+
+    // 3. Single-row header by text-to-numeric column transition.
+    let mut transition_cols = 0usize;
+    let mut row0_numeric_in_numeric_col = 0usize;
+    for col in 0..col_count {
+        if !body_col_is_numeric(1, col) {
+            continue;
+        }
+        let head = cell_str(0, col);
+        if is_numeric_like(head) {
+            row0_numeric_in_numeric_col += 1;
+        } else if !head.is_empty() {
+            transition_cols += 1;
+        }
+    }
+    if transition_cols > 0 && row0_numeric_in_numeric_col == 0 {
+        return 1;
+    }
+
+    0
 }
 
 #[cfg(test)]
@@ -2497,12 +3466,14 @@ mod tests {
     #[test]
     fn candidate_limits_refuse_instead_of_discarding_a_grid() {
         let bounds = [0.0, 10.0, 20.0];
+        let tol = TableTolerances::default();
         for (code, maximum) in [
             (LimitCode::TableCellCount, 3),
             (LimitCode::TableSpanCandidateCount, 1),
         ] {
             let budget = Budget::default().with_limit(code, Some(maximum));
-            let error = materialize_grid_cells(&[], &bounds, &bounds, &[], &budget).unwrap_err();
+            let error =
+                materialize_grid_cells(&[], &bounds, &bounds, &[], tol, &budget).unwrap_err();
             assert!(matches!(error, Error::Limit(refusal) if refusal.code() == code));
         }
     }
@@ -2510,7 +3481,8 @@ mod tests {
     #[test]
     fn hybrid_slot_signatures_charge_memory_and_release_on_refusal() {
         let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(1));
-        let error = line_grid_slots(&[], &[0.0, 10.0, 20.0], true, &budget).unwrap_err();
+        let error = line_grid_slots(&[], &[0.0, 10.0, 20.0], true, TABLE_SNAP_TOLERANCE, &budget)
+            .unwrap_err();
         assert!(matches!(error, Error::Limit(refusal) if refusal.code() == LimitCode::MemorySize));
         assert_eq!(budget.used(LimitCode::MemorySize), 0);
     }
@@ -2553,14 +3525,15 @@ mod tests {
         let budget = Budget::default();
         let mut charged = 0;
         assert_eq!(
-            cell_text(&lines, cell, &budget, &mut charged).unwrap(),
+            cell_text(&lines, cell, TABLE_SNAP_TOLERANCE, &budget, &mut charged).unwrap(),
             "ab"
         );
         assert_eq!((charged, budget.used(LimitCode::TextSize)), (2, 2));
 
         let budget = Budget::default().with_limit(LimitCode::TextSize, Some(1));
         let mut charged = 0;
-        let error = cell_text(&lines, cell, &budget, &mut charged).unwrap_err();
+        let error =
+            cell_text(&lines, cell, TABLE_SNAP_TOLERANCE, &budget, &mut charged).unwrap_err();
         assert!(matches!(error, Error::Limit(refusal) if refusal.code() == LimitCode::TextSize));
         assert_eq!((charged, budget.used(LimitCode::TextSize)), (0, 0));
     }
@@ -2584,17 +3557,18 @@ mod tests {
             rule(0.0, 0.0, 0.0, 10.0, false),
             rule(10.0, 0.0, 10.0, 10.0, false),
         ];
+        let tol = TableTolerances::default();
         let (xs, ys) = ([0.0, 10.0, 20.0], [0.0, 10.0]);
         let budget = Budget::default();
         assert!(
-            materialize_grid_cells(&rules, &xs, &ys, &lines, &budget)
+            materialize_grid_cells(&rules, &xs, &ys, &lines, tol, &budget)
                 .unwrap()
                 .is_none()
         );
         assert_eq!(budget.used(LimitCode::TextSize), 0);
 
         let (xs, ys) = ([0.0, 10.0], [0.0, 10.0]);
-        let (cells, _) = materialize_grid_cells(&rules, &xs, &ys, &lines, &budget)
+        let (cells, _) = materialize_grid_cells(&rules, &xs, &ys, &lines, tol, &budget)
             .unwrap()
             .unwrap();
         assert_eq!(cells[0].as_ref().map(|(_, text)| text.as_str()), Some("ab"));
@@ -2604,7 +3578,8 @@ mod tests {
     #[test]
     fn detection_polls_the_operation_deadline() {
         let budget = Budget::default().with_timeout(std::time::Duration::ZERO);
-        let error = detect_grid_tables(&[], &[], &budget).unwrap_err();
+        let error = detect_grid_tables(&[], &[], TableTolerances::default(), &[], false, &budget)
+            .unwrap_err();
         assert!(matches!(error, Error::Limit(refusal) if refusal.code() == LimitCode::Deadline));
     }
 
@@ -2679,10 +3654,19 @@ mod tests {
         let lines = double_rule_body_lines();
         let budget = Budget::default();
 
-        let tables = detect_grid_tables(&lines, &rules, &budget).unwrap();
+        let tables = detect_grid_tables(
+            &lines,
+            &rules,
+            TableTolerances::default(),
+            &[],
+            false,
+            &budget,
+        )
+        .unwrap();
         assert_eq!(tables.len(), 1);
-        let (bbox, row_count, col_count, cells, _, diagnostics) = &tables[0];
+        let (bbox, row_count, col_count, cells, _, diagnostics, header_rows) = &tables[0];
         assert_eq!((*row_count, *col_count), (4, 3));
+        assert_eq!(*header_rows, 2);
         assert_eq!(*bbox, (20.0, 20.0, 260.0, 150.0));
         assert_eq!(diagnostics.0, 0.95);
         let text_at = |r: usize, c: usize| {
@@ -2722,7 +3706,15 @@ mod tests {
         // Tight cell budget that allows the 2x3 header (6 cells) but would fail
         // if the 12 prose lines were mistakenly counted as 12x3 table rows.
         let budget = Budget::default().with_limit(LimitCode::TableCellCount, Some(10));
-        let tables = detect_grid_tables(&lines, &rules, &budget).unwrap();
+        let tables = detect_grid_tables(
+            &lines,
+            &rules,
+            TableTolerances::default(),
+            &[],
+            false,
+            &budget,
+        )
+        .unwrap();
         assert_eq!(tables.len(), 1);
         assert_eq!((tables[0].1, tables[0].2), (2, 3));
         assert_eq!(tables[0].5.0, 1.0);
@@ -2732,23 +3724,24 @@ mod tests {
     fn double_rule_body_enforces_table_cell_rule_and_text_size_budgets() {
         let rules = double_rule_rules();
         let lines = double_rule_body_lines();
+        let tol = TableTolerances::default();
 
         // 4x3 = 12 cells exceeds a limit of 10.
         let cell_budget = Budget::default().with_limit(LimitCode::TableCellCount, Some(10));
-        let err = detect_grid_tables(&lines, &rules, &cell_budget).unwrap_err();
+        let err = detect_grid_tables(&lines, &rules, tol, &[], false, &cell_budget).unwrap_err();
         assert!(
             matches!(err, Error::Limit(refusal) if refusal.code() == LimitCode::TableCellCount)
         );
 
         // 11 real rules + 2 projected column dividers + 1 inferred row divider = 14 rules.
         let rule_budget = Budget::default().with_limit(LimitCode::TextRuleCount, Some(13));
-        let err = detect_grid_tables(&lines, &rules, &rule_budget).unwrap_err();
+        let err = detect_grid_tables(&lines, &rules, tol, &[], false, &rule_budget).unwrap_err();
         assert!(matches!(err, Error::Limit(refusal) if refusal.code() == LimitCode::TextRuleCount));
 
         // TextSize refusal mid-body releases every byte charged for header and
         // earlier body cells.
         let text_budget = Budget::default().with_limit(LimitCode::TextSize, Some(20));
-        let err = detect_grid_tables(&lines, &rules, &text_budget).unwrap_err();
+        let err = detect_grid_tables(&lines, &rules, tol, &[], false, &text_budget).unwrap_err();
         assert!(matches!(err, Error::Limit(refusal) if refusal.code() == LimitCode::TextSize));
         assert_eq!(text_budget.used(LimitCode::TextSize), 0);
     }

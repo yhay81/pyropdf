@@ -817,7 +817,7 @@ READ_ONLY = {
     "StructureNamespaces": "find",
     "StructureTree": "child_rules reading_order resolve_role walk",
     "WebCapture": "by_id by_url",
-    "Table": "markdown",
+    "Table": "markdown to_dicts to_dataframe",
     "typed.LinkedTree": "lookup",
     "typed.View": "interpret",
 }

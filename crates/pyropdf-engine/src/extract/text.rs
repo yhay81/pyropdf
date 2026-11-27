@@ -35,7 +35,7 @@ pub use self::layout::{
 };
 pub use self::search::{SearchHits, page_search};
 pub use self::selection::page_selection;
-pub use self::tables::{TableCell, TableDiagnosticsTuple, TableTuple, page_tables};
+pub use self::tables::{TableCell, TableDiagnosticsTuple, TableOptions, TableTuple, page_tables};
 use super::model::FALLBACK_FONT_KEY;
 use super::provenance::{RunCheck, Source, run_sources};
 use super::stretch::Stretches;
