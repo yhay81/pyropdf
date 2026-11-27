@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import subprocess
@@ -366,6 +367,30 @@ def test_stability_policy_matches_package_metadata_and_limits() -> None:
             "capabilities.zip",
         ):
             assert token in text, (language, token)
+
+        anchor_ids[language] = re.findall(r"\{#([A-Za-z0-9_:-]+)\}", text)
+
+    assert anchor_ids["en"]
+    assert anchor_ids["ja"] == anchor_ids["en"]
+
+
+def test_migration_guides_are_wired_synchronized_and_syntax_valid() -> None:
+    before_fence = re.compile(r"^```py(?: [^\n]*)?\n(.*?)^```", re.MULTILINE | re.DOTALL)
+    anchor_ids: dict[str, list[str]] = {}
+    for language, config_name in (("en", "mkdocs.yml"), ("ja", "mkdocs.ja.yml")):
+        guide = DOCS / language / "migrating.md"
+        assert guide.is_file(), guide
+        text = guide.read_text(encoding="utf-8")
+        config_text = (ROOT / config_name).read_text(encoding="utf-8")
+        assert ": migrating.md" in config_text, config_name
+        assert "- migrating.md" in config_text, config_name
+
+        before_snippets = before_fence.findall(text)
+        after_snippets = EXAMPLE.findall(text)
+        assert before_snippets, language
+        assert len(before_snippets) == len(after_snippets), language
+        for index, snippet in enumerate(before_snippets):
+            ast.parse(snippet, filename=f"docs/{language}/migrating.md#before-{index}")
 
         anchor_ids[language] = re.findall(r"\{#([A-Za-z0-9_:-]+)\}", text)
 
