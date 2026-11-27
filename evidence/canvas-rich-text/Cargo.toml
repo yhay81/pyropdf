@@ -1,0 +1,24 @@
+[workspace]
+
+[package]
+name = "canvas-rich-text-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# F6 budget and fallible containers from the pyropdf store.
+pyropdf-store = { path = "../../crates/pyropdf-store" }
+
+# Option B: exact crates already shipped in crates/pyropdf-engine/Cargo.toml
+# (zero new workspace dependencies).
+harfrust = "0.16.0"
+pdf-base14-metrics = "0.0.2"
+skrifa = "0.50.0"
+unicode-bidi = "0.3.18"
+unicode-linebreak = "0.1.5"
+unicode-segmentation = "1.13.3"
+unicode-script = "0.5.9"
+
+# Option A: candidate rich-text layout engine (minimal non-system feature set).
+parley = { version = "0.13.0", default-features = false, features = ["std"] }
