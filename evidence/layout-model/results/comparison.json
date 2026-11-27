@@ -1,0 +1,1358 @@
+{
+  "aggregate": {
+    "pyropdf heuristic (text)": {
+      "anchors_found": 140,
+      "anchors_total": 140,
+      "pairs_in_order": 129,
+      "pairs_total": 129,
+      "true_tables": 2,
+      "fp_tables": 0,
+      "jp_headings": 0
+    },
+    "pyropdf heuristic (md)": {
+      "anchors_found": 137,
+      "anchors_total": 140,
+      "pairs_in_order": 126,
+      "pairs_total": 126,
+      "true_tables": 2,
+      "fp_tables": 0,
+      "jp_headings": 0
+    },
+    "pymupdf-layout 2.2 (md)": {
+      "anchors_found": 103,
+      "anchors_total": 140,
+      "pairs_in_order": 90,
+      "pairs_total": 92,
+      "true_tables": 2,
+      "fp_tables": 3,
+      "jp_headings": 0
+    },
+    "PP-DocLayout-S (FP32, 480x480)": {
+      "anchors_found": 140,
+      "anchors_total": 140,
+      "pairs_in_order": 118,
+      "pairs_total": 129,
+      "true_tables": 0,
+      "fp_tables": 1,
+      "jp_headings": 6
+    },
+    "PP-DocLayout_plus-L (FP32, 800x800)": {
+      "anchors_found": 140,
+      "anchors_total": 140,
+      "pairs_in_order": 125,
+      "pairs_total": 129,
+      "true_tables": 2,
+      "fp_tables": 0,
+      "jp_headings": 9
+    },
+    "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+      "anchors_found": 140,
+      "anchors_total": 140,
+      "pairs_in_order": 122,
+      "pairs_total": 129,
+      "true_tables": 2,
+      "fp_tables": 0,
+      "jp_headings": 9
+    },
+    "PP-DocLayoutV3 (FP32, 800x800)": {
+      "anchors_found": 140,
+      "anchors_total": 140,
+      "pairs_in_order": 126,
+      "pairs_total": 129,
+      "true_tables": 2,
+      "fp_tables": 0,
+      "jp_headings": 9
+    },
+    "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+      "anchors_found": 140,
+      "anchors_total": 140,
+      "pairs_in_order": 124,
+      "pairs_total": 129,
+      "true_tables": 2,
+      "fp_tables": 0,
+      "jp_headings": 9
+    }
+  },
+  "per_page": {
+    "bill-hr815-p1": {
+      "document": "bill-hr815.pdf",
+      "page": 1,
+      "engines": {
+        "pyropdf heuristic (text)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "regions": {
+            "blocks": 7,
+            "tables": 0
+          }
+        },
+        "pyropdf heuristic (md)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "regions": {
+            "tables": 0
+          }
+        },
+        "pymupdf-layout 2.2 (md)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "regions": {
+            "list-item": 15,
+            "page-header": 1,
+            "picture": 1,
+            "section-header": 2,
+            "text": 14
+          }
+        },
+        "PP-DocLayout-S (FP32, 480x480)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 10,
+            "pairs": 11
+          },
+          "infer_4t_ms": 21.95,
+          "regions": {
+            "header_image": 1,
+            "doc_title": 1,
+            "text": 4,
+            "abstract": 1
+          }
+        },
+        "PP-DocLayout_plus-L (FP32, 800x800)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "infer_4t_ms": 1028.89,
+          "regions": {
+            "header": 2,
+            "doc_title": 1,
+            "text": 21,
+            "paragraph_title": 3
+          }
+        },
+        "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "infer_4t_ms": 390.75,
+          "regions": {
+            "header": 2,
+            "doc_title": 1,
+            "text": 21,
+            "paragraph_title": 3
+          }
+        },
+        "PP-DocLayoutV3 (FP32, 800x800)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "infer_4t_ms": 769.49,
+          "regions": {
+            "header_image": 1,
+            "header": 1,
+            "doc_title": 1,
+            "text": 23,
+            "paragraph_title": 3
+          }
+        },
+        "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "infer_4t_ms": 557.74,
+          "regions": {
+            "header_image": 1,
+            "header": 1,
+            "doc_title": 1,
+            "text": 22,
+            "paragraph_title": 2
+          }
+        }
+      }
+    },
+    "f1040-p1": {
+      "document": "f1040.pdf",
+      "page": 1,
+      "engines": {
+        "pyropdf heuristic (text)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "regions": {
+            "blocks": 16,
+            "tables": 1
+          }
+        },
+        "pyropdf heuristic (md)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "regions": {
+            "tables": 1
+          }
+        },
+        "pymupdf-layout 2.2 (md)": {
+          "anchors": {
+            "found": 8,
+            "total": 18,
+            "in_order": 7,
+            "pairs": 7
+          },
+          "regions": {
+            "table": 3
+          }
+        },
+        "PP-DocLayout-S (FP32, 480x480)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "infer_4t_ms": 24.2,
+          "regions": {
+            "table": 3,
+            "text": 3,
+            "footer": 1
+          }
+        },
+        "PP-DocLayout_plus-L (FP32, 800x800)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "infer_4t_ms": 815.9,
+          "regions": {
+            "table": 1,
+            "footer": 1
+          }
+        },
+        "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "infer_4t_ms": 396.67,
+          "regions": {
+            "table": 1,
+            "footer": 1
+          }
+        },
+        "PP-DocLayoutV3 (FP32, 800x800)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "infer_4t_ms": 706.33,
+          "regions": {
+            "table": 1,
+            "vision_footnote": 1
+          }
+        },
+        "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "infer_4t_ms": 474.62,
+          "regions": {
+            "table": 1,
+            "vision_footnote": 1
+          }
+        }
+      }
+    },
+    "f1040-p2": {
+      "document": "f1040.pdf",
+      "page": 2,
+      "engines": {
+        "pyropdf heuristic (text)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "regions": {
+            "blocks": 10,
+            "tables": 0
+          }
+        },
+        "pyropdf heuristic (md)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "regions": {
+            "tables": 0
+          }
+        },
+        "pymupdf-layout 2.2 (md)": {
+          "anchors": {
+            "found": 8,
+            "total": 18,
+            "in_order": 7,
+            "pairs": 7
+          },
+          "regions": {
+            "table": 2
+          }
+        },
+        "PP-DocLayout-S (FP32, 480x480)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "infer_4t_ms": 22.54,
+          "regions": {
+            "header": 1,
+            "content": 1,
+            "text": 1,
+            "footer": 1
+          }
+        },
+        "PP-DocLayout_plus-L (FP32, 800x800)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "infer_4t_ms": 621.54,
+          "regions": {
+            "table": 1,
+            "footer": 1,
+            "text": 1
+          }
+        },
+        "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "infer_4t_ms": 378.88,
+          "regions": {
+            "table": 1,
+            "number": 1,
+            "text": 1
+          }
+        },
+        "PP-DocLayoutV3 (FP32, 800x800)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "infer_4t_ms": 701.69,
+          "regions": {
+            "number": 1,
+            "table": 1,
+            "vision_footnote": 2
+          }
+        },
+        "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+          "anchors": {
+            "found": 18,
+            "total": 18,
+            "in_order": 17,
+            "pairs": 17
+          },
+          "infer_4t_ms": 487.03,
+          "regions": {
+            "number": 1,
+            "table": 1,
+            "vision_footnote": 2
+          }
+        }
+      }
+    },
+    "mhlw-doc-p1": {
+      "document": "mhlw-doc.pdf",
+      "page": 1,
+      "engines": {
+        "pyropdf heuristic (text)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 10,
+            "pairs": 10
+          },
+          "regions": {
+            "blocks": 40,
+            "tables": 0
+          }
+        },
+        "pyropdf heuristic (md)": {
+          "anchors": {
+            "found": 10,
+            "total": 11,
+            "in_order": 9,
+            "pairs": 9
+          },
+          "regions": {
+            "tables": 0
+          }
+        },
+        "pymupdf-layout 2.2 (md)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 10,
+            "pairs": 10
+          },
+          "regions": {
+            "list-item": 14,
+            "page-footer": 1,
+            "page-header": 1,
+            "text": 3
+          }
+        },
+        "PP-DocLayout-S (FP32, 480x480)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 5,
+            "pairs": 10
+          },
+          "infer_4t_ms": 21.69,
+          "regions": {
+            "text": 13,
+            "paragraph_title": 4,
+            "header": 1
+          }
+        },
+        "PP-DocLayout_plus-L (FP32, 800x800)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 9,
+            "pairs": 10
+          },
+          "infer_4t_ms": 587.05,
+          "regions": {
+            "header": 1,
+            "paragraph_title": 6,
+            "text": 12,
+            "number": 1
+          }
+        },
+        "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 7,
+            "pairs": 10
+          },
+          "infer_4t_ms": 362.24,
+          "regions": {
+            "header": 2,
+            "text": 12,
+            "paragraph_title": 6,
+            "number": 1
+          }
+        },
+        "PP-DocLayoutV3 (FP32, 800x800)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 9,
+            "pairs": 10
+          },
+          "infer_4t_ms": 725.16,
+          "regions": {
+            "header": 1,
+            "doc_title": 1,
+            "paragraph_title": 5,
+            "text": 12,
+            "number": 1
+          }
+        },
+        "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 9,
+            "pairs": 10
+          },
+          "infer_4t_ms": 485.18,
+          "regions": {
+            "header": 1,
+            "doc_title": 1,
+            "paragraph_title": 5,
+            "text": 11,
+            "number": 1
+          }
+        }
+      }
+    },
+    "mhlw-doc-p2": {
+      "document": "mhlw-doc.pdf",
+      "page": 2,
+      "engines": {
+        "pyropdf heuristic (text)": {
+          "anchors": {
+            "found": 5,
+            "total": 5,
+            "in_order": 4,
+            "pairs": 4
+          },
+          "regions": {
+            "blocks": 16,
+            "tables": 0
+          }
+        },
+        "pyropdf heuristic (md)": {
+          "anchors": {
+            "found": 3,
+            "total": 5,
+            "in_order": 2,
+            "pairs": 2
+          },
+          "regions": {
+            "tables": 0
+          }
+        },
+        "pymupdf-layout 2.2 (md)": {
+          "anchors": {
+            "found": 3,
+            "total": 5,
+            "in_order": 2,
+            "pairs": 2
+          },
+          "regions": {
+            "list-item": 3,
+            "page-footer": 1,
+            "text": 4
+          }
+        },
+        "PP-DocLayout-S (FP32, 480x480)": {
+          "anchors": {
+            "found": 5,
+            "total": 5,
+            "in_order": 3,
+            "pairs": 4
+          },
+          "infer_4t_ms": 19.53,
+          "regions": {
+            "text": 4,
+            "paragraph_title": 2
+          }
+        },
+        "PP-DocLayout_plus-L (FP32, 800x800)": {
+          "anchors": {
+            "found": 5,
+            "total": 5,
+            "in_order": 4,
+            "pairs": 4
+          },
+          "infer_4t_ms": 596.77,
+          "regions": {
+            "paragraph_title": 3,
+            "text": 4,
+            "number": 1
+          }
+        },
+        "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+          "anchors": {
+            "found": 5,
+            "total": 5,
+            "in_order": 4,
+            "pairs": 4
+          },
+          "infer_4t_ms": 348.71,
+          "regions": {
+            "paragraph_title": 3,
+            "text": 4,
+            "number": 1
+          }
+        },
+        "PP-DocLayoutV3 (FP32, 800x800)": {
+          "anchors": {
+            "found": 5,
+            "total": 5,
+            "in_order": 4,
+            "pairs": 4
+          },
+          "infer_4t_ms": 699.71,
+          "regions": {
+            "paragraph_title": 3,
+            "text": 4,
+            "number": 1
+          }
+        },
+        "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+          "anchors": {
+            "found": 5,
+            "total": 5,
+            "in_order": 4,
+            "pairs": 4
+          },
+          "infer_4t_ms": 471.54,
+          "regions": {
+            "paragraph_title": 3,
+            "text": 4,
+            "number": 1
+          }
+        }
+      }
+    },
+    "nics-background-checks-2015-11-p1": {
+      "document": "nics-background-checks-2015-11.pdf",
+      "page": 1,
+      "engines": {
+        "pyropdf heuristic (text)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 10,
+            "pairs": 10
+          },
+          "regions": {
+            "blocks": 5,
+            "tables": 1
+          }
+        },
+        "pyropdf heuristic (md)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 10,
+            "pairs": 10
+          },
+          "regions": {
+            "tables": 1
+          }
+        },
+        "pymupdf-layout 2.2 (md)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 10,
+            "pairs": 10
+          },
+          "regions": {
+            "page-footer": 1,
+            "section-header": 2,
+            "table": 1,
+            "text": 6
+          }
+        },
+        "PP-DocLayout-S (FP32, 480x480)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 9,
+            "pairs": 10
+          },
+          "infer_4t_ms": 21.45,
+          "regions": {
+            "chart": 1,
+            "number": 1
+          }
+        },
+        "PP-DocLayout_plus-L (FP32, 800x800)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 9,
+            "pairs": 10
+          },
+          "infer_4t_ms": 602.99,
+          "regions": {
+            "figure_title": 1,
+            "table": 1,
+            "number": 1
+          }
+        },
+        "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 9,
+            "pairs": 10
+          },
+          "infer_4t_ms": 351.18,
+          "regions": {
+            "figure_title": 1,
+            "table": 1,
+            "number": 1
+          }
+        },
+        "PP-DocLayoutV3 (FP32, 800x800)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 9,
+            "pairs": 10
+          },
+          "infer_4t_ms": 702.36,
+          "regions": {
+            "figure_title": 1,
+            "table": 1,
+            "vision_footnote": 2,
+            "number": 1
+          }
+        },
+        "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+          "anchors": {
+            "found": 11,
+            "total": 11,
+            "in_order": 9,
+            "pairs": 10
+          },
+          "infer_4t_ms": 484.26,
+          "regions": {
+            "figure_title": 1,
+            "table": 1,
+            "vision_footnote": 2,
+            "number": 1
+          }
+        }
+      }
+    },
+    "patent-us223898-p2": {
+      "document": "patent-us223898.pdf",
+      "page": 2,
+      "engines": {
+        "pyropdf heuristic (text)": {
+          "anchors": {
+            "found": 9,
+            "total": 9,
+            "in_order": 8,
+            "pairs": 8
+          },
+          "regions": {
+            "blocks": 5,
+            "tables": 0
+          }
+        },
+        "pyropdf heuristic (md)": {
+          "anchors": {
+            "found": 9,
+            "total": 9,
+            "in_order": 8,
+            "pairs": 8
+          },
+          "regions": {
+            "tables": 0
+          }
+        },
+        "pymupdf-layout 2.2 (md)": {
+          "anchors": {
+            "found": 9,
+            "total": 9,
+            "in_order": 7,
+            "pairs": 8
+          },
+          "regions": {
+            "table": 1,
+            "title": 1
+          }
+        },
+        "PP-DocLayout-S (FP32, 480x480)": {
+          "anchors": {
+            "found": 9,
+            "total": 9,
+            "in_order": 8,
+            "pairs": 8
+          },
+          "infer_4t_ms": 22.03,
+          "regions": {
+            "header": 1,
+            "doc_title": 1,
+            "text": 3,
+            "abstract": 1
+          }
+        },
+        "PP-DocLayout_plus-L (FP32, 800x800)": {
+          "anchors": {
+            "found": 9,
+            "total": 9,
+            "in_order": 8,
+            "pairs": 8
+          },
+          "infer_4t_ms": 594.87,
+          "regions": {
+            "doc_title": 1,
+            "text": 10,
+            "header": 1
+          }
+        },
+        "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+          "anchors": {
+            "found": 9,
+            "total": 9,
+            "in_order": 7,
+            "pairs": 8
+          },
+          "infer_4t_ms": 420.58,
+          "regions": {
+            "doc_title": 1,
+            "text": 7,
+            "header": 1
+          }
+        },
+        "PP-DocLayoutV3 (FP32, 800x800)": {
+          "anchors": {
+            "found": 9,
+            "total": 9,
+            "in_order": 8,
+            "pairs": 8
+          },
+          "infer_4t_ms": 691.7,
+          "regions": {
+            "header": 1,
+            "doc_title": 1,
+            "text": 14,
+            "aside_text": 13
+          }
+        },
+        "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+          "anchors": {
+            "found": 9,
+            "total": 9,
+            "in_order": 8,
+            "pairs": 8
+          },
+          "infer_4t_ms": 471.85,
+          "regions": {
+            "header": 1,
+            "doc_title": 1,
+            "text": 14,
+            "aside_text": 12
+          }
+        }
+      }
+    },
+    "patent-us223898-p3": {
+      "document": "patent-us223898.pdf",
+      "page": 3,
+      "engines": {
+        "pyropdf heuristic (text)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 13,
+            "pairs": 13
+          },
+          "regions": {
+            "blocks": 3,
+            "tables": 0
+          }
+        },
+        "pyropdf heuristic (md)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 13,
+            "pairs": 13
+          },
+          "regions": {
+            "tables": 0
+          }
+        },
+        "pymupdf-layout 2.2 (md)": {
+          "anchors": {
+            "found": 12,
+            "total": 14,
+            "in_order": 10,
+            "pairs": 11
+          },
+          "regions": {
+            "list-item": 1,
+            "text": 3,
+            "title": 1
+          }
+        },
+        "PP-DocLayout-S (FP32, 480x480)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 12,
+            "pairs": 13
+          },
+          "infer_4t_ms": 22.68,
+          "regions": {
+            "header": 1,
+            "number": 1,
+            "table": 1,
+            "reference": 1
+          }
+        },
+        "PP-DocLayout_plus-L (FP32, 800x800)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 12,
+            "pairs": 13
+          },
+          "infer_4t_ms": 598.89,
+          "regions": {
+            "header": 2,
+            "text": 26
+          }
+        },
+        "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 12,
+            "pairs": 13
+          },
+          "infer_4t_ms": 365.43,
+          "regions": {
+            "header": 2,
+            "text": 27
+          }
+        },
+        "PP-DocLayoutV3 (FP32, 800x800)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 12,
+            "pairs": 13
+          },
+          "infer_4t_ms": 691.72,
+          "regions": {
+            "header": 2,
+            "aside_text": 18,
+            "text": 20
+          }
+        },
+        "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 13,
+            "pairs": 13
+          },
+          "infer_4t_ms": 473.25,
+          "regions": {
+            "header": 1,
+            "aside_text": 3,
+            "text": 18
+          }
+        }
+      }
+    },
+    "senate-expenditures-p1": {
+      "document": "senate-expenditures.pdf",
+      "page": 1,
+      "engines": {
+        "pyropdf heuristic (text)": {
+          "anchors": {
+            "found": 16,
+            "total": 16,
+            "in_order": 15,
+            "pairs": 15
+          },
+          "regions": {
+            "blocks": 5,
+            "tables": 1
+          }
+        },
+        "pyropdf heuristic (md)": {
+          "anchors": {
+            "found": 16,
+            "total": 16,
+            "in_order": 15,
+            "pairs": 15
+          },
+          "regions": {
+            "tables": 1
+          }
+        },
+        "pymupdf-layout 2.2 (md)": {
+          "anchors": {
+            "found": 14,
+            "total": 16,
+            "in_order": 13,
+            "pairs": 13
+          },
+          "regions": {
+            "table": 1,
+            "text": 1
+          }
+        },
+        "PP-DocLayout-S (FP32, 480x480)": {
+          "anchors": {
+            "found": 16,
+            "total": 16,
+            "in_order": 15,
+            "pairs": 15
+          },
+          "infer_4t_ms": 21.81,
+          "regions": {
+            "image": 1
+          }
+        },
+        "PP-DocLayout_plus-L (FP32, 800x800)": {
+          "anchors": {
+            "found": 16,
+            "total": 16,
+            "in_order": 15,
+            "pairs": 15
+          },
+          "infer_4t_ms": 586.54,
+          "regions": {
+            "table": 1
+          }
+        },
+        "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+          "anchors": {
+            "found": 16,
+            "total": 16,
+            "in_order": 15,
+            "pairs": 15
+          },
+          "infer_4t_ms": 355.31,
+          "regions": {
+            "table": 1
+          }
+        },
+        "PP-DocLayoutV3 (FP32, 800x800)": {
+          "anchors": {
+            "found": 16,
+            "total": 16,
+            "in_order": 15,
+            "pairs": 15
+          },
+          "infer_4t_ms": 726.8,
+          "regions": {
+            "table": 1,
+            "number": 1
+          }
+        },
+        "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+          "anchors": {
+            "found": 16,
+            "total": 16,
+            "in_order": 15,
+            "pairs": 15
+          },
+          "infer_4t_ms": 466.22,
+          "regions": {
+            "table": 1
+          }
+        }
+      }
+    },
+    "usrguide-p1": {
+      "document": "usrguide.pdf",
+      "page": 1,
+      "engines": {
+        "pyropdf heuristic (text)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 13,
+            "pairs": 13
+          },
+          "regions": {
+            "blocks": 11,
+            "tables": 0
+          }
+        },
+        "pyropdf heuristic (md)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 13,
+            "pairs": 13
+          },
+          "regions": {
+            "tables": 0
+          }
+        },
+        "pymupdf-layout 2.2 (md)": {
+          "anchors": {
+            "found": 4,
+            "total": 14,
+            "in_order": 3,
+            "pairs": 3
+          },
+          "regions": {
+            "page-footer": 1,
+            "section-header": 2,
+            "table": 1,
+            "text": 3
+          }
+        },
+        "PP-DocLayout-S (FP32, 480x480)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 12,
+            "pairs": 13
+          },
+          "infer_4t_ms": 21.54,
+          "regions": {
+            "text": 2,
+            "content": 1
+          }
+        },
+        "PP-DocLayout_plus-L (FP32, 800x800)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 13,
+            "pairs": 13
+          },
+          "infer_4t_ms": 596.75,
+          "regions": {
+            "doc_title": 1,
+            "text": 2,
+            "paragraph_title": 1,
+            "content": 1,
+            "footnote": 1,
+            "number": 1
+          }
+        },
+        "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 13,
+            "pairs": 13
+          },
+          "infer_4t_ms": 353.35,
+          "regions": {
+            "doc_title": 1,
+            "text": 2,
+            "paragraph_title": 1,
+            "content": 1,
+            "footnote": 1,
+            "number": 1
+          }
+        },
+        "PP-DocLayoutV3 (FP32, 800x800)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 13,
+            "pairs": 13
+          },
+          "infer_4t_ms": 1279.78,
+          "regions": {
+            "doc_title": 1,
+            "text": 2,
+            "paragraph_title": 1,
+            "content": 1,
+            "footnote": 1,
+            "number": 1
+          }
+        },
+        "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+          "anchors": {
+            "found": 14,
+            "total": 14,
+            "in_order": 13,
+            "pairs": 13
+          },
+          "infer_4t_ms": 479.16,
+          "regions": {
+            "doc_title": 1,
+            "text": 2,
+            "paragraph_title": 1,
+            "content": 1,
+            "footnote": 1,
+            "number": 1
+          }
+        }
+      }
+    },
+    "usrguide-p2": {
+      "document": "usrguide.pdf",
+      "page": 2,
+      "engines": {
+        "pyropdf heuristic (text)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "regions": {
+            "blocks": 15,
+            "tables": 0
+          }
+        },
+        "pyropdf heuristic (md)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "regions": {
+            "tables": 0
+          }
+        },
+        "pymupdf-layout 2.2 (md)": {
+          "anchors": {
+            "found": 11,
+            "total": 12,
+            "in_order": 10,
+            "pairs": 10
+          },
+          "regions": {
+            "page-footer": 1,
+            "section-header": 4,
+            "table": 1,
+            "text": 5
+          }
+        },
+        "PP-DocLayout-S (FP32, 480x480)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 10,
+            "pairs": 11
+          },
+          "infer_4t_ms": 21.76,
+          "regions": {
+            "text": 9,
+            "paragraph_title": 4
+          }
+        },
+        "PP-DocLayout_plus-L (FP32, 800x800)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 10,
+            "pairs": 11
+          },
+          "infer_4t_ms": 595.72,
+          "regions": {
+            "paragraph_title": 4,
+            "text": 5,
+            "number": 1
+          }
+        },
+        "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 10,
+            "pairs": 11
+          },
+          "infer_4t_ms": 345.9,
+          "regions": {
+            "paragraph_title": 4,
+            "text": 5,
+            "number": 1
+          }
+        },
+        "PP-DocLayoutV3 (FP32, 800x800)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "infer_4t_ms": 1729.19,
+          "regions": {
+            "content": 1,
+            "paragraph_title": 4,
+            "text": 5,
+            "inline_formula": 1,
+            "number": 1
+          }
+        },
+        "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 8,
+            "pairs": 11
+          },
+          "infer_4t_ms": 474.53,
+          "regions": {
+            "content": 1,
+            "text": 5,
+            "paragraph_title": 1
+          }
+        }
+      }
+    }
+  },
+  "scans": {
+    "PP-DocLayout_plus-L (INT8)": {
+      "bunka-kokugo-series-019-p4-p1": {
+        "infer_4t_ms": 1150.88,
+        "regions": {
+          "text": 10,
+          "paragraph_title": 1,
+          "doc_title": 1
+        }
+      },
+      "wdl6812-manuscript-p1": {
+        "infer_4t_ms": 1422.72,
+        "regions": {
+          "image": 1
+        }
+      }
+    },
+    "PP-DocLayoutV3 (FP32)": {
+      "bunka-kokugo-series-019-p4-p1": {
+        "infer_4t_ms": 2526.63,
+        "regions": {
+          "text": 7,
+          "paragraph_title": 1
+        }
+      },
+      "wdl6812-manuscript-p1": {
+        "infer_4t_ms": 2122.53,
+        "regions": {
+          "image": 1
+        }
+      }
+    }
+  }
+}

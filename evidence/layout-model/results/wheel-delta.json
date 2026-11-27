@@ -1,0 +1,125 @@
+{
+  "platform": "macosx_arm64",
+  "baseline_meta": {
+    "cargo_lock_packages": 220,
+    "duplicates_in_engine": [
+      "fearless_simd v0.7.0",
+      "fearless_simd v1.3.0",
+      "miniz_oxide v0.8.9",
+      "miniz_oxide v0.9.1",
+      "read-fonts v0.46.0",
+      "read-fonts v0.47.0",
+      "skrifa v0.49.0",
+      "skrifa v0.50.0",
+      "syn v2.0.119",
+      "syn v3.0.10"
+    ],
+    "cargo_audit_clean": true,
+    "cargo_audit_summary": "clean (0 warnings/advisories)",
+    "wasm32_emscripten_ok": true
+  },
+  "standalone_rten_probes": {
+    "aarch64_apple_darwin": {
+      "rten_format_raw": 1852720,
+      "rten_format_zlib9": 672308,
+      "onnx_format_delta_raw": 150464,
+      "onnx_format_delta_zlib9": 71482
+    },
+    "wasm32_unknown_unknown": {
+      "rten_format_raw": 1596605,
+      "rten_format_zlib9": 510469,
+      "onnx_format_delta_raw": 162470,
+      "onnx_format_delta_zlib9": 45893
+    }
+  },
+  "v041_abi3_wheels": {
+    "win_amd64": 8961169,
+    "manylinux_x86_64": 8900191,
+    "macosx_x86_64": 8566157,
+    "manylinux_aarch64": 8324603,
+    "macosx_arm64": 7735902
+  },
+  "v041_wasm_wheel": 6748614,
+  "variants": {
+    "rten_format_wrapper": {
+      "head": {
+        "filename": "pyropdf-0.4.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "tag": "cp311-abi3-macosx_11_0_arm64",
+        "sha256": "671298f6aecf61f09375a7de49b99f7b710b4c2cf46cd4d4464a19adb8f77326",
+        "size_bytes": 7764128,
+        "size_mib": 7.404449,
+        "extension_bytes": 7082438
+      },
+      "base": {
+        "filename": "pyropdf-0.4.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "tag": "cp311-abi3-macosx_11_0_arm64",
+        "sha256": "855bdaccc56ae286d9bd776185acd64ec5d1c8cdb0bd45eff1e841da087048ba",
+        "size_bytes": 7755870,
+        "size_mib": 7.396574,
+        "extension_bytes": 7074177
+      },
+      "growth_bytes": 8258,
+      "justification": "spike measurement",
+      "original_deflate9_bytes": 7953995,
+      "extension_growth_bytes": 8261,
+      "meta": {
+        "cargo_lock_packages": 220,
+        "duplicates_in_engine": [
+          "fearless_simd v0.7.0",
+          "fearless_simd v1.3.0",
+          "miniz_oxide v0.8.9",
+          "miniz_oxide v0.9.1",
+          "read-fonts v0.46.0",
+          "read-fonts v0.47.0",
+          "skrifa v0.49.0",
+          "skrifa v0.50.0",
+          "syn v2.0.119",
+          "syn v3.0.10"
+        ],
+        "cargo_audit_clean": true,
+        "cargo_audit_summary": "clean (0 warnings/advisories)",
+        "wasm32_emscripten_ok": true
+      }
+    },
+    "onnx_format_wrapper": {
+      "head": {
+        "filename": "pyropdf-0.4.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "tag": "cp311-abi3-macosx_11_0_arm64",
+        "sha256": "2b73f3639720d1268be3ca639bf66350c409b6ddd5dccd322f24cc4ea14b9b1e",
+        "size_bytes": 7845147,
+        "size_mib": 7.481715,
+        "extension_bytes": 7163364
+      },
+      "base": {
+        "filename": "pyropdf-0.4.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "tag": "cp311-abi3-macosx_11_0_arm64",
+        "sha256": "855bdaccc56ae286d9bd776185acd64ec5d1c8cdb0bd45eff1e841da087048ba",
+        "size_bytes": 7755870,
+        "size_mib": 7.396574,
+        "extension_bytes": 7074177
+      },
+      "growth_bytes": 89277,
+      "justification": "spike measurement",
+      "original_deflate9_bytes": 8038246,
+      "extension_growth_bytes": 89187,
+      "meta": {
+        "cargo_lock_packages": 221,
+        "duplicates_in_engine": [
+          "fearless_simd v0.7.0",
+          "fearless_simd v1.3.0",
+          "miniz_oxide v0.8.9",
+          "miniz_oxide v0.9.1",
+          "read-fonts v0.46.0",
+          "read-fonts v0.47.0",
+          "skrifa v0.49.0",
+          "skrifa v0.50.0",
+          "syn v2.0.119",
+          "syn v3.0.10"
+        ],
+        "cargo_audit_clean": true,
+        "cargo_audit_summary": "clean (0 warnings/advisories)",
+        "wasm32_emscripten_ok": true
+      }
+    }
+  }
+}
