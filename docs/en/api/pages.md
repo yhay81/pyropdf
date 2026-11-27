@@ -750,6 +750,7 @@ Page.text(
     whitespace: bool = True,
     dehyphenate: bool = False,
     unmapped: Unmapped = 'skip',
+    actual_text: bool = True,
     max_glyphs: int | None = 262144,
     max_size: int | None = 67108864,
 ) -> str
@@ -762,7 +763,8 @@ the documentation rather than the document's semantic order. Spaces
 between words are inferred from glyph positions, and lines end with a
 newline. Annotation appearances count as page content. The
 `/ActualText` of a marked-content sequence replaces the text of the
-glyphs inside it.
+glyphs inside it unless `actual_text=False`, which extracts the
+underlying glyph Unicode directly.
 
 `clip` keeps the glyphs whose box's center lies inside a
 display-space rectangle, in the page's reading order, which gives the
@@ -800,6 +802,7 @@ Page.words(
     whitespace: bool = True,
     dehyphenate: bool = False,
     unmapped: Unmapped = 'skip',
+    actual_text: bool = True,
     exact_bboxes: bool = False,
     max_glyphs: int | None = 262144,
     max_size: int | None = 67108864,
@@ -832,6 +835,7 @@ Page.layout(
     whitespace: bool = True,
     dehyphenate: bool = False,
     unmapped: Unmapped = 'skip',
+    actual_text: bool = True,
     exact_bboxes: bool = False,
     styles: bool = False,
     max_glyphs: int | None = 262144,
@@ -870,6 +874,7 @@ Page.chars(
     whitespace: bool = True,
     dehyphenate: bool = False,
     unmapped: Unmapped = 'skip',
+    actual_text: bool = True,
     exact_bboxes: bool = False,
     styles: bool = False,
     max_glyphs: int | None = 262144,
@@ -899,6 +904,7 @@ Page.search(
     whitespace: bool = True,
     dehyphenate: bool = False,
     unmapped: Unmapped = 'skip',
+    actual_text: bool = True,
     exact_bboxes: bool = False,
     max_glyphs: int | None = 262144,
     max_size: int | None = 67108864,

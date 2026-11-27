@@ -25,9 +25,10 @@ use crate::pixmap::bridge_error;
 
 /// The text options as `python/pyropdf/_text.py` passes them: `(clip, keep
 /// clipped glyphs, unmapped code, expand ligatures, normalize whitespace,
-/// dehyphenate, exact boxes, styles)`, with the unmapped codes 0 to skip, 1
-/// for U+FFFD, and 2 for the glyph ID.
-pub(crate) type OptionsTuple = (Option<BBox>, bool, u8, bool, bool, bool, bool, bool);
+/// dehyphenate, exact boxes, styles, ignore actual text)`, with the unmapped
+/// codes 0 to skip, 1 for U+FFFD, 2 for the glyph ID, and 3 for Type 3 char
+/// code.
+pub(crate) type OptionsTuple = (Option<BBox>, bool, u8, bool, bool, bool, bool, bool, bool);
 
 /// The text options as a memo key, with the clip's coordinates as bits, and
 /// the fallback faces when the options ask for exact boxes, the only text
@@ -41,11 +42,22 @@ pub(crate) type TextKey = (
     bool,
     bool,
     bool,
+    bool,
     Fallback,
 );
 
 fn text_key(options: OptionsTuple, fallback: &Fallback) -> TextKey {
-    let (clip, keep_clipped, unmapped, ligatures, whitespace, dehyphenate, exact, styles) = options;
+    let (
+        clip,
+        keep_clipped,
+        unmapped,
+        ligatures,
+        whitespace,
+        dehyphenate,
+        exact,
+        styles,
+        ignore_actual_text,
+    ) = options;
     (
         clip.map(box_bits),
         keep_clipped,
@@ -55,6 +67,7 @@ fn text_key(options: OptionsTuple, fallback: &Fallback) -> TextKey {
         dehyphenate,
         exact,
         styles,
+        ignore_actual_text,
         if exact {
             fallback.clone()
         } else {
@@ -100,6 +113,7 @@ pub(crate) fn text_options(options: OptionsTuple) -> PyResult<TextOptions> {
         dehyphenate,
         exact_bboxes,
         styles,
+        ignore_actual_text,
     ) = options;
     let unmapped = match unmapped {
         0 => Unmapped::Skip,
@@ -121,6 +135,7 @@ pub(crate) fn text_options(options: OptionsTuple) -> PyResult<TextOptions> {
         dehyphenate,
         exact_bboxes,
         styles,
+        ignore_actual_text,
     })
 }
 

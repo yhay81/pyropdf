@@ -448,6 +448,7 @@ Annotation.text(
     whitespace: bool = True,
     dehyphenate: bool = False,
     unmapped: Unmapped = 'skip',
+    actual_text: bool = True,
     max_glyphs: int | None = 262144,
     max_size: int | None = 67108864,
 ) -> str

@@ -317,6 +317,9 @@ pub struct TextOptions {
     /// Collect the page's vector rules and mark the glyphs that one
     /// underlines or strikes out.
     pub styles: bool,
+    /// Ignore marked-content `/ActualText` replacements and extract the
+    /// underlying glyph Unicode directly.
+    pub ignore_actual_text: bool,
 }
 
 impl TextOptions {
@@ -565,6 +568,9 @@ impl ContentSink for TextCollector<'_> {
 
     fn begin_marked_content(&mut self, actual_text: Option<&[u8]>) {
         self.marks = self.marks.saturating_add(1);
+        if self.options.ignore_actual_text {
+            return;
+        }
         let (None, Some(bytes), None) = (&self.actual_text, actual_text, &self.error) else {
             return;
         };
@@ -579,6 +585,10 @@ impl ContentSink for TextCollector<'_> {
             }
             Err(refusal) => self.error = Some(refusal.into()),
         }
+    }
+
+    fn wants_actual_text(&self) -> bool {
+        !self.options.ignore_actual_text
     }
 
     fn end_marked_content(&mut self) {

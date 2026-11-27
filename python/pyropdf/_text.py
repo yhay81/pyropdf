@@ -53,8 +53,9 @@ _DEFAULT_MAX_TEXT_GLYPHS = 262_144
 _DEFAULT_MAX_TEXT_SIZE = 64 * 1024 * 1024
 
 # The core's text options: (clip, keep clipped glyphs, unmapped code, expand
-# ligatures, normalize whitespace, dehyphenate, exact boxes, styles).
-_TextOptions: TypeAlias = tuple[tuple[float, float, float, float] | None, bool, int, bool, bool, bool, bool, bool]
+# ligatures, normalize whitespace, dehyphenate, exact boxes, styles, ignore
+# actual text).
+_TextOptions: TypeAlias = tuple[tuple[float, float, float, float] | None, bool, int, bool, bool, bool, bool, bool, bool]
 
 
 def text_options(  # noqa: PLR0913 - the shared options of the text views.
@@ -69,6 +70,7 @@ def text_options(  # noqa: PLR0913 - the shared options of the text views.
     max_size: int | None,
     exact_bboxes: bool = False,
     styles: bool = False,
+    actual_text: bool = True,
 ) -> _TextOptions:
     """Validate the options of the text views, with ``clip`` already validated."""
     for name, value in (
@@ -78,6 +80,7 @@ def text_options(  # noqa: PLR0913 - the shared options of the text views.
         ("dehyphenate", dehyphenate),
         ("exact_bboxes", exact_bboxes),
         ("styles", styles),
+        ("actual_text", actual_text),
     ):
         if not isinstance(value, bool):
             msg = f"{name} must be True or False: {value!r}"
@@ -88,7 +91,7 @@ def text_options(  # noqa: PLR0913 - the shared options of the text views.
         raise ValueError(msg)
     _validate_optional_positive_int("max_glyphs", max_glyphs)
     _validate_optional_positive_int("max_size", max_size)
-    return (clip, clipped, code, not ligatures, not whitespace, dehyphenate, exact_bboxes, styles)
+    return (clip, clipped, code, not ligatures, not whitespace, dehyphenate, exact_bboxes, styles, not actual_text)
 
 
 def _warn_skipped(skipped: int) -> None:
