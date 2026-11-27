@@ -114,7 +114,12 @@ MUTATIONS = (
     ("move_page", "Reorder the page tree and update its label ranges.", "Pages", "move"),
     ("delete_page", "Remove a leaf and prune destinations, structure and other referents.", "Pages", "__delitem__"),
     ("rotate", "Store the new display rotation on the page.", "Page", "rotation="),
-    ("assign_operations", "Write the page's new content stream.", "Page", "operations="),
+    (
+        "assign_operations",
+        "Write the page's new content stream, detaching a shared original.",
+        "Page",
+        "operations= clip_to_rect",
+    ),
     ("canvas_path", "A clean canvas exit writes buffered operators and resources as one transaction.", "Page", "draw"),
     ("canvas_path", "Commit the buffered content on clean exit, discard on failure.", "Canvas", "__enter__ __exit__"),
     (

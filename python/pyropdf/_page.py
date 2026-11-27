@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, overload
 
 from pyropdf import _core, _markdown
@@ -12,7 +14,7 @@ from pyropdf._annotations import Annotations
 from pyropdf._canvas import Canvas
 from pyropdf._clean import clean_page
 from pyropdf._content import Content, Paths, _content_from_core
-from pyropdf._errors import LimitError, StaleObjectError, StalePageError
+from pyropdf._errors import LimitError, PdfError, StaleObjectError, StalePageError
 from pyropdf._fonts import FontInfo, page_fonts
 from pyropdf._geometry import Quad, Rect
 from pyropdf._images import PageImage, page_images
@@ -31,7 +33,7 @@ from pyropdf._measurement import (
     _read_page_viewports,
     _write_page_viewports,
 )
-from pyropdf._objects import Dictionary
+from pyropdf._objects import Dictionary, Name
 from pyropdf._ocr import (
     OcrEngine,
     OcrRotation,
@@ -76,12 +78,13 @@ from pyropdf._text import (
     build_words,
     text_options,
 )
-from pyropdf._text_edit import replace_text
+from pyropdf._text_edit import _resources, _sub, replace_text
 from pyropdf._transparency import uses_transparency
 from pyropdf._widgets import Widgets
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from typing import Never
 
     from pyropdf._core import CharColumns
     from pyropdf._document import Document
@@ -186,6 +189,172 @@ def _ocr_layer_words(words: Iterable[OcrWord]) -> list[OcrWord]:
         text_bytes += encoded_bytes
         accepted.append(word)
     return accepted
+
+
+@dataclass(slots=True)
+class _ClipShow:
+    """One separately positioned show and the number of simple-font bytes to account for."""
+
+    codes: int
+    seen: int = 0
+    kept: int = 0
+
+
+def _cannot_clip(detail: str) -> Never:
+    message = f"cannot clip this page content: {detail}"
+    raise PdfError(message)
+
+
+def _clip_numbers(operands: tuple[object, ...], count: int) -> bool:
+    return len(operands) == count and all(
+        isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) for value in operands
+    )
+
+
+def _show_size(operator: str, operands: tuple[object, ...], budget: _core._OperationBudget) -> int:
+    if len(operands) == 1:
+        argument = operands[0]
+        if operator == "Tj" and isinstance(argument, bytes):
+            return len(argument)
+        if operator == "TJ" and isinstance(argument, tuple):
+            size = 0
+            for entry in argument:
+                budget.poll()
+                if isinstance(entry, bytes):
+                    size += len(entry)
+                elif not _clip_numbers((entry,), 1):
+                    _cannot_clip("invalid TJ array")
+            return size
+    _cannot_clip(f"invalid {operator} operands")
+
+
+_CLIP_TAIL_TOKENS = re.compile(rb"%[^\r\n]*|[^\x00\t\n\f\r ]")
+_CLIP_COLORS = {"g": 1, "rg": 3, "k": 4}
+_CLIP_POSITIONING = {"Tm": 6, "Td": 2, "TD": 2, "T*": 0}
+_CLIP_TEXT_STATE = {"Tc", "Tw", "Tz", "TL", "Ts"}
+
+
+@dataclass(slots=True)
+class _ClipText:
+    fonts: Dictionary | None
+    budget: _core._OperationBudget
+    positioned: bool = True
+    font_set: bool = False
+
+    def read(self, item: Operation | InlineImage, index: int) -> _ClipShow | None:
+        name, args = item.operator, item.operands
+        if name in _CLIP_POSITIONING and _clip_numbers(args, _CLIP_POSITIONING[name]):
+            self.positioned = True
+        elif name == "Tf":
+            match args:
+                case (Name() as key, size) if _clip_numbers((size,), 1):
+                    font = _sub(self.fonts, key)
+                    if font is None or font.get("Subtype") not in (Name("Type1"), Name("MMType1"), Name("TrueType")):
+                        _cannot_clip("a text font does not establish a single byte per glyph")
+                    self.font_set = True
+                case _:
+                    _cannot_clip("invalid Tf operands")
+        elif _clip_numbers(args, 1) and (name in _CLIP_TEXT_STATE or (name == "Tr" and args[0] in (0, 3))):
+            return None
+        elif name in {"Tj", "TJ"} and self.font_set and self.positioned:
+            self.positioned = False
+            return _ClipShow(_show_size(name, args, self.budget))
+        else:
+            _cannot_clip(f"unsupported or dependent text operation {index} ({name})")
+        return None
+
+
+def _clip_graphics(item: Operation | InlineImage, index: int, saved_fonts: list[bool], text: _ClipText) -> None:
+    name, args = item.operator, item.operands
+    if name == "q" and not args:
+        text.budget.charge("memory_size", 16)
+        saved_fonts.append(text.font_set)
+    elif name == "Q" and saved_fonts and not args:
+        text.font_set = saved_fonts.pop()
+        text.budget.release("memory_size", 16)
+    elif name != "cm" or not _clip_numbers(args, 6):
+        _cannot_clip(f"unsupported graphics operation {index} ({name})")
+
+
+def _clip_shows(page: Page, operations: Operations, budget: _core._OperationBudget) -> dict[int, _ClipShow]:
+    """Prove that skipping any one show cannot move another or change a clipping path."""
+    for token in _CLIP_TAIL_TOKENS.finditer(operations.tail):
+        budget.poll()
+        if operations.tail[token.start()] != ord("%"):
+            _cannot_clip("unparsed content after the last operation")
+    text = _ClipText(_sub(_resources(page), "Font"), budget)
+    saved_fonts: list[bool] = []
+    shows = {}
+    in_text = False
+    for index, item in enumerate(operations):
+        budget.poll()
+        name, args = item.operator, item.operands
+        if name in _CLIP_COLORS and _clip_numbers(args, _CLIP_COLORS[name]):
+            continue
+        if in_text:
+            if name == "ET" and not args:
+                in_text = False
+            elif (show := text.read(item, index)) is not None:
+                budget.charge("memory_size", 192)
+                shows[index] = show
+        elif name == "BT" and not args:
+            # BT resets the text matrices. The selected font belongs to the graphics state.
+            text.positioned = True
+            in_text = True
+        else:
+            _clip_graphics(item, index, saved_fonts, text)
+    if saved_fonts or in_text:
+        _cannot_clip("unbalanced graphics or text object")
+    return shows
+
+
+def _retained_clip_operations(
+    operations: Operations, shows: dict[int, _ClipShow], budget: _core._OperationBudget
+) -> Operations:
+    """Keep the original operations and reserve space for writing their bytes."""
+    # Reserve the operation references and both the growing bytearray and the final bytes.
+    budget.charge("memory_size", 24 * len(operations) + 3 * (len(operations.tail) + 1))
+    retained = []
+    for index, item in enumerate(operations):
+        budget.poll()
+        show = shows.get(index)
+        if show is not None and show.codes and not show.kept:
+            continue
+        source = item._source  # noqa: SLF001 - page.operations retains each original byte span.
+        assert source is not None  # noqa: S101 - all operations came from the page parser.
+        budget.charge("memory_size", 3 * (len(source) + 1))
+        retained.append(item)
+    return Operations(retained, tail=operations.tail)
+
+
+def _clip_page(page: Page, rect: Rect, budget: _core._OperationBudget) -> int:
+    if not rect.intersects(page.rect):
+        msg = "rect must intersect the visible page"
+        raise ValueError(msg)
+    operations = page.operations
+    shows = _clip_shows(page, operations, budget)
+    for char in page.chars(clipped=True, unmapped="replacement"):
+        budget.poll()
+        # Annotation appearances have no page operation. Every direct show still
+        # needs one located glyph per source byte, even if its provenance was lost.
+        if char.is_synthetic or (char.operation is None and char.stream is None):
+            continue
+        show = shows.get(char.operation) if char.operation is not None and char.stream is not None else None
+        if show is None or char.bbox.is_empty or char.bbox.is_infinite:
+            _cannot_clip("a glyph lacks a direct operation or display box")
+        show.seen += 1
+        show.kept += int(rect.intersects(char.bbox))
+    removed = 0
+    for show in shows.values():
+        budget.poll()
+        if show.seen != show.codes:
+            _cannot_clip("the source bytes and located glyphs do not correspond")
+        if 0 < show.kept < show.seen:
+            _cannot_clip("the rectangle splits a text-showing operation")
+        removed += show.seen - show.kept
+    if removed:
+        page.operations = _retained_clip_operations(operations, shows, budget)
+    return removed
 
 
 class Page:
@@ -727,6 +896,30 @@ class Page:
         left as it was.
         """
         return recolor(self._document, target, [self.index])
+
+    def clip_to_rect(self, rect: Sequence[float]) -> int:
+        """Remove wholly outside, independently positioned direct text shows and return the removed glyph count.
+
+        The finite rectangle is in display space and must intersect the page. A glyph is kept
+        when its layout box intersects the rectangle. A show spanning both sides, a dependent
+        show, a composite or Type 3 font, and other painting such as images, paths and Forms
+        raise :class:`PdfError` before any edit. The operation changes this page's contents
+        in one undo step. Annotations and other uses of shared streams retain their content. Full saves may
+        retain unused objects, and earlier incremental revisions still contain the original data.
+        """
+        box = Rect(_clip_box(rect, name="rect"))
+        core = self._document._core()  # noqa: SLF001
+        budget = _core.begin_operation(core, "clip page content")
+        try:
+            removed = _clip_page(self, box, budget)
+            if removed:
+                _core.end_transaction(core, True)  # noqa: FBT003 - commit the operation.
+            else:
+                _core.abort_canvas(core, budget)
+        except BaseException:
+            _core.abort_canvas(core, budget)
+            raise
+        return removed
 
     def clean_contents(self, *, annotations: bool = True) -> None:
         """Normalize the page's content and drop the resources that it never names, in one transaction.
