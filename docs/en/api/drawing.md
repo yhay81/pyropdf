@@ -72,8 +72,8 @@ Write the drawing after a normal exit; discard it after an exception.
 Canvas.path(
     path: PathInput,
     *,
-    fill: Color | Gradient | PatternPaint | ShadingPattern | None = None,
-    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
+    fill: Color | Gradient | PatternPaint | ShadingPattern | TilingPattern | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | ShadingPattern | TilingPattern | None = None,
     fill_rule: FillRule = FillRule.NONZERO,
 )
 ```
@@ -357,13 +357,20 @@ blend mode are applied; soft masks are not. An axial or radial
 document version. Its RGB approximation is sampled on the first
 drawing, preserving its matrix, domain, opacity, and extension at
 either end, its clip box, and its background. Sampling is bounded
-to 1,025 stops; features between the probes can be lost.
-Function-based and mesh shadings and `TilingPattern`
-paints cannot be drawn yet. An image is drawn from its object, with the
-image's own masks: a canvas on a page of the item's document draws
+to 1,025 stops; features between the probes can be lost. A
+`TilingPattern` retains its captured pattern cell and is
+written as a bounded `/PatternType 1` stream preserving its cell
+box, steps, matrix, and opacity; cells containing soft masks,
+function/mesh shadings, or excessive nesting raise `ValueError`.
+Function-based and mesh shadings cannot be drawn yet.
+
+An indirect image or stencil image mask is drawn from its object, with
+the image's own masks: a canvas on a page of the item's document draws
 that object again, and one of another document copies it, with the
 objects it reaches but pages, as it is when this call is made. Inline
-images and stencil image masks cannot be drawn.
+raster images and inline stencil image masks (`xref == 0`) promote
+their captured payloads into bounded, deduplicated image XObjects.
+Stencil masks paint with their `Image.fill` paint.
 
 A text run uses its original PDF codes and positioned text matrices.
 Its font dictionary, encoding, and embedded program are copied from

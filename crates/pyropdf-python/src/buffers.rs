@@ -9,17 +9,19 @@ use std::ffi::{CStr, c_char, c_int, c_void};
 use std::ptr;
 use std::sync::Arc;
 
+use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyBufferError, PyIndexError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::PyCapsule;
+use pyo3::types::{PyBytes, PyCapsule, PyList};
 use pyropdf_engine::extract::buffers::{
     clear_bitmap_bits, column_buffer_view, plain_bytes as bytes, row_range_valid, set_bitmap_bit,
 };
 use pyropdf_engine::extract::{
-    BBox, BlockTuple, ClipTuple, ClusterOptions, Contexts, GroupTuple, MarkTuple, PageContent,
-    PaintColumns, PaintTuple, PathClusterTuple, PathTable, StateTuple, StoredColorTuple,
-    cluster_path_table,
+    BBox, BlockTuple, CapturedTilingCell, CellPaint, CellStroke, ClipTuple, ClusterOptions,
+    Contexts, GroupTuple, InlineImageData, MarkTuple, PageContent, PaintColumns, PaintTuple,
+    PathClusterTuple, PathTable, SampledShadingTuple, StateTuple, StoredColorTuple, TilingCellOp,
+    cluster_path_table, sample_shading_pattern,
 };
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, DocumentLimits, LimitCode};
@@ -658,6 +660,101 @@ impl PathColumns {
         })?
     }
 
+    /// Returns the captured inline raster or stencil image payload at `index`,
+    /// charging its Python buffer copy to `operation`.
+    fn inline_image(
+        &self,
+        py: Python<'_>,
+        index: usize,
+        operation: &OperationBudget,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        crate::errors::boundary(|| {
+            operation.ensure_active()?;
+            let Some(payload) = self.table.inline_image(index) else {
+                return Ok(None);
+            };
+            match payload {
+                InlineImageData::Raster(raster) => {
+                    let bytes_len = (raster.color.len() as u64)
+                        .saturating_add(raster.alpha.as_ref().map_or(0, |mask| mask.2.len() as u64))
+                        .saturating_add(256);
+                    operation
+                        .operation
+                        .charge(LimitCode::MemorySize, bytes_len)
+                        .map_err(|refusal| limit_error(&refusal))?;
+                    let color = PyBytes::new(py, &raster.color);
+                    let alpha = raster
+                        .alpha
+                        .as_ref()
+                        .map(|(w, h, data)| (*w, *h, PyBytes::new(py, data)));
+                    Ok(Some(
+                        (
+                            false,
+                            raster.width,
+                            raster.height,
+                            raster.gray,
+                            color,
+                            alpha,
+                            raster.interpolate,
+                        )
+                            .into_py_any(py)?,
+                    ))
+                }
+                InlineImageData::Stencil(stencil) => {
+                    let bytes_len = (stencil.mask_bits.len() as u64).saturating_add(256);
+                    operation
+                        .operation
+                        .charge(LimitCode::MemorySize, bytes_len)
+                        .map_err(|refusal| limit_error(&refusal))?;
+                    let bits = PyBytes::new(py, &stencil.mask_bits);
+                    let no_alpha: Option<(u32, u32, Bound<'_, PyBytes>)> = None;
+                    Ok(Some(
+                        (
+                            true,
+                            stencil.width,
+                            stencil.height,
+                            true,
+                            bits,
+                            no_alpha,
+                            stencil.interpolate,
+                        )
+                            .into_py_any(py)?,
+                    ))
+                }
+            }
+        })?
+    }
+
+    /// Returns the captured tiling pattern cell for `pattern`, sampling any
+    /// nested axial/radial shadings lazily under `operation`'s budget.
+    fn tiling_cell(
+        &self,
+        py: Python<'_>,
+        pattern: usize,
+        operation: &OperationBudget,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        crate::errors::boundary(|| {
+            operation.ensure_active()?;
+            let Some(cell) = self.table.tiling_cell(pattern) else {
+                return Ok(None);
+            };
+            let shadings = py
+                .detach(|| {
+                    let mut sampled = BudgetVec::new(&operation.operation);
+                    collect_cell_shadings(cell, &operation.operation, &mut sampled)?;
+                    Ok::<_, pyropdf_engine::extract::Error>(sampled.into_vec())
+                })
+                .map_err(|error| match error {
+                    pyropdf_engine::extract::Error::Limit(refusal) => limit_error(&refusal),
+                    other => PdfError::new_err(other.to_string()),
+                })?;
+            let mut cursor = 0usize;
+            let converted =
+                tiling_cell_to_py(py, cell, &shadings, &mut cursor, &operation.operation)?;
+            Ok(Some(converted))
+        })?
+    }
+
     /// Returns the Arrow schema of the rows as a PyCapsule.
     fn arrow_schema<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyCapsule>> {
         crate::errors::boundary(|| schema_capsule(py, &PATH_STRUCT))?
@@ -677,6 +774,269 @@ impl PathColumns {
             Ok((schema_capsule(py, &PATH_STRUCT)?, array_capsule(py, array)?))
         })?
     }
+}
+
+/// Samples every `CellPaint::Shading` inside `cell` in deterministic pre-order,
+/// charging `budget` off the GIL.
+fn collect_cell_shadings(
+    cell: &CapturedTilingCell,
+    budget: &Budget,
+    out: &mut BudgetVec<'_, Option<SampledShadingTuple>>,
+) -> Result<(), pyropdf_engine::extract::Error> {
+    if cell.refusal.is_some() {
+        return Ok(());
+    }
+    for op in &cell.ops {
+        budget.poll()?;
+        match op {
+            TilingCellOp::Path { fill, stroke, .. } => {
+                if let Some(paint) = fill {
+                    collect_paint_shadings(paint, budget, out)?;
+                }
+                if let Some(stroke) = stroke {
+                    collect_paint_shadings(&stroke.paint, budget, out)?;
+                }
+            }
+            TilingCellOp::StencilImage { fill, .. } => {
+                collect_paint_shadings(fill, budget, out)?;
+            }
+            TilingCellOp::PushClip { .. }
+            | TilingCellOp::PopClip
+            | TilingCellOp::PushGroup { .. }
+            | TilingCellOp::PopGroup
+            | TilingCellOp::RasterImage { .. } => {}
+        }
+    }
+    Ok(())
+}
+
+fn collect_paint_shadings(
+    paint: &CellPaint,
+    budget: &Budget,
+    out: &mut BudgetVec<'_, Option<SampledShadingTuple>>,
+) -> Result<(), pyropdf_engine::extract::Error> {
+    match paint {
+        CellPaint::Color(_) => Ok(()),
+        CellPaint::Shading { shading, .. } => {
+            let sampled = sample_shading_pattern(shading, budget)?;
+            out.try_push(sampled)?;
+            Ok(())
+        }
+        CellPaint::Tiling { cell, .. } => collect_cell_shadings(cell, budget, out),
+    }
+}
+
+fn cell_paint_to_py(
+    py: Python<'_>,
+    paint: &CellPaint,
+    shadings: &[Option<SampledShadingTuple>],
+    cursor: &mut usize,
+    budget: &Budget,
+) -> PyResult<Py<PyAny>> {
+    match paint {
+        CellPaint::Color([r, g, b, a]) => {
+            budget
+                .charge(LimitCode::MemorySize, 128)
+                .map_err(|refusal| limit_error(&refusal))?;
+            (0u8, (*r, *g, *b, *a)).into_py_any(py)
+        }
+        CellPaint::Shading { matrix, .. } => {
+            let sampled = shadings.get(*cursor).and_then(Option::as_ref);
+            *cursor = cursor.saturating_add(1);
+            let Some((axial, coords, extend, stops, bounds, background)) = sampled else {
+                return Err(PdfError::new_err(
+                    "a shading inside a tiling pattern cell could not be sampled",
+                ));
+            };
+            budget
+                .charge(
+                    LimitCode::MemorySize,
+                    (stops.len() as u64).saturating_mul(512).saturating_add(256),
+                )
+                .map_err(|refusal| limit_error(&refusal))?;
+            (
+                1u8,
+                (*axial, *coords, *extend, stops, *bounds, *background),
+                *matrix,
+            )
+                .into_py_any(py)
+        }
+        CellPaint::Tiling {
+            cell,
+            matrix,
+            opacity,
+        } => {
+            let nested = tiling_cell_to_py(py, cell, shadings, cursor, budget)?;
+            (2u8, nested, *matrix, *opacity).into_py_any(py)
+        }
+    }
+}
+
+fn cell_stroke_to_py(
+    py: Python<'_>,
+    stroke: &CellStroke,
+    shadings: &[Option<SampledShadingTuple>],
+    cursor: &mut usize,
+    budget: &Budget,
+) -> PyResult<Py<PyAny>> {
+    budget
+        .charge(
+            LimitCode::MemorySize,
+            (stroke.dashes.len() as u64)
+                .saturating_mul(32)
+                .saturating_add(192),
+        )
+        .map_err(|refusal| limit_error(&refusal))?;
+    let paint = cell_paint_to_py(py, &stroke.paint, shadings, cursor, budget)?;
+    (
+        paint,
+        stroke.width,
+        stroke.cap,
+        stroke.join,
+        stroke.miter_limit,
+        &stroke.dashes,
+        stroke.dash_offset,
+    )
+        .into_py_any(py)
+}
+
+fn tiling_cell_to_py(
+    py: Python<'_>,
+    cell: &CapturedTilingCell,
+    shadings: &[Option<SampledShadingTuple>],
+    cursor: &mut usize,
+    budget: &Budget,
+) -> PyResult<Py<PyAny>> {
+    budget
+        .charge(LimitCode::MemorySize, 256)
+        .map_err(|refusal| limit_error(&refusal))?;
+    let ops = PyList::empty(py);
+    if cell.refusal.is_none() {
+        for op in &cell.ops {
+            budget.poll().map_err(|refusal| limit_error(&refusal))?;
+            let entry = match op {
+                TilingCellOp::PushClip {
+                    kinds,
+                    coords,
+                    even_odd,
+                } => {
+                    let bytes_len = (kinds.len() as u64)
+                        .saturating_add((coords.len() as u64).saturating_mul(32))
+                        .saturating_add(128);
+                    budget
+                        .charge(LimitCode::MemorySize, bytes_len)
+                        .map_err(|refusal| limit_error(&refusal))?;
+                    (0u8, PyBytes::new(py, kinds), coords, *even_odd).into_py_any(py)?
+                }
+                TilingCellOp::PopClip => {
+                    budget
+                        .charge(LimitCode::MemorySize, 64)
+                        .map_err(|refusal| limit_error(&refusal))?;
+                    (1u8,).into_py_any(py)?
+                }
+                TilingCellOp::PushGroup { opacity, blend } => {
+                    budget
+                        .charge(LimitCode::MemorySize, 96)
+                        .map_err(|refusal| limit_error(&refusal))?;
+                    (2u8, *opacity, *blend).into_py_any(py)?
+                }
+                TilingCellOp::PopGroup => {
+                    budget
+                        .charge(LimitCode::MemorySize, 64)
+                        .map_err(|refusal| limit_error(&refusal))?;
+                    (3u8,).into_py_any(py)?
+                }
+                TilingCellOp::Path {
+                    kinds,
+                    coords,
+                    fill,
+                    even_odd,
+                    stroke,
+                    blend,
+                } => {
+                    let bytes_len = (kinds.len() as u64)
+                        .saturating_add((coords.len() as u64).saturating_mul(32))
+                        .saturating_add(192);
+                    budget
+                        .charge(LimitCode::MemorySize, bytes_len)
+                        .map_err(|refusal| limit_error(&refusal))?;
+                    let fill_py = fill
+                        .as_ref()
+                        .map(|paint| cell_paint_to_py(py, paint, shadings, cursor, budget))
+                        .transpose()?;
+                    let stroke_py = stroke
+                        .as_ref()
+                        .map(|stroke| cell_stroke_to_py(py, stroke, shadings, cursor, budget))
+                        .transpose()?;
+                    (
+                        4u8,
+                        PyBytes::new(py, kinds),
+                        coords,
+                        fill_py,
+                        *even_odd,
+                        stroke_py,
+                        *blend,
+                    )
+                        .into_py_any(py)?
+                }
+                TilingCellOp::RasterImage {
+                    image,
+                    matrix,
+                    blend,
+                } => {
+                    let bytes_len = (image.color.len() as u64)
+                        .saturating_add(image.alpha.as_ref().map_or(0, |mask| mask.2.len() as u64))
+                        .saturating_add(256);
+                    budget
+                        .charge(LimitCode::MemorySize, bytes_len)
+                        .map_err(|refusal| limit_error(&refusal))?;
+                    let color = PyBytes::new(py, &image.color);
+                    let alpha = image
+                        .alpha
+                        .as_ref()
+                        .map(|(w, h, data)| (*w, *h, PyBytes::new(py, data)));
+                    (
+                        5u8,
+                        image.width,
+                        image.height,
+                        image.gray,
+                        color,
+                        alpha,
+                        image.interpolate,
+                        *matrix,
+                        *blend,
+                    )
+                        .into_py_any(py)?
+                }
+                TilingCellOp::StencilImage {
+                    stencil,
+                    fill,
+                    matrix,
+                    blend,
+                } => {
+                    let bytes_len = (stencil.mask_bits.len() as u64).saturating_add(256);
+                    budget
+                        .charge(LimitCode::MemorySize, bytes_len)
+                        .map_err(|refusal| limit_error(&refusal))?;
+                    let bits = PyBytes::new(py, &stencil.mask_bits);
+                    let fill_py = cell_paint_to_py(py, fill, shadings, cursor, budget)?;
+                    (
+                        6u8,
+                        stencil.width,
+                        stencil.height,
+                        bits,
+                        stencil.interpolate,
+                        fill_py,
+                        *matrix,
+                        *blend,
+                    )
+                        .into_py_any(py)?
+                }
+            };
+            ops.append(entry)?;
+        }
+    }
+    (cell.bbox, cell.x_step, cell.y_step, cell.refusal, ops).into_py_any(py)
 }
 
 /// One column of [`CharColumns`] or [`PathColumns`] for some of its rows,

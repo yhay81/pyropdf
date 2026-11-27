@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pyropdf import _core
 from pyropdf._canvas._path import _TURNS, _fmt, _number, _numbers, _paint, _stroke
-from pyropdf._content import ShadingPattern, TextRenderMode
+from pyropdf._content import ShadingPattern, TextRenderMode, TilingPattern
 from pyropdf._fallback_fonts import FallbackFonts
 from pyropdf._fonts import Font, _max_lines, _textbox_text, _utf16
 from pyropdf._objects import Name
@@ -239,8 +239,11 @@ def _text_paint(
     """Return the checked fill, stroke, and PDF ``Tr`` mode code (0..7)."""
     stroked = _stroke(stroke)
     filled = None if fill is None else _paint(fill, "fill")
-    if isinstance(filled, ShadingPattern) or (stroked is not None and isinstance(stroked.paint, ShadingPattern)):
-        msg = "text needs a Color or a gradient in place of a ShadingPattern"
+    if isinstance(filled, (ShadingPattern, TilingPattern)):
+        msg = f"text needs a Color or a gradient in place of a {type(filled).__name__}"
+        raise TypeError(msg)
+    if stroked is not None and isinstance(stroked.paint, (ShadingPattern, TilingPattern)):
+        msg = f"text needs a Color or a gradient in place of a {type(stroked.paint).__name__}"
         raise TypeError(msg)
     if clip:
         return _clip_text_paint(filled, stroked)

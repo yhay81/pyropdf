@@ -185,6 +185,23 @@ class PathColumns:
         ]
         | None
     ): ...
+    def inline_image(
+        self, index: int, operation: _OperationBudget
+    ) -> (
+        tuple[
+            bool,
+            int,
+            int,
+            bool,
+            bytes,
+            tuple[int, int, bytes] | None,
+            bool,
+        ]
+        | None
+    ): ...
+    def tiling_cell(
+        self, pattern: int, operation: _OperationBudget
+    ) -> tuple[tuple[float, float, float, float], float, float, str | None, list[Any]] | None: ...
     def arrow_schema(self) -> object: ...
     def arrow_array(self, start: int, stop: int, /) -> tuple[object, object]: ...
 

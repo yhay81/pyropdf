@@ -400,6 +400,7 @@ def test_images_report_their_object_mask_and_placement() -> None:
     assert (image.colorspace, image.components, image.bits) == ("DeviceRGB", 3, 8)
     assert image.mask is ImageMask.SOFT
     assert not image.is_stencil
+    assert image.fill is None
     assert image.bbox == pytest.approx(Rect(10, 20, 50, 40))
     assert image.matrix == pytest.approx((40, 0, 0, 20, 10, 20))
     assert image.context.groups[-1].opacity == 1
@@ -412,6 +413,7 @@ def test_stencil_masks_are_images_without_an_object() -> None:
     assert image.is_stencil
     assert image.xref == 0
     assert image.colorspace == ""
+    assert_color(image.fill, (0, 0, 1))
     assert image.bbox == pytest.approx(Rect(10, 70, 30, 90))
 
 
@@ -430,6 +432,7 @@ def test_stencil_masks_keep_their_stream_identity_and_placement(*, inline: bool,
         assert (image.width, image.height, image.bits, image.components) == (2, 2, 1, 1)
         assert image.colorspace == ""
         assert image.mask is None
+        assert_color(image.fill, (0, 0, 1))
         assert image.bbox == pytest.approx(Rect(x, 70, x + 20, 90))
 
 

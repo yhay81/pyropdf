@@ -5,14 +5,16 @@ the bundled corpus is drawn again with ``Canvas.draw`` on a blank page of
 the same size in another document, and the two renderings agree within
 ``ROUND_TRIP_TOLERANCE`` levels per channel at 72 dpi outside the boxes of
 the items that a canvas cannot draw yet: runs without a reusable font or paint, items under a soft
-mask, unsupported pattern paints, inline images, and image masks; and of annotations
+mask, and function-based or mesh shadings; and of annotations
 without an appearance stream, which the renderer draws but
 ``Page.content()`` does not report. Those items are
 listed with the reason in ``_not_drawn``, and the documentation of
 ``Canvas.draw`` publishes the same tolerance and exceptions.
 
-Axial and radial shadings are sampled only when redrawn. Function-based and
-mesh shadings and tiling cells remain outside the round trip.
+Axial and radial shadings are sampled only when redrawn. Tiling patterns,
+inline raster images, and indirect or inline stencil image masks are redrawn
+directly. Only soft masks and function-based or mesh shadings remain outside
+the round trip.
 """
 
 from __future__ import annotations
@@ -36,7 +38,21 @@ from test_canvas_embedded import JAPANESE
 from test_content_model import page_with, stencil_page, stream_object
 
 import pyropdf
-from pyropdf import Color, ColorStop, Image, LinearGradient, Path, Point, ShadingPattern, ShadingType, Stroke, TextRun
+from pyropdf import (
+    Color,
+    ColorStop,
+    Image,
+    LinearGradient,
+    Matrix,
+    Path,
+    Point,
+    Rect,
+    ShadingPattern,
+    ShadingType,
+    Stroke,
+    TextRun,
+    TilingPattern,
+)
 
 CORPUS = FilePath(__file__).parent / "assets" / "real_world"
 
@@ -45,21 +61,26 @@ CORPUS = FilePath(__file__).parent / "assets" / "real_world"
 ROUND_TRIP_TOLERANCE = 16
 
 
+def _unsupported_path_paint(paint: object) -> bool:
+    """Return whether a path or stencil paint is outside the round trip."""
+    if paint is None or isinstance(paint, (Color, TilingPattern)):
+        return False
+    return not (isinstance(paint, ShadingPattern) and paint.shading_type in (ShadingType.AXIAL, ShadingType.RADIAL))
+
+
 def _not_drawn(item: TextRun | Path | Image) -> str | None:
     """Return why a canvas cannot draw an item yet, or ``None``."""
     if item.soft_mask is not None or any(group.soft_mask is not None for group in item.context.groups):
         return "soft mask"
     if isinstance(item, Image):
-        return "inline image or image mask" if item.xref == 0 or item.is_stencil else None
-    paints = (item.fill, None if item.stroke is None else item.stroke.paint)
-    if any(
-        paint is not None
-        and not isinstance(paint, Color)
-        and not (isinstance(paint, ShadingPattern) and paint.shading_type in (ShadingType.AXIAL, ShadingType.RADIAL))
-        for paint in paints
-    ):
-        return "pattern paint"
-    return None
+        unsupported = item.is_stencil and (item.fill is None or _unsupported_path_paint(item.fill))
+    elif isinstance(item, TextRun):
+        paints = (item.fill, None if item.stroke is None else item.stroke.paint)
+        unsupported = any(paint is not None and not isinstance(paint, Color) for paint in paints)
+    else:
+        paints = (item.fill, None if item.stroke is None else item.stroke.paint)
+        unsupported = any(_unsupported_path_paint(paint) for paint in paints)
+    return "pattern paint" if unsupported else None
 
 
 def _largest_difference(original: pyropdf.Pixmap, redrawn: pyropdf.Pixmap, hidden: list[pyropdf.Rect]) -> int:
@@ -494,16 +515,431 @@ def test_draw_refuses_items_it_cannot_draw_and_writes_nothing() -> None:
 
 
 @pytest.mark.parametrize("inline", [False, True])
-def test_draw_refuses_stencil_images_without_writing(*, inline: bool) -> None:
-    page = stencil_page(inline=inline)
-    image = page.content().images[0]
-    assert image.xref == (0 if inline else 6)
+@pytest.mark.parametrize("same_document", [False, True])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.spec("image-masks", "read", "interpret", "create", "preserve")
+def test_draw_redraws_stencil_images(*, inline: bool, same_document: bool, nested: bool) -> None:
+    page = stencil_page(inline=inline, nested=nested)
+    images = page.content().images
+    assert len(images) == 2
+    assert all(img.is_stencil and img.fill == Color(0, 0, 1) for img in images)
+    target = page.document if same_document else pyropdf.Document()
+    copy = target.pages.new((page.rect.width, page.rect.height))
+    with copy.draw() as canvas:
+        for image in images:
+            canvas.draw(image)
+    assert _largest_difference(page.pixmap(dpi=72), copy.pixmap(dpi=72), []) <= ROUND_TRIP_TOLERANCE
+    reopened = pyropdf.open(target.to_bytes()).pages[copy.index]
+    assert _largest_difference(page.pixmap(dpi=72), reopened.pixmap(dpi=72), []) <= ROUND_TRIP_TOLERANCE
+    redrawn = copy.content().images
+    assert len(redrawn) == 2
+    assert all(img.is_stencil for img in redrawn)
+    # Deduplicated: both placements reference one image XObject in the target.
+    assert len({img.xref for img in redrawn}) == 1
+    if not inline and same_document:
+        assert redrawn[0].xref == images[0].xref
+    if inline:
+        stream = target.objects[redrawn[0].xref]
+        assert isinstance(stream, pyropdf.Stream)
+        assert stream.get("ImageMask") is True
+        assert "ColorSpace" not in stream
+
+
+@pytest.mark.parametrize("inline", [False, True])
+@pytest.mark.parametrize("rotate", [0, 90, 180, 270])
+def test_draw_redraws_stencil_with_opacity_decode_and_pattern_fill(*, inline: bool, rotate: int) -> None:
+    samples = "\x40\x00"
+    objects: dict[int, str] = {
+        6: "<< /Type /ExtGState /ca 0.5 >>",
+        7: "<< /Type /Pattern /PatternType 2 /Shading 8 0 R >>",
+        8: "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0] /Extend [true true] "
+        "/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 1 0] /N 1 >> >>",
+        9: stream_object(
+            "0.9 0.1 0.2 rg 0 0 5 5 re f 0.1 0.2 0.9 rg 5 5 5 5 re f",
+            "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+            "/BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << >>",
+        ),
+    }
+    if inline:
+        im_grad = f"BI /W 2 /H 2 /IM true /BPC 1 /D [1 0] ID {samples} EI"
+        im_tile = f"BI /W 2 /H 2 /IM true /BPC 1 ID {samples} EI"
+        xobj_res = ""
+    else:
+        objects[10] = stream_object(
+            samples,
+            "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ImageMask true /BitsPerComponent 1 /Decode [1 0]",
+        )
+        objects[11] = stream_object(
+            samples,
+            "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ImageMask true /BitsPerComponent 1",
+        )
+        im_grad, im_tile = "/ImG Do", "/ImT Do"
+        xobj_res = "/XObject << /ImG 10 0 R /ImT 11 0 R >>"
+    page = page_with(
+        f"q /GS1 gs /Pattern cs /PG scn 40 0 0 40 10 10 cm {im_grad} Q\n"
+        f"q /Pattern cs /PT scn 40 0 0 40 70 10 cm {im_tile} Q",
+        resources=f"/ExtGState << /GS1 6 0 R >> /Pattern << /PG 7 0 R /PT 9 0 R >> {xobj_res}",
+        objects=objects,
+        rotate=rotate,
+    )
+    images = page.content().images
+    assert isinstance(images[0].fill, ShadingPattern)
+    assert isinstance(images[1].fill, TilingPattern)
+    copy = _redraw(page)
+    assert _largest_difference(page.pixmap(dpi=72), copy.pixmap(dpi=72), []) <= ROUND_TRIP_TOLERANCE
+
+
+def test_draw_refuses_invalid_stencil_and_inline_images_without_writing() -> None:
+    stencil = stencil_page(inline=True).content().images[0]
+    raster_page = page_with("q 20 0 0 20 10 10 cm BI /W 2 /H 1 /BPC 8 /CS /RGB ID \xff\x00\x00\x00\xff\x00 EI Q")
+    inline_raster = raster_page.content().images[0]
     target = pyropdf.Document()
     copy = target.pages.new((200, 100))
     before = target.to_bytes(), target.history.steps
-    with copy.draw() as canvas, pytest.raises(ValueError, match="stencil"):
-        canvas.draw(image)
+    cases = [
+        (dataclasses.replace(stencil, fill=None), "fill paint"),
+        (dataclasses.replace(inline_raster, is_stencil=True, fill=Color(1, 0, 0)), "captured data"),
+        (pickle.loads(pickle.dumps(inline_raster)), "captured data"),  # noqa: S301 - value created here.
+        (pickle.loads(pickle.dumps(stencil)), "captured data"),  # noqa: S301 - value created here.
+    ]
+    for bad, pattern in cases:
+        with copy.draw() as canvas, pytest.raises(ValueError, match=pattern):
+            canvas.draw(bad)
     assert (target.to_bytes(), target.history.steps) == before
+
+
+@pytest.mark.parametrize("same_document", [False, True])
+@pytest.mark.parametrize("rotate", [0, 90, 180, 270])
+@pytest.mark.spec("inline-images", "read", "interpret", "create", "preserve")
+def test_draw_redraws_inline_raster_images(tmp_path: FilePath, *, same_document: bool, rotate: int) -> None:
+    rgb_hex = "FF0000 00FF00 0000FF FFFF00>"
+    gray_hex = "20 E0>"
+    # Color-key masked inline RGB: black pixel masked out, red pixel kept.
+    masked_hex = "000000 FF2020>"
+    content = (
+        "0.85 0.9 0.95 rg 0 0 200 100 re f\n"
+        f"q 40 0 0 40 10 10 cm BI /W 2 /H 2 /BPC 8 /CS /RGB /F /AHx ID {rgb_hex} EI Q\n"
+        f"q 40 0 0 40 60 10 cm BI /W 2 /H 1 /BPC 8 /CS /G /F /AHx ID {gray_hex} EI Q\n"
+        f"q 40 0 0 40 110 10 cm BI /W 2 /H 1 /BPC 8 /CS /RGB /F /AHx /Mask [0 10 0 10 0 10] ID {masked_hex} EI Q\n"
+        f"q 20 0 0 20 160 10 cm BI /W 2 /H 2 /BPC 8 /CS /RGB /F /AHx ID {rgb_hex} EI Q"
+    )
+    page = page_with(content, rotate=rotate)
+    page_size = (page.rect.width, page.rect.height)
+    images = page.content().images
+    assert len(images) == 4
+    assert all(img.xref == 0 and not img.is_stencil and img.fill is None for img in images)
+    target = page.document if same_document else pyropdf.Document()
+    copy = target.pages.new(page_size)
+    original_pix = page.pixmap(dpi=72)
+    if not same_document:
+        # Inline payloads are owned and survive closing the source document.
+        page.document.close()
+    with copy.draw() as canvas:
+        canvas.rect((0, 0, page_size[0], page_size[1]), fill=Color(0.85, 0.9, 0.95))
+        for image in images:
+            canvas.draw(image)
+    assert _largest_difference(original_pix, copy.pixmap(dpi=72), []) <= ROUND_TRIP_TOLERANCE
+    reopened = pyropdf.open(target.to_bytes()).pages[copy.index]
+    assert _largest_difference(original_pix, reopened.pixmap(dpi=72), []) <= ROUND_TRIP_TOLERANCE
+    # Images 0 and 3 share the same payload -> deduplicated to one XObject.
+    redrawn_images = copy.content().images
+    assert redrawn_images[0].xref == redrawn_images[3].xref > 0
+    if not same_document and rotate == 0 and shutil.which("pdftoppm"):
+        out_path = tmp_path / "inline.pdf"
+        target.save(out_path)
+        _, pixels = _poppler_page(out_path, 1)
+        assert min(pixels) < 100
+
+
+@pytest.mark.parametrize("rotate", [0, 90, 180, 270])
+@pytest.mark.spec("tiling-patterns", "read", "interpret", "create", "preserve")
+def test_draw_redraws_colored_tiling_pattern_fill_and_stroke(tmp_path: FilePath, rotate: int) -> None:
+    pattern_stream = stream_object(
+        "0.9 0.1 0.1 rg 0 0 6 6 re f 0.1 0.4 0.9 rg 6 6 6 6 re f 0.1 0.7 0.2 RG 1 w 0 12 m 12 0 l S",
+        "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+        "/BBox [0 0 12 12] /XStep 14 /YStep 14 /Matrix [1.2 0.2 -0.15 1.1 5 3] /Resources << >>",
+    )
+    page = page_with(
+        "q /GS1 gs /Pattern cs /P1 scn 10 10 80 70 re f Q\nq /Pattern CS /P1 SCN 10 w 110 15 70 60 re S Q",
+        resources="/ExtGState << /GS1 6 0 R >> /Pattern << /P1 7 0 R >>",
+        objects={6: "<< /Type /ExtGState /ca 0.65 >>", 7: pattern_stream},
+        rotate=rotate,
+    )
+    page_size = (page.rect.width, page.rect.height)
+    original_pix = page.pixmap(dpi=72)
+    content = page.content()
+    paths_col = page.paths()
+    assert isinstance(content.paths[0].fill, TilingPattern)
+    assert isinstance(paths_col[0].fill, TilingPattern)
+    assert content.paths[0].fill.opacity == pytest.approx(0.65, abs=1 / 255)
+    # Redraw from both Page.content() and Page.paths(), including after closing the source.
+    items_from_content = list(content.paths)
+    items_from_paths = list(paths_col)
+    if rotate == 0 and shutil.which("pdftoppm"):
+        src_path = tmp_path / "tiling_src.pdf"
+        page.document.save(src_path)
+    page.document.close()
+    for batch in (items_from_content, items_from_paths):
+        target = pyropdf.Document()
+        copy = target.pages.new(page_size)
+        with copy.draw() as canvas:
+            for item in batch:
+                canvas.draw(item)
+        assert _largest_difference(original_pix, copy.pixmap(dpi=72), []) <= ROUND_TRIP_TOLERANCE
+        reopened = pyropdf.open(target.to_bytes()).pages[0]
+        assert _largest_difference(original_pix, reopened.pixmap(dpi=72), []) <= ROUND_TRIP_TOLERANCE
+        if rotate == 0 and batch is items_from_content and shutil.which("pdftoppm"):
+            dst_path = tmp_path / "tiling_dst.pdf"
+            target.save(dst_path)
+            _, src_ppm = _poppler_page(src_path, 1)
+            _, dst_ppm = _poppler_page(dst_path, 1)
+            diffs = [abs(a - b) for a, b in zip(src_ppm, dst_ppm, strict=True)]
+            assert sum(diffs) / len(diffs) < 1.0
+            assert max(diffs) <= 24
+
+
+@pytest.mark.spec("tiling-patterns", "read", "interpret", "create", "preserve")
+def test_draw_redraws_uncolored_tiling_pattern_with_distinct_fill_and_stroke_colors() -> None:
+    pattern_stream = stream_object(
+        "0 0 6 6 re f 6 6 6 6 re f",
+        "/Type /Pattern /PatternType 1 /PaintType 2 /TilingType 1 "
+        "/BBox [0 0 12 12] /XStep 12 /YStep 12 /Resources << >>",
+    )
+    page = page_with(
+        "/PCS cs 0 0 1 /P1 scn /PCS CS 1 0 0 /P1 SCN 12 w 20 20 140 60 re B",
+        resources="/ColorSpace << /PCS [/Pattern /DeviceRGB] >> /Pattern << /P1 6 0 R >>",
+        objects={6: pattern_stream},
+    )
+    copy = _redraw(page)
+    assert _largest_difference(page.pixmap(dpi=72), copy.pixmap(dpi=72), []) <= ROUND_TRIP_TOLERANCE
+    # Fill interior is blue, stroke border is red.
+    assert copy.pixmap(dpi=72).pixel(50, 50) == page.pixmap(dpi=72).pixel(50, 50)
+    assert copy.pixmap(dpi=72).pixel(20, 20) == page.pixmap(dpi=72).pixel(20, 20)
+
+
+@pytest.mark.spec("tiling-patterns", "read", "interpret", "create", "preserve")
+def test_draw_redraws_tiling_cell_with_clips_images_text_shadings_and_nested_tiling() -> None:
+    nested_tiling = stream_object(
+        "0.2 0.7 0.3 rg 0 0 4 4 re f",
+        "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 8 8] /XStep 8 /YStep 8 /Resources << >>",
+    )
+    shading = (
+        "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 24 0] /Extend [true true] "
+        "/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0.8 0] /C1 [0.2 0.2 1] /N 1 >> >>"
+    )
+    shading_pat = "<< /Type /Pattern /PatternType 2 /Shading 8 0 R >>"
+    raster_img = stream_object(
+        "\xff\x00\x00\x00\xff\x00\x00\x00\xff\xff\xff\x00",
+        "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8",
+    )
+    stencil_img = stream_object(
+        "\x40\x00",
+        "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ImageMask true /BitsPerComponent 1",
+    )
+    outer_tiling = stream_object(
+        "q 2 2 28 28 re W n "
+        "q /Pattern cs /PS scn 0 0 32 16 re f Q "
+        "q /Pattern cs /PN scn 0 16 32 16 re f Q "
+        "q /GS1 gs 10 0 0 10 2 2 cm /ImR Do Q "
+        "q 0.9 0 0.6 rg 10 0 0 10 18 18 cm /ImS Do Q "
+        "q 0 0 0 rg BT /F1 10 Tf 4 12 Td (X) Tj ET Q Q",
+        "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+        "/BBox [0 0 32 32] /XStep 34 /YStep 34 "
+        "/Resources << /Font << /F1 5 0 R >> /ExtGState << /GS1 12 0 R >> "
+        "/Pattern << /PN 6 0 R /PS 7 0 R >> /XObject << /ImR 9 0 R /ImS 10 0 R >> >>",
+    )
+    page = page_with(
+        "/Pattern cs /Outer scn 10 10 180 80 re f",
+        resources="/Pattern << /Outer 11 0 R >>",
+        objects={
+            6: nested_tiling,
+            7: shading_pat,
+            8: shading,
+            9: raster_img,
+            10: stencil_img,
+            11: outer_tiling,
+            12: "<< /Type /ExtGState /ca 0.7 >>",
+        },
+    )
+    copy = _redraw(page)
+    assert _largest_difference(page.pixmap(dpi=72), copy.pixmap(dpi=72), []) <= ROUND_TRIP_TOLERANCE
+
+
+def test_draw_tiling_pattern_clip_filtering_and_deduplication() -> None:
+    p1 = stream_object(
+        "1 0 0 rg 0 0 10 10 re f",
+        "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+        "/BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << >>",
+    )
+    p2 = stream_object(
+        "0 0 1 rg 0 0 10 10 re f",
+        "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+        "/BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << >>",
+    )
+    stencil = stream_object(
+        "\x00\x00",
+        "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ImageMask true /BitsPerComponent 1",
+    )
+    page = page_with(
+        "/Pattern cs /P1 scn 0 0 50 100 re f "
+        "/Pattern cs /P2 scn 120 0 80 100 re f "
+        "q /Pattern cs /P2 scn 40 0 0 40 130 30 cm /Im Do Q",
+        resources="/Pattern << /P1 6 0 R /P2 7 0 R >> /XObject << /Im 8 0 R >>",
+        objects={6: p1, 7: p2, 8: stencil},
+    )
+    # Clipping drops P1 and keeps both the path and stencil image referencing P2.
+    clipped = page.content(clip=(110, 0, 200, 100))
+    assert len(clipped.paths) == 1
+    assert len(clipped.images) == 1
+    target = pyropdf.Document()
+    copy = target.pages.new((200, 100))
+    with copy.draw() as canvas:
+        for item in clipped:
+            canvas.draw(item)
+    assert copy.pixmap(dpi=72).pixel(150, 50) == page.pixmap(dpi=72).pixel(150, 50)
+    # Both path and stencil share one written /PatternType 1 object in the target.
+    tiling_objs = [
+        xref
+        for xref in target.objects
+        if isinstance(target.objects[xref], pyropdf.Stream) and target.objects[xref].get("PatternType") == 1
+    ]
+    assert len(tiling_objs) == 1
+
+
+def test_draw_refuses_unretained_and_unsupported_tiling_patterns_without_writing() -> None:
+    # 1. Unretained TilingPattern raises TypeError.
+    plain_path = _drawn().pages[0].content().paths[0]
+    unretained = TilingPattern(bbox=Rect(0, 0, 10, 10), x_step=10, y_step=10, matrix=Matrix(1, 0, 0, 1, 0, 0))
+    # 2. Tiling cell with a soft mask.
+    smask_group = stream_object(
+        "0.5 g 0 0 10 10 re f",
+        "/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Group << /S /Transparency /CS /DeviceGray >>",
+    )
+    smask_cell = stream_object(
+        "/GS1 gs 1 0 0 rg 0 0 10 10 re f",
+        "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+        "/BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /ExtGState << /GS1 7 0 R >> >>",
+    )
+    smask_page = page_with(
+        "q 5 5 100 80 re W n /Pattern cs /P scn 0 0 100 80 re f Q",
+        resources="/Pattern << /P 6 0 R >>",
+        objects={
+            6: smask_cell,
+            7: "<< /Type /ExtGState /SMask << /Type /Mask /S /Luminosity /G 8 0 R >> >>",
+            8: smask_group,
+        },
+    )
+    smask_path = smask_page.content().paths[0]
+    # 3. Tiling cell with a Type 1 function-based shading.
+    fn_cell = stream_object(
+        "/Pattern cs /PS scn 0 0 10 10 re f",
+        "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+        "/BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /Pattern << /PS 7 0 R >> >>",
+    )
+    fn_page = page_with(
+        "/Pattern cs /P scn 0 0 50 50 re f",
+        resources="/Pattern << /P 6 0 R >>",
+        objects={
+            6: fn_cell,
+            7: "<< /Type /Pattern /PatternType 2 /Shading 8 0 R >>",
+            8: "<< /ShadingType 1 /ColorSpace /DeviceRGB /Domain [0 1 0 1] /Function 9 0 R >>",
+            9: stream_object("{ pop 0 0 }", "/FunctionType 4 /Domain [0 1 0 1] /Range [0 1 0 1 0 1]"),
+        },
+    )
+    fn_path = fn_page.content().paths[0]
+    # 4. Excessively nested tiling patterns (> MAX_TILING_DEPTH).
+    deep_objects: dict[int, str] = {
+        12: stream_object(
+            "1 0 0 rg 0 0 10 10 re f",
+            "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+            "/BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << >>",
+        )
+    }
+    for obj_num in range(11, 5, -1):
+        deep_objects[obj_num] = stream_object(
+            "/Pattern cs /Next scn 0 0 10 10 re f",
+            "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+            f"/BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /Pattern << /Next {obj_num + 1} 0 R >> >>",
+        )
+    deep_page = page_with(
+        "/Pattern cs /P scn 0 0 40 40 re f",
+        resources="/Pattern << /P 6 0 R >>",
+        objects=deep_objects,
+    )
+    deep_path = deep_page.content().paths[0]
+
+    target = pyropdf.Document()
+    copy = target.pages.new((200, 100))
+    before = target.to_bytes(), target.history.steps
+    with copy.draw() as canvas, pytest.raises(TypeError, match="TilingPattern"):
+        canvas.draw(dataclasses.replace(plain_path, fill=unretained))
+    for bad_path, pattern in (
+        (smask_path, "soft mask"),
+        (fn_path, "shading"),
+        (deep_path, "deeply"),
+    ):
+        with copy.draw() as canvas, pytest.raises(ValueError, match=pattern):
+            canvas.draw(bad_path)
+    assert (target.to_bytes(), target.history.steps) == before
+
+
+def test_inline_image_and_tiling_pattern_enforce_budgets_atomically() -> None:
+    # 1. Extraction enforces total_decompressed_size on inline images.
+    big_inline_pdf = page_with(
+        "q 50 0 0 50 0 0 cm BI /W 128 /H 128 /BPC 8 /CS /G /F /Fl ID "
+        + zlib.compress(b"\x80" * (128 * 128)).decode("latin1")
+        + " EI Q"
+    ).document.to_bytes()
+    limited_src = pyropdf.open(
+        big_inline_pdf,
+        limits=pyropdf.DocumentLimits(max_total_decompressed_size=1024),
+    )
+    with pytest.raises(pyropdf.LimitError) as refused:
+        limited_src.pages[0].content()
+    assert refused.value.code == "total_decompressed_size"
+
+    # 2. Target canvas enforces memory_size atomically when drawing inline image.
+    inline_item = pyropdf.open(big_inline_pdf).pages[0].content().images[0]
+    tight_target = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=8_192))
+    blank = tight_target.pages.new((200, 100))
+    before = tight_target.to_bytes(), tight_target.history.steps
+    with pytest.raises(pyropdf.LimitError) as refused, blank.draw() as canvas:
+        canvas.draw(inline_item)
+    assert refused.value.code == "memory_size"
+    assert (tight_target.to_bytes(), tight_target.history.steps) == before
+
+    # 3. Target canvas enforces memory_size and cancellation atomically on TilingPattern.
+    many_rects = " ".join(f"{i % 10} {i // 10} 1 1 re f" for i in range(400))
+    tiling_pdf = page_with(
+        "/Pattern cs /P scn 0 0 100 100 re f",
+        resources="/Pattern << /P 6 0 R >>",
+        objects={
+            6: stream_object(
+                f"1 0 0 rg {many_rects}",
+                "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+                "/BBox [0 0 20 50] /XStep 20 /YStep 50 /Resources << >>",
+            )
+        },
+    ).document.to_bytes()
+    tiling_path = pyropdf.open(tiling_pdf).pages[0].content().paths[0]
+    tight_tiling = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=8_192))
+    blank_tiling = tight_tiling.pages.new((200, 100))
+    before_tiling = tight_tiling.to_bytes(), tight_tiling.history.steps
+    with pytest.raises(pyropdf.LimitError) as refused, blank_tiling.draw() as canvas:
+        canvas.draw(tiling_path)
+    assert refused.value.code == "memory_size"
+    assert (tight_tiling.to_bytes(), tight_tiling.history.steps) == before_tiling
+
+    # 4. Cancellation refuses tiling draw cleanly without writing.
+    token = pyropdf.CancellationToken()
+    cancelled_target = pyropdf.Document(limits=pyropdf.DocumentLimits(cancellation=token))
+    blank_cancel = cancelled_target.pages.new((200, 100))
+    before_steps = cancelled_target.history.steps
+    with pytest.raises(pyropdf.LimitError) as refused, blank_cancel.draw() as canvas:  # noqa: PT012
+        token.cancel()
+        canvas.draw(tiling_path)
+    assert refused.value.code == "cancelled"
+    assert cancelled_target.history.steps == before_steps
 
 
 def _shared_font_document(*, vertical: bool = False) -> bytes:

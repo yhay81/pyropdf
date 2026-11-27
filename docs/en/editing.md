@@ -147,9 +147,13 @@ with page.draw() as canvas:
 `PAD_END`), nothing (`NONE`), or the line runs again (`REPEAT`) or back and
 forth (`REFLECT`). Equal functions and shadings are written once in a canvas.
 `page.content()` and `page.paths()` read axial and radial shadings back as a
-`ShadingPattern` with their color function, and `canvas.draw` repaints their
-fills and strokes as a bounded sampled approximation (other shading types and
-`TilingPattern` are not repainted). When a soft mask requires separate text
+`ShadingPattern` with their color function and tiling patterns as a
+`TilingPattern` with their captured pattern cell, and `canvas.draw` repaints
+their fills and strokes (axial and radial shadings as a bounded sampled
+approximation, tiling patterns as bounded `/PatternType 1` streams;
+function-based and mesh shadings are not repainted). `canvas.draw` also
+repaints inline raster images and indirect or inline stencil image masks using
+their `Image.fill` paint. When a soft mask requires separate text
 fill and stroke objects, the second has empty `ActualText` so that text
 extraction reads the text once.
 

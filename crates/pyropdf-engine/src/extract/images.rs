@@ -5,7 +5,8 @@
 use hayro::hayro_interpret::font::{Glyph, GlyphRun};
 use hayro::hayro_interpret::{
     BlendMode, ClipPath, Device, DrawMode, DrawProps, Image, ImageData, ImageDrawProps,
-    InterpreterCache, InterpreterSettings, RenderContent, SoftMask, interpret,
+    InterpreterCache, InterpreterSettings, LumaData, RasterImage, RenderContent, SoftMask,
+    interpret,
 };
 use hayro::hayro_syntax::content::TypedIter;
 use hayro::hayro_syntax::object::{Name, Stream};
@@ -25,6 +26,117 @@ pub struct DecodedImage {
     pub color: Vec<u8>,
     /// One alpha byte per pixel, for an image with a mask or a stencil.
     pub alpha: Option<Vec<u8>>,
+}
+
+/// Owned 8-bit raster image payload captured from an inline image or tiling
+/// pattern cell, ready to be promoted into a PDF Image XObject.
+#[derive(Clone, Debug)]
+pub struct CapturedRaster {
+    pub width: u32,
+    pub height: u32,
+    /// Whether `color` holds one gray byte per pixel instead of three RGB bytes.
+    pub gray: bool,
+    pub color: Vec<u8>,
+    /// Optional 8-bit alpha mask `(width, height, samples)` when any pixel is
+    /// not fully opaque.
+    pub alpha: Option<(u32, u32, Vec<u8>)>,
+    pub interpolate: bool,
+}
+
+/// Owned 1-bit stencil image mask payload captured from an inline stencil or
+/// tiling pattern cell, in PDF `/ImageMask true` default `/Decode [0 1]`
+/// polarity (`0` = painted, `1` = masked/transparent), MSB first, row-padded.
+#[derive(Clone, Debug)]
+pub struct CapturedStencil {
+    pub width: u32,
+    pub height: u32,
+    pub mask_bits: Vec<u8>,
+    pub interpolate: bool,
+}
+
+/// Reads `/Interpolate` (or inline `/I`) from an image stream dictionary.
+pub(super) fn image_interpolate(stream: &Stream<'_>) -> bool {
+    let dict = stream.dict();
+    dict.get::<bool>(b"Interpolate")
+        .or_else(|| dict.get::<bool>(b"I"))
+        .unwrap_or(false)
+}
+
+/// Decodes a `RasterImage` into an owned [`CapturedRaster`], charging the
+/// decoded RGBA footprint to `total_decompressed_size` before decoding and the
+/// retained pixel buffers to `memory_size`.
+pub(super) fn capture_raster_image(
+    raster: &RasterImage<'_>,
+    budget: &Budget,
+) -> Result<Option<CapturedRaster>, Error> {
+    let pixels = u64::from(raster.width()).saturating_mul(u64::from(raster.height()));
+    budget.charge(LimitCode::TotalDecompressedSize, pixels.saturating_mul(4))?;
+    let interpolate = image_interpolate(raster.stream());
+    let mut out = None;
+    raster.with_rgba(
+        |data, alpha| {
+            let (width, height, gray, color) = match data {
+                ImageData::Rgb(rgb) => (rgb.width, rgb.height, false, rgb.data),
+                ImageData::Luma(luma) => (luma.width, luma.height, true, luma.data),
+            };
+            let alpha = alpha
+                .filter(|mask| mask.data.iter().any(|&value| value < 255))
+                .map(|mask| (mask.width, mask.height, mask.data));
+            out = Some(CapturedRaster {
+                width,
+                height,
+                gray,
+                color,
+                alpha,
+                interpolate,
+            });
+        },
+        None,
+    );
+    if let Some(captured) = &out {
+        let retained = captured
+            .color
+            .len()
+            .saturating_add(captured.alpha.as_ref().map_or(0, |mask| mask.2.len()));
+        budget.charge(LimitCode::MemorySize, retained as u64)?;
+    }
+    Ok(out)
+}
+
+/// Packs an 8-bit hayro stencil alpha buffer (`255` = painted, `0` = masked)
+/// into a 1-bit PDF `/ImageMask true` buffer (`/Decode [0 1]`, `0` = painted,
+/// `1` = masked), charging the packed buffer to `memory_size`.
+pub(super) fn pack_stencil_mask(
+    luma: &LumaData,
+    interpolate: bool,
+    budget: &Budget,
+) -> Result<CapturedStencil, Error> {
+    let width = luma.width as usize;
+    let height = luma.height as usize;
+    let row_bytes = width.div_ceil(8);
+    let total_bytes = row_bytes.saturating_mul(height);
+    budget.charge(LimitCode::MemorySize, total_bytes as u64)?;
+    let mut mask_bits = model::with_capacity(total_bytes, "stencil mask bits")?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "fills the capacity reserved above and charged to memory_size"
+    )]
+    mask_bits.resize(total_bytes, 0xFF);
+    for y in 0..height {
+        let src_row = y.saturating_mul(width);
+        let dst_row = y.saturating_mul(row_bytes);
+        for x in 0..width {
+            if luma.data.get(src_row + x).copied().unwrap_or(0) >= 128 {
+                mask_bits[dst_row + (x >> 3)] &= !(0x80 >> (x & 7));
+            }
+        }
+    }
+    Ok(CapturedStencil {
+        width: luma.width,
+        height: luma.height,
+        mask_bits,
+        interpolate,
+    })
 }
 
 /// Decodes one hayro `Image` after charging its RGBA byte footprint to
@@ -94,6 +206,10 @@ impl ContentSink for Grab<'_> {
     fn path(&mut self, _: &BezPath, _: Affine, _: &DrawMode) {}
     fn stopped(&self) -> bool {
         self.found
+    }
+
+    fn handles_image_decode(&self) -> bool {
+        true
     }
 
     fn image(&mut self, ordinal: usize, image: &Image<'_, '_>) -> Result<(), Error> {

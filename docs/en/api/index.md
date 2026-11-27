@@ -135,7 +135,7 @@ method and property of its classes with its full description.
 - [`LineTo`](text-and-content.md#lineto): Draw a line to `to`.
 - [`MarkedContent`](text-and-content.md#markedcontent): A marked-content sequence (`BMC` or `BDC`).
 - [`MoveTo`](text-and-content.md#moveto): Start a new subpath at `to`.
-- [`Paint`](text-and-content.md#paint): A solid color, pattern, shading, or gradient paint; a canvas also repaints axial/radial `ShadingPattern` values.
+- [`Paint`](text-and-content.md#paint): A solid color, pattern, shading, or gradient paint; a canvas also repaints axial/radial `ShadingPattern` and `TilingPattern` values.
 - [`Path`](text-and-content.md#path): A path that is filled, stroked, or both.
 - [`PathCluster`](text-and-content.md#pathcluster): A display-space cluster of nearby vector paths.
 - [`Paths`](text-and-content.md#paths_1): The paths of a page as columns, from `Page.paths`.
