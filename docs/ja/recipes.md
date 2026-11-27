@@ -43,6 +43,33 @@ with pyropdf.open("input.pdf") as doc:
     doc.save("reordered.pdf")
 ```
 
+## 画像コレクションや CBZ アーカイブを PDF に変換する
+
+```python
+import io
+import zipfile
+
+import pyropdf
+
+# ページ画像からメモリ上に CBZ を組み立て、1 トランザクションで PDF に変換する
+archive = io.BytesIO()
+with pyropdf.open("input.pdf") as src, zipfile.ZipFile(archive, "w") as cbz:
+    for number, page in enumerate(src.pages, start=1):
+        cbz.writestr(f"chapter1/page{number}.png", page.pixmap(dpi=72).to_bytes("png"))
+
+archive.seek(0)
+with pyropdf.Document(limits=pyropdf.DocumentLimits.web()) as out:
+    out.pages.new_from_cbz(archive)
+    out.save("comic.pdf")
+```
+
+`doc.pages.new_from_cbz` はエントリを自然順（`page2.png` が `page10.png` より先）で並べ、
+`__MACOSX` やメタデータファイルを無視し、Exif の向きを反映し、JPEG / JPEG 2000 を再圧縮せず
+埋め込みます。展開はチャンク単位で `DocumentLimits`（ファイルサイズ・展開後サイズ・展開倍率・
+フレーム数・総ピクセル数）を検証し、1 回の取り消し可能なトランザクションで確定またはロールバックします。
+画像の列（パス・バイト列・`Pixmap`）には `doc.pages.new_from_images(paths)` を使い、全ページを
+同じ寸法に収めたい場合は `size=(595, 842)` を渡します。
+
 ## 全ページを PNG に描画する
 
 ```python

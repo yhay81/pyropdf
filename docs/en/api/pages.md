@@ -1154,25 +1154,77 @@ and no rotation or crop of the page tree's root carries over to it.
 
 ```python
 Pages.new_from_image(
-    source: str | os.PathLike[str] | bytes | bytearray | memoryview | Pixmap,
+    source: _ImageSource,
     *,
     dpi: float | tuple[float, float] | None = None,
+    size: tuple[float, float] | None = None,
     index: int | None = None,
 ) -> list[Page]
 ```
 
-Add one page per frame of an image, each the size of its frame at its resolution, in one transaction.
+Add one page per frame of an image, sized by its resolution or fitted into `size`, in one transaction.
 
 `source` is a path, encoded bytes, or a `Pixmap`. JPEG and
 JPEG 2000 data is embedded as it is, without recompression, and PNG
-keeps its alpha as a soft mask; each is one frame. Other formats,
+keeps its alpha as a soft mask; each is one frame. Exif orientation
+(1–8) is honored without recompressing JPEG streams. Other formats,
 such as multi-page TIFF, GIF, or WebP, are read through Pillow when
 it is installed, one frame per page, up to 4,096 frames and 256
-million pixels in all, from up to 256 MiB of data. A frame's resolution comes from its JFIF
-density or Exif resolution, PNG `pHYs`, or Pillow's `dpi`, else
-96 dpi, and `dpi`, one number or `(x, y)`,
-overrides it. The pages go where `new` puts one, in order, and
-are returned.
+million pixels in all, from up to 256 MiB of data. A frame's
+resolution comes from its JFIF density or Exif resolution, PNG
+`pHYs`, or Pillow's `dpi`, else 96 dpi. Pass `dpi`, one number
+or `(x, y)`, to override it, or `size`, a `(width, height)`
+page size in points, to fit each frame centered inside that size at
+its aspect ratio (mutually exclusive with `dpi`). The pages go where
+`new` puts one, in order, and are returned.
+
+### `new_from_images`
+
+```python
+Pages.new_from_images(
+    sources: Iterable[_ImageSource],
+    *,
+    dpi: float | tuple[float, float] | None = None,
+    size: tuple[float, float] | None = None,
+    index: int | None = None,
+) -> list[Page]
+```
+
+Add pages from an ordered collection of images in one undoable transaction.
+
+Each item of `sources` is a path, encoded bytes, or a
+`Pixmap`, converted with the same lossless JPEG/JPEG 2000
+passthrough, PNG alpha soft-mask handling, and Exif orientation as
+`new_from_image`. All frames across `sources` share the 4,096
+frame limit, the 256 million pixel cap, and the document's
+`DocumentLimits`. An empty iterable returns `[]` without
+modifying the document.
+
+### `new_from_cbz`
+
+```python
+Pages.new_from_cbz(
+    source: _CbzSource,
+    *,
+    dpi: float | tuple[float, float] | None = None,
+    size: tuple[float, float] | None = None,
+    index: int | None = None,
+) -> list[Page]
+```
+
+Add pages from the image entries of a CBZ (ZIP) archive in one undoable transaction.
+
+`source` is a path, bytes, or a binary file-like object. Image
+entries are sorted in deterministic natural filename order, skipping
+`__MACOSX` and non-image metadata files. Path-traversal names,
+symbolic links, encrypted entries, and corrupt archive members are
+refused atomically with `ValueError`. Each member is read in
+bounded chunks charged against the document's `DocumentLimits`
+(file size, per-entry and total decompressed size, decompression
+ratio, memory size, page count, duration, and cancellation) as well
+as the 4,096 frame and 256 million pixel caps. JPEG and JPEG 2000
+members are embedded without lossy recompression, PNG keeps its alpha
+soft mask, and Exif orientation is honored.
 
 ### `insert`
 

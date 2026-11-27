@@ -709,9 +709,9 @@ MUTATIONS = (
     ),
     (
         "new_page_image",
-        "Create a page for each image frame, register its image and draw the placement.",
+        "Create a page for each image frame, image collection item, or CBZ member in one transaction.",
         "Pages",
-        "new_from_image",
+        "new_from_image new_from_images new_from_cbz",
     ),
     (
         "page_boxes",

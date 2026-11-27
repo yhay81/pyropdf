@@ -44,6 +44,35 @@ with pyropdf.open("input.pdf") as doc:
     doc.save("reordered.pdf")
 ```
 
+## Convert images or a CBZ archive to PDF
+
+```python
+import io
+import zipfile
+
+import pyropdf
+
+# Build an in-memory CBZ archive from rendered pages, then convert it to a PDF.
+archive = io.BytesIO()
+with pyropdf.open("input.pdf") as src, zipfile.ZipFile(archive, "w") as cbz:
+    for number, page in enumerate(src.pages, start=1):
+        cbz.writestr(f"chapter1/page{number}.png", page.pixmap(dpi=72).to_bytes("png"))
+
+archive.seek(0)
+with pyropdf.Document(limits=pyropdf.DocumentLimits.web()) as out:
+    out.pages.new_from_cbz(archive)
+    out.save("comic.pdf")
+```
+
+`doc.pages.new_from_cbz` reads archive members in natural filename order (so
+`page2.png` comes before `page10.png`), skips `__MACOSX` and metadata files,
+honors Exif orientation, embeds JPEG and JPEG 2000 without recompression, and
+enforces `DocumentLimits` (file size, per-entry and total decoded bytes,
+decompression ratio, frame count, and pixel count) atomically in one undoable
+transaction. Use `doc.pages.new_from_images(paths)` for an ordered collection
+of image paths, bytes, or `Pixmap` values, and pass `size=(595, 842)` to fit
+every page to a uniform page size.
+
 ## Render every page to PNG
 
 ```python
