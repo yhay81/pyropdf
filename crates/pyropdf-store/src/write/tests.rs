@@ -813,7 +813,11 @@ fn every_object_of_the_corpus_reads_back_as_itself() {
             let value = Value::from_object(&object, &source, &budget)
                 .unwrap_or_else(|error| panic!("{file}, object {objects}: {error}"));
             let object = MaybeRef::NotRef(object);
-            for written in [lexeme_bytes(&value), canonical_bytes(&value)] {
+            for written in [
+                lexeme_bytes(&value),
+                canonical_bytes(&value),
+                pretty_bytes(&value),
+            ] {
                 // hayro-syntax reads the bytes as the object it read from the
                 // file, and the store reads them as the same value, keys in
                 // the same order.
@@ -830,4 +834,86 @@ fn every_object_of_the_corpus_reads_back_as_itself() {
         }
         assert!(objects > 0, "{file} has no objects");
     }
+}
+
+/// Writes `value` in pretty-printed syntax with the default budget.
+fn pretty_bytes(value: &Value) -> Vec<u8> {
+    let budget = Budget::default();
+    let mut out = BudgetVec::new(&budget);
+    super::pretty(&mut out, value).unwrap_or_else(|error| panic!("{value:?}: {error}"));
+    out.into_vec()
+}
+
+#[test]
+fn pretty_formats_nested_dicts_and_arrays_deterministically() {
+    let budget = Budget::default();
+    let source = Bytes::from(
+        &b"<< /Type /Page /MediaBox [0 0 612 792] /Empty <<>> /EmptyArr [] /Resources << /Font << /F1 5 0 R >> >> /Nested [<< /A 1 >> << /B (hi\xff) >>] /Long [1 2 3 4 5 6 7 8 9] >>"[..],
+    );
+    let value = Value::parse(&source, &budget).unwrap();
+    let first = pretty_bytes(&value);
+    let second = pretty_bytes(&value);
+    assert_eq!(first, second);
+    let expected = concat!(
+        "<<\n",
+        "  /Type /Page\n",
+        "  /MediaBox [0 0 612 792]\n",
+        "  /Empty <<>>\n",
+        "  /EmptyArr []\n",
+        "  /Resources <<\n",
+        "    /Font <<\n",
+        "      /F1 5 0 R\n",
+        "    >>\n",
+        "  >>\n",
+        "  /Nested [\n",
+        "    <<\n",
+        "      /A 1\n",
+        "    >>\n",
+        "    <<\n",
+        "      /B (hi\\377)\n",
+        "    >>\n",
+        "  ]\n",
+        "  /Long [\n",
+        "    1\n",
+        "    2\n",
+        "    3\n",
+        "    4\n",
+        "    5\n",
+        "    6\n",
+        "    7\n",
+        "    8\n",
+        "    9\n",
+        "  ]\n",
+        ">>",
+    );
+    assert_eq!(std::str::from_utf8(&first).unwrap(), expected);
+    assert!(
+        first
+            .iter()
+            .all(|&b| matches!(b, b'\t' | b'\n' | b'\r' | 0x20..=0x7E))
+    );
+    assert_eq!(Value::parse(&Bytes::from(first), &budget).unwrap(), value);
+}
+
+#[test]
+fn pretty_respects_object_depth_and_memory_budgets() {
+    let mut nested = Value::Integer(1);
+    for _ in 0..8 {
+        nested = Value::Array(Array::from(vec![nested]));
+    }
+    let shallow = Budget::default().with_limit(LimitCode::ObjectValueDepth, Some(4));
+    let mut out = BudgetVec::new(&shallow);
+    let err = super::pretty(&mut out, &nested).unwrap_err();
+    assert_eq!(
+        err.limit().map(LimitExceeded::code),
+        Some(LimitCode::ObjectValueDepth)
+    );
+
+    let tight = Budget::default().with_limit(LimitCode::MemorySize, Some(8));
+    let mut out = BudgetVec::new(&tight);
+    let err = super::pretty(&mut out, &nested).unwrap_err();
+    assert_eq!(
+        err.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
 }

@@ -1,13 +1,14 @@
 //! Object streams: the objects that a save packs into them on request
 //! (DESIGN.md section 4.4, ISO 32000-2 section 7.5.7).
 
+use super::recode::StreamPolicy;
 use super::renumber::Renumbering;
-use super::{Mode, Output, Result, Row, Streams, raw, recode};
+use super::{Format, Mode, Output, Result, Row, Streams, raw, recode};
 use crate::budget::{Budget, BudgetVec};
 use crate::security;
 use crate::value::{Bytes, Dict, Name, Reference, Stream, Value};
 use crate::version::{Slot, Version};
-use crate::{Error as StoreError, ErrorKind, write};
+use crate::{Error as StoreError, ErrorKind};
 
 /// The members of one object stream, as lopdf and pylopdf pack them.
 const MEMBERS: u32 = 100;
@@ -18,6 +19,8 @@ pub(super) struct Packer<'a> {
     budget: &'a Budget,
     /// The Flate level of the object streams, or none for uncompressed ones.
     level: Option<u8>,
+    /// Output formatting (ASCII safety and pretty printing).
+    format: Format,
     /// The next object number that the save has not given out.
     next: u64,
     /// The object number of the stream being filled, once it has a member.
@@ -35,10 +38,11 @@ pub(super) struct Packer<'a> {
 impl<'a> Packer<'a> {
     /// Returns a packer whose object streams take the numbers from `next`
     /// on.
-    pub(super) fn new(budget: &'a Budget, level: Option<u8>, next: u64) -> Self {
+    pub(super) fn new(budget: &'a Budget, level: Option<u8>, next: u64, format: Format) -> Self {
         Self {
             budget,
             level,
+            format,
             next,
             number: None,
             table: BudgetVec::new(budget),
@@ -75,16 +79,22 @@ impl<'a> Packer<'a> {
         if member.generation() != 0 {
             return Ok(false);
         }
-        match version.get(row.number, budget) {
-            Ok(Some(object)) if !matches!(**object.value(), Value::Stream(_)) => {}
+        let object = match version.get(row.number, budget) {
+            Ok(Some(object)) if !matches!(**object.value(), Value::Stream(_)) => object,
             Ok(_) => return Ok(false),
             Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => return Ok(false),
             Err(error) => return Err(error.into()),
-        }
+        };
         // A member is never encrypted on its own: its object stream is.
         let bytes = match (renumbering, version.slot(row.number)) {
             (Some(renumbering), _) => {
-                renumbering.bytes(version, reference, Streams::Keep, false, budget)?
+                let keep = StreamPolicy::new(Streams::Keep, &[], budget)?;
+                renumbering.bytes(version, reference, &keep, self.format, false, budget)?
+            }
+            (None, _) if self.format.rewrites_syntax() => {
+                let mut formatted = BudgetVec::new(budget);
+                self.format.write_value(&mut formatted, object.value())?;
+                Bytes::new(formatted.into_vec())
             }
             (None, Some(Slot::Written(object))) => object.bytes().clone(),
             (None, _) => raw::body(&**version.base(), reference, budget).map_err(|error| {
@@ -145,8 +155,14 @@ impl<'a> Packer<'a> {
             Some(level) => recode::compressed(&stream, level, budget)?.unwrap_or(stream),
             None => stream,
         };
+        let stream = if self.format.ascii && !recode::is_printable_ascii(stream.data()) {
+            recode::wrap_ascii85(&stream, &|_, _| Ok(None), budget)?
+        } else {
+            stream
+        };
         let mut plain = BudgetVec::new(budget);
-        write::value(&mut plain, &Value::Stream(Box::new(stream)))?;
+        self.format
+            .write_value(&mut plain, &Value::Stream(Box::new(stream)))?;
         let plain = Bytes::new(plain.into_vec());
         let bytes = match mode.handler() {
             Some(handler) => {

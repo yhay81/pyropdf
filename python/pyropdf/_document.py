@@ -30,6 +30,7 @@ from pyropdf._actions import (
 from pyropdf._attachments import Attachments
 from pyropdf._changes import changes as _changes
 from pyropdf._check import structural_check as _structural_check
+from pyropdf._clean import clean_document as _clean_document
 from pyropdf._collections import (
     Collection,
     NamedPages,
@@ -1157,6 +1158,17 @@ class Document:
         renumber: bool = False,
         dedupe: bool = False,
         linearize: bool = False,
+        clean: bool = False,
+        ascii: bool = False,  # noqa: A002 - public full-save option
+        pretty: bool = False,
+        stream_filter: (
+            Literal["keep", "none", "FlateDecode", "ASCII85Decode", "ASCIIHexDecode", "RunLengthDecode"]
+            | Mapping[
+                int,
+                Literal["keep", "none", "FlateDecode", "ASCII85Decode", "ASCIIHexDecode", "RunLengthDecode"] | None,
+            ]
+            | None
+        ) = None,
     ) -> None:
         """Write the document to a file.
 
@@ -1246,9 +1258,33 @@ class Document:
         prunes and renumbers whatever ``prune`` and ``renumber`` say, and
         moves the attributes that pages inherit from the page tree into the
         pages. It writes a cross-reference table, so it refuses
-        ``cross_reference="stream"`` or ``"hybrid"``, ``object_streams``, and ``dedupe``,
-        and an incremental save refuses it. :attr:`is_linearized` reads
-        whether an opened file is linearized.
+        ``cross_reference="stream"`` or ``"hybrid"``, ``object_streams``,
+        ``dedupe``, ``ascii``, and ``pretty``, and an incremental save
+        refuses it. :attr:`is_linearized` reads whether an opened file is
+        linearized.
+
+        ``clean=True`` normalizes every page content stream and annotation
+        appearance stream and prunes unnamed resources in a private save
+        view before writing; the caller's live document and its undo history
+        remain unchanged even if cleaning or saving fails.
+
+        ``ascii=True`` emits only printable ASCII bytes: it omits the binary
+        header comment, escapes binary strings and names, defaults
+        ``cross_reference=None`` to a classic table, and wraps any stream
+        containing non-ASCII bytes in ``ASCII85Decode`` while preserving
+        image filters losslessly. It is refused for encrypted and linearized
+        saves. ``pretty=True`` formats dictionaries and nested or long arrays
+        with deterministic multi-line indentation for inspection and diffing.
+
+        ``stream_filter`` selects an explicit filter for eligible non-image
+        streams: ``"keep"``, ``"none"`` (uncompressed), ``"FlateDecode"``
+        (at ``compression_level``), ``"ASCII85Decode"``, ``"ASCIIHexDecode"``,
+        or ``"RunLengthDecode"``, or a mapping ``{xref: filter}`` (where
+        ``None`` means ``"none"``) to override individual objects while
+        leaving unlisted streams untouched. It excludes ``compress=True``
+        and ``decompress=True``. ``clean``, ``ascii``, ``pretty``, and
+        ``stream_filter`` require a full save and are refused when
+        ``incremental=True``.
         """
         self._ensure_open()
         options = _save_options(
@@ -1263,9 +1299,17 @@ class Document:
             renumber=renumber,
             dedupe=dedupe,
             linearize=linearize,
+            clean=clean,
+            ascii=ascii,
+            pretty=pretty,
+            stream_filter=stream_filter,
         )
         arg = _encryption_arg(encryption)
-        _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg, *options))
+        if ascii and self._will_encrypt(encryption):
+            msg = "ascii=True is not available for encrypted saves"
+            raise ValueError(msg)
+        with self._save_source(clean=clean) as source:
+            _atomic_save_file(path, lambda temporary: source.save_path(temporary, incremental, arg, *options))
 
     def to_bytes(  # noqa: PLR0913 - the save options are all keyword-only
         self,
@@ -1283,6 +1327,17 @@ class Document:
         renumber: bool = False,
         dedupe: bool = False,
         linearize: bool = False,
+        clean: bool = False,
+        ascii: bool = False,  # noqa: A002 - public full-save option
+        pretty: bool = False,
+        stream_filter: (
+            Literal["keep", "none", "FlateDecode", "ASCII85Decode", "ASCIIHexDecode", "RunLengthDecode"]
+            | Mapping[
+                int,
+                Literal["keep", "none", "FlateDecode", "ASCII85Decode", "ASCIIHexDecode", "RunLengthDecode"] | None,
+            ]
+            | None
+        ) = None,
     ) -> bytes:
         """Return the document as PDF bytes, as :meth:`save` writes them with the same options.
 
@@ -1303,9 +1358,40 @@ class Document:
             renumber=renumber,
             dedupe=dedupe,
             linearize=linearize,
+            clean=clean,
+            ascii=ascii,
+            pretty=pretty,
+            stream_filter=stream_filter,
         )
         _validate_optional_positive_int("max_size", max_size)
-        return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption), *options)
+        arg = _encryption_arg(encryption)
+        if ascii and self._will_encrypt(encryption):
+            msg = "ascii=True is not available for encrypted saves"
+            raise ValueError(msg)
+        with self._save_source(clean=clean) as source:
+            return source.to_bytes(incremental, max_size, arg, *options)
+
+    def _will_encrypt(self, encryption: Encryption | RecipientEncryption | None) -> bool:
+        """Return whether a full save with ``encryption`` will write ciphertext."""
+        if encryption is None:
+            return False
+        if encryption is Encryption.KEEP:
+            encrypted, _, _, _, _ = _core.security_state(self._doc)
+            return encrypted
+        return True
+
+    @contextmanager
+    def _save_source(self, *, clean: bool) -> Generator[_Document]:
+        """Yield the core handle to save, cleaning a private view when requested."""
+        if not clean:
+            yield self._doc
+            return
+        view = self._import_source(self._doc.save_view())
+        try:
+            _clean_document(view)
+            yield view._doc  # noqa: SLF001
+        finally:
+            view.close()
 
     @property
     def signatures(self) -> list[Signature]:
@@ -1996,6 +2082,10 @@ class Document:
 
 #: zlib's highest compression level, which ``compression_level`` takes.
 _MAX_COMPRESSION_LEVEL = 9
+#: Highest 32-bit PDF object number accepted in a per-stream filter mapping.
+_MAX_OBJECT_NUMBER = 0xFFFF_FFFF
+#: Supported explicit stream filter names for ``Document.save(stream_filter=...)``.
+_STREAM_FILTERS = frozenset({"keep", "none", "FlateDecode", "ASCII85Decode", "ASCIIHexDecode", "RunLengthDecode"})
 
 
 def _validate_bool(name: str, value: object) -> None:
@@ -2003,6 +2093,82 @@ def _validate_bool(name: str, value: object) -> None:
     if not isinstance(value, bool):
         msg = f"{name} must be a bool: {value!r}"
         raise TypeError(msg)
+
+
+def _normalize_stream_filter_entry(xref: object, name: object) -> tuple[int, str]:
+    """Validate one ``(xref, filter)`` pair from a per-stream filter mapping."""
+    if isinstance(xref, bool) or not isinstance(xref, int):
+        msg = f"stream_filter keys must be object-number ints: {xref!r}"
+        raise TypeError(msg)
+    if not 1 <= xref <= _MAX_OBJECT_NUMBER:
+        msg = f"stream_filter object number must be positive and 32-bit: {xref}"
+        raise ValueError(msg)
+    if name is None:
+        return xref, "none"
+    if not isinstance(name, str):
+        msg = f"stream_filter values must be filter names or None: {name!r}"
+        raise TypeError(msg)
+    if name not in _STREAM_FILTERS:
+        msg = f"unsupported stream_filter for object {xref}: {name!r}"
+        raise ValueError(msg)
+    return xref, name
+
+
+def _normalize_stream_filter(stream_filter: object) -> tuple[str | None, list[tuple[int, str]] | None]:
+    """Validate ``stream_filter`` and split it into document-wide or per-object core arguments."""
+    if stream_filter is None:
+        return None, None
+    if isinstance(stream_filter, str):
+        if stream_filter not in _STREAM_FILTERS:
+            msg = (
+                "stream_filter must be 'keep', 'none', 'FlateDecode', 'ASCII85Decode', "
+                f"'ASCIIHexDecode', 'RunLengthDecode', a mapping, or None: {stream_filter!r}"
+            )
+            raise ValueError(msg)
+        return stream_filter, None
+    if isinstance(stream_filter, Mapping):
+        return None, [_normalize_stream_filter_entry(xref, name) for xref, name in stream_filter.items()]
+    msg = f"stream_filter must be a filter name, a mapping of xref to filter, or None: {stream_filter!r}"
+    raise TypeError(msg)
+
+
+def _check_save_option_conflicts(  # noqa: PLR0913 - mirrors Document.save keyword options
+    *,
+    compress: bool,
+    decompress: bool,
+    cross_reference: object,
+    object_streams: bool,
+    prune: bool,
+    dedupe: bool,
+    linearize: bool,
+    ascii: bool,  # noqa: A002 - public full-save option
+    pretty: bool,
+    stream_filter: object,
+) -> None:
+    """Validate cross-option invariants for full saves."""
+    if compress and decompress:
+        msg = "decompress=True needs compress=False, which would compress the streams again"
+        raise ValueError(msg)
+    if stream_filter is not None and (compress or decompress):
+        msg = "stream_filter cannot be combined with compress=True or decompress=True"
+        raise ValueError(msg)
+    if cross_reference not in (None, "table", "stream", "hybrid"):
+        msg = f"cross_reference must be 'table', 'stream', 'hybrid', or None: {cross_reference!r}"
+        raise ValueError(msg)
+    if dedupe and not prune:
+        msg = "dedupe=True needs prune=True, which leaves the merged objects out"
+        raise ValueError(msg)
+    if object_streams and cross_reference == "table":
+        msg = "object_streams=True needs cross_reference='stream', 'hybrid', or None"
+        raise ValueError(msg)
+    if linearize:
+        _refuse_linearized_options(
+            cross_reference=cross_reference,
+            object_streams=object_streams,
+            dedupe=dedupe,
+            ascii=ascii,
+            pretty=pretty,
+        )
 
 
 def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
@@ -2018,12 +2184,33 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
     renumber: bool,
     dedupe: bool,
     linearize: bool,
-) -> tuple[bool, int | None, bool, bool, bool | None, bool, bool, bool, bool, bool]:
+    clean: bool,
+    ascii: bool,  # noqa: A002 - public full-save option
+    pretty: bool,
+    stream_filter: object,
+) -> tuple[
+    bool,
+    int | None,
+    bool,
+    bool,
+    bool | None,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    str | None,
+    list[tuple[int, str]] | None,
+    int,
+]:
     """Check the save options, and return them as the core's save methods take them.
 
     They are ``prune``, the ``compress`` level, ``decompress``, ``renew_id``,
     ``cross_reference_stream``, ``object_streams``, ``renumber``,
-    ``dedupe``, ``linearize``, and ``hybrid_reference``.
+    ``dedupe``, ``linearize``, ``hybrid_reference``, ``ascii``, ``pretty``,
+    ``stream_filter``, ``stream_filters``, and ``filter_level``.
     """
     flags = {
         "incremental": incremental,
@@ -2035,6 +2222,9 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
         "renumber": renumber,
         "dedupe": dedupe,
         "linearize": linearize,
+        "clean": clean,
+        "ascii": ascii,
+        "pretty": pretty,
     }
     for name, value in flags.items():
         _validate_bool(name, value)
@@ -2044,6 +2234,7 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
     if not 0 <= compression_level <= _MAX_COMPRESSION_LEVEL:
         msg = f"compression_level must be from 0 through 9: {compression_level}"
         raise ValueError(msg)
+    default_filter, per_stream_filters = _normalize_stream_filter(stream_filter)
     if incremental:
         _refuse_full_save_options(
             prune=prune,
@@ -2053,21 +2244,23 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
             renumber=renumber,
             dedupe=dedupe,
             linearize=linearize,
+            clean=clean,
+            ascii=ascii,
+            pretty=pretty,
+            stream_filter=stream_filter,
         )
-    if compress and decompress:
-        msg = "decompress=True needs compress=False, which would compress the streams again"
-        raise ValueError(msg)
-    if cross_reference not in (None, "table", "stream", "hybrid"):
-        msg = f"cross_reference must be 'table', 'stream', 'hybrid', or None: {cross_reference!r}"
-        raise ValueError(msg)
-    if dedupe and not prune:
-        msg = "dedupe=True needs prune=True, which leaves the merged objects out"
-        raise ValueError(msg)
-    if object_streams and cross_reference == "table":
-        msg = "object_streams=True needs cross_reference='stream', 'hybrid', or None"
-        raise ValueError(msg)
-    if linearize:
-        _refuse_linearized_options(cross_reference=cross_reference, object_streams=object_streams, dedupe=dedupe)
+    _check_save_option_conflicts(
+        compress=compress,
+        decompress=decompress,
+        cross_reference=cross_reference,
+        object_streams=object_streams,
+        prune=prune,
+        dedupe=dedupe,
+        linearize=linearize,
+        ascii=ascii,
+        pretty=pretty,
+        stream_filter=stream_filter,
+    )
     stream = None if cross_reference in (None, "hybrid") else cross_reference == "stream"
     return (
         prune,
@@ -2080,22 +2273,36 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
         dedupe,
         linearize,
         cross_reference == "hybrid",
+        ascii,
+        pretty,
+        default_filter,
+        per_stream_filters,
+        compression_level,
     )
 
 
-def _refuse_linearized_options(*, cross_reference: object, object_streams: bool, dedupe: bool) -> None:
+def _refuse_linearized_options(
+    *,
+    cross_reference: object,
+    object_streams: bool,
+    dedupe: bool,
+    ascii: bool,  # noqa: A002 - public full-save option
+    pretty: bool,
+) -> None:
     """Raise ValueError for an option that a linearized file cannot hold."""
     conflicts = {
         "cross_reference='stream'": cross_reference == "stream",
         "cross_reference='hybrid'": cross_reference == "hybrid",
         "object_streams=True": object_streams,
         "dedupe=True": dedupe,
+        "ascii=True": ascii,
+        "pretty=True": pretty,
     }
     for name, given in conflicts.items():
         if given:
             msg = (
-                "linearize=True writes a cross-reference table without object streams or merged objects, "
-                f"so it refuses {name}"
+                "linearize=True writes a cross-reference table without object streams, merged objects, "
+                f"or ASCII/pretty formatting, so it refuses {name}"
             )
             raise ValueError(msg)
 
@@ -2109,6 +2316,10 @@ def _refuse_full_save_options(  # noqa: PLR0913 - the save options are all keywo
     renumber: bool,
     dedupe: bool,
     linearize: bool,
+    clean: bool,
+    ascii: bool,  # noqa: A002 - public full-save option
+    pretty: bool,
+    stream_filter: object,
 ) -> None:
     """Raise :class:`ValueError` for an option that an incremental save refuses, as only a full save takes it."""
     kept = {
@@ -2118,6 +2329,10 @@ def _refuse_full_save_options(  # noqa: PLR0913 - the save options are all keywo
         "renumber": (renumber, "the numbers"),
         "dedupe": (dedupe, "the objects"),
         "linearize": (linearize, "the order"),
+        "clean": (clean, "the original content streams"),
+        "ascii": (ascii, "the original bytes"),
+        "pretty": (pretty, "the original formatting"),
+        "stream_filter": (stream_filter is not None, "the streams"),
     }
     for name, (given, what) in kept.items():
         if given:

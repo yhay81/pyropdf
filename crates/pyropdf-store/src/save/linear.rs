@@ -32,7 +32,8 @@ use std::fmt;
 use std::io;
 use std::sync::Arc;
 
-use super::{Error, Mode, Output, Result, Row, Streams, identifier, recode, renews, table};
+use super::recode::StreamPolicy;
+use super::{Error, Format, Mode, Output, Result, Row, identifier, recode, renews, table};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::memo::Reads;
 use crate::pages::PageIndex;
@@ -266,7 +267,7 @@ pub(super) fn write(
     target: &mut dyn io::Write,
     budget: &Budget,
     mode: &Mode<'_>,
-    streams: Streams,
+    policy: &StreamPolicy<'_>,
     renew_id: bool,
 ) -> Result<u64> {
     let mut plan = Plan::new(version, budget)?;
@@ -313,7 +314,7 @@ pub(super) fn write(
     let writer = Writer {
         plan: &plan,
         mode,
-        streams,
+        policy,
         encrypt: encrypt.as_ref(),
         id: &id,
     };
@@ -1027,7 +1028,7 @@ fn refused(what: &str) -> Error {
 struct Writer<'a> {
     plan: &'a Plan<'a>,
     mode: &'a Mode<'a>,
-    streams: Streams,
+    policy: &'a StreamPolicy<'a>,
     encrypt: Option<&'a Value>,
     id: &'a Id,
 }
@@ -1184,10 +1185,13 @@ impl Writer<'_> {
                 out.bytes(b" /ID ")?;
                 out.bytes(&bytes)
             }
-            Id::Renew(first) => {
-                identifier(out, first.clone().unwrap_or_else(|| digest.clone()), digest)
-            }
-            Id::Fixed(first) => identifier(out, first.clone(), first.clone()),
+            Id::Renew(first) => identifier(
+                out,
+                first.clone().unwrap_or_else(|| digest.clone()),
+                digest,
+                Format::default(),
+            ),
+            Id::Fixed(first) => identifier(out, first.clone(), first.clone(), Format::default()),
         }
     }
 
@@ -1211,21 +1215,27 @@ impl Writer<'_> {
         } else {
             plan.version.check_stream_filters(&value, budget)?;
         }
-        if self.streams != Streams::Keep
-            && let Some(recoded) = recode::recoded(
+        if !self.policy.is_keep(info.number)
+            && let Some(recoded) = recode::apply(
                 &value,
-                self.streams,
+                info.number,
+                self.policy,
+                false,
                 &|r, b| plan.version.filter_object(r, b),
                 budget,
             )
             .map_err(context)?
         {
-            let mut before = BudgetVec::new(budget);
-            write::value(&mut before, &value)?;
-            let mut after = BudgetVec::new(budget);
-            write::value(&mut after, &recoded)?;
-            if self.streams == Streams::Decompress || after.len() < before.len() {
+            if !self.policy.requires_shorter(info.number) {
                 value = recoded;
+            } else {
+                let mut before = BudgetVec::new(budget);
+                write::value(&mut before, &value)?;
+                let mut after = BudgetVec::new(budget);
+                write::value(&mut after, &recoded)?;
+                if after.len() < before.len() {
+                    value = recoded;
+                }
             }
         }
         let reference = Reference::new(info.new, 0);

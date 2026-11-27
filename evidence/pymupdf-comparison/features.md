@@ -90,12 +90,12 @@ trackers where appropriate. Text and layout accuracy are scored separately in
 
 | Capability | PyMuPDF 2.1 | pyropdf main | Work |
 | --- | --- | --- | --- |
-| Incremental and full save; compression and object streams | `save`, `saveIncr`, `garbage`, `deflate`, `use_objstms` | Available: `save`, `to_bytes`, `prune`, `compress`, `object_streams`, `dedupe`, and hybrid-reference xref; pre-save cleaning, ASCII/pretty output, and per-stream filters remain | #252, #1191 |
+| Incremental and full save; compression and object streams | `save`, `saveIncr`, `garbage`, `deflate`, `use_objstms` | Available: `save`, `to_bytes`, `prune`, `compress`, `object_streams`, `dedupe`, `hybrid`, `clean`, `ascii`, `pretty`, and `stream_filter` | |
 | Linearized save and detection | `save(linear=True)`, `is_fast_webaccess` | Available: `doc.save(linearize=True)`, `doc.is_linearized` | |
 | Encryption | standard handler including AES and RC4 | Available: standard handler (RC4/AES), public-key recipients (#864), AES-GCM ISO/TS 32003 (#865), and document MAC ISO/TS 32004 (#866); direct rendering of some legacy recipient, crypt-filter, and GCM streams awaits store-source integration | #937, #968, #993, #1043 |
 | Redaction | `add_redact_annot`, `apply_redactions` | Partial: redaction marks and independent verification exist (#1076); permanent removal of text, images, and vector content awaits nested provenance | #362, #104 |
 | Remove content outside a rectangle | `clip_to_rect` removes non-intersecting items; intersecting paths and images remain whole | Missing: crop boxes and rendering clips hide rather than remove content. #420 proposes stronger outside removal | #250, #420 |
-| Clean content streams and resources | `Page.clean_contents`, `save(clean=True)` | Available: `page.clean_contents()` normalizes page content and appearance streams and prunes unnamed resources; pre-save cleaning option tracked separately | #1191 |
+| Clean content streams and resources | `Page.clean_contents`, `save(clean=True)` | Available: `page.clean_contents()` and `save(clean=True)` / `to_bytes(clean=True)` normalize page content and appearance streams and prune unnamed resources without mutating the live document | |
 | Sanitizing | `scrub` | Available: `doc.sanitize`, with a report | |
 | Font subsetting | `subset_fonts` | Available: `doc.subset_fonts` (TrueType and CFF) | |
 | Bulk image rewriting | `rewrite_images` | Available: `doc.rewrite_images` rewrites masked, alternate, CMYK, ICC-based, stencil mask, and inline images across Form XObjects and appearances (lossless, grayscale, and bitonal CCITT Group 4) and returns an unsupported-image report for images it leaves untouched | |

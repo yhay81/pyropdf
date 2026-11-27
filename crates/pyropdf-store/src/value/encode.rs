@@ -100,56 +100,117 @@ fn encode_filter(
         None
     };
     let data = predicted.as_ref().map_or(data, BudgetVec::as_slice);
-    let mut out = BudgetVec::new(budget);
     match filter {
-        b"ASCIIHexDecode" => {
-            out.try_reserve_exact(data.len().saturating_mul(2).saturating_add(1))?;
-            for chunk in data.chunks(4096) {
-                budget.poll()?;
-                for &byte in chunk {
-                    out.try_extend_from_slice(&[
-                        HEX[usize::from(byte >> 4)],
-                        HEX[usize::from(byte & 15)],
-                    ])?;
-                }
-            }
-            out.try_push(b'>')?;
-        }
-        b"ASCII85Decode" => {
-            for chunk in data.chunks(4096) {
-                budget.poll()?;
-                for group in chunk.chunks(4) {
-                    let mut word = [0; 4];
-                    word[..group.len()].copy_from_slice(group);
-                    let mut value = u32::from_be_bytes(word);
-                    if value == 0 && group.len() == 4 {
-                        out.try_push(b'z')?;
-                        continue;
-                    }
-                    let mut digits = [0; 5];
-                    for digit in digits.iter_mut().rev() {
-                        *digit = u8::try_from(value % 85).expect("ASCII85 digit") + b'!';
-                        value /= 85;
-                    }
-                    out.try_extend_from_slice(&digits[..group.len() + 1])?;
-                }
-            }
-            out.try_extend_from_slice(b"~>")?;
-        }
+        b"ASCIIHexDecode" => ascii_hex(data, None, budget),
+        b"ASCII85Decode" => ascii85(data, None, budget),
         b"LZWDecode" => {
             let early = parameter(parameters, "EarlyChange", 1)?;
             if !matches!(early, 0 | 1) {
                 return Err(Error::malformed("LZW EarlyChange must be 0 or 1"));
             }
+            let mut out = BudgetVec::new(budget);
             lzw(data, early == 1, &mut out, budget)?;
+            Ok(out.into_vec())
         }
-        b"RunLengthDecode" => run_length(data, &mut out, budget)?,
-        b"FlateDecode" => {
-            return crate::save::deflate(data, 6, usize::MAX, budget)?
-                .ok_or_else(|| Error::malformed("could not encode the Flate stream"));
-        }
-        _ => return Err(Error::malformed("unsupported stream encoder")),
+        b"RunLengthDecode" => run_length_bytes(data, budget),
+        b"FlateDecode" => crate::save::deflate(data, 6, usize::MAX, budget)?
+            .ok_or_else(|| Error::malformed("could not encode the Flate stream")),
+        _ => Err(Error::malformed("unsupported stream encoder")),
     }
+}
+
+/// Encodes `data` with `ASCIIHexDecode` (ISO 32000-2 section 7.4.2), optionally
+/// wrapping lines at `wrap_columns` bytes.
+pub(crate) fn ascii_hex(
+    data: &[u8],
+    wrap_columns: Option<usize>,
+    budget: &Budget,
+) -> Result<Vec<u8>> {
+    let mut out = BudgetVec::new(budget);
+    let raw_len = data.len().saturating_mul(2).saturating_add(1);
+    let newlines = wrap_columns.map_or(0, |cols| {
+        if cols >= 2 {
+            raw_len / cols + 1
+        } else {
+            raw_len
+        }
+    });
+    out.try_reserve_exact(raw_len.saturating_add(newlines))?;
+    let mut col = 0usize;
+    for chunk in data.chunks(4096) {
+        budget.poll()?;
+        for &byte in chunk {
+            if let Some(cols) = wrap_columns
+                && col > 0
+                && col + 2 > cols
+            {
+                out.try_push(b'\n')?;
+                col = 0;
+            }
+            out.try_extend_from_slice(&[HEX[usize::from(byte >> 4)], HEX[usize::from(byte & 15)]])?;
+            col += 2;
+        }
+    }
+    if let Some(cols) = wrap_columns
+        && col > 0
+        && col + 1 > cols
+    {
+        out.try_push(b'\n')?;
+    }
+    out.try_push(b'>')?;
+    Ok(out.into_vec())
+}
+
+/// Encodes `data` with `ASCII85Decode` (ISO 32000-2 section 7.4.3), optionally
+/// wrapping lines at `wrap_columns` bytes without splitting the `~>` marker.
+pub(crate) fn ascii85(
+    data: &[u8],
+    wrap_columns: Option<usize>,
+    budget: &Budget,
+) -> Result<Vec<u8>> {
+    let mut out = BudgetVec::new(budget);
+    let mut col = 0usize;
+    for chunk in data.chunks(4096) {
+        budget.poll()?;
+        for group in chunk.chunks(4) {
+            let mut word = [0; 4];
+            word[..group.len()].copy_from_slice(group);
+            let mut value = u32::from_be_bytes(word);
+            let mut digits = [0u8; 5];
+            let token: &[u8] = if value == 0 && group.len() == 4 {
+                b"z"
+            } else {
+                for digit in digits.iter_mut().rev() {
+                    *digit = u8::try_from(value % 85).expect("ASCII85 digit") + b'!';
+                    value /= 85;
+                }
+                &digits[..group.len() + 1]
+            };
+            if let Some(cols) = wrap_columns
+                && col > 0
+                && col + token.len() > cols
+            {
+                out.try_push(b'\n')?;
+                col = 0;
+            }
+            out.try_extend_from_slice(token)?;
+            col += token.len();
+        }
+    }
+    if let Some(cols) = wrap_columns
+        && col > 0
+        && col + 2 > cols
+    {
+        out.try_push(b'\n')?;
+    }
+    out.try_extend_from_slice(b"~>")?;
+    Ok(out.into_vec())
+}
+
+/// Encodes `data` with `RunLengthDecode` (ISO 32000-2 section 7.4.5).
+pub(crate) fn run_length_bytes(data: &[u8], budget: &Budget) -> Result<Vec<u8>> {
+    let mut out = BudgetVec::new(budget);
+    run_length(data, &mut out, budget)?;
     Ok(out.into_vec())
 }
 

@@ -43,6 +43,13 @@ const EXACT_DIGITS: usize = 21;
 /// The digits of hexadecimal escapes and strings.
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
+/// Spaces used to emit pretty-print indentation in bounded chunks.
+const INDENT_SPACES: [u8; 64] = [b' '; 64];
+
+/// Maximum number of scalar items kept on a single line in pretty arrays
+/// (boxes, matrices, color tuples, `/ID`, `/W`, and short procsets stay compact).
+const PRETTY_INLINE_ARRAY_MAX: usize = 8;
+
 /// Appends `value` to `out` in PDF syntax, writing each value that kept its
 /// lexeme as that lexeme.
 ///
@@ -69,11 +76,36 @@ pub fn canonical(out: &mut BudgetVec<'_, u8>, value: &Value) -> Result<()> {
     Writer::new(out, false).write(value)
 }
 
+/// Appends `value` to `out` in deterministic pretty-printed PDF syntax,
+/// ignoring every lexeme.
+///
+/// Non-empty dictionaries put each `/Key value` entry on its own indented line;
+/// nested or long arrays break across indented lines while short scalar arrays
+/// stay compact on one line. Every non-stream byte emitted is printable ASCII.
+/// Refuses as [`canonical`] does.
+pub fn pretty(out: &mut BudgetVec<'_, u8>, value: &Value) -> Result<()> {
+    Writer::pretty(out, 0).write(value)
+}
+
+/// Appends `value` to `out` in pretty-printed syntax starting at `base_indent`
+/// indentation levels (used for trailer dictionary entries).
+pub(crate) fn pretty_indented(
+    out: &mut BudgetVec<'_, u8>,
+    value: &Value,
+    base_indent: usize,
+) -> Result<()> {
+    Writer::pretty(out, base_indent).write(value)
+}
+
 /// Writes values to one output.
 struct Writer<'o, 'b> {
     out: &'o mut BudgetVec<'b, u8>,
     /// Whether a value that kept its lexeme is written as that lexeme.
     lexemes: bool,
+    /// Whether dictionaries and nested/long arrays use multi-line indentation.
+    pretty: bool,
+    /// Extra indentation levels applied outside the root value.
+    base_indent: usize,
     /// How many values the writer has written, for polling the budget.
     steps: u32,
     /// Bytes written since the last poll in `push`.
@@ -85,6 +117,8 @@ enum Frame<'v> {
     Array {
         items: slice::Iter<'v, Value>,
         first: bool,
+        multiline: bool,
+        depth: usize,
     },
     Dict {
         entries: slice::Iter<'v, (Name, Value)>,
@@ -93,6 +127,7 @@ enum Frame<'v> {
         stream: Option<&'v Stream>,
         /// Whether the stream's `/Length` has been written.
         length: bool,
+        depth: usize,
     },
 }
 
@@ -101,6 +136,19 @@ impl<'o, 'b> Writer<'o, 'b> {
         Self {
             out,
             lexemes,
+            pretty: false,
+            base_indent: 0,
+            steps: 0,
+            bytes_since_poll: 0,
+        }
+    }
+
+    const fn pretty(out: &'o mut BudgetVec<'b, u8>, base_indent: usize) -> Self {
+        Self {
+            out,
+            lexemes: false,
+            pretty: true,
+            base_indent,
             steps: 0,
             bytes_since_poll: 0,
         }
@@ -176,9 +224,16 @@ impl<'o, 'b> Writer<'o, 'b> {
             Value::Array(array) => {
                 self.check_depth(depth)?;
                 self.push(b"[")?;
+                let multiline = self.pretty
+                    && (array.len() > PRETTY_INLINE_ARRAY_MAX
+                        || array
+                            .iter()
+                            .any(|item| matches!(item, Value::Array(_) | Value::Dict(_))));
                 return Ok(Some(Frame::Array {
                     items: array.iter(),
                     first: true,
+                    multiline,
+                    depth,
                 }));
             }
             Value::Dict(dict) => {
@@ -189,6 +244,7 @@ impl<'o, 'b> Writer<'o, 'b> {
                     first: true,
                     stream: None,
                     length: false,
+                    depth,
                 }));
             }
             Value::Stream(stream) => return self.start_stream(stream, depth),
@@ -220,6 +276,7 @@ impl<'o, 'b> Writer<'o, 'b> {
             first: true,
             stream: Some(stream),
             length: false,
+            depth,
         }))
     }
 
@@ -228,12 +285,25 @@ impl<'o, 'b> Writer<'o, 'b> {
     /// values left.
     fn next_value<'v>(&mut self, frame: &mut Frame<'v>) -> Result<Option<&'v Value>> {
         match frame {
-            Frame::Array { items, first } => {
+            Frame::Array {
+                items,
+                first,
+                multiline,
+                depth,
+            } => {
                 if let Some(item) = items.next() {
-                    if !mem::take(first) {
+                    if *multiline {
+                        *first = false;
+                        self.push(b"\n")?;
+                        self.write_indent(self.base_indent.saturating_add(*depth))?;
+                    } else if !mem::take(first) {
                         self.push(b" ")?;
                     }
                     return Ok(Some(item));
+                }
+                if *multiline && !*first {
+                    self.push(b"\n")?;
+                    self.write_indent(self.base_indent.saturating_add(*depth - 1))?;
                 }
                 self.push(b"]")?;
             }
@@ -242,9 +312,14 @@ impl<'o, 'b> Writer<'o, 'b> {
                 first,
                 stream,
                 length,
+                depth,
             } => {
                 for (key, value) in entries.by_ref() {
-                    if !mem::take(first) {
+                    if self.pretty {
+                        *first = false;
+                        self.push(b"\n")?;
+                        self.write_indent(self.base_indent.saturating_add(*depth))?;
+                    } else if !mem::take(first) {
                         self.push(b" ")?;
                     }
                     self.name(key)?;
@@ -260,20 +335,45 @@ impl<'o, 'b> Writer<'o, 'b> {
                 }
                 if let Some(stream) = stream {
                     if !*length {
-                        if !*first {
+                        if self.pretty {
+                            *first = false;
+                            self.push(b"\n")?;
+                            self.write_indent(self.base_indent.saturating_add(*depth))?;
+                        } else if !*first {
                             self.push(b" ")?;
                         }
                         self.push(b"/Length ")?;
                         self.display(stream.data().len())?;
                     }
+                    if self.pretty {
+                        self.push(b"\n")?;
+                        self.write_indent(self.base_indent.saturating_add(*depth - 1))?;
+                    }
                     self.push(b">>")?;
                     self.stream_data(stream)?;
                 } else {
+                    if self.pretty && !*first {
+                        self.push(b"\n")?;
+                        self.write_indent(self.base_indent.saturating_add(*depth - 1))?;
+                    }
                     self.push(b">>")?;
                 }
             }
         }
         Ok(None)
+    }
+
+    /// Writes `levels` indentation levels (two spaces each) in bounded chunks.
+    fn write_indent(&mut self, levels: usize) -> Result<()> {
+        let mut remaining = levels
+            .checked_mul(2)
+            .ok_or_else(|| LimitExceeded::new(LimitCode::MemorySize))?;
+        while remaining > 0 {
+            let step = remaining.min(INDENT_SPACES.len());
+            self.push(&INDENT_SPACES[..step])?;
+            remaining -= step;
+        }
+        Ok(())
     }
 
     /// Writes the data of `stream` after its dictionary, between `stream`

@@ -56,7 +56,8 @@ with pyropdf.open("input.pdf") as doc:
 - **増分保存**（`incremental=True`）は、編集が書いたオブジェクトだけを元のバイト列の
   後ろに追記します。元のバイト列は変わらないので、そこにかかる電子署名は有効なままです。
 - **全体保存**（既定）はファイル全体を書き直します。`compress`、`object_streams`、
-  `prune`、`renumber`、`dedupe` で結果を調整できます。
+  `prune`、`renumber`、`dedupe`、`clean`、`ascii`、`pretty`、`stream_filter` で
+  結果を調整できます。
 
 ```python
 import pyropdf
@@ -65,7 +66,25 @@ with pyropdf.open("input.pdf") as doc:
     doc.pages[0].rotation = 90
     doc.save("appended.pdf", incremental=True)
     doc.save("rewritten.pdf", compress=True, object_streams=True, prune=True)
+    doc.save("inspect.pdf", clean=True, ascii=True, pretty=True)
+    doc.save("filtered.pdf", stream_filter="ASCII85Decode")
 ```
+
+- `clean=True` は、保存専用ビュー上で各ページのコンテンツストリームと注釈外観ストリームを
+  正規化し、参照されていないリソースを削除してから書き出します。元の `Document` の版や
+  undo 履歴は、保存の成否にかかわらず変更されません。
+- `ascii=True` は印字可能な ASCII バイトのみを出力し（バイナリヘッダコメントを省き、
+  文字列や名前をエスケープし、既定の相互参照をクラシックテーブルにして、バイナリストリームを
+  `ASCII85Decode` で包みます）、`pretty=True` は辞書と配列を決定論的な複数行インデントで
+  整形します。
+- `stream_filter` は非画像ストリームのフィルタを明示指定します（`"keep"`・`"none"`・
+  `"FlateDecode"`・`"ASCII85Decode"`・`"ASCIIHexDecode"`・`"RunLengthDecode"`）。
+  `{xref: filter}` のマッピングを渡すと指定オブジェクトだけを上書きし、他のストリームは
+  読み込んだまま保持します。
+
+`clean`・`ascii`・`pretty`・`stream_filter` は全体保存専用で、`incremental=True` と
+組み合わせると `ValueError` で拒否されます。また `ascii=True` は暗号化保存および
+リニアライズ保存と組み合わせられません。
 
 編集せずに保存した文書は入力を再現します。増分保存ならバイト単位で、全体保存なら
 すべての値が一致します。

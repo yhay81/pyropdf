@@ -398,9 +398,22 @@ impl _Document {
         })?
     }
 
+    /// Returns an isolated view over the version that reads currently see,
+    /// with zero retained history, so pre-save cleaning can modify and save
+    /// it without touching this document or its history.
+    fn save_view(&self) -> PyResult<Self> {
+        crate::errors::boundary(|| {
+            let version = self.reading()?;
+            Ok(Self::new(
+                Document::from_version(version, Some(0)),
+                self.limits.clone(),
+            ))
+        })?
+    }
+
     /// Writes the document to the file at `path`, created or truncated; the
     /// caller replaces the target with it.
-    #[pyo3(signature = (path, incremental, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false, linearize=false, hybrid_reference=false))]
+    #[pyo3(signature = (path, incremental, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false, linearize=false, hybrid_reference=false, ascii=false, pretty=false, stream_filter=None, stream_filters=None, filter_level=6))]
     #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn save_path(
         &self,
@@ -418,8 +431,14 @@ impl _Document {
         dedupe: bool,
         linearize: bool,
         hybrid_reference: bool,
+        ascii: bool,
+        pretty: bool,
+        stream_filter: Option<String>,
+        stream_filters: Option<Vec<(u32, String)>>,
+        filter_level: u8,
     ) -> PyResult<()> {
         crate::errors::boundary(|| {
+            let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
             let options = save_options(
                 prune,
                 compress,
@@ -431,10 +450,15 @@ impl _Document {
                 dedupe,
                 linearize,
                 hybrid_reference,
-            );
+                ascii,
+                pretty,
+                stream_filter.as_deref(),
+                stream_filters.as_deref(),
+                filter_level,
+                &budget,
+            )?;
             let (version, encryption) =
                 crate::security::prepare(py, self, incremental, encryption)?;
-            let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
             py.detach(|| {
                 let target = path.display().to_string();
                 let result = (|| {
@@ -457,7 +481,7 @@ impl _Document {
     }
 
     /// Returns the document as PDF bytes, at most `max_size` of them.
-    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false, linearize=false, hybrid_reference=false))]
+    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false, linearize=false, hybrid_reference=false, ascii=false, pretty=false, stream_filter=None, stream_filters=None, filter_level=6))]
     #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn to_bytes<'py>(
         &self,
@@ -475,8 +499,14 @@ impl _Document {
         dedupe: bool,
         linearize: bool,
         hybrid_reference: bool,
+        ascii: bool,
+        pretty: bool,
+        stream_filter: Option<String>,
+        stream_filters: Option<Vec<(u32, String)>>,
+        filter_level: u8,
     ) -> PyResult<Bound<'py, PyBytes>> {
         crate::errors::boundary(|| {
+            let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
             let options = save_options(
                 prune,
                 compress,
@@ -488,10 +518,15 @@ impl _Document {
                 dedupe,
                 linearize,
                 hybrid_reference,
-            );
+                ascii,
+                pretty,
+                stream_filter.as_deref(),
+                stream_filters.as_deref(),
+                filter_level,
+                &budget,
+            )?;
             let (version, encryption) =
                 crate::security::prepare(py, self, incremental, encryption)?;
-            let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
             let out = py.detach(|| {
                 let mut out = Vec::new();
                 write_version(
@@ -649,15 +684,23 @@ fn write_version(
     Ok(())
 }
 
-/// Returns the options of a save that prunes when `prune`, compresses at the
-/// level `compress` when it is given, decompresses when `decompress`, renews
-/// the file identifier when `renew_id`, writes a cross-reference stream or a
-/// table as `cross_reference_stream` asks or else the base's form, packs
-/// objects into object streams when `object_streams`, renumbers the objects
-/// when `renumber`, merges identical ones when `dedupe`, and linearizes the
-/// file when `linearize`.
+fn parse_stream_filter(name: &str, level: u8) -> PyResult<save::StreamFilter> {
+    match name {
+        "keep" => Ok(save::StreamFilter::Keep),
+        "none" => Ok(save::StreamFilter::None),
+        "FlateDecode" => Ok(save::StreamFilter::Flate(level)),
+        "ASCII85Decode" => Ok(save::StreamFilter::Ascii85),
+        "ASCIIHexDecode" => Ok(save::StreamFilter::AsciiHex),
+        "RunLengthDecode" => Ok(save::StreamFilter::RunLength),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unsupported stream_filter: {name:?}"
+        ))),
+    }
+}
+
+/// Returns the options of a save from the validated Python arguments.
 #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
-const fn save_options(
+fn save_options(
     prune: bool,
     compress: Option<u8>,
     decompress: bool,
@@ -668,15 +711,41 @@ const fn save_options(
     dedupe: bool,
     linearize: bool,
     hybrid_reference: bool,
-) -> save::Options {
-    let streams = match (compress, decompress) {
-        (Some(level), _) => save::Streams::Compress(level),
-        (None, true) => save::Streams::Decompress,
-        (None, false) => save::Streams::Keep,
+    ascii: bool,
+    pretty: bool,
+    stream_filter: Option<&str>,
+    stream_filters: Option<&[(u32, String)]>,
+    filter_level: u8,
+    budget: &Budget,
+) -> PyResult<save::Options> {
+    let streams = if let Some(filter) = stream_filter {
+        save::Streams::Filter(parse_stream_filter(filter, filter_level)?)
+    } else {
+        match (compress, decompress) {
+            (Some(level), _) => save::Streams::Compress(level),
+            (None, true) => save::Streams::Decompress,
+            (None, false) => save::Streams::Keep,
+        }
     };
-    save::Options {
+    let mut parsed_filters = pyropdf_store::budget::BudgetVec::new(budget);
+    if let Some(entries) = stream_filters {
+        budget
+            .check(LimitCode::ObjectCount, entries.len() as u64)
+            .map_err(|e| limit_error(&e))?;
+        parsed_filters
+            .try_reserve(entries.len())
+            .map_err(|e| limit_error(&e))?;
+        for (xref, name) in entries {
+            budget.poll().map_err(|e| limit_error(&e))?;
+            parsed_filters
+                .try_push((*xref, parse_stream_filter(name, filter_level)?))
+                .map_err(|e| limit_error(&e))?;
+        }
+    }
+    Ok(save::Options {
         prune,
         streams,
+        stream_filters: parsed_filters.into_vec(),
         renew_id,
         cross_reference: match (hybrid_reference, cross_reference_stream) {
             (true, _) => save::CrossReference::Hybrid,
@@ -688,7 +757,9 @@ const fn save_options(
         renumber,
         dedupe,
         linearize,
-    }
+        ascii,
+        pretty,
+    })
 }
 
 /// Reads the fields of a Python `DocumentLimits`.

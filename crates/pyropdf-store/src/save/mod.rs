@@ -30,14 +30,15 @@ use md5::{Digest, Md5};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::index::{Index, Location, SectionKind};
 use crate::security::{self, Encryption, Handler};
-use crate::value::{Array, Bytes, Dict, PdfString, Reference, Stream, Value};
+use crate::value::{Array, Bytes, Dict, PdfString, Reference, Stream, Value, encode};
 use crate::version::{Slot, Version};
 use crate::{Error as StoreError, ErrorKind, LimitExceeded, write};
+use recode::StreamPolicy;
 use renumber::Renumbering;
 
 pub use base::FileBase;
 pub use linear::is_linearized;
-pub use recode::{Streams, deflate};
+pub use recode::{StreamFilter, Streams, deflate};
 
 /// A save either reports a typed store error, preserves the sink's I/O
 /// error, or refuses a mode unsupported by this base.
@@ -68,13 +69,17 @@ pub enum Refusal {
     MacLinearization,
     /// An attached MAC is bound to the existing signature's exact bytes.
     SignedMacRevision,
-    /// Pruning, decompressing, another cross-reference form, object
-    /// streams, and renumbering rewrite the original file, whose objects,
-    /// numbers, and cross-reference form an incremental save keeps.
+    /// Pruning, decompressing, explicit stream filters, ASCII/pretty output,
+    /// another cross-reference form, object streams, and renumbering rewrite
+    /// the original file, whose objects, numbers, and cross-reference form an
+    /// incremental save keeps.
     FullSaveOption,
     /// A linearized save writes a cross-reference table, and neither
-    /// object streams nor merged objects.
+    /// object streams, merged objects, nor ASCII/pretty output.
     Linearization,
+    /// Encrypted strings and streams are binary ciphertext (ISO 32000-2
+    /// section 7.6.2), so encrypted saves cannot guarantee ASCII-only output.
+    AsciiEncryption,
 }
 
 /// The result of saving to an output writer.
@@ -122,10 +127,13 @@ impl fmt::Display for Error {
                 Refusal::SignedMacRevision => "use an incremental save to preserve the existing signature and its attached PDF MAC",
                 Refusal::MacLinearization => "linearization of a PDF MAC protected document is not supported",
                 Refusal::FullSaveOption => {
-                    "prune, decompress, a new cross-reference form, object streams, renumbering, and linearization require a full save"
+                    "prune, decompress, stream filters, ASCII/pretty formatting, a new cross-reference form, object streams, renumbering, and linearization require a full save"
                 }
                 Refusal::Linearization => {
-                    "a linearized save writes a cross-reference table, without object streams or merged objects"
+                    "a linearized save writes a cross-reference table, without object streams, merged objects, or ASCII/pretty formatting"
+                }
+                Refusal::AsciiEncryption => {
+                    "ASCII output is not available for encrypted saves"
                 }
             }),
         }
@@ -186,13 +194,17 @@ pub fn full_encrypted(
 
 /// What a full save changes beyond writing every live object (DESIGN.md
 /// section 4.4). Every option is off by default.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Options {
     /// Writes only the objects that the trailer reaches, and the numbers of
     /// the others as free entries.
     pub prune: bool,
     /// How the save writes the data of streams.
     pub streams: Streams,
+    /// Per-object stream filter overrides, as `(object_number, filter)` pairs.
+    /// Overrides `streams` for the named objects; unlisted objects follow
+    /// `streams`.
+    pub stream_filters: Vec<(u32, StreamFilter)>,
     /// Renews the file identifier (ISO 32000-2 section 14.4) with the MD5
     /// digest of what the save writes before it, so that the same version
     /// saves to the same bytes. A save of a version with changes keeps the
@@ -230,8 +242,57 @@ pub struct Options {
     /// The save then writes only the objects that the pages, the trailer,
     /// and the catalog reach, numbered anew, moves the page tree's
     /// inherited attributes into the pages, and refuses object streams, a
-    /// cross-reference stream, and `dedupe`.
+    /// cross-reference stream, `dedupe`, `ascii`, and `pretty`.
     pub linearize: bool,
+    /// Writes only printable ASCII bytes: omits the binary header comment,
+    /// escapes binary strings and names, defaults `CrossReference::Base` to
+    /// a classic table, and wraps streams containing non-ASCII bytes with
+    /// `ASCII85Decode`.
+    pub ascii: bool,
+    /// Formats dictionaries and nested/long arrays deterministically with
+    /// two-space indentation instead of preserving raw lexemes.
+    pub pretty: bool,
+}
+
+/// Output formatting options for a save.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Format {
+    pub(super) ascii: bool,
+    pub(super) pretty: bool,
+}
+
+impl Format {
+    pub(super) const fn rewrites_syntax(self) -> bool {
+        self.ascii || self.pretty
+    }
+
+    pub(super) fn write_value(
+        self,
+        out: &mut BudgetVec<'_, u8>,
+        value: &Value,
+    ) -> crate::Result<()> {
+        if self.pretty {
+            write::pretty(out, value)
+        } else if self.ascii {
+            write::canonical(out, value)
+        } else {
+            write::value(out, value)
+        }
+    }
+
+    pub(super) fn write_trailer_value(
+        self,
+        out: &mut BudgetVec<'_, u8>,
+        value: &Value,
+    ) -> crate::Result<()> {
+        if self.pretty {
+            write::pretty_indented(out, value, 1)
+        } else if self.ascii {
+            write::canonical(out, value)
+        } else {
+            write::value(out, value)
+        }
+    }
 }
 
 /// The form of the cross-reference data that a save writes.
@@ -272,8 +333,14 @@ impl CrossReference {
 const fn level(streams: Streams) -> Option<u8> {
     match streams {
         Streams::Keep => Some(6),
-        Streams::Compress(level) => Some(level),
-        Streams::Decompress => None,
+        Streams::Compress(level) | Streams::Filter(StreamFilter::Flate(level)) => Some(level),
+        Streams::Decompress | Streams::Filter(StreamFilter::None) => None,
+        Streams::Filter(
+            StreamFilter::Keep
+            | StreamFilter::Ascii85
+            | StreamFilter::AsciiHex
+            | StreamFilter::RunLength,
+        ) => Some(6),
     }
 }
 
@@ -320,10 +387,20 @@ pub fn full_with(
     }
     let version = declared.as_deref().unwrap_or(version);
     let mut mode = Mode::of(version, encryption, budget)?;
+    if options.ascii && !matches!(mode, Mode::Plain) {
+        return Err(Error::Refused(Refusal::AsciiEncryption));
+    }
     let mac = integrity::plan(version, &mode, true, options.linearize, budget)?;
+    let policy = StreamPolicy::new(options.streams, &options.stream_filters, budget)?;
+    let format = Format {
+        ascii: options.ascii,
+        pretty: options.pretty,
+    };
     if options.linearize {
         if options.object_streams
             || options.dedupe
+            || options.ascii
+            || options.pretty
             || matches!(
                 options.cross_reference,
                 CrossReference::Stream | CrossReference::Hybrid
@@ -331,14 +408,7 @@ pub fn full_with(
         {
             return Err(Error::Refused(Refusal::Linearization));
         }
-        return linear::write(
-            version,
-            target,
-            budget,
-            &mode,
-            options.streams,
-            options.renew_id,
-        );
+        return linear::write(version, target, budget, &mode, &policy, options.renew_id);
     }
     let mut numbers = BudgetVec::new(budget);
     version.base().numbers(&mut numbers)?;
@@ -398,7 +468,14 @@ pub fn full_with(
     };
     let renumbering = renumbering.as_ref();
     let hybrid = options.cross_reference == CrossReference::Hybrid;
-    let stream = options.object_streams || options.cross_reference.stream(version);
+    // In ASCII mode without an explicit xref stream or object-stream request,
+    // default `CrossReference::Base` to a classic ASCII table for readability.
+    let stream = options.object_streams
+        || if format.ascii && options.cross_reference == CrossReference::Base {
+            false
+        } else {
+            options.cross_reference.stream(version)
+        };
     // Packing in a hybrid is optional. Keep everything reachable with a
     // classic reader, including the catalog, pages, resources and trailer.
     let visible = if hybrid && options.object_streams && !options.prune {
@@ -409,7 +486,11 @@ pub fn full_with(
     let mut out = Output::new(target, budget, 0, options.renew_id);
     out.mac = mac.map(integrity::MacOutput::new);
     out.bytes(mode.header(version, stream, out.mac.is_some()))?;
-    out.bytes(b"\n%\xE2\xE3\xCF\xD3\n")?;
+    if format.ascii {
+        out.bytes(b"\n")?;
+    } else {
+        out.bytes(b"\n%\xE2\xE3\xCF\xD3\n")?;
+    }
     // A copied linearization dictionary must not remain the first object:
     // its old offsets describe the base, not this full save. Write the
     // catalog first, retaining every object's value and number unchanged.
@@ -424,9 +505,9 @@ pub fn full_with(
         _ => version.next_number(),
     };
     let next = size + u64::from(matches!(mode, Mode::New { .. }));
-    let level = level(options.streams);
+    let level = level(policy.default_streams());
     let mut packer = (options.object_streams && !(hybrid && options.prune))
-        .then(|| pack::Packer::new(budget, level, next));
+        .then(|| pack::Packer::new(budget, level, next, format));
     let encrypt = match version.trailer().get("Encrypt") {
         Some(Value::Reference(encrypt)) => Some(encrypt.number()),
         _ => None,
@@ -439,7 +520,7 @@ pub fn full_with(
         {
             return Ok(());
         }
-        write_object(version, row, rewriting, out, &mode, options.streams)
+        write_object(version, row, rewriting, out, &mode, &policy, format)
     };
     if let Some(at) = root.and_then(|root| rows.binary_search_by_key(&root, |row| row.number).ok())
     {
@@ -466,7 +547,7 @@ pub fn full_with(
             member: None,
         };
         let mut bytes = BudgetVec::new(budget);
-        write::value(&mut bytes, &Value::Dict(dict.clone()))?;
+        format.write_value(&mut bytes, &Value::Dict(dict.clone()))?;
         out.display(format_args!("{number} 0 obj\n"))?;
         out.bytes(&bytes)?;
         out.bytes(b"\nendobj\n")?;
@@ -485,6 +566,7 @@ pub fn full_with(
         hybrid,
         size,
         renew_id: options.renew_id,
+        format,
         stream: if stream {
             Some((pack::take(&mut next)?, level))
         } else {
@@ -548,12 +630,15 @@ fn write_incremental(
     signature: Option<Reference>,
 ) -> Result<(u64, Option<security::integrity::Writer>)> {
     if options.prune
-        || options.streams == Streams::Decompress
+        || matches!(options.streams, Streams::Decompress | Streams::Filter(_))
+        || !options.stream_filters.is_empty()
         || options.cross_reference != CrossReference::Base
         || options.object_streams
         || options.renumber
         || options.dedupe
         || options.linearize
+        || options.ascii
+        || options.pretty
     {
         return Err(Error::Refused(Refusal::FullSaveOption));
     }
@@ -592,11 +677,13 @@ fn write_incremental(
     // Include the head of the newly freed entries. Retired entries are not
     // reusable. Older free entries remain defined by previous sections.
     rows.try_push(row(version, 0))?;
+    let policy = StreamPolicy::new(options.streams, &[], budget)?;
+    let format = Format::default();
     for (number, _) in version.slots() {
         budget.poll()?;
         if number != 0 {
             let mut row = row(version, number);
-            write_object(version, &mut row, None, &mut out, &mode, options.streams)?;
+            write_object(version, &mut row, None, &mut out, &mode, &policy, format)?;
             rows.try_push(row)?;
         }
     }
@@ -608,7 +695,8 @@ fn write_incremental(
             None,
             &mut out,
             &mode,
-            options.streams,
+            &policy,
+            format,
         )?;
         rows.try_push(affected)?;
     }
@@ -631,6 +719,7 @@ fn write_incremental(
         hybrid,
         size: version.next_number(),
         renew_id: options.renew_id,
+        format,
         stream: if hybrid || CrossReference::Base.stream(version) {
             Some((pack::take(&mut next)?, level(options.streams)))
         } else {
@@ -849,7 +938,8 @@ fn write_object(
     renumbering: Option<&Renumbering<'_>>,
     out: &mut Output<'_>,
     mode: &Mode<'_>,
-    streams: Streams,
+    policy: &StreamPolicy<'_>,
+    format: Format,
 ) -> Result<()> {
     out.budget.poll()?;
     if row.offset.is_none() {
@@ -861,7 +951,8 @@ fn write_object(
         let plain = renumbering.bytes(
             version,
             reference,
-            streams,
+            policy,
+            format,
             mode.removing_encryption(version),
             out.budget,
         )?;
@@ -891,63 +982,73 @@ fn write_object(
     let budget = out.budget;
     let context =
         |e: StoreError| e.context(format!("saving object {} {}", row.number, row.generation));
-    let bytes = match (version.slot(row.number), mode) {
-        (Some(Slot::Written(object)), Mode::Plain) => {
-            version.check_stream_filters(&*object.value(budget)?, budget)?;
-            plain_body(object.bytes().clone(), version, budget)?
-        }
-        (Some(Slot::Written(object)), Mode::Keep { encrypt, .. })
-            if Some(row.number) == *encrypt =>
-        {
-            object.bytes().clone()
-        }
-        (Some(Slot::Written(object)), _) => {
-            let handler = mode.handler().expect("an encrypting mode has a handler");
-            security::encrypt_bytes_as(
-                handler,
-                reference,
-                reference,
-                object.bytes(),
-                &|r, b| version.filter_object(r, b),
+    let bytes = if format.rewrites_syntax() {
+        formatted_object(version, reference, policy, format, mode, budget).map_err(|error| {
+            error.context(format!("saving object {} {}", row.number, row.generation))
+        })?
+    } else {
+        let bytes = match (version.slot(row.number), mode) {
+            (Some(Slot::Written(object)), Mode::Plain) => {
+                version.check_stream_filters(&*object.value(budget)?, budget)?;
+                plain_body(object.bytes().clone(), version, budget)?
+            }
+            (Some(Slot::Written(object)), Mode::Keep { encrypt, .. })
+                if Some(row.number) == *encrypt =>
+            {
+                object.bytes().clone()
+            }
+            (Some(Slot::Written(object)), _) => {
+                let handler = mode.handler().expect("an encrypting mode has a handler");
+                security::encrypt_bytes_as(
+                    handler,
+                    reference,
+                    reference,
+                    object.bytes(),
+                    &|r, b| version.filter_object(r, b),
+                    budget,
+                )
+                .map_err(context)?
+            }
+            (_, Mode::Keep { index, encrypt, .. })
+                if Some(row.number) == *encrypt
+                    || (mode.changed_streams().binary_search(&row.number).is_err()
+                        && matches!(
+                            index.get(row.number).map(|entry| entry.location()),
+                            Some(Location::Offset(_))
+                        )) =>
+            {
+                raw::file_body(index, reference, budget).map_err(context)?
+            }
+            (_, Mode::Plain) => plain_body(
+                raw::body(&**version.base(), reference, budget).map_err(context)?,
+                version,
                 budget,
-            )
-            .map_err(context)?
+            )?,
+            (_, _) => {
+                let handler = mode.handler().expect("an encrypting mode has a handler");
+                let plain = raw::body(&**version.base(), reference, budget).map_err(context)?;
+                security::encrypt_bytes_as(
+                    handler,
+                    reference,
+                    reference,
+                    &plain,
+                    &|r, b| version.filter_object(r, b),
+                    budget,
+                )
+                .map_err(context)?
+            }
+        };
+        match recode(version, reference, policy, format, mode, budget).map_err(|error| {
+            error.context(format!("saving object {} {}", row.number, row.generation))
+        })? {
+            // `compress=True` replaces the data only where it is shorter.
+            Some(recoded)
+                if !policy.requires_shorter(row.number) || recoded.len() < bytes.len() =>
+            {
+                recoded
+            }
+            _ => bytes,
         }
-        (_, Mode::Keep { index, encrypt, .. })
-            if Some(row.number) == *encrypt
-                || (mode.changed_streams().binary_search(&row.number).is_err()
-                    && matches!(
-                        index.get(row.number).map(|entry| entry.location()),
-                        Some(Location::Offset(_))
-                    )) =>
-        {
-            raw::file_body(index, reference, budget).map_err(context)?
-        }
-        (_, Mode::Plain) => plain_body(
-            raw::body(&**version.base(), reference, budget).map_err(context)?,
-            version,
-            budget,
-        )?,
-        (_, _) => {
-            let handler = mode.handler().expect("an encrypting mode has a handler");
-            let plain = raw::body(&**version.base(), reference, budget).map_err(context)?;
-            security::encrypt_bytes_as(
-                handler,
-                reference,
-                reference,
-                &plain,
-                &|r, b| version.filter_object(r, b),
-                budget,
-            )
-            .map_err(context)?
-        }
-    };
-    let bytes = match recode(version, reference, streams, mode, budget).map_err(|error| {
-        error.context(format!("saving object {} {}", row.number, row.generation))
-    })? {
-        // A compressed stream replaces the data only where it is shorter.
-        Some(recoded) if streams == Streams::Decompress || recoded.len() < bytes.len() => recoded,
-        _ => bytes,
     };
     row.offset = Some(out.offset()?);
     out.display(format_args!("{} {} obj\n", row.number, row.generation))?;
@@ -955,17 +1056,108 @@ fn write_object(
     out.bytes(b"\nendobj\n")
 }
 
+/// Serializes `reference` through the object writer for `ascii`/`pretty`
+/// output, recoding streams per `policy` and wrapping binary streams in
+/// `ASCII85Decode` when `format.ascii` is set.
+fn formatted_object(
+    version: &Version,
+    reference: Reference,
+    policy: &StreamPolicy<'_>,
+    format: Format,
+    mode: &Mode<'_>,
+    budget: &Budget,
+) -> Result<Bytes> {
+    let object = match version.get(reference.number(), budget) {
+        Ok(Some(object)) => object,
+        Ok(None) => return Ok(Bytes::default()),
+        Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => {
+            let raw_bytes = match version.slot(reference.number()) {
+                Some(Slot::Written(written)) => written.bytes().clone(),
+                _ => raw::body(&**version.base(), reference, budget)?,
+            };
+            if format.ascii && !recode::is_printable_ascii(&raw_bytes) {
+                return Err(error.into());
+            }
+            return Ok(raw_bytes);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let mut clear;
+    let value = if mode.removing_encryption(version)
+        && matches!(object.value().as_ref(), Value::Stream(_))
+    {
+        clear = crate::value::copy_for_edit(object.value(), budget)?;
+        security::filters::remove_explicit(
+            &mut clear,
+            &|r, b| version.filter_object(r, b),
+            budget,
+        )?;
+        &clear
+    } else {
+        if matches!(mode, Mode::Plain)
+            && matches!(version.slot(reference.number()), Some(Slot::Written(_)))
+        {
+            version.check_stream_filters(object.value(), budget)?;
+        }
+        object.value().as_ref()
+    };
+    let recoded = recode::apply(
+        value,
+        reference.number(),
+        policy,
+        format.ascii,
+        &|r, b| version.filter_object(r, b),
+        budget,
+    )?;
+    let plain = match recoded {
+        Some(recoded) if policy.requires_shorter(reference.number()) && !format.ascii => {
+            let mut before = BudgetVec::new(budget);
+            format.write_value(&mut before, value)?;
+            let mut after = BudgetVec::new(budget);
+            format.write_value(&mut after, &recoded)?;
+            if after.len() < before.len() {
+                Bytes::new(after.into_vec())
+            } else {
+                Bytes::new(before.into_vec())
+            }
+        }
+        Some(recoded) => {
+            let mut out = BudgetVec::new(budget);
+            format.write_value(&mut out, &recoded)?;
+            Bytes::new(out.into_vec())
+        }
+        None => {
+            let mut out = BudgetVec::new(budget);
+            format.write_value(&mut out, value)?;
+            Bytes::new(out.into_vec())
+        }
+    };
+    Ok(match (mode, mode.handler()) {
+        (Mode::Keep { encrypt, .. }, _) if Some(reference.number()) == *encrypt => plain,
+        (_, Some(handler)) => security::encrypt_bytes_as(
+            handler,
+            reference,
+            reference,
+            &plain,
+            &|r, b| version.filter_object(r, b),
+            budget,
+        )?,
+        (_, None) => plain,
+    })
+}
+
 /// Returns the bytes of the object `reference` with its stream recoded as
-/// `streams` asks, encrypted as `mode` encrypts, or `None` when it stays as
+/// `policy` asks, encrypted as `mode` encrypts, or `None` when it stays as
 /// it is. An object that does not parse stays as it is.
 fn recode(
     version: &Version,
     reference: Reference,
-    streams: Streams,
+    policy: &StreamPolicy<'_>,
+    format: Format,
     mode: &Mode<'_>,
     budget: &Budget,
 ) -> Result<Option<Bytes>> {
-    if streams == Streams::Keep {
+    if policy.is_keep(reference.number()) && !format.ascii {
         return Ok(None);
     }
     let object = match version.get(reference.number(), budget) {
@@ -988,12 +1180,19 @@ fn recode(
     } else {
         object.value().as_ref()
     };
-    let Some(value) = recode::recoded(value, streams, &|r, b| version.filter_object(r, b), budget)?
+    let Some(value) = recode::apply(
+        value,
+        reference.number(),
+        policy,
+        format.ascii,
+        &|r, b| version.filter_object(r, b),
+        budget,
+    )?
     else {
         return Ok(None);
     };
     let mut plain = BudgetVec::new(budget);
-    write::value(&mut plain, &value)?;
+    format.write_value(&mut plain, &value)?;
     let plain = Bytes::new(plain.into_vec());
     Ok(Some(match mode.handler() {
         Some(handler) => security::encrypt_bytes_as(
@@ -1019,6 +1218,7 @@ struct Ending<'a> {
     /// new encryption.
     size: u64,
     renew_id: bool,
+    format: Format,
     /// The object number of the cross-reference stream and the Flate level
     /// of its data, for a save that writes one instead of a table.
     stream: Option<(u32, Option<u8>)>,
@@ -1052,18 +1252,20 @@ fn finish(
         Mode::New { number, .. } => u64::from(*number) + 1,
         _ => ending.size,
     };
+    let sep = if ending.format.pretty { "\n  " } else { " " };
+    let close = if ending.format.pretty { "\n" } else { " " };
     if let Some((number, _)) = ending.stream {
         // The cross-reference stream takes the last number.
         size = u64::from(number) + 1;
-        out.display(format_args!("{number} 0 obj\n<< /Type /XRef"))?;
+        out.display(format_args!("{number} 0 obj\n<<{sep}/Type /XRef"))?;
     } else {
         table(rows, out)?;
         out.bytes(b"trailer\n<<")?;
     }
     trailer_fields(version, mode, out, &ending, &mut None)?;
-    out.display(format_args!(" /Size {size}"))?;
+    out.display(format_args!("{sep}/Size {size}"))?;
     if let Some(previous) = ending.previous {
-        out.display(format_args!(" /Prev {previous}"))?;
+        out.display(format_args!("{sep}/Prev {previous}"))?;
     }
     out.authentication()?;
     if let Some((number, level)) = ending.stream {
@@ -1074,10 +1276,10 @@ fn finish(
             next_free: 0,
             member: None,
         };
-        stream(rows.iter(), &own, level, out)?;
+        stream(rows.iter(), &own, level, ending.format, out)?;
         out.display(format_args!("startxref\n{xref}\n%%EOF\n"))
     } else {
-        out.display(format_args!(" >>\nstartxref\n{xref}\n%%EOF\n"))
+        out.display(format_args!("{close}>>\nstartxref\n{xref}\n%%EOF\n"))
     }
 }
 
@@ -1090,28 +1292,47 @@ fn trailer_fields(
     ending: &Ending<'_>,
     digest: &mut Option<Value>,
 ) -> Result<()> {
+    let sep = if ending.format.pretty { "\n  " } else { " " };
     if let Mode::New { id, number, .. } = mode {
         trailer(
             version.trailer(),
             out,
             &[b"Encrypt", b"ID"],
             ending.renumbering,
+            ending.format,
         )?;
-        out.display(format_args!(" /Encrypt {number} 0 R"))?;
+        out.display(format_args!("{sep}/Encrypt {number} 0 R"))?;
         // The keys derive from the first element.
         let first = Value::String(PdfString::hexadecimal(id.as_slice()));
         let second = digest
             .get_or_insert_with(|| out.digest().unwrap_or_else(|| first.clone()))
             .clone();
-        identifier(out, first, second)?;
+        identifier(out, first, second, ending.format)?;
     } else if let Some(first) = renews(version, ending.renew_id) {
-        trailer(version.trailer(), out, &[b"ID"], ending.renumbering)?;
+        trailer(
+            version.trailer(),
+            out,
+            &[b"ID"],
+            ending.renumbering,
+            ending.format,
+        )?;
         let digest = digest
             .get_or_insert_with(|| out.digest().expect("a renewing save keeps a digest"))
             .clone();
-        identifier(out, first.unwrap_or_else(|| digest.clone()), digest)?;
+        identifier(
+            out,
+            first.unwrap_or_else(|| digest.clone()),
+            digest,
+            ending.format,
+        )?;
     } else {
-        trailer(version.trailer(), out, &[], ending.renumbering)?;
+        trailer(
+            version.trailer(),
+            out,
+            &[],
+            ending.renumbering,
+            ending.format,
+        )?;
     }
     Ok(())
 }
@@ -1178,6 +1399,7 @@ fn stream<'a>(
     rows: impl Iterator<Item = &'a Row> + Clone,
     own: &'a Row,
     level: Option<u8>,
+    format: Format,
     out: &mut Output<'_>,
 ) -> Result<()> {
     let budget = out.budget;
@@ -1200,30 +1422,62 @@ fn stream<'a>(
         Some(level) => recode::compressed(&data, level, budget)?,
         None => None,
     };
-    out.display(format_args!(" /W [1 {second} {third}] /Index ["))?;
+    let sep = if format.pretty { "\n  " } else { " " };
+    let close = if format.pretty { "\n" } else { " " };
+    out.display(format_args!("{sep}/W [1 {second} {third}]{sep}/Index ["))?;
     let mut run: Option<(u32, u32)> = None;
+    let mut first_run = true;
     for row in all() {
         budget.poll()?;
         match &mut run {
             Some((start, count)) if start.checked_add(*count) == Some(row.number) => *count += 1,
             _ => {
                 if let Some((start, count)) = run {
-                    out.display(format_args!(" {start} {count}"))?;
+                    if format.pretty {
+                        if !first_run {
+                            out.bytes(b" ")?;
+                        }
+                        out.display(format_args!("{start} {count}"))?;
+                        first_run = false;
+                    } else {
+                        out.display(format_args!(" {start} {count}"))?;
+                    }
                 }
                 run = Some((row.number, 1));
             }
         }
     }
     if let Some((start, count)) = run {
-        out.display(format_args!(" {start} {count}"))?;
+        if format.pretty {
+            if !first_run {
+                out.bytes(b" ")?;
+            }
+            out.display(format_args!("{start} {count}"))?;
+        } else {
+            out.display(format_args!(" {start} {count}"))?;
+        }
     }
-    let data = compressed.as_ref().unwrap_or(&data).data();
-    out.display(format_args!(" ] /Length {}", data.len()))?;
-    if compressed.is_some() {
-        out.bytes(b" /Filter /FlateDecode")?;
+    let raw_data = compressed.as_ref().unwrap_or(&data).data();
+    let ascii_wrapped = if format.ascii {
+        Some(encode::ascii85(
+            raw_data,
+            Some(recode::ASCII_WRAP_COLUMNS),
+            budget,
+        )?)
+    } else {
+        None
+    };
+    let payload: &[u8] = ascii_wrapped.as_deref().unwrap_or(raw_data);
+    let close_index = if format.pretty { "]" } else { " ]" };
+    out.display(format_args!("{close_index}{sep}/Length {}", payload.len()))?;
+    match (ascii_wrapped.is_some(), compressed.is_some()) {
+        (true, true) => out.display(format_args!("{sep}/Filter [/ASCII85Decode /FlateDecode]"))?,
+        (true, false) => out.display(format_args!("{sep}/Filter /ASCII85Decode"))?,
+        (false, true) => out.display(format_args!("{sep}/Filter /FlateDecode"))?,
+        (false, false) => {}
     }
-    out.bytes(b" >>\nstream\n")?;
-    out.bytes(data)?;
+    out.display(format_args!("{close}>>\nstream\n"))?;
+    out.bytes(payload)?;
     out.bytes(b"\nendstream\nendobj\n")
 }
 
@@ -1246,10 +1500,14 @@ fn renews(version: &Version, renew_id: bool) -> Option<Option<Value>> {
 }
 
 /// Writes the trailer entry `/ID [first second]`.
-fn identifier(out: &mut Output<'_>, first: Value, second: Value) -> Result<()> {
+fn identifier(out: &mut Output<'_>, first: Value, second: Value, format: Format) -> Result<()> {
     let mut bytes = BudgetVec::new(out.budget);
-    write::value(&mut bytes, &Value::Array(Array::from(vec![first, second])))?;
-    out.bytes(b" /ID ")?;
+    format.write_trailer_value(&mut bytes, &Value::Array(Array::from(vec![first, second])))?;
+    if format.pretty {
+        out.bytes(b"\n  /ID ")?;
+    } else {
+        out.bytes(b" /ID ")?;
+    }
     out.bytes(&bytes)
 }
 
@@ -1276,7 +1534,9 @@ fn trailer(
     out: &mut Output<'_>,
     replaced: &[&[u8]],
     renumbering: Option<&Renumbering<'_>>,
+    format: Format,
 ) -> Result<()> {
+    let sep: &[u8] = if format.pretty { b"\n  " } else { b" " };
     for (name, value) in dict.iter() {
         if replaced.contains(&name.as_bytes())
             || ((out.mac.is_some() || out.attached.is_some()) && name.as_bytes() == b"AuthCode")
@@ -1291,13 +1551,15 @@ fn trailer(
         // Names are bounded by the same operation before their small clone.
         out.budget
             .charge(LimitCode::MemorySize, name.as_bytes().len() as u64)?;
-        write::value(&mut bytes, &Value::Name(name.clone()))?;
+        format.write_trailer_value(&mut bytes, &Value::Name(name.clone()))?;
         bytes.try_push(b' ')?;
         match renumbering {
-            Some(renumbering) => write::value(&mut bytes, &renumbering.copy(value, out.budget)?)?,
-            None => write::value(&mut bytes, value)?,
+            Some(renumbering) => {
+                format.write_trailer_value(&mut bytes, &renumbering.copy(value, out.budget)?)?;
+            }
+            None => format.write_trailer_value(&mut bytes, value)?,
         }
-        out.bytes(b" ")?;
+        out.bytes(sep)?;
         out.bytes(&bytes)?;
     }
     Ok(())

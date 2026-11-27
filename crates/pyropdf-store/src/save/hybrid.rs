@@ -39,9 +39,11 @@ pub(super) fn finish(
         }
         out.bytes(b"trailer\n<<")?;
         trailer_fields(version, mode, out, ending, &mut digest)?;
-        out.display(format_args!(" /Size {number}"))?;
+        let sep = if ending.format.pretty { "\n  " } else { " " };
+        let close = if ending.format.pretty { "\n" } else { " " };
+        out.display(format_args!("{sep}/Size {number}"))?;
         out.authentication()?;
-        out.display(format_args!(" >>\nstartxref\n{main}\n%%EOF\n"))?;
+        out.display(format_args!("{close}>>\nstartxref\n{main}\n%%EOF\n"))?;
         super::integrity::MacOutput::next_revision(out)?;
         main
     };
@@ -54,11 +56,16 @@ pub(super) fn finish(
         next_free: 0,
         member: None,
     };
-    out.display(format_args!("{number} 0 obj\n<< /Type /XRef /Size {size}"))?;
+    let sep = if ending.format.pretty { "\n  " } else { " " };
+    let close = if ending.format.pretty { "\n" } else { " " };
+    out.display(format_args!(
+        "{number} 0 obj\n<<{sep}/Type /XRef{sep}/Size {size}"
+    ))?;
     stream(
         rows.iter().filter(|row| row.member.is_some()),
         &own,
         level,
+        ending.format,
         out,
     )?;
     let xref = out.offset()?;
@@ -73,8 +80,8 @@ pub(super) fn finish(
     out.bytes(b"trailer\n<<")?;
     trailer_fields(version, mode, out, ending, &mut digest)?;
     out.display(format_args!(
-        " /Size {size} /Prev {previous} /XRefStm {supplement}"
+        "{sep}/Size {size}{sep}/Prev {previous}{sep}/XRefStm {supplement}"
     ))?;
     out.authentication()?;
-    out.display(format_args!(" >>\nstartxref\n{xref}\n%%EOF\n"))
+    out.display(format_args!("{close}>>\nstartxref\n{xref}\n%%EOF\n"))
 }
