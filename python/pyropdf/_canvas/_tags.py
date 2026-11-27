@@ -151,7 +151,7 @@ class _Group:
 class _Scope(AbstractContextManager[None]):
     """One clip, transform, opacity, blend, or layer scope of a canvas."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - internal scope parameters.
         self,
         canvas: Canvas,
         opening: bytes,
@@ -159,15 +159,23 @@ class _Scope(AbstractContextManager[None]):
         *,
         group: _Group | None = None,
         matrix: Matrix | None = None,
+        emit: bytes | None = None,
     ) -> None:
         self._canvas = canvas
         self._opening = opening
         self._closing = closing
         self._group = group
         self._matrix = matrix
+        self._emit = emit
 
     def __enter__(self) -> None:
         self._canvas._push(self._opening, self._closing, group=self._group, matrix=self._matrix)  # noqa: SLF001
+        if self._emit is not None:
+            try:
+                self._canvas._emit(self._emit)  # noqa: SLF001
+            except BaseException:
+                self._canvas._pop()  # noqa: SLF001
+                raise
 
     def __exit__(
         self,

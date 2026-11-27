@@ -1065,11 +1065,11 @@ class Canvas:
                     for index, line in enumerate(lines)
                     if line
                 ]
-            opening = self._build_clip_text_opening(
+            clip_ops = self._build_clip_text_opening(
                 _TextLayout(faces, font_size, rotation, placed, checked_direction == "vertical"),
                 (fill_paint, stroke_paint, tr_mode),
             )
-            return _Scope(self, opening, b"Q")
+            return _Scope(self, b"q", b"Q", emit=clip_ops)
 
     def _build_text_object(self, layout: _TextLayout, *, allow_type3: bool) -> bytes:
         """Assemble the ``BT ... ET`` text object for ``layout``."""
@@ -1090,7 +1090,7 @@ class Canvas:
         return b"\n".join(parts)
 
     def _build_clip_text_opening(self, layout: _TextLayout, paint: _TextPaint) -> bytes:
-        """Build the ``q ... BT ... ET`` opening operators for :meth:`clip_text`."""
+        """Build the clip-text operators emitted inside ``q ... Q`` for :meth:`clip_text`."""
         fill, stroke, tr_mode = paint
         segments = (
             self._text_bounds(layout)
@@ -1116,7 +1116,7 @@ class Canvas:
             # and empty ActualText so text extracts once.
             split = filling is not None and stroking is not None
             passes = ((filling, None), (None, stroking)) if split else ((filling, stroking),)
-            parts = [b"q"]
+            parts: list[bytes] = []
             for index, (filled_pass, stroked_pass) in enumerate(passes):
                 pass_mode = 2 if filled_pass is not None and stroked_pass is not None else 1 if stroked_pass else 0
                 parts.append(
@@ -1129,7 +1129,7 @@ class Canvas:
                 )
             parts.extend((b"7 Tr", b"/Span <</ActualText ()>> BDC", shown_text, b"EMC", b"0 Tr"))
             return b"\n".join(parts)
-        parts = [b"q"]
+        parts = []
         fill_alpha = None if filling is None else filling.alpha
         stroke_alpha = None if stroking is None else stroking.alpha
         if fill_alpha is not None or stroke_alpha is not None:

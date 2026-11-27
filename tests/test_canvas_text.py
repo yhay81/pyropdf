@@ -18,6 +18,7 @@ differences:
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -795,3 +796,14 @@ def test_clip_text_empty_clips_everything() -> None:
     with page.draw() as canvas, canvas.clip_text("", (20, 60), size=48):
         canvas.rect((0, 0, 100, 100), fill=RED)
     assert bytes(page.pixmap(dpi=72)) == blank
+
+
+def test_clip_text_marks_artifact_on_tagged_documents() -> None:
+    root = Path(__file__).resolve().parent.parent
+    font = pyropdf.Font.from_file(root / "crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf")
+    for fixture in ("tests/assets/pdfua/pdfua-1.pdf", "tests/assets/pdfua/pdfua-2.pdf"):
+        with pyropdf.open(root / fixture) as doc:
+            with doc.pages[0].draw() as canvas, canvas.clip_text("AV", (20, 100), font=font, size=24):
+                canvas.rect((0, 70, 80, 110), fill=RED)
+            assert doc.changes(incremental=False).claims == ()
+            assert doc.changes(incremental=True).claims == ()
