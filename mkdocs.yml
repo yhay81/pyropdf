@@ -166,8 +166,10 @@ plugins:
         The guide explains concepts and tasks with examples that run in the
         project's tests. The API reference is generated from the package's
         docstrings: one page per area, each listing its classes, functions,
-        and signatures. The Japanese guide is at
-        https://pyropdf.haya.works/ja/llms.txt.
+        and signatures. Localized guides are at
+        https://pyropdf.haya.works/ja/llms.txt,
+        https://pyropdf.haya.works/zh-cn/llms.txt, and
+        https://pyropdf.haya.works/ko/llms.txt.
       full_output: llms-full.txt
       sections:
         Guide:
@@ -207,6 +209,12 @@ extra:
     - name: 日本語
       link: /ja/
       lang: ja
+    - name: 简体中文
+      link: /zh-cn/
+      lang: zh-cn
+    - name: 한국어
+      link: /ko/
+      lang: ko
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/yhay81/pyropdf

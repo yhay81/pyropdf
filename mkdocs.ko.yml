@@ -1,0 +1,180 @@
+site_name: pyropdf
+site_url: https://pyropdf.haya.works/ko/
+site_description: Python다운 사용성과 Rust 코어를 결합한 PDF 라이브러리. pyropdf는 버전 관리되는 객체 저장소 위에서 Python으로 PDF를 읽고, 렌더링하고, 편집하고, 서명하며, 모든 변경을 되돌릴 수 있고 실패한 편집은 문서를 원래 그대로 유지합니다.
+site_author: Yusuke Hayashi
+copyright: Copyright &copy; 2026 Yusuke Hayashi · MIT License
+repo_url: https://github.com/yhay81/pyropdf
+repo_name: yhay81/pyropdf
+edit_uri: edit/main/docs/ko/
+docs_dir: docs/ko
+site_dir: site/ko
+
+theme:
+  name: material
+  variant: modern
+  language: ko
+  custom_dir: docs/overrides
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    logo: material/fire
+    repo: fontawesome/brands/github
+    alternate: material/translate
+  features:
+    - navigation.footer
+    - navigation.indexes
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.instant.progress
+    - navigation.path
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - content.action.copy
+    - content.action.edit
+    - content.code.annotate
+    - content.code.copy
+    - content.tabs.link
+    - content.tooltips
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: 다크 모드로 전환
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: 라이트 모드로 전환
+
+nav:
+  - 홈: index.md
+  - 가이드:
+      - 시작하기: getting-started.md
+      - 핵심 개념: concepts.md
+      - 내용 읽기: reading.md
+      - 렌더링: rendering.md
+      - 편집: editing.md
+      - 버전과 저장: versions.md
+      - 제한과 오류: limits.md
+      - 레시피: recipes.md
+      - PyMuPDF에서 마이그레이션: migrating.md
+  - API 레퍼런스 (영어): /api/
+  - 프로젝트:
+      - pyropdf 선택하기: choosing.md
+      - 상태 및 안전성: status.md
+      - API 안정성: stability.md
+      - 명세 지원 현황: specification.md
+      - 설계 문서: https://github.com/yhay81/pyropdf/blob/main/DESIGN.md
+      - 변경 이력: https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  # The glossary: its abbreviations show as tooltips on every page.
+  - pymdownx.snippets:
+      base_path: [docs]
+      check_paths: true
+      auto_append:
+        - includes/abbreviations.ko.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  # Hovering a link to a heading of these pages previews it in place.
+  - zensical.extensions.preview:
+      configurations:
+        - targets:
+            include:
+              - concepts.md
+              - limits.md
+
+plugins:
+  - search
+  # Serve the Google Fonts from the site itself. Only the fonts: the theme's
+  # bundle also names video and lightbox scripts that no page loads, and the
+  # plugin would otherwise download them and the ad SDK that they load.
+  - privacy:
+      assets_include:
+        - fonts.googleapis.com/*
+        - fonts.gstatic.com/*
+  # llms.txt, llms-full.txt, and a Markdown copy of each listed page; the
+  # theme's content.action.copy shows "Copy as Markdown" on those pages.
+  - llmstxt:
+      markdown_description: >-
+        이 가이드는 프로젝트 테스트에서 실제로 실행되는 예제와 함께 핵심 개념과 작업을 설명합니다.
+        API 레퍼런스는 영어로만 제공되며 https://pyropdf.haya.works/llms.txt 에서 확인할 수 있습니다.
+      full_output: llms-full.txt
+      sections:
+        가이드:
+          - getting-started.md
+          - concepts.md
+          - reading.md
+          - rendering.md
+          - editing.md
+          - versions.md
+          - limits.md
+          - recipes.md
+          - migrating.md
+        프로젝트:
+          - choosing.md
+          - status.md
+          - stability.md
+          - specification.md
+  # A social card and Open Graph metadata for every page.
+  - social:
+      cards_layout_options:
+        background_color: "#15120f"
+        color: "#f1ebe0"
+        font_family: Noto Sans KR
+  - minify:
+      minify_html: true
+      minify_inline_css: true
+      minify_inline_js: true
+
+extra:
+  current_language: ko
+  alternate:
+    - name: English
+      link: /
+      lang: en
+    - name: 日本語
+      link: /ja/
+      lang: ja
+    - name: 简体中文
+      link: /zh-cn/
+      lang: zh-cn
+    - name: 한국어
+      link: /ko/
+      lang: ko
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/yhay81/pyropdf
+      name: GitHub의 pyropdf
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/pyropdf/
+      name: PyPI의 pyropdf

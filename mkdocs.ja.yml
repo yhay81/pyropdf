@@ -165,6 +165,12 @@ extra:
     - name: 日本語
       link: /ja/
       lang: ja
+    - name: 简体中文
+      link: /zh-cn/
+      lang: zh-cn
+    - name: 한국어
+      link: /ko/
+      lang: ko
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/yhay81/pyropdf

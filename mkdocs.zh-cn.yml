@@ -1,0 +1,180 @@
+site_name: pyropdf
+site_url: https://pyropdf.haya.works/zh-cn/
+site_description: 兼具 Python 的易用体验与 Rust 内核的 PDF 库。pyropdf 在版本化对象存储之上通过 Python 读取、渲染、编辑和签署 PDF，每次修改均可撤销，失败的编辑也不会破坏原文档。
+site_author: Yusuke Hayashi
+copyright: Copyright &copy; 2026 Yusuke Hayashi · MIT License
+repo_url: https://github.com/yhay81/pyropdf
+repo_name: yhay81/pyropdf
+edit_uri: edit/main/docs/zh-cn/
+docs_dir: docs/zh-cn
+site_dir: site/zh-cn
+
+theme:
+  name: material
+  variant: modern
+  language: zh
+  custom_dir: docs/overrides
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    logo: material/fire
+    repo: fontawesome/brands/github
+    alternate: material/translate
+  features:
+    - navigation.footer
+    - navigation.indexes
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.instant.progress
+    - navigation.path
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - content.action.copy
+    - content.action.edit
+    - content.code.annotate
+    - content.code.copy
+    - content.tabs.link
+    - content.tooltips
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: 切换到浅色模式
+
+nav:
+  - 首页: index.md
+  - 指南:
+      - 快速开始: getting-started.md
+      - 核心概念: concepts.md
+      - 读取内容: reading.md
+      - 渲染: rendering.md
+      - 编辑: editing.md
+      - 版本与保存: versions.md
+      - 限制与错误: limits.md
+      - 实用示例: recipes.md
+      - 从 PyMuPDF 迁移: migrating.md
+  - API 参考（英文）: /api/
+  - 项目:
+      - 选择 pyropdf: choosing.md
+      - 状态与安全: status.md
+      - API 稳定性: stability.md
+      - 规范覆盖情况: specification.md
+      - 设计文档: https://github.com/yhay81/pyropdf/blob/main/DESIGN.md
+      - 更新日志: https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  # The glossary: its abbreviations show as tooltips on every page.
+  - pymdownx.snippets:
+      base_path: [docs]
+      check_paths: true
+      auto_append:
+        - includes/abbreviations.zh-cn.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  # Hovering a link to a heading of these pages previews it in place.
+  - zensical.extensions.preview:
+      configurations:
+        - targets:
+            include:
+              - concepts.md
+              - limits.md
+
+plugins:
+  - search
+  # Serve the Google Fonts from the site itself. Only the fonts: the theme's
+  # bundle also names video and lightbox scripts that no page loads, and the
+  # plugin would otherwise download them and the ad SDK that they load.
+  - privacy:
+      assets_include:
+        - fonts.googleapis.com/*
+        - fonts.gstatic.com/*
+  # llms.txt, llms-full.txt, and a Markdown copy of each listed page; the
+  # theme's content.action.copy shows "Copy as Markdown" on those pages.
+  - llmstxt:
+      markdown_description: >-
+        本指南通过可在项目测试中运行的示例代码介绍核心概念与常见任务。
+        API 参考仅提供英文版，位于 https://pyropdf.haya.works/llms.txt。
+      full_output: llms-full.txt
+      sections:
+        指南:
+          - getting-started.md
+          - concepts.md
+          - reading.md
+          - rendering.md
+          - editing.md
+          - versions.md
+          - limits.md
+          - recipes.md
+          - migrating.md
+        项目:
+          - choosing.md
+          - status.md
+          - stability.md
+          - specification.md
+  # A social card and Open Graph metadata for every page.
+  - social:
+      cards_layout_options:
+        background_color: "#15120f"
+        color: "#f1ebe0"
+        font_family: Noto Sans SC
+  - minify:
+      minify_html: true
+      minify_inline_css: true
+      minify_inline_js: true
+
+extra:
+  current_language: zh-cn
+  alternate:
+    - name: English
+      link: /
+      lang: en
+    - name: 日本語
+      link: /ja/
+      lang: ja
+    - name: 简体中文
+      link: /zh-cn/
+      lang: zh-cn
+    - name: 한국어
+      link: /ko/
+      lang: ko
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/yhay81/pyropdf
+      name: GitHub 上的 pyropdf
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/pyropdf/
+      name: PyPI 上的 pyropdf
