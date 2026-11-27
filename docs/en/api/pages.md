@@ -779,6 +779,7 @@ Page.text(
     dehyphenate: bool = False,
     unmapped: Unmapped = 'skip',
     actual_text: bool = True,
+    ruby: RubyMode = 'omit',
     max_glyphs: int | None = 262144,
     max_size: int | None = 67108864,
 ) -> str
@@ -787,12 +788,21 @@ Page.text(
 Return the text of the current version of the page in reading order.
 
 Reading order follows the geometry and script heuristics described in
-the documentation rather than the document's semantic order. Spaces
-between words are inferred from glyph positions, and lines end with a
-newline. Annotation appearances count as page content. The
-`/ActualText` of a marked-content sequence replaces the text of the
-glyphs inside it unless `actual_text=False`, which extracts the
-underlying glyph Unicode directly.
+the documentation rather than the document's semantic order, segmenting
+pages that mix horizontal bands or sidebars with vertical CJK columns
+into coherent orientation regions. Spaces between words are inferred
+from glyph positions, and lines end with a newline. Annotation
+appearances count as page content. The `/ActualText` of a
+marked-content sequence replaces the text of the glyphs inside it
+unless `actual_text=False`, which extracts the underlying glyph
+Unicode directly.
+
+`ruby` controls geometric Japanese ruby (furigana) annotations
+aligned beside base kanji runs (above horizontal text or to the right
+of vertical CJK text; see `RubyMode`): `"omit"` (the default)
+omits furigana so base words stay intact, `"parenthesize"` splices
+each ruby run inline in parentheses after its base characters, and
+`"keep"` leaves ruby runs as ordinary text.
 
 `clip` keeps the glyphs whose box's center lies inside a
 display-space rectangle, in the page's reading order, which gives the
@@ -831,6 +841,7 @@ Page.words(
     dehyphenate: bool = False,
     unmapped: Unmapped = 'skip',
     actual_text: bool = True,
+    ruby: RubyMode = 'omit',
     exact_bboxes: bool = False,
     max_glyphs: int | None = 262144,
     max_size: int | None = 67108864,
@@ -864,6 +875,7 @@ Page.layout(
     dehyphenate: bool = False,
     unmapped: Unmapped = 'skip',
     actual_text: bool = True,
+    ruby: RubyMode = 'omit',
     exact_bboxes: bool = False,
     styles: bool = False,
     max_glyphs: int | None = 262144,
@@ -903,6 +915,7 @@ Page.chars(
     dehyphenate: bool = False,
     unmapped: Unmapped = 'skip',
     actual_text: bool = True,
+    ruby: RubyMode = 'omit',
     exact_bboxes: bool = False,
     styles: bool = False,
     max_glyphs: int | None = 262144,
@@ -933,6 +946,7 @@ Page.search(
     dehyphenate: bool = False,
     unmapped: Unmapped = 'skip',
     actual_text: bool = True,
+    ruby: RubyMode = 'omit',
     exact_bboxes: bool = False,
     max_glyphs: int | None = 262144,
     max_size: int | None = 67108864,
@@ -988,6 +1002,7 @@ Page.markdown(
     table_strategy: Literal['lines', 'text'] | None = 'lines',
     use_structure: Literal['auto', 'always', 'never'] = 'auto',
     expand_abbreviations: bool = False,
+    ruby: RubyMode = 'omit',
     margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
     max_graphics: int | None = 65536,
@@ -1000,7 +1015,7 @@ Return the current version of the page as Markdown.
 This is `Document.markdown` of this page alone, using the
 document's structure tree when enabled and trustworthy, or inferring
 heading sizes from this page when falling back to geometric extraction.
-`margins`, `images`, and `max_graphics` work as on
+`ruby`, `margins`, `images`, and `max_graphics` work as on
 `Document.markdown`.
 
 ### `tables`

@@ -28,7 +28,14 @@ from pyropdf._structure import (
     _structure_item,
 )
 from pyropdf._structure_rules import occurrence
-from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, build_layout, build_words, text_options
+from pyropdf._text import (
+    _DEFAULT_MAX_TEXT_GLYPHS,
+    _DEFAULT_MAX_TEXT_SIZE,
+    RubyMode,
+    build_layout,
+    build_words,
+    text_options,
+)
 from pyropdf._xobjects import _resources
 
 if TYPE_CHECKING:
@@ -988,6 +995,7 @@ class _PageMcidIndex:
             whitespace=True,
             dehyphenate=False,
             unmapped="skip",
+            ruby="keep",
             max_glyphs=_DEFAULT_MAX_TEXT_GLYPHS,
             max_size=_DEFAULT_MAX_TEXT_SIZE,
         )
@@ -1065,6 +1073,7 @@ class _Fragment:
     md: str
     line_key: tuple[int, int] | None
     bbox: Rect | None
+    is_ruby: bool = False
 
 
 def _needs_fragment_space(prev: _Fragment, curr: _Fragment) -> bool:
@@ -1106,12 +1115,13 @@ def _join_fragments(fragments: list[_Fragment], *, preserve_ws: bool) -> tuple[s
     for frag in fragments:
         if not frag.text:
             continue
-        if prev is not None and _needs_fragment_space(prev, frag):
+        if not frag.is_ruby and prev is not None and _needs_fragment_space(prev, frag):
             plain_out.append(" ")
             md_out.append(" ")
         plain_out.append(frag.text)
         md_out.append(frag.md)
-        prev = frag
+        if not frag.is_ruby:
+            prev = frag
     plain = re.sub(r"[ \t\r\n]+", " ", "".join(plain_out)).strip()
     md = re.sub(r"[ \t\r\n]+", " ", "".join(md_out)).strip()
     return plain, md
@@ -1397,6 +1407,27 @@ def _format_list_item_text(label_text: str, body_plain: str, body_md: str, item:
 
 
 @dataclass(slots=True)
+class _RubyEntry:
+    text: str
+    page: int | None
+    line_key: tuple[int, int] | None
+    bbox: Rect | None
+    language: str | None
+    bold: bool
+    italic: bool
+
+
+@dataclass(slots=True)
+class _RubyState:
+    rb: list[_RubyEntry] = field(default_factory=list)
+    rt: list[_RubyEntry] = field(default_factory=list)
+    rp_before: list[_RubyEntry] = field(default_factory=list)
+    rp_after: list[_RubyEntry] = field(default_factory=list)
+    authored: list[_RubyEntry] = field(default_factory=list)
+    saw_rt: bool = False
+
+
+@dataclass(slots=True)
 class _Frame:
     element: StructureElement | None
     role: str
@@ -1409,6 +1440,7 @@ class _Frame:
     cell: tuple[int, int, list[_TextCollector]] | None = None
     list_state: _ListState | None = None
     list_item: _ListItemState | None = None
+    ruby_state: _RubyState | None = None
     in_label: bool = False
     in_blockquote: bool = False
     table_caption_after: _TableState | None = None
@@ -1486,6 +1518,7 @@ class _StructureExportWalker:
         *,
         expand: bool,
         table_strategy: Literal["lines", "text"] | None,
+        ruby: RubyMode = "omit",
         max_graphics: int | None = None,
     ) -> None:
         self.tree = tree
@@ -1493,6 +1526,7 @@ class _StructureExportWalker:
         self.budget = budget
         self.expand = expand
         self.table_strategy = table_strategy
+        self.ruby = ruby
         self.max_graphics = max_graphics
         self.page_indexes: dict[int, _PageMcidIndex] = {}
         self.blocks_by_page: dict[int, list[StructureBlock]] = {idx: [] for idx in page_map}
@@ -1552,6 +1586,15 @@ class _StructureExportWalker:
         for frame in reversed(self.frames):
             if frame.list_item is not None:
                 return frame.list_item
+        return None
+
+    def _active_ruby(self) -> tuple[_RubyState, str] | None:
+        sub_role = ""
+        for frame in reversed(self.frames):
+            if frame.ruby_state is not None:
+                return frame.ruby_state, sub_role
+            if not sub_role and frame.role in {"RB", "RT", "RP"}:
+                sub_role = frame.role
         return None
 
     def _flush_enclosing_text(self) -> None:
@@ -1624,8 +1667,24 @@ class _StructureExportWalker:
         language: str | None,
         bold: bool = False,
         italic: bool = False,
+        bypass_ruby: bool = False,
+        is_ruby: bool = False,
     ) -> None:
         if not text:
+            return
+        if not bypass_ruby and (active_ruby := self._active_ruby()) is not None:
+            ruby_state, sub_role = active_ruby
+            entry = _RubyEntry(
+                text=text, page=page, line_key=line_key, bbox=bbox, language=language, bold=bold, italic=italic
+            )
+            ruby_state.authored.append(entry)
+            if sub_role == "RT":
+                ruby_state.saw_rt = True
+                ruby_state.rt.append(entry)
+            elif sub_role == "RP":
+                (ruby_state.rp_after if ruby_state.saw_rt else ruby_state.rp_before).append(entry)
+            else:
+                ruby_state.rb.append(entry)
             return
         frame = self.frames[-1]
         collector = self._active_collector()
@@ -1644,7 +1703,12 @@ class _StructureExportWalker:
             md = _wrap_inline_emphasis(text, bold=eff_bold, italic=eff_italic)
         else:
             md = text
-        collector.add_fragment(page, _Fragment(text, md, line_key, bbox), bbox=bbox, language=language)
+        collector.add_fragment(
+            page,
+            _Fragment(text, md, line_key, bbox, is_ruby=is_ruby),
+            bbox=bbox,
+            language=language,
+        )
 
     def _handle_figure(
         self,
@@ -2000,6 +2064,9 @@ class _StructureExportWalker:
             em=parent.em + (1 if role == "Em" else 0),
             code=parent.code + (1 if role == "Code" else 0),
         )
+        if role == "Ruby":
+            frame.ruby_state = _RubyState()
+            return frame
         active_table = self._active_table()
         if active_table is not None and self._configure_table_frame(frame, elem, active_table):
             return frame
@@ -2038,7 +2105,57 @@ class _StructureExportWalker:
             )
         )
 
+    def _emit_ruby_entries(self, entries: Sequence[_RubyEntry], *, is_ruby: bool = False) -> None:
+        for entry in entries:
+            self._append_inline_text(
+                entry.text,
+                entry.page,
+                line_key=entry.line_key,
+                bbox=entry.bbox,
+                language=entry.language,
+                bold=entry.bold,
+                italic=entry.italic,
+                bypass_ruby=True,
+                is_ruby=is_ruby,
+            )
+
+    def _finish_ruby(self, state: _RubyState) -> None:
+        if self.ruby == "keep":
+            self._emit_ruby_entries(state.authored)
+            return
+        self._emit_ruby_entries(state.rb)
+        if self.ruby == "parenthesize" and state.rt:
+            first_rt = state.rt[0]
+            last_rt = state.rt[-1]
+            if state.rp_before and state.rp_after:
+                self._emit_ruby_entries(state.rp_before, is_ruby=True)
+                self._emit_ruby_entries(state.rt, is_ruby=True)
+                self._emit_ruby_entries(state.rp_after, is_ruby=True)
+            else:
+                self._append_inline_text(
+                    "(",
+                    first_rt.page,
+                    line_key=first_rt.line_key,
+                    bbox=first_rt.bbox,
+                    language=first_rt.language,
+                    bypass_ruby=True,
+                    is_ruby=True,
+                )
+                self._emit_ruby_entries(state.rt, is_ruby=True)
+                self._append_inline_text(
+                    ")",
+                    last_rt.page,
+                    line_key=last_rt.line_key,
+                    bbox=last_rt.bbox,
+                    language=last_rt.language,
+                    bypass_ruby=True,
+                    is_ruby=True,
+                )
+
     def _exit_frame(self, frame: _Frame) -> None:
+        if frame.ruby_state is not None:
+            self._finish_ruby(frame.ruby_state)
+            return
         if frame.cell is not None:
             self._finish_cell(frame)
             return
@@ -2231,6 +2348,7 @@ def _collect_structure_pages(  # noqa: PLR0913 - bundles export options under re
     table_strategy: Literal["lines", "text"] | None,
     use_structure: Literal["auto", "always", "never"],
     expand_abbreviations: bool,
+    ruby: RubyMode = "omit",
     max_graphics: int | None = None,
 ) -> dict[int, PageStructureData] | None:
     walker = _StructureExportWalker(
@@ -2239,6 +2357,7 @@ def _collect_structure_pages(  # noqa: PLR0913 - bundles export options under re
         budget,
         expand=expand_abbreviations,
         table_strategy=table_strategy,
+        ruby=ruby,
         max_graphics=max_graphics,
     )
     blocks_by_page = walker.run()
@@ -2264,12 +2383,13 @@ def _collect_structure_pages(  # noqa: PLR0913 - bundles export options under re
     return result
 
 
-def extract_structure_pages(
+def extract_structure_pages(  # noqa: PLR0913 - bundles export options for structure extraction.
     pages: Sequence[Page],
     *,
     table_strategy: Literal["lines", "text"] | None,
     use_structure: Literal["auto", "always", "never"],
     expand_abbreviations: bool,
+    ruby: RubyMode = "omit",
     max_graphics: int | None = None,
 ) -> dict[int, PageStructureData] | None:
     """Extract per-page structure blocks when enabled and trustworthy, or return ``None`` for pure geometric mode."""
@@ -2298,6 +2418,7 @@ def extract_structure_pages(
                 table_strategy=table_strategy,
                 use_structure=use_structure,
                 expand_abbreviations=expand_abbreviations,
+                ruby=ruby,
                 max_graphics=max_graphics,
             ),
         )

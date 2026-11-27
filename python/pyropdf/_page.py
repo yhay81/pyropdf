@@ -76,6 +76,7 @@ from pyropdf._text import (
     _DEFAULT_MAX_TEXT_SIZE,
     Chars,
     Layout,
+    RubyMode,
     Unmapped,
     Word,
     _quad,
@@ -1102,18 +1103,28 @@ class Page:
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
         actual_text: bool = True,
+        ruby: RubyMode = "omit",
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
         max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
     ) -> str:
         """Return the text of the current version of the page in reading order.
 
         Reading order follows the geometry and script heuristics described in
-        the documentation rather than the document's semantic order. Spaces
-        between words are inferred from glyph positions, and lines end with a
-        newline. Annotation appearances count as page content. The
-        ``/ActualText`` of a marked-content sequence replaces the text of the
-        glyphs inside it unless ``actual_text=False``, which extracts the
-        underlying glyph Unicode directly.
+        the documentation rather than the document's semantic order, segmenting
+        pages that mix horizontal bands or sidebars with vertical CJK columns
+        into coherent orientation regions. Spaces between words are inferred
+        from glyph positions, and lines end with a newline. Annotation
+        appearances count as page content. The ``/ActualText`` of a
+        marked-content sequence replaces the text of the glyphs inside it
+        unless ``actual_text=False``, which extracts the underlying glyph
+        Unicode directly.
+
+        ``ruby`` controls geometric Japanese ruby (furigana) annotations
+        aligned beside base kanji runs (above horizontal text or to the right
+        of vertical CJK text; see :data:`RubyMode`): ``"omit"`` (the default)
+        omits furigana so base words stay intact, ``"parenthesize"`` splices
+        each ruby run inline in parentheses after its base characters, and
+        ``"keep"`` leaves ruby runs as ordinary text.
 
         ``clip`` keeps the glyphs whose box's center lies inside a
         display-space rectangle, in the page's reading order, which gives the
@@ -1148,6 +1159,7 @@ class Page:
             dehyphenate=dehyphenate,
             unmapped=unmapped,
             actual_text=actual_text,
+            ruby=ruby,
             max_glyphs=max_glyphs,
             max_size=max_size,
         )
@@ -1175,6 +1187,7 @@ class Page:
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
         actual_text: bool = True,
+        ruby: RubyMode = "omit",
         exact_bboxes: bool = False,
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
         max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
@@ -1201,6 +1214,7 @@ class Page:
             dehyphenate=dehyphenate,
             unmapped=unmapped,
             actual_text=actual_text,
+            ruby=ruby,
             max_glyphs=max_glyphs,
             max_size=max_size,
             exact_bboxes=exact_bboxes,
@@ -1230,6 +1244,7 @@ class Page:
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
         actual_text: bool = True,
+        ruby: RubyMode = "omit",
         exact_bboxes: bool = False,
         styles: bool = False,
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
@@ -1266,6 +1281,7 @@ class Page:
             dehyphenate=dehyphenate,
             unmapped=unmapped,
             actual_text=actual_text,
+            ruby=ruby,
             max_glyphs=max_glyphs,
             max_size=max_size,
             exact_bboxes=exact_bboxes,
@@ -1283,6 +1299,7 @@ class Page:
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
         actual_text: bool = True,
+        ruby: RubyMode = "omit",
         exact_bboxes: bool = False,
         styles: bool = False,
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
@@ -1304,6 +1321,7 @@ class Page:
             dehyphenate=dehyphenate,
             unmapped=unmapped,
             actual_text=actual_text,
+            ruby=ruby,
             max_glyphs=max_glyphs,
             max_size=max_size,
             exact_bboxes=exact_bboxes,
@@ -1356,6 +1374,7 @@ class Page:
         dehyphenate: bool = ...,
         unmapped: Unmapped = ...,
         actual_text: bool = ...,
+        ruby: RubyMode = ...,
         exact_bboxes: bool = ...,
         max_glyphs: int | None = ...,
         max_size: int | None = ...,
@@ -1375,6 +1394,7 @@ class Page:
         dehyphenate: bool = ...,
         unmapped: Unmapped = ...,
         actual_text: bool = ...,
+        ruby: RubyMode = ...,
         exact_bboxes: bool = ...,
         max_glyphs: int | None = ...,
         max_size: int | None = ...,
@@ -1393,6 +1413,7 @@ class Page:
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
         actual_text: bool = True,
+        ruby: RubyMode = "omit",
         exact_bboxes: bool = False,
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
         max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
@@ -1441,6 +1462,7 @@ class Page:
             dehyphenate=dehyphenate,
             unmapped=unmapped,
             actual_text=actual_text,
+            ruby=ruby,
             max_glyphs=max_glyphs,
             max_size=max_size,
             exact_bboxes=exact_bboxes,
@@ -1546,6 +1568,7 @@ class Page:
         table_strategy: Literal["lines", "text"] | None = "lines",
         use_structure: Literal["auto", "always", "never"] = "auto",
         expand_abbreviations: bool = False,
+        ruby: RubyMode = "omit",
         margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
         images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
         max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
@@ -1556,7 +1579,7 @@ class Page:
         This is :meth:`Document.markdown` of this page alone, using the
         document's structure tree when enabled and trustworthy, or inferring
         heading sizes from this page when falling back to geometric extraction.
-        ``margins``, ``images``, and ``max_graphics`` work as on
+        ``ruby``, ``margins``, ``images``, and ``max_graphics`` work as on
         :meth:`Document.markdown`.
         """
         _markdown.validate_options(
@@ -1564,6 +1587,7 @@ class Page:
             max_size,
             use_structure=use_structure,
             expand_abbreviations=expand_abbreviations,
+            ruby=ruby,
             margins=margins,
             images=images,
             max_graphics=max_graphics,
@@ -1575,6 +1599,7 @@ class Page:
                 max_size=max_size,
                 use_structure=use_structure,
                 expand_abbreviations=expand_abbreviations,
+                ruby=ruby,
                 margins=margins,
                 images=images,
                 max_graphics=max_graphics,

@@ -3510,6 +3510,7 @@ mod tests {
             is_underlined: false,
             is_struck: false,
             joins_previous: false,
+            is_ruby: false,
             source_order: 0,
             shown_until: 1,
             run: 0,

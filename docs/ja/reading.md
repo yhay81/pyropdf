@@ -27,6 +27,31 @@ with pyropdf.open("input.pdf") as doc:
 `page.text()`・`page.words()`・`page.layout()`・`page.chars()`・`page.search()`・
 `annotation.text()` に `actual_text=False` を渡すと、元のグリフの Unicode 値を直接取り出せます。
 
+### 縦書き・横書き混在とルビ（ふりがな） {#mixed-orientations-and-japanese-ruby-furigana}
+
+横書きの見出し・キャプション・表・フッタと縦書き CJK 段組（複数段の段組みを含む）が
+混在するページでは、読み取り前にページを方向ごとの一貫した領域に分割します。
+横書き領域は上から下・左から右へ、縦書き CJK 領域は各段の中で上から下・右から左へ
+自然な読み順で並びます。
+
+日本語のルビ（ふりがな）—横書き漢字の直上または縦書き漢字の直右に配置された小字の
+かな列、および Markdown エクスポート時の構造ツリー `/Ruby`（`/RB`・`/RT`・`/RP`）要素—は
+`ruby` オプションで制御できます。
+
+- `"omit"`（既定）: ふりがなを省略し、親文字の語句を検索や抽出で分断しないようにします。
+- `"parenthesize"`: 各ふりがなを親文字の直後に丸括弧つきで挿入します（例: `東京(とうきょう)`）。
+- `"keep"`: ルビを通常のテキストとしてそのまま残します。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    print(page.text())                       # 既定ではふりがなを省略
+    print(page.text(ruby="parenthesize"))    # 例: 東京(とうきょう)
+    print(page.markdown(ruby="parenthesize"))
+```
+
 ## レイアウト
 
 `page.layout()` はテキストをブロック・行・スパンにまとめ、フォント・サイズ・色を添えます。

@@ -496,6 +496,9 @@ def test_the_size_budget_counts_the_text_of_the_whole_call() -> None:
     ("options", "error", "message"),
     [
         ({"unmapped": "cid"}, ValueError, "unmapped must be"),
+        ({"ruby": "inline"}, ValueError, "ruby must be"),
+        ({"ruby": True}, TypeError, "ruby must be"),
+        ({"ruby": 1}, TypeError, "ruby must be"),
         ({"clipped": 1}, TypeError, "clipped must be True or False"),
         ({"ligatures": None}, TypeError, "ligatures must be True or False"),
         ({"whitespace": "no"}, TypeError, "whitespace must be True or False"),
@@ -581,3 +584,146 @@ def test_chunked_text_budgets_refuse_at_exact_glyph_and_size_boundaries() -> Non
     with pytest.raises(pyropdf.LimitError) as size_error:
         document.text(max_glyphs=10, max_size=21)
     assert size_error.value.code == "text_size"
+
+
+def _japanese_mixed_pdf(stream: str, *, width: int = 500, height: int = 600) -> bytes:
+    """Build a page with horizontal MS-Mincho (/FH), vertical MS-Mincho (/FV), and Helvetica (/F1)."""
+    return build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: (
+                f"<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 {width} {height}] "
+                "/Resources << /Font << /F1 5 0 R /FH 6 0 R /FV 7 0 R >> >> >>"
+            ),
+            3: "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+            4: f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream",
+            5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            6: "<< /Type /Font /Subtype /Type0 /BaseFont /MS-Mincho /Encoding /90ms-RKSJ-H /DescendantFonts [8 0 R] >>",
+            7: "<< /Type /Font /Subtype /Type0 /BaseFont /MS-Mincho /Encoding /90ms-RKSJ-V /DescendantFonts [8 0 R] >>",
+            8: (
+                "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /MS-Mincho "
+                "/CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 6 >> "
+                "/FontDescriptor 9 0 R /DW 1000 >>"
+            ),
+            9: (
+                "<< /Type /FontDescriptor /FontName /MS-Mincho /Flags 6 /FontBBox [0 -137 1000 859] "
+                "/ItalicAngle 0 /Ascent 859 /Descent -140 /CapHeight 769 /StemV 78 >>"
+            ),
+        }
+    )
+
+
+def _cp932_octal(text: str) -> str:
+    return "".join(f"\\{byte:03o}" for byte in text.encode("cp932"))
+
+
+def test_mixed_dan_gumi_and_sidebar_extract_in_natural_reading_order() -> None:
+    # Horizontal title, upper 2-column vertical tier, horizontal middle heading,
+    # lower vertical tier alongside a horizontal sidebar, and horizontal footer.
+    stream = "\n".join(
+        [
+            "BT /F1 18 Tf 40 550 Td (Title Heading) Tj ET",
+            # Upper vertical tier (y=490..440 in PDF, R-to-L: 上段右 then 上段左)
+            f"BT /FV 14 Tf 320 490 Td ({_cp932_octal('上段左')}) Tj ET",
+            f"BT /FV 14 Tf 342 490 Td ({_cp932_octal('上段右')}) Tj ET",
+            # Middle horizontal subheading
+            "BT /F1 14 Tf 40 370 Td (Middle Section) Tj ET",
+            # Lower band: vertical columns on the right, horizontal caption on the left
+            f"BT /FV 14 Tf 320 310 Td ({_cp932_octal('下段左')}) Tj ET",
+            f"BT /FV 14 Tf 342 310 Td ({_cp932_octal('下段右')}) Tj ET",
+            "BT /F1 11 Tf 40 295 Td (Sidebar Note) Tj ET",
+            # Horizontal footer
+            "BT /F1 10 Tf 40 80 Td (Footer Line) Tj ET",
+        ]
+    )
+    with pyropdf.open(_japanese_mixed_pdf(stream)) as doc:
+        page = doc.pages[0]
+        assert page.text().splitlines() == [
+            "Title Heading",
+            "上段右",
+            "上段左",
+            "Middle Section",
+            "下段右",
+            "下段左",
+            "Sidebar Note",
+            "Footer Line",
+        ]
+        layout_lines = [line.text for block in page.layout().blocks for line in block.lines]
+        assert layout_lines == [
+            "Title Heading",
+            "上段右",
+            "上段左",
+            "Middle Section",
+            "下段右",
+            "下段左",
+            "Sidebar Note",
+            "Footer Line",
+        ]
+
+
+def test_embedded_canvas_vertical_multicolumn_with_horizontal_bands() -> None:
+    font_path = (
+        Path(__file__).resolve().parent.parent / "crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf"
+    )
+    font = pyropdf.Font.from_file(font_path)
+    with pyropdf.Document() as doc:
+        page = doc.pages.new((400, 360))
+        with page.draw() as canvas:
+            canvas.text("Title Heading", (40, 40), size=20)
+            canvas.textbox((120, 80, 300, 145), "日本語かなのテキスト。", font=font, size=12, direction="vertical")
+            canvas.text("Footer Note", (40, 310), size=10)
+
+        assert page.text().splitlines() == ["Title Heading", "日本語かな", "のテキス", "ト。", "Footer Note"]
+        blocks = [[line.text for line in block.lines] for block in page.layout().blocks]
+        assert blocks == [["Title Heading"], ["日本語かな", "のテキス", "ト。"], ["Footer Note"]]
+
+
+def test_horizontal_japanese_ruby_modes_and_search() -> None:
+    # Base line "東京から大阪へ" at y=400 (12pt -> 12pt per glyph: x=60..144).
+    # Two ruby runs directly above 東京 (x=60..84) and 大阪 (x=108..132) with slight overhang.
+    stream = "\n".join(
+        [
+            f"BT /FH 12 Tf 60 400 Td ({_cp932_octal('東京から大阪へ')}) Tj ET",
+            f"BT /FH 6 Tf 58 413 Td ({_cp932_octal('とうきょう')}) Tj ET",
+            f"BT /FH 6 Tf 106 413 Td ({_cp932_octal('おおさか')}) Tj ET",
+        ]
+    )
+    with pyropdf.open(_japanese_mixed_pdf(stream)) as doc:
+        page = doc.pages[0]
+        assert page.text() == "東京から大阪へ\n"
+        assert doc.text() == "東京から大阪へ\n"
+        assert [w.text for w in page.words()] == ["東京から大阪へ"]
+        assert len(page.search("東京から大阪へ")) == 1
+        assert page.search("とうきょう") == []
+
+        assert page.text(ruby="parenthesize") == "東京(とうきょう)から大阪(おおさか)へ\n"
+        assert doc.text(ruby="parenthesize") == "東京(とうきょう)から大阪(おおさか)へ\n"
+        assert [line.text for block in page.layout(ruby="parenthesize").blocks for line in block.lines] == [
+            "東京(とうきょう)から大阪(おおさか)へ"
+        ]
+        chars_text = "".join(ch.text for ch in page.chars(ruby="parenthesize"))
+        assert chars_text == "東京(とうきょう)から大阪(おおさか)へ"
+        assert len(page.search("とうきょう", ruby="parenthesize")) == 1
+
+        kept_lines = page.text(ruby="keep").splitlines()
+        assert kept_lines == ["とうきょう おおさか", "東京から大阪へ"]
+
+
+def test_vertical_japanese_ruby_modes_including_single_kana() -> None:
+    # Vertical base column "東京へ行く" at x=200, y=500 downward (14pt).
+    # Multi-char ruby "とうきょう" right of 東京, and single-char ruby "い" right of 行.
+    stream = "\n".join(
+        [
+            f"BT /FV 14 Tf 200 500 Td ({_cp932_octal('東京へ行く')}) Tj ET",
+            f"BT /FV 6 Tf 215 500 Td ({_cp932_octal('とうきょう')}) Tj ET",
+            f"BT /FV 6 Tf 215 458 Td ({_cp932_octal('い')}) Tj ET",
+        ]
+    )
+    with pyropdf.open(_japanese_mixed_pdf(stream)) as doc:
+        page = doc.pages[0]
+        assert page.text() == "東京へ行く\n"
+        assert len(page.search("東京へ行く")) == 1
+        assert page.text(ruby="parenthesize") == "東京(とうきょう)へ行(い)く\n"
+        assert "とうきょう" in page.text(ruby="keep")
+        assert "い" in page.text(ruby="keep")
+        assert "東京へ行く" in page.text(ruby="keep")

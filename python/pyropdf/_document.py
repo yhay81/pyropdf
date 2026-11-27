@@ -149,7 +149,14 @@ from pyropdf._signing import sign as _sign
 from pyropdf._signing import signatures as _signatures
 from pyropdf._signing import timestamp as _timestamp
 from pyropdf._structure import StructureTree, _delete_structure_tree
-from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
+from pyropdf._text import (
+    _DEFAULT_MAX_TEXT_GLYPHS,
+    _DEFAULT_MAX_TEXT_SIZE,
+    RubyMode,
+    Unmapped,
+    _warn_skipped,
+    text_options,
+)
 from pyropdf._threads import Threads, _delete_all_threads
 from pyropdf._web_capture import WebCapture
 
@@ -1672,6 +1679,7 @@ class Document:
         whitespace: bool = True,
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
+        ruby: RubyMode = "omit",
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
         max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
     ) -> str:
@@ -1693,6 +1701,7 @@ class Document:
             whitespace=whitespace,
             dehyphenate=dehyphenate,
             unmapped=unmapped,
+            ruby=ruby,
             max_glyphs=max_glyphs,
             max_size=max_size,
         )
@@ -1723,6 +1732,7 @@ class Document:
         table_strategy: Literal["lines", "text"] | None = "lines",
         use_structure: Literal["auto", "always", "never"] = "auto",
         expand_abbreviations: bool = False,
+        ruby: RubyMode = "omit",
         margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
         ignore_headers_footers: bool = False,
         images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
@@ -1740,23 +1750,31 @@ class Document:
         ``Title``), lists (``L``/``LI``/``Lbl``/``LBody``), tables
         (``Table``/``THead``/``TBody``/``TFoot``/``TR``/``TH``/``TD``),
         block quotes, code, figures with ``/Alt`` descriptions, ``/ActualText``
-        replacements, and logical reading order while omitting ``Artifact``
-        content. Custom roles resolve through ``/RoleMap`` and PDF 2.0
-        namespaces. Pass ``expand_abbreviations=True`` to prefer ``/E``
-        abbreviation expansions. Pages that are untagged, fail coverage checks,
-        or contain unresolved Form XObject marked content fall back
-        deterministically to geometric layout extraction. ``use_structure="always"``
-        reads from the structure tree whenever present without trustworthiness
-        checks (raising :class:`MalformedPdfError` on broken trees);
-        ``use_structure="never"`` always uses geometric layout extraction.
+        replacements, ``/Ruby`` annotations (``/RB``, ``/RT``, ``/RP``), and
+        logical reading order while omitting ``Artifact`` content. Custom roles
+        resolve through ``/RoleMap`` and PDF 2.0 namespaces. Pass
+        ``expand_abbreviations=True`` to prefer ``/E`` abbreviation expansions.
+        Pages that are untagged, fail coverage checks, or contain unresolved
+        Form XObject marked content fall back deterministically to geometric
+        layout extraction. ``use_structure="always"`` reads from the structure
+        tree whenever present without trustworthiness checks (raising
+        :class:`MalformedPdfError` on broken trees); ``use_structure="never"``
+        always uses geometric layout extraction.
 
         In geometric extraction, headings come from font sizes: the size that
         holds the most text is the body's, and larger sizes map in descending
         order to ``#`` through ``####``. Wrapped CJK lines join without spaces,
         leading bullets and ``1.`` or ``1)`` become Markdown lists, and the
         bold and italic of embedded fonts become emphasis. Multicolumn text
-        follows its gutters, and vertical CJK columns read top to bottom and
-        right to left; ruby and mixed orientations are not interpreted.
+        follows its gutters, vertical CJK columns read top to bottom and right
+        to left, and pages mixing horizontal bands or sidebars with vertical
+        CJK columns segment into coherent orientation regions.
+
+        ``ruby`` controls Japanese ruby (furigana) annotations in both
+        structure ``/Ruby`` elements and geometric extraction (see
+        :data:`RubyMode`): ``"omit"`` (the default) emits only base text,
+        ``"parenthesize"`` formats furigana in parentheses after its base text,
+        and ``"keep"`` preserves ruby text as authored.
 
         ``margins`` excludes content outside the display-space body region
         (inset from the page's top, bottom, left, and right edges after
@@ -1790,6 +1808,7 @@ class Document:
             max_size,
             use_structure=use_structure,
             expand_abbreviations=expand_abbreviations,
+            ruby=ruby,
             margins=margins,
             ignore_headers_footers=ignore_headers_footers,
             images=images,
@@ -1802,6 +1821,7 @@ class Document:
                 max_size=max_size,
                 use_structure=use_structure,
                 expand_abbreviations=expand_abbreviations,
+                ruby=ruby,
                 margins=margins,
                 ignore_headers_footers=ignore_headers_footers,
                 images=images,

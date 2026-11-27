@@ -45,7 +45,14 @@ as a Unicode code point. This heuristic can produce unrelated text for custom
 encodings. Other unmapped glyphs give U+FFFD. Font Unicode mappings and
 recognized glyph names take precedence."""
 
+RubyMode: TypeAlias = Literal["omit", "parenthesize", "keep"]
+RubyMode.__doc__ = """How Japanese ruby (furigana) annotations are handled during text and Markdown
+extraction: ``"omit"`` drops ruby annotations so base words remain intact for
+prose and search, ``"parenthesize"`` attaches ruby inline after its base text
+as ``base(ruby)``, and ``"keep"`` leaves ruby runs untouched as ordinary text."""
+
 _UNMAPPED_CODES = {"skip": 0, "replacement": 1, "glyph_id": 2, "type3_char_code": 3}
+_RUBY_CODES = {"omit": 0, "parenthesize": 1, "keep": 2}
 
 #: Glyphs that one page's text collects by default (``text_glyph_count``).
 _DEFAULT_MAX_TEXT_GLYPHS = 262_144
@@ -54,8 +61,21 @@ _DEFAULT_MAX_TEXT_SIZE = 64 * 1024 * 1024
 
 # The core's text options: (clip, keep clipped glyphs, unmapped code, expand
 # ligatures, normalize whitespace, dehyphenate, exact boxes, styles, ignore
-# actual text).
-_TextOptions: TypeAlias = tuple[tuple[float, float, float, float] | None, bool, int, bool, bool, bool, bool, bool, bool]
+# actual text, ruby code).
+_TextOptions: TypeAlias = tuple[
+    tuple[float, float, float, float] | None, bool, int, bool, bool, bool, bool, bool, bool, int
+]
+
+
+def _validate_ruby(ruby: object) -> RubyMode:
+    """Validate one Japanese ruby handling mode."""
+    if not isinstance(ruby, str):
+        msg = f"ruby must be 'omit', 'parenthesize', or 'keep': {ruby!r}"
+        raise TypeError(msg)
+    if ruby in ("omit", "parenthesize", "keep"):
+        return ruby
+    msg = f"ruby must be 'omit', 'parenthesize', or 'keep': {ruby!r}"
+    raise ValueError(msg)
 
 
 def text_options(  # noqa: PLR0913 - the shared options of the text views.
@@ -71,6 +91,7 @@ def text_options(  # noqa: PLR0913 - the shared options of the text views.
     exact_bboxes: bool = False,
     styles: bool = False,
     actual_text: bool = True,
+    ruby: RubyMode = "omit",
 ) -> _TextOptions:
     """Validate the options of the text views, with ``clip`` already validated."""
     for name, value in (
@@ -89,9 +110,21 @@ def text_options(  # noqa: PLR0913 - the shared options of the text views.
     if code is None:
         msg = f"unmapped must be 'skip', 'replacement', 'glyph_id', or 'type3_char_code': {unmapped!r}"
         raise ValueError(msg)
+    ruby_mode = _validate_ruby(ruby)
     _validate_optional_positive_int("max_glyphs", max_glyphs)
     _validate_optional_positive_int("max_size", max_size)
-    return (clip, clipped, code, not ligatures, not whitespace, dehyphenate, exact_bboxes, styles, not actual_text)
+    return (
+        clip,
+        clipped,
+        code,
+        not ligatures,
+        not whitespace,
+        dehyphenate,
+        exact_bboxes,
+        styles,
+        not actual_text,
+        _RUBY_CODES[ruby_mode],
+    )
 
 
 def _warn_skipped(skipped: int) -> None:
@@ -758,4 +791,4 @@ def _build_span(  # noqa: PLR0913, PLR0917 - unpacks one core span tuple.
 for _public in (Block, Char, Chars, Layout, Line, Span, Word):
     _public.__module__ = "pyropdf"
 
-__all__ = ["Block", "Char", "Chars", "Layout", "Line", "Span", "Unmapped", "Word"]
+__all__ = ["Block", "Char", "Chars", "Layout", "Line", "RubyMode", "Span", "Unmapped", "Word"]

@@ -645,6 +645,7 @@ const EXACT: TextOptions = TextOptions {
     exact_bboxes: true,
     styles: false,
     ignore_actual_text: false,
+    ruby: RubyMode::Omit,
 };
 
 /// Returns faces that draw Japanese in `source`.

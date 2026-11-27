@@ -444,6 +444,20 @@ pub enum Unmapped {
     Type3CharCode,
 }
 
+/// How Japanese ruby (furigana) runs are handled during text extraction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum RubyMode {
+    /// Drop geometric ruby annotations so base words remain intact for prose
+    /// and search.
+    #[default]
+    Omit,
+    /// Attach each geometric ruby annotation inline after its base kanji as
+    /// `base(ruby)`.
+    Parenthesize,
+    /// Leave ruby runs untouched as ordinary text lines.
+    Keep,
+}
+
 /// The options of the text of a page.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TextOptions {
@@ -468,6 +482,8 @@ pub struct TextOptions {
     /// Ignore marked-content `/ActualText` replacements and extract the
     /// underlying glyph Unicode directly.
     pub ignore_actual_text: bool,
+    /// How Japanese ruby (furigana) runs are handled.
+    pub ruby: RubyMode,
 }
 
 impl TextOptions {
@@ -531,6 +547,9 @@ struct GlyphRecord {
     /// Whether the glyph continues the word of the line before, which
     /// dehyphenation removed the hyphen of.
     joins_previous: bool,
+    /// Whether this glyph belongs to a parenthesized Japanese ruby run spliced
+    /// inline into its base line under [`RubyMode::Parenthesize`].
+    is_ruby: bool,
     /// The place of the glyph among those that the page showed, kept or
     /// not, which is its order before geometric clustering.
     source_order: usize,
@@ -1233,6 +1252,7 @@ impl TextCollector<'_, '_> {
             is_underlined: false,
             is_struck: false,
             joins_previous: false,
+            is_ruby: false,
             source_order,
             shown_until: source_order + 1,
             run: self.style.run,
@@ -1462,6 +1482,7 @@ impl GlyphRecord {
             is_underlined: false,
             is_struck: false,
             joins_previous: false,
+            is_ruby: false,
             source_order: 0,
             shown_until: 0,
             run: 0,
@@ -1627,9 +1648,118 @@ fn is_cjk_text(text: &GlyphText) -> bool {
     saw_character
 }
 
+/// Maximum ruby-to-base font size ratio for geometric Japanese furigana.
+const RUBY_MAX_SIZE_RATIO: f64 = 0.68;
+
+/// Inline gap threshold (in ruby em) that splits separate ruby annotations
+/// sharing one parallel baseline (for example above two words on one line).
+const RUBY_SEGMENT_GAP: f64 = 1.2;
+
+/// Maximum recursive XY-cut depth when segmenting mixed horizontal/vertical pages.
+const MAX_ORIENTATION_DEPTH: usize = 4;
+
+/// Horizontal column pitch threshold (in em) below which consecutive vertical
+/// CJK lines stay in the same paragraph block.
+const VERTICAL_BLOCK_GAP: f64 = 2.2;
+
+fn is_kana_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3041..=0x3096
+            | 0x309D..=0x309E
+            | 0x30A1..=0x30FA
+            | 0x30FC..=0x30FE
+            | 0xFF66..=0xFF9F
+            | 0x1B132..=0x1B167
+    )
+}
+
+fn is_ruby_allowed_char(ch: char) -> bool {
+    is_kana_char(ch) || ch.is_whitespace() || matches!(ch, '・' | '･')
+}
+
+fn is_kanji_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3005..=0x3007
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xF900..=0xFAFF
+            | 0x20000..=0x323AF
+    )
+}
+
+fn glyph_is_kana(glyph: &GlyphRecord) -> bool {
+    let mut saw_kana = false;
+    for ch in glyph.text.chars() {
+        if !is_ruby_allowed_char(ch) {
+            return false;
+        }
+        if is_kana_char(ch) {
+            saw_kana = true;
+        }
+    }
+    saw_kana
+}
+
+fn glyph_has_kanji(glyph: &GlyphRecord) -> bool {
+    glyph.text.chars().any(is_kanji_char)
+}
+
+/// Identify glyphs from `WMode = 1` vertical text runs where consecutive glyphs
+/// within the same PDF text-showing run (`glyph.run`) advance vertically
+/// downward despite hayro reporting a horizontal basis.
+fn same_run_vertical_indices(arena: &[GlyphRecord], glyphs: &[usize]) -> Result<Vec<usize>, Error> {
+    let mut proved = Vec::new();
+    let mut i = 0usize;
+    while i < glyphs.len() {
+        let run_id = arena[glyphs[i]].run;
+        let mut j = i + 1;
+        while j < glyphs.len() && arena[glyphs[j]].run == run_id {
+            j += 1;
+        }
+        if j - i >= 2 {
+            let visible_count = glyphs[i..j]
+                .iter()
+                .filter(|&&idx| !arena[idx].text.chars().all(char::is_whitespace))
+                .count();
+            if visible_count < 2 {
+                i = j;
+                continue;
+            }
+            let mut vertical_steps = 0usize;
+            let mut horizontal_steps = 0usize;
+            for pair in glyphs[i..j].windows(2) {
+                let (a, b) = (&arena[pair[0]], &arena[pair[1]]);
+                if a.font_id != b.font_id {
+                    continue;
+                }
+                let scale = a.size.max(b.size).max(1.0);
+                let dx = (b.x - a.x).abs();
+                let dy = b.y - a.y;
+                if dx <= scale * VERTICAL_LINE_TOLERANCE && dy >= scale * 0.35 && dy <= scale * 1.65
+                {
+                    vertical_steps += 1;
+                } else if dy.abs() <= scale * LINE_TOLERANCE && dx >= scale * 0.2 {
+                    horizontal_steps += 1;
+                }
+            }
+            if vertical_steps > 0 && horizontal_steps == 0 {
+                for &index in &glyphs[i..j] {
+                    try_push_text(&mut proved, index, "same-run vertical glyphs")?;
+                }
+            }
+        }
+        i = j;
+    }
+    Ok(proved)
+}
+
 /// Identify CJK glyphs that advance vertically even though hayro reports the
 /// font's transformed horizontal basis. Requiring a local vertical neighbour
-/// and no local horizontal neighbour avoids reclassifying normal CJK rows.
+/// tighter than any same-scale horizontal neighbour avoids reclassifying normal
+/// CJK rows while still handling multi-column vertical paragraphs and ignoring
+/// adjacent smaller ruby annotations.
 ///
 /// `glyphs` selects candidates from `arena`; returned values are arena indexes.
 fn inferred_vertical_cjk_indices(
@@ -1654,8 +1784,8 @@ fn inferred_vertical_cjk_indices(
     let mut eligible = Vec::new();
     for &index in &cjk_indices {
         let glyph = &arena[index];
-        let mut has_vertical_neighbour = false;
-        let mut has_horizontal_neighbour = false;
+        let mut nearest_dy = f64::INFINITY;
+        let mut nearest_dx = f64::INFINITY;
         for &other_index in &cjk_indices {
             if other_index == index {
                 continue;
@@ -1664,27 +1794,34 @@ fn inferred_vertical_cjk_indices(
             if other.font_id != glyph.font_id {
                 continue;
             }
+            let min_size = glyph.size.min(other.size);
             let scale = glyph.size.max(other.size).max(1.0);
+            // Ignore adjacent smaller/larger ruby runs when testing column geometry.
+            if min_size <= scale * RUBY_MAX_SIZE_RATIO {
+                continue;
+            }
             let dx = (other.x - glyph.x).abs();
             let dy = (other.y - glyph.y).abs();
             if dx <= scale * VERTICAL_LINE_TOLERANCE && dy >= scale * 0.35 && dy <= scale * 1.35 {
-                has_vertical_neighbour = true;
+                nearest_dy = nearest_dy.min(dy);
             }
             if dy <= scale * LINE_TOLERANCE && dx >= scale * 0.2 && dx <= scale * 1.8 {
-                has_horizontal_neighbour = true;
-            }
-            if has_vertical_neighbour && has_horizontal_neighbour {
-                break;
+                nearest_dx = nearest_dx.min(dx);
             }
         }
-        if has_vertical_neighbour && !has_horizontal_neighbour {
+        let has_vertical_neighbour = nearest_dy.is_finite();
+        let blocked_by_horizontal = nearest_dx.is_finite()
+            && !(nearest_dy < nearest_dx * 0.92 && nearest_dx >= glyph.size.max(1.0) * 1.15);
+        if has_vertical_neighbour && !blocked_by_horizontal {
             try_push_text(&mut eligible, index, "vertical-CJK eligibility collection")?;
         }
     }
     Ok(eligible)
 }
 
-/// Extract conservative CJK vertical chains from otherwise horizontal glyphs.
+/// Extract vertical CJK chains from otherwise horizontal glyphs, combining
+/// exact same-run `WMode = 1` detections with conservative positioned-CJK
+/// vertical inference.
 ///
 /// Accepted chains rewrite their arena records to a vertical direction and
 /// writing mode 1. Record positions never move, so arena indexes stay valid
@@ -1693,8 +1830,9 @@ fn extract_inferred_vertical_cjk(
     arena: &mut [GlyphRecord],
     glyphs: Vec<usize>,
 ) -> Result<(Vec<usize>, Vec<Vec<usize>>), Error> {
+    let proved = same_run_vertical_indices(arena, &glyphs)?;
     let eligible = inferred_vertical_cjk_indices(arena, &glyphs)?;
-    if eligible.len() < MIN_VERTICAL_CJK_GLYPHS {
+    if proved.is_empty() && eligible.len() < MIN_VERTICAL_CJK_GLYPHS {
         return Ok((glyphs, Vec::new()));
     }
 
@@ -1712,14 +1850,18 @@ fn extract_inferred_vertical_cjk(
         clippy::disallowed_methods,
         reason = "fills the capacity reserved above"
     )]
-    selected.resize(arena.len(), false);
+    selected.resize(arena.len(), 0u8);
+    // 1 = inferred by CJK geometry, 2 = proved by same-run downward advancement.
     for index in eligible {
-        selected[index] = true;
+        selected[index] = 1;
+    }
+    for index in proved {
+        selected[index] = 2;
     }
     let mut candidates = Vec::new();
     let mut remaining = Vec::new();
     for index in glyphs {
-        let target = if selected[index] {
+        let target = if selected[index] != 0 {
             &mut candidates
         } else {
             &mut remaining
@@ -1744,9 +1886,15 @@ fn extract_inferred_vertical_cjk(
         };
         let matching_line = lines.iter_mut().find(|line| {
             let first = &arena[line[0]];
+            let min_size = first.size.min(glyph_size);
+            let max_size = first.size.max(glyph_size).max(1.0);
+            let tol_scale = if min_size <= max_size * RUBY_MAX_SIZE_RATIO {
+                min_size.max(1.0)
+            } else {
+                max_size
+            };
             first.font_id == glyph_font_id
-                && (first.x - glyph_x).abs()
-                    <= first.size.max(glyph_size).max(1.0) * VERTICAL_LINE_TOLERANCE
+                && (first.x - glyph_x).abs() <= tol_scale * VERTICAL_LINE_TOLERANCE
         });
         if let Some(line) = matching_line {
             try_push_text(line, index, "vertical-CJK line")?;
@@ -1765,25 +1913,51 @@ fn extract_inferred_vertical_cjk(
                 .total_cmp(&arena[right].y)
                 .then(left.cmp(&right))
         });
-        let continuous = line.windows(2).all(|pair| {
-            let (first, second) = (&arena[pair[0]], &arena[pair[1]]);
-            let scale = first.size.max(second.size).max(1.0);
-            let gap = second.y - first.y;
-            gap >= scale * 0.35 && gap <= scale * 1.35
-        });
-        if line.len() >= MIN_VERTICAL_CJK_GLYPHS && continuous {
-            for &index in &line {
-                arena[index].direction = (0.0, 1.0);
-                arena[index].writing_mode = 1;
+        // Split vertical runs separated by a wide vertical gap (e.g. stacked
+        // vertical tiers / dan-gumi sharing column x-coordinates).
+        let mut sub_start = 0usize;
+        for pos in 1..=line.len() {
+            let split_here = if pos == line.len() {
+                true
+            } else {
+                let (first, second) = (&arena[line[pos - 1]], &arena[line[pos]]);
+                let scale = first.size.max(second.size).max(1.0);
+                let gap = second.y - first.y;
+                gap > scale * 1.65
+            };
+            if !split_here {
+                continue;
             }
-            try_push_text(&mut accepted, line, "accepted vertical-CJK lines")?;
-        } else {
-            for index in line {
-                try_push_text(
-                    &mut remaining,
-                    index,
-                    "remaining horizontal glyph collection",
-                )?;
+            let slice = &line[sub_start..pos];
+            sub_start = pos;
+            let has_proved = slice.iter().any(|&idx| selected[idx] == 2);
+            let min_len = if has_proved {
+                2
+            } else {
+                MIN_VERTICAL_CJK_GLYPHS
+            };
+            let continuous = slice.windows(2).all(|pair| {
+                let (first, second) = (&arena[pair[0]], &arena[pair[1]]);
+                let scale = first.size.max(second.size).max(1.0);
+                let gap = second.y - first.y;
+                gap >= scale * 0.35 && gap <= scale * if has_proved { 1.65 } else { 1.35 }
+            });
+            if slice.len() >= min_len && continuous {
+                let mut sub = Vec::new();
+                for &index in slice {
+                    arena[index].direction = (0.0, 1.0);
+                    arena[index].writing_mode = 1;
+                    try_push_text(&mut sub, index, "accepted vertical-CJK line")?;
+                }
+                try_push_text(&mut accepted, sub, "accepted vertical-CJK lines")?;
+            } else {
+                for &index in slice {
+                    try_push_text(
+                        &mut remaining,
+                        index,
+                        "remaining horizontal glyph collection",
+                    )?;
+                }
             }
         }
     }
@@ -1806,8 +1980,14 @@ fn cluster_explicit_vertical(
         let glyph = &arena[index];
         let matching_line = lines.iter_mut().find(|line| {
             let first = &arena[line[0]];
-            let scale = first.size.max(glyph.size).max(1.0);
-            (first.x - glyph.x).abs() <= scale * VERTICAL_LINE_TOLERANCE
+            let min_size = first.size.min(glyph.size);
+            let max_size = first.size.max(glyph.size).max(1.0);
+            let tol_scale = if min_size <= max_size * RUBY_MAX_SIZE_RATIO {
+                min_size.max(1.0)
+            } else {
+                max_size
+            };
+            (first.x - glyph.x).abs() <= tol_scale * VERTICAL_LINE_TOLERANCE
                 && first.direction.0 * glyph.direction.0 + first.direction.1 * glyph.direction.1
                     > 0.9
         });
@@ -2170,7 +2350,16 @@ fn cluster_lines(glyphs: Vec<GlyphRecord>) -> Result<Vec<Vec<GlyphRecord>>, Erro
     for (glyph_y, _, index) in keys {
         let glyph = &arena[index];
         let tolerance = glyph.size.max(1.0) * LINE_TOLERANCE;
-        if (glyph_y - current_baseline).abs() <= tolerance {
+        let is_ruby_above = lines.last().is_some_and(|line| {
+            !line.is_empty()
+                && line.iter().all(|&prior| {
+                    let prior = &arena[prior];
+                    prior.size <= glyph.size * RUBY_MAX_SIZE_RATIO
+                        && glyph_y - prior.y > prior.size.max(1.0) * LINE_TOLERANCE
+                        && glyph_is_kana(prior)
+                })
+        });
+        if !is_ruby_above && (glyph_y - current_baseline).abs() <= tolerance {
             let line = lines
                 .last_mut()
                 .expect("a line was created immediately before");
@@ -2389,32 +2578,165 @@ fn order_axis_page_lines(
     order_columns(segments, orientation)
 }
 
-/// Order vertical columns right-to-left, preserving horizontal headers and
-/// footers outside the vertical text region.
+/// Segment and order a page that mixes horizontal and vertical lines into
+/// coherent orientation regions using bounded recursive XY-cuts.
+///
+/// Vertically disjoint y-bands are always ordered top-to-bottom (so stacked
+/// horizontal headers/tables and multi-tier vertical `dan-gumi` sections stay
+/// in natural reading order). Within a mixed band, horizontally disjoint
+/// x-strips are ordered right-to-left when vertical text dominates (Japanese
+/// page flow) or left-to-right when horizontal text dominates.
 fn order_vertical_page_lines(
     clustered: Vec<Vec<GlyphRecord>>,
 ) -> Result<Vec<Vec<GlyphRecord>>, Error> {
+    order_mixed_region(clustered, 0)
+}
+
+fn line_char_weight(line: &[GlyphRecord]) -> usize {
+    line.iter()
+        .map(|glyph| glyph.text.chars().filter(|ch| !ch.is_whitespace()).count())
+        .sum::<usize>()
+        .max(1)
+}
+
+fn region_is_vertical_dominant(lines: &[Vec<GlyphRecord>]) -> bool {
+    let mut vertical_chars = 0usize;
+    let mut vertical_lines = 0usize;
+    let mut horizontal_chars = 0usize;
+    for line in lines {
+        let weight = line_char_weight(line);
+        if line.first().is_some_and(has_vertical_baseline) {
+            vertical_chars += weight;
+            if line.first().is_some_and(|glyph| glyph.writing_mode == 1) {
+                vertical_lines += 1;
+            }
+        } else {
+            horizontal_chars += weight;
+        }
+    }
+    vertical_chars >= horizontal_chars
+        || (vertical_lines >= 2 && vertical_chars * 2 >= horizontal_chars)
+}
+
+fn order_mixed_region(
+    lines: Vec<Vec<GlyphRecord>>,
+    depth: usize,
+) -> Result<Vec<Vec<GlyphRecord>>, Error> {
+    if lines.len() <= 1 {
+        return Ok(lines);
+    }
+    let has_vertical = lines
+        .iter()
+        .any(|line| line.first().is_some_and(has_vertical_baseline));
+    let has_horizontal = lines.iter().any(|line| {
+        line.first()
+            .is_some_and(|glyph| !has_vertical_baseline(glyph))
+    });
+    if !has_vertical {
+        return order_axis_page_lines(lines, AxisOrientation::Right);
+    }
+    if !has_horizontal {
+        return order_axis_page_lines(lines, AxisOrientation::Down);
+    }
+
+    if depth < MAX_ORIENTATION_DEPTH {
+        // 1. Try horizontal cuts (vertically disjoint y-bands, top-to-bottom).
+        let y_bands = split_disjoint_bands(lines, false)?;
+        if y_bands.len() >= 2 {
+            let mut out = Vec::new();
+            for band in y_bands {
+                for line in order_mixed_region(band, depth + 1)? {
+                    try_push_text(&mut out, line, "ordered mixed y-band lines")?;
+                }
+            }
+            return Ok(out);
+        }
+        let lines = y_bands.into_iter().next().unwrap_or_default();
+
+        // 2. Try vertical cuts (horizontally disjoint x-strips within the band).
+        let vertical_dominant = region_is_vertical_dominant(&lines);
+        let mut x_strips = split_disjoint_bands(lines, true)?;
+        if x_strips.len() >= 2 {
+            if vertical_dominant {
+                x_strips.reverse();
+            }
+            let mut out = Vec::new();
+            for strip in x_strips {
+                for line in order_mixed_region(strip, depth + 1)? {
+                    try_push_text(&mut out, line, "ordered mixed x-strip lines")?;
+                }
+            }
+            return Ok(out);
+        }
+        let lines = x_strips.into_iter().next().unwrap_or_default();
+        return order_overlapping_mixed(lines, vertical_dominant);
+    }
+
+    let vertical_dominant = region_is_vertical_dominant(&lines);
+    order_overlapping_mixed(lines, vertical_dominant)
+}
+
+/// Partition `lines` into disjoint bands along `y` (`split_x == false`) or `x`
+/// (`split_x == true`), ordered ascending along the split axis.
+fn split_disjoint_bands(
+    lines: Vec<Vec<GlyphRecord>>,
+    split_x: bool,
+) -> Result<Vec<Vec<Vec<GlyphRecord>>>, Error> {
+    let mut decorated: Vec<(f64, f64, usize, Vec<GlyphRecord>)> = Vec::new();
+    for line in lines {
+        let (x0, y0, x1, y1) = line_bbox(&line);
+        let (start, end) = if split_x { (x0, x1) } else { (y0, y1) };
+        let source = line_source_order(&line);
+        try_push_text(&mut decorated, (start, end, source, line), "band sort keys")?;
+    }
+    decorated.sort_unstable_by(|a, b| {
+        a.0.total_cmp(&b.0)
+            .then_with(|| a.1.total_cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+
+    let mut bands: Vec<Vec<Vec<GlyphRecord>>> = Vec::new();
+    let mut current_end = f64::NEG_INFINITY;
+    for (start, end, _, line) in decorated {
+        if bands.is_empty() || start >= current_end {
+            let mut band = Vec::new();
+            try_push_text(&mut band, line, "orientation band line")?;
+            try_push_text(&mut bands, band, "orientation bands")?;
+            current_end = end;
+        } else {
+            current_end = current_end.max(end);
+            try_push_text(
+                bands
+                    .last_mut()
+                    .expect("an orientation band was created above"),
+                line,
+                "orientation band line",
+            )?;
+        }
+    }
+    Ok(bands)
+}
+
+/// Fallback ordering for mixed horizontal and vertical lines whose bounding
+/// boxes genuinely overlap along both axes.
+fn order_overlapping_mixed(
+    lines: Vec<Vec<GlyphRecord>>,
+    vertical_dominant: bool,
+) -> Result<Vec<Vec<GlyphRecord>>, Error> {
     let mut vertical_y0 = f64::INFINITY;
     let mut vertical_y1 = f64::NEG_INFINITY;
-    let mut has_vertical = false;
-    for line in &clustered {
+    for line in &lines {
         if line.first().is_some_and(has_vertical_baseline) {
             let (_, y0, _, y1) = line_bbox(line);
             vertical_y0 = vertical_y0.min(y0);
             vertical_y1 = vertical_y1.max(y1);
-            has_vertical = true;
         }
     }
-    if !has_vertical {
-        vertical_y0 = f64::NEG_INFINITY;
-        vertical_y1 = f64::INFINITY;
-    }
-
     let mut top = Vec::new();
     let mut vertical = Vec::new();
     let mut middle = Vec::new();
     let mut bottom = Vec::new();
-    for line in clustered {
+    for line in lines {
         if line.first().is_some_and(has_vertical_baseline) {
             try_push_text(&mut vertical, line, "ordered vertical text lines")?;
             continue;
@@ -2428,20 +2750,29 @@ fn order_vertical_page_lines(
             try_push_text(&mut middle, line, "text lines beside vertical content")?;
         }
     }
-    let mut top = sort_lines_by_bbox_key(top, |line| line_bbox(line).1, false)?;
-    let vertical = sort_lines_by_bbox_key(vertical, |line| line_bbox(line).0, true)?;
-    let middle = sort_lines_by_bbox_key(middle, |line| line_bbox(line).1, false)?;
-    let bottom = sort_lines_by_bbox_key(bottom, |line| line_bbox(line).1, false)?;
-    for line in vertical {
-        try_push_text(&mut top, line, "ordered mixed-orientation text lines")?;
-    }
-    for line in middle {
-        try_push_text(&mut top, line, "ordered mixed-orientation text lines")?;
+    let mut out = order_axis_page_lines(top, AxisOrientation::Right)?;
+    let vertical = order_axis_page_lines(vertical, AxisOrientation::Down)?;
+    let middle = order_axis_page_lines(middle, AxisOrientation::Right)?;
+    let bottom = order_axis_page_lines(bottom, AxisOrientation::Right)?;
+    if vertical_dominant {
+        for line in vertical {
+            try_push_text(&mut out, line, "ordered mixed-orientation text lines")?;
+        }
+        for line in middle {
+            try_push_text(&mut out, line, "ordered mixed-orientation text lines")?;
+        }
+    } else {
+        for line in middle {
+            try_push_text(&mut out, line, "ordered mixed-orientation text lines")?;
+        }
+        for line in vertical {
+            try_push_text(&mut out, line, "ordered mixed-orientation text lines")?;
+        }
     }
     for line in bottom {
-        try_push_text(&mut top, line, "ordered mixed-orientation text lines")?;
+        try_push_text(&mut out, line, "ordered mixed-orientation text lines")?;
     }
-    Ok(top)
+    Ok(out)
 }
 
 /// Return a line's bbox without exposing the internal glyph representation.
@@ -2458,43 +2789,6 @@ fn line_bbox(line: &[GlyphRecord]) -> BBox {
         y1 = y1.max(glyph_y1);
     }
     (x0, y0, x1, y1)
-}
-
-/// Sort whole lines by one precomputed geometry key with the explicit
-/// source-order tie-breaker, scanning each line's glyphs once instead of on
-/// every comparison.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "one key and one entry per line of the page's glyphs, which text_glyph_count counts"
-)]
-fn sort_lines_by_bbox_key(
-    lines: Vec<Vec<GlyphRecord>>,
-    key: impl Fn(&[GlyphRecord]) -> f64,
-    descending: bool,
-) -> Result<Vec<Vec<GlyphRecord>>, Error> {
-    let mut decorated = Vec::new();
-    decorated.try_reserve_exact(lines.len()).map_err(|error| {
-        Error::Allocation(format!("failed to allocate line ordering keys: {error}"))
-    })?;
-    for line in lines {
-        let key_value = key(&line);
-        let source_order = line_source_order(&line);
-        decorated.push((key_value, source_order, line));
-    }
-    decorated.sort_unstable_by(|left, right| {
-        let ordering = if descending {
-            right.0.total_cmp(&left.0)
-        } else {
-            left.0.total_cmp(&right.0)
-        };
-        ordering.then(left.1.cmp(&right.1))
-    });
-    let mut lines = Vec::new();
-    lines.try_reserve_exact(decorated.len()).map_err(|error| {
-        Error::Allocation(format!("failed to allocate ordered text lines: {error}"))
-    })?;
-    lines.extend(decorated.into_iter().map(|(_, _, line)| line));
-    Ok(lines)
 }
 
 /// Earliest callback order in one non-empty physical line.
@@ -3333,16 +3627,19 @@ fn viewed_page_lines(
     if options.styles {
         layout::mark_styles(&mut glyphs, collected.rules);
     }
-    match page_lines(glyphs).and_then(|lines| view_lines(lines, options)) {
+    let mut charge = collected.charge;
+    match page_lines(glyphs, options.ruby, budget, &mut charge)
+        .and_then(|lines| view_lines(lines, options))
+    {
         Ok(lines) => Ok(ViewedLines {
             lines,
             fonts: collected.fonts,
             skipped: collected.skipped,
             page_box: collected.page_box,
-            charge: collected.charge,
+            charge,
         }),
         Err(error) => {
-            collected.charge.release(budget);
+            charge.release(budget);
             Err(error)
         }
     }
@@ -3541,15 +3838,444 @@ fn add_sources<'a>(
     Ok(())
 }
 
-/// Clusters glyphs into lines and orders them for reading, each line in
-/// logical order.
-fn page_lines(glyphs: Vec<GlyphRecord>) -> Result<Vec<Vec<GlyphRecord>>, Error> {
+/// Clusters glyphs into lines, resolves geometric Japanese ruby runs, and
+/// orders lines for reading, each line in logical order.
+fn page_lines(
+    glyphs: Vec<GlyphRecord>,
+    ruby: RubyMode,
+    budget: &Budget,
+    charge: &mut GlyphCharge,
+) -> Result<Vec<Vec<GlyphRecord>>, Error> {
     let physical_lines = cluster_lines(glyphs)?;
-    let mut lines = order_page_lines(physical_lines)?;
+    let ruby_resolved = apply_geometric_ruby(physical_lines, ruby, budget, charge)?;
+    let mut lines = order_page_lines(ruby_resolved)?;
     for line in &mut lines {
         logicalize_rtl_segments(line);
     }
     Ok(lines)
+}
+
+#[derive(Clone, Copy)]
+struct RubyLineSummary {
+    bbox: BBox,
+    max_size: f64,
+    is_vertical: bool,
+    is_pure_kana: bool,
+}
+
+#[derive(Clone, Copy)]
+struct RubyAttachment {
+    base_line: usize,
+    anchor_index: usize,
+    ruby_line: usize,
+    seg_start: usize,
+    seg_end: usize,
+    inline_pos: f64,
+}
+
+fn line_is_pure_kana(line: &[GlyphRecord]) -> bool {
+    let mut saw_kana = false;
+    for glyph in line {
+        for ch in glyph.text.chars() {
+            if !is_ruby_allowed_char(ch) {
+                return false;
+            }
+            if is_kana_char(ch) {
+                saw_kana = true;
+            }
+        }
+    }
+    saw_kana
+}
+
+fn slice_bbox_and_size(slice: &[GlyphRecord]) -> (BBox, f64) {
+    let mut x0 = f64::INFINITY;
+    let mut y0 = f64::INFINITY;
+    let mut x1 = f64::NEG_INFINITY;
+    let mut y1 = f64::NEG_INFINITY;
+    let mut max_size = 0.0_f64;
+    for glyph in slice {
+        let (gx0, gy0, gx1, gy1) = font_bbox(glyph);
+        x0 = x0.min(gx0);
+        y0 = y0.min(gy0);
+        x1 = x1.max(gx1);
+        y1 = y1.max(gy1);
+        max_size = max_size.max(glyph.size);
+    }
+    ((x0, y0, x1, y1), max_size)
+}
+
+/// Find the last glyph index in `base_line` annotated by a ruby span
+/// `[r_start, r_end]` along the base line's reading axis, verifying that the
+/// aligned base span contains at least one Kanji glyph and trimming slight
+/// ruby overhang past the last Kanji onto non-Kanji kana.
+fn find_ruby_anchor(
+    base_line: &[GlyphRecord],
+    r_start: f64,
+    r_end: f64,
+    is_vertical: bool,
+    base_size: f64,
+) -> Option<usize> {
+    let mut first_match: Option<usize> = None;
+    let mut last_match: Option<usize> = None;
+    let mut best_kanji: Option<(f64, usize)> = None;
+    let r_center = (r_start + r_end) * 0.5;
+    for (idx, glyph) in base_line.iter().enumerate() {
+        let (gx0, gy0, gx1, gy1) = font_bbox(glyph);
+        let (g0, g1) = if is_vertical { (gy0, gy1) } else { (gx0, gx1) };
+        let g_len = (g1 - g0).max(1.0);
+        let overlap = r_end.min(g1) - r_start.max(g0);
+        if overlap > 0.0 {
+            if first_match.is_none() {
+                first_match = Some(idx);
+            }
+            last_match = Some(idx);
+        }
+        if glyph_has_kanji(glyph) {
+            let g_center = (g0 + g1) * 0.5;
+            let dist = (g_center - r_center).abs();
+            if overlap > 0.0 || dist <= base_size * 0.75 {
+                let better = best_kanji.is_none_or(|(best_dist, _)| dist < best_dist);
+                if better {
+                    best_kanji = Some((dist, idx));
+                }
+            }
+        }
+        let _ = g_len;
+    }
+
+    let (start, mut end) = match (first_match, last_match) {
+        (Some(s), Some(e)) => (s, e),
+        _ => {
+            let (_, k) = best_kanji?;
+            return Some(k);
+        }
+    };
+    if !base_line[start..=end].iter().any(glyph_has_kanji) {
+        return None;
+    }
+    // Trim trailing non-kanji base glyphs that only catch slight ruby overhang.
+    while end > start && !glyph_has_kanji(&base_line[end]) {
+        let (gx0, gy0, gx1, gy1) = font_bbox(&base_line[end]);
+        let (g0, g1) = if is_vertical { (gy0, gy1) } else { (gx0, gx1) };
+        let g_len = (g1 - g0).max(1.0);
+        let overlap = (r_end.min(g1) - r_start.max(g0)).max(0.0);
+        if overlap < g_len * 0.65 {
+            end -= 1;
+        } else {
+            break;
+        }
+    }
+    Some(end)
+}
+
+fn synthetic_ruby_paren(
+    ch: char,
+    template: &GlyphRecord,
+    direction: (f64, f64),
+    wmode: u8,
+) -> GlyphRecord {
+    let text = GlyphText::Char(ch);
+    GlyphRecord {
+        bidi_flags: glyph_bidi_flags(&text),
+        text,
+        x: template.x,
+        y: template.y,
+        size: template.size,
+        advance: 0.0,
+        zero_advance: true,
+        direction,
+        writing_mode: wmode,
+        font_id: template.font_id,
+        extent_asc: template.extent_asc,
+        extent_desc: template.extent_desc,
+        color: template.color,
+        render_mode: template.render_mode,
+        is_clipped: template.is_clipped,
+        ink: None,
+        is_underlined: false,
+        is_struck: false,
+        joins_previous: false,
+        is_ruby: true,
+        source_order: template.source_order,
+        shown_until: template.shown_until.max(1),
+        run: template.run,
+        source: None,
+    }
+}
+
+/// Detect and resolve geometric Japanese ruby (furigana) runs relative to
+/// parallel base Kanji lines under `mode`, enforcing `budget`.
+fn apply_geometric_ruby(
+    mut lines: Vec<Vec<GlyphRecord>>,
+    mode: RubyMode,
+    budget: &Budget,
+    charge: &mut GlyphCharge,
+) -> Result<Vec<Vec<GlyphRecord>>, Error> {
+    if mode == RubyMode::Keep || lines.len() < 2 {
+        return Ok(lines);
+    }
+    let mut any_kanji = false;
+    let mut any_pure_kana = false;
+    for line in &lines {
+        if !any_kanji && line.iter().any(glyph_has_kanji) {
+            any_kanji = true;
+        }
+        if !any_pure_kana && line_is_pure_kana(line) {
+            any_pure_kana = true;
+        }
+        if any_kanji && any_pure_kana {
+            break;
+        }
+    }
+    if !any_kanji || !any_pure_kana {
+        return Ok(lines);
+    }
+
+    let mut summaries = BudgetVec::new(budget);
+    summaries.try_reserve_exact(lines.len())?;
+    let mut kanji_bases = BudgetVec::new(budget);
+    for (idx, line) in lines.iter().enumerate() {
+        budget.poll()?;
+        let (bbox, max_size) = slice_bbox_and_size(line);
+        let is_vertical = line.first().is_some_and(has_vertical_baseline);
+        let has_kanji = line.iter().any(glyph_has_kanji);
+        let is_pure_kana = line_is_pure_kana(line);
+        summaries.try_push(RubyLineSummary {
+            bbox,
+            max_size,
+            is_vertical,
+            is_pure_kana,
+        })?;
+        if has_kanji {
+            kanji_bases.try_push(idx)?;
+        }
+    }
+
+    let mut attachments: BudgetVec<'_, RubyAttachment> = BudgetVec::new(budget);
+    let mut consumed_masks: BudgetVec<'_, Option<BudgetVec<'_, bool>>> = BudgetVec::new(budget);
+    consumed_masks.try_reserve_exact(lines.len())?;
+    for _ in 0..lines.len() {
+        consumed_masks.try_push(None)?;
+    }
+
+    for r in 0..lines.len() {
+        budget.poll()?;
+        if !summaries[r].is_pure_kana || lines[r].is_empty() {
+            continue;
+        }
+        let r_vert = summaries[r].is_vertical;
+        // Split candidate ruby line into separate annotations whenever an
+        // inline whitespace gap separates furigana over distinct words.
+        let mut segments: BudgetVec<'_, (usize, usize)> = BudgetVec::new(budget);
+        let mut seg_start = 0usize;
+        for pos in 1..=lines[r].len() {
+            let split = if pos == lines[r].len() {
+                true
+            } else {
+                let prev = &lines[r][pos - 1];
+                let curr = &lines[r][pos];
+                let scale = prev.size.max(curr.size).max(1.0);
+                let gap = if r_vert {
+                    let (_, _, _, py1) = font_bbox(prev);
+                    let (_, cy0, _, _) = font_bbox(curr);
+                    cy0 - py1
+                } else {
+                    let (_, _, px1, _) = font_bbox(prev);
+                    let (cx0, _, _, _) = font_bbox(curr);
+                    cx0 - px1
+                };
+                gap > scale * RUBY_SEGMENT_GAP
+            };
+            if split {
+                segments.try_push((seg_start, pos))?;
+                seg_start = pos;
+            }
+        }
+
+        for &(s, e) in segments.iter() {
+            budget.poll()?;
+            let slice = &lines[r][s..e];
+            if !line_is_pure_kana(slice) {
+                continue;
+            }
+            let ((rx0, ry0, rx1, ry1), ruby_size) = slice_bbox_and_size(slice);
+            let ruby_cx = (rx0 + rx1) * 0.5;
+            let ruby_cy = (ry0 + ry1) * 0.5;
+
+            let mut best: Option<(f64, usize, usize)> = None;
+            for &b in kanji_bases.iter() {
+                if b == r {
+                    continue;
+                }
+                let base = summaries[b];
+                if ruby_size > base.max_size * RUBY_MAX_SIZE_RATIO {
+                    continue;
+                }
+                let base_size = base.max_size.max(1.0);
+                let (bx0, by0, bx1, by1) = base.bbox;
+                let base_cx = (bx0 + bx1) * 0.5;
+                let base_cy = (by0 + by1) * 0.5;
+
+                if !base.is_vertical {
+                    if r_vert && (e - s) > 1 {
+                        continue;
+                    }
+                    let gap = by0 - ry1;
+                    if !(ruby_cy < base_cy
+                        && gap >= -base_size * 0.45
+                        && gap <= base_size * 0.75
+                        && rx0 <= bx1 + base_size * 0.5
+                        && rx1 >= bx0 - base_size * 0.5)
+                    {
+                        continue;
+                    }
+                    if let Some(anchor) = find_ruby_anchor(&lines[b], rx0, rx1, false, base_size) {
+                        let dist = gap.abs();
+                        if best.is_none_or(|(best_dist, _, _)| dist < best_dist) {
+                            best = Some((dist, b, anchor));
+                        }
+                    }
+                } else {
+                    if !r_vert && (e - s) > 2 {
+                        continue;
+                    }
+                    let eff_base_right = bx1.max(bx0 + base_size);
+                    let gap = rx0 - eff_base_right;
+                    if !(ruby_cx > base_cx
+                        && gap >= -base_size * 0.65
+                        && gap <= base_size * 0.85
+                        && ry0 <= by1 + base_size * 0.5
+                        && ry1 >= by0 - base_size * 0.5)
+                    {
+                        continue;
+                    }
+                    if let Some(anchor) = find_ruby_anchor(&lines[b], ry0, ry1, true, base_size) {
+                        let dist = gap.abs();
+                        if best.is_none_or(|(best_dist, _, _)| dist < best_dist) {
+                            best = Some((dist, b, anchor));
+                        }
+                    }
+                }
+            }
+
+            if let Some((_, b, anchor_index)) = best {
+                if consumed_masks[r].is_none() {
+                    let mut mask = BudgetVec::new(budget);
+                    mask.try_reserve_exact(lines[r].len())?;
+                    mask.try_extend(std::iter::repeat_n(false, lines[r].len()))?;
+                    consumed_masks[r] = Some(mask);
+                }
+                if let Some(mask) = consumed_masks[r].as_mut() {
+                    for flag in &mut mask[s..e] {
+                        *flag = true;
+                    }
+                }
+                let inline_pos = if summaries[b].is_vertical { ry0 } else { rx0 };
+                attachments.try_push(RubyAttachment {
+                    base_line: b,
+                    anchor_index,
+                    ruby_line: r,
+                    seg_start: s,
+                    seg_end: e,
+                    inline_pos,
+                })?;
+            }
+        }
+    }
+
+    if attachments.is_empty() {
+        return Ok(lines);
+    }
+
+    if mode == RubyMode::Parenthesize {
+        attachments.sort_unstable_by(|a, b| {
+            a.base_line
+                .cmp(&b.base_line)
+                .then_with(|| a.anchor_index.cmp(&b.anchor_index))
+                .then_with(|| a.inline_pos.total_cmp(&b.inline_pos))
+                .then_with(|| a.ruby_line.cmp(&b.ruby_line))
+                .then_with(|| a.seg_start.cmp(&b.seg_start))
+        });
+        let mut att_idx = 0usize;
+        while att_idx < attachments.len() {
+            let b = attachments[att_idx].base_line;
+            let mut end_idx = att_idx + 1;
+            while end_idx < attachments.len() && attachments[end_idx].base_line == b {
+                end_idx += 1;
+            }
+            let base_dir = lines[b].first().map_or((1.0, 0.0), |g| g.direction);
+            let base_wmode = lines[b].first().map_or(0, |g| g.writing_mode);
+            let base_vertical = summaries[b].is_vertical;
+
+            let original = std::mem::take(&mut lines[b]);
+            let mut rebuilt = Vec::new();
+            let mut cursor = att_idx;
+            for (glyph_idx, glyph) in original.into_iter().enumerate() {
+                try_push_text(&mut rebuilt, glyph, "ruby-annotated base line")?;
+                while cursor < end_idx && attachments[cursor].anchor_index == glyph_idx {
+                    let att = attachments[cursor];
+                    cursor += 1;
+                    budget.charge(LimitCode::TextGlyphCount, 2)?;
+                    charge.glyphs += 2;
+                    budget.charge(LimitCode::TextSize, 2)?;
+                    charge.text_size += 2;
+                    let mut ruby_glyphs = Vec::new();
+                    for slot in &mut lines[att.ruby_line][att.seg_start..att.seg_end] {
+                        let mut moved = std::mem::replace(slot, GlyphRecord::placeholder());
+                        if !moved.text.chars().all(char::is_whitespace) {
+                            moved.is_ruby = true;
+                            moved.direction = base_dir;
+                            moved.writing_mode = base_wmode;
+                            try_push_text(&mut ruby_glyphs, moved, "attached ruby glyphs")?;
+                        }
+                    }
+                    if ruby_glyphs.is_empty() {
+                        continue;
+                    }
+                    if base_vertical && ruby_glyphs.len() > 1 {
+                        ruby_glyphs.sort_unstable_by(|left, right| {
+                            left.y
+                                .total_cmp(&right.y)
+                                .then_with(|| left.source_order.cmp(&right.source_order))
+                        });
+                    }
+                    let open = synthetic_ruby_paren('(', &ruby_glyphs[0], base_dir, base_wmode);
+                    let close = synthetic_ruby_paren(
+                        ')',
+                        ruby_glyphs.last().expect("ruby_glyphs is non-empty"),
+                        base_dir,
+                        base_wmode,
+                    );
+                    try_push_text(&mut rebuilt, open, "ruby open paren")?;
+                    for ruby_glyph in ruby_glyphs {
+                        try_push_text(&mut rebuilt, ruby_glyph, "ruby-annotated base line")?;
+                    }
+                    try_push_text(&mut rebuilt, close, "ruby close paren")?;
+                }
+            }
+            lines[b] = rebuilt;
+            att_idx = end_idx;
+        }
+    }
+
+    let mut output = Vec::new();
+    for (idx, line) in lines.into_iter().enumerate() {
+        if let Some(mask) = &consumed_masks[idx] {
+            let mut remaining = Vec::new();
+            for (pos, glyph) in line.into_iter().enumerate() {
+                if !mask[pos] && glyph.shown_until != 0 {
+                    try_push_text(&mut remaining, glyph, "unmatched ruby-line glyphs")?;
+                }
+            }
+            if !remaining.is_empty() {
+                try_push_text(&mut output, remaining, "ruby-resolved text lines")?;
+            }
+        } else if !line.is_empty() {
+            try_push_text(&mut output, line, "ruby-resolved text lines")?;
+        }
+    }
+    Ok(output)
 }
 
 /// Restores each widely separated segment of `line` on its own: a gap of
@@ -3656,6 +4382,7 @@ fn view_glyph(glyph: &GlyphRecord, view: &TextOptions) -> Result<GlyphRecord, Er
         is_underlined: glyph.is_underlined,
         is_struck: glyph.is_struck,
         joins_previous: glyph.joins_previous,
+        is_ruby: glyph.is_ruby,
         source_order: glyph.source_order,
         shown_until: glyph.shown_until,
         run: glyph.run,
@@ -3663,18 +4390,44 @@ fn view_glyph(glyph: &GlyphRecord, view: &TextOptions) -> Result<GlyphRecord, Er
     })
 }
 
-/// Whether `line` starts a new block after `previous`: vertical lines stand
-/// alone, and so does a line whose baseline is more than `BLOCK_GAP` sizes
-/// below, or more than `LINE_TOLERANCE` sizes above, the one before.
+/// Whether `line` starts a new block after `previous`: orientation changes
+/// always start a new block; horizontal lines break on vertical gaps above
+/// `BLOCK_GAP`; vertical CJK lines (`writing_mode == 1`) group into one block
+/// across normal right-to-left column spacing and break on tier changes,
+/// heading size jumps, paragraph indents, or wide column gaps.
 fn starts_block(previous: &[GlyphRecord], line: &[GlyphRecord]) -> bool {
     let size = |line: &[GlyphRecord]| line.iter().map(|glyph| glyph.size).fold(0.0, f64::max);
     let vertical = has_vertical_baseline(&line[0]);
-    let scale = size(previous).max(size(line)).max(1.0);
+    let prev_vertical = has_vertical_baseline(&previous[0]);
+    if vertical != prev_vertical {
+        return true;
+    }
+    let prev_size = size(previous);
+    let curr_size = size(line);
+    let scale = prev_size.max(curr_size).max(1.0);
+    if vertical {
+        if previous[0].writing_mode != 1
+            || line[0].writing_mode != 1
+            || previous[0].direction.1 <= 0.5
+            || line[0].direction.1 <= 0.5
+        {
+            return true;
+        }
+        let (_, prev_y0, _, prev_y1) = line_bbox(previous);
+        let (_, curr_y0, _, curr_y1) = line_bbox(line);
+        let dx = previous[0].x - line[0].x;
+        let min_size = prev_size.min(curr_size).max(1.0);
+        let size_jump = scale / min_size > 1.15;
+        let overlaps_y = prev_y0 < curr_y1 && curr_y0 < prev_y1;
+        let paragraph_indent = curr_y0 - prev_y0 > scale * 0.6;
+        return !overlaps_y
+            || size_jump
+            || paragraph_indent
+            || dx > scale * VERTICAL_BLOCK_GAP
+            || dx < -scale * LINE_TOLERANCE;
+    }
     let (prev, baseline) = (previous[0].y, line[0].y);
-    vertical
-        || has_vertical_baseline(&previous[0]) != vertical
-        || baseline - prev > scale * BLOCK_GAP
-        || prev - baseline > scale * LINE_TOLERANCE
+    baseline - prev > scale * BLOCK_GAP || prev - baseline > scale * LINE_TOLERANCE
 }
 
 /// Whether a glyph's text is one hyphen that can end a hyphenated line:
@@ -3719,11 +4472,11 @@ fn glyph_progress(glyph: &GlyphRecord) -> f64 {
 /// the baseline. Compare their complete inline intervals so inferred word
 /// spaces remain symmetric without changing geometry-based line discovery.
 fn needs_gap(previous: Option<&GlyphRecord>, glyph: &GlyphRecord) -> bool {
-    if glyph.writing_mode == 1 {
+    if glyph.writing_mode == 1 || glyph.is_ruby {
         return false;
     }
     previous.is_some_and(|previous| {
-        if previous.text.ends_with(' ') || glyph.text.starts_with(' ') {
+        if previous.is_ruby || previous.text.ends_with(' ') || glyph.text.starts_with(' ') {
             return false;
         }
         if glyph_uses_no_space_script(previous) && glyph_uses_no_space_script(glyph) {
@@ -4131,6 +4884,7 @@ mod tests {
             is_underlined: false,
             is_struck: false,
             joins_previous: false,
+            is_ruby: false,
             source_order: 0,
             shown_until: 1,
             run: 0,
@@ -4196,5 +4950,139 @@ mod tests {
             .collect();
         assert_eq!(first, "S1880");
         assert_eq!(second, "DE");
+    }
+
+    #[test]
+    fn horizontal_ruby_omit_parenthesize_and_keep() {
+        let make_glyphs = || {
+            let mut gs = Vec::new();
+            // Base line: 東京から大阪へ (12pt, y = 100.0)
+            for (i, ch) in "東京から大阪へ".chars().enumerate() {
+                let mut g = glyph(ch, 20.0 + i as f64 * 12.0, 100.0, 12.0);
+                g.advance = 12.0;
+                g.source_order = i;
+                g.shown_until = i + 1;
+                gs.push(g);
+            }
+            // Ruby above 東京: とうきょう (6pt, y = 89.0, slight overhang)
+            for (i, ch) in "とうきょう".chars().enumerate() {
+                let mut g = glyph(ch, 17.0 + i as f64 * 6.0, 89.0, 6.0);
+                g.advance = 6.0;
+                g.source_order = 20 + i;
+                g.shown_until = 21 + i;
+                gs.push(g);
+            }
+            // Ruby above 大阪: おおさか (6pt, y = 89.0)
+            for (i, ch) in "おおさか".chars().enumerate() {
+                let mut g = glyph(ch, 68.0 + i as f64 * 6.0, 89.0, 6.0);
+                g.advance = 6.0;
+                g.source_order = 40 + i;
+                g.shown_until = 41 + i;
+                gs.push(g);
+            }
+            gs
+        };
+        let budget = Budget::default();
+        let mut charge = GlyphCharge {
+            glyphs: 0,
+            text_size: 0,
+        };
+        let omitted = page_lines(make_glyphs(), RubyMode::Omit, &budget, &mut charge).unwrap();
+        let mut out = String::new();
+        assemble_text_into(&omitted, None, &mut out).unwrap();
+        assert_eq!(out, "東京から大阪へ\n");
+
+        let mut charge = GlyphCharge {
+            glyphs: 0,
+            text_size: 0,
+        };
+        let parens =
+            page_lines(make_glyphs(), RubyMode::Parenthesize, &budget, &mut charge).unwrap();
+        let mut out_p = String::new();
+        assemble_text_into(&parens, None, &mut out_p).unwrap();
+        assert_eq!(out_p, "東京(とうきょう)から大阪(おおさか)へ\n");
+        assert_eq!(charge.glyphs, 4);
+        assert_eq!(charge.text_size, 4);
+        charge.release(&budget);
+
+        let mut charge = GlyphCharge {
+            glyphs: 0,
+            text_size: 0,
+        };
+        let kept = page_lines(make_glyphs(), RubyMode::Keep, &budget, &mut charge).unwrap();
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn mixed_dan_gumi_and_horizontal_bands_order_top_to_bottom_and_rtl() {
+        let mut gs = Vec::new();
+        let mut seq = 0usize;
+        fn push_h(
+            gs: &mut Vec<GlyphRecord>,
+            seq: &mut usize,
+            text: &str,
+            x0: f64,
+            y: f64,
+            run: u32,
+        ) {
+            for (i, ch) in text.chars().enumerate() {
+                let mut g = glyph(ch, x0 + i as f64 * 10.0, y, 12.0);
+                g.advance = 10.0;
+                g.run = run;
+                g.source_order = *seq;
+                g.shown_until = *seq + 1;
+                *seq += 1;
+                gs.push(g);
+            }
+        }
+        fn push_v(
+            gs: &mut Vec<GlyphRecord>,
+            seq: &mut usize,
+            text: &str,
+            x: f64,
+            y0: f64,
+            run: u32,
+        ) {
+            for (i, ch) in text.chars().enumerate() {
+                let mut g = glyph(ch, x, y0 + i as f64 * 12.0, 12.0);
+                g.advance = 6.0;
+                g.run = run;
+                g.source_order = *seq;
+                g.shown_until = *seq + 1;
+                *seq += 1;
+                gs.push(g);
+            }
+        }
+        push_h(&mut gs, &mut seq, "Title", 40.0, 30.0, 1);
+        // Upper vertical tier (y = 80..120), right-to-left: 上右 then 上左
+        push_v(&mut gs, &mut seq, "上段左", 160.0, 80.0, 2);
+        push_v(&mut gs, &mut seq, "上段右", 180.0, 80.0, 3);
+        // Middle horizontal subheading (y = 180)
+        push_h(&mut gs, &mut seq, "Middle", 40.0, 180.0, 4);
+        // Lower vertical tier (y = 240..280), right-to-left: 下段右 then 下段左
+        push_v(&mut gs, &mut seq, "下段左", 160.0, 240.0, 5);
+        push_v(&mut gs, &mut seq, "下段右", 180.0, 240.0, 6);
+        push_h(&mut gs, &mut seq, "Footer", 40.0, 340.0, 7);
+
+        let budget = Budget::default();
+        let mut charge = GlyphCharge {
+            glyphs: 0,
+            text_size: 0,
+        };
+        let ordered = page_lines(gs, RubyMode::Omit, &budget, &mut charge).unwrap();
+        let mut out = String::new();
+        assemble_text_into(&ordered, None, &mut out).unwrap();
+        assert_eq!(
+            out.lines().collect::<Vec<_>>(),
+            vec![
+                "Title",
+                "上段右",
+                "上段左",
+                "Middle",
+                "下段右",
+                "下段左",
+                "Footer"
+            ]
+        );
     }
 }

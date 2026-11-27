@@ -383,6 +383,7 @@ fn span_glyph_slices(line: &[GlyphRecord]) -> impl Iterator<Item = &[GlyphRecord
                 || b.is_clipped != a.is_clipped
                 || b.is_underlined != a.is_underlined
                 || b.is_struck != a.is_struck
+                || b.is_ruby != a.is_ruby
                 || baseline_shift(a, b) > a.size.max(b.size) * SPAN_BASELINE_TOLERANCE
             {
                 break;

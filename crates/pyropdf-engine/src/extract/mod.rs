@@ -48,9 +48,9 @@ pub use model::{
 };
 pub use reads::read_page;
 pub use text::{
-    BlockTuple, CharTuple, LineTuple, PageLayout, QuadTuple, SearchHits, SpanStyleTuple, SpanTuple,
-    TableCell, TableDiagnosticsTuple, TableOptions, TableTuple, TextOptions, TextPeak, Unmapped,
-    WordTuple, page_layout, page_search, page_selection, page_tables, page_text,
+    BlockTuple, CharTuple, LineTuple, PageLayout, QuadTuple, RubyMode, SearchHits, SpanStyleTuple,
+    SpanTuple, TableCell, TableDiagnosticsTuple, TableOptions, TableTuple, TextOptions, TextPeak,
+    Unmapped, WordTuple, page_layout, page_search, page_selection, page_tables, page_text,
 };
 
 /// Why reading a page's content stopped.
