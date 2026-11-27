@@ -107,7 +107,7 @@ mod _core {
         decode_png, encode_jpeg_samples, image_samples, image_stored, page_image, thumbnail_image,
     };
     #[pymodule_export]
-    use super::items::{page_content, page_paths};
+    use super::items::{cluster_path_boxes, page_content, page_paths};
     #[pymodule_export]
     use super::objects::{
         attachment_reader, decode_text_string, object_add, object_add_stream, object_delete,

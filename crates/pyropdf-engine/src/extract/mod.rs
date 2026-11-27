@@ -20,6 +20,7 @@ use crate::bridge::Bridged;
 use crate::render::Fallback;
 
 pub mod buffers;
+mod clusters;
 mod font_guard;
 mod glyphs;
 mod images;
@@ -32,6 +33,9 @@ mod stretch;
 mod tests;
 mod text;
 
+pub use clusters::{
+    ClusterInput, ClusterOptions, PathClusterTuple, cluster_path_inputs, cluster_path_table,
+};
 pub use glyphs::used_glyphs;
 pub use images::{DecodedImage, page_image, page_thumbnail};
 pub use model::{

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import dataclasses
 import pickle
+import time
 import warnings
 from pathlib import Path
 
@@ -27,19 +28,24 @@ from test_content import build_raw_pdf
 import pyropdf
 from pyropdf import (
     BlendMode,
+    CancellationToken,
     ClosePath,
     Color,
+    Content,
     CurveTo,
+    DocumentLimits,
     FillRule,
     FontRef,
     GraphicsContext,
     ImageMask,
+    LimitError,
     LineCap,
     LineJoin,
     LineTo,
     MarkedContent,
     Matrix,
     MoveTo,
+    PathCluster,
     Point,
     Rect,
     ShadingPattern,
@@ -850,3 +856,247 @@ def test_font_ref_reports_object_identity_across_font_types() -> None:
         ("Type0", True),
         ("Type3", False),
     } <= seen_subtypes
+
+
+def test_path_clustering_merges_diagrams_icons_charts_and_respects_tolerances() -> None:
+    # Build a 200x100 page with:
+    # 0-2: L-shaped chart axes (vertical + horizontal) plus an interior bar absorbed transitively
+    # 3-4: two-stroke icon separated horizontally by 2 pt (merges at tol=3, splits at tol=1)
+    # 5:   hairline stroked line (0 w) below the icon (kept)
+    content_stream = (
+        "2 w 10 20 m 10 80 l S\n"  # vertical axis (display x=9..11, y=19..81)
+        "2 w 10 20 m 70 20 l S\n"  # horizontal axis (display x=9..71, y=79..81)
+        "0.2 0.4 0.8 rg 30 35 12 25 re f\n"  # interior bar (display x=30..42, y=40..65)
+        "1 w 120 60 15 15 re S\n"  # icon stroke A (display x=119.5..135.5, y=24.5..40.5)
+        "1 w 138 60 15 15 re S\n"  # icon stroke B (display x=137.5..153.5, y=24.5..40.5; 2pt gap)
+        "0 w 120 42 m 153 42 l S"  # hairline rule at y=58 (display x=120..153, y=58..58)
+    )
+    page = page_with(content_stream)
+    paths = page.paths()
+    content = page.content()
+
+    clusters = paths.clusters()
+    assert clusters == content.path_clusters()
+    assert len(clusters) == 3
+
+    # Cluster 0: chart (axes + interior bar) -> display x=9..71, y=19..81
+    # Cluster 1: icon (two strokes merged across 2pt gap) -> display x=119.5..153.5, y=24.5..40.5
+    # Cluster 2: hairline rule -> display x=120..153, y=58..58
+    chart, icon, hairline = clusters
+    assert chart.bbox == pytest.approx(Rect(9, 19, 71, 81))
+    assert chart.path_indices == (0, 1, 2)
+    assert chart.count == 3
+
+    assert icon.bbox == pytest.approx(Rect(119.5, 24.5, 153.5, 40.5))
+    assert icon.path_indices == (3, 4)
+    assert icon.count == 2
+
+    assert hairline.bbox == pytest.approx(Rect(120, 58, 153, 58))
+    assert hairline.path_indices == (5,)
+    assert hairline.count == 1
+
+    # Tighter tolerance splits the two icon strokes apart.
+    tight = paths.clusters(x_tolerance=1.0, y_tolerance=1.0)
+    assert len(tight) == 4
+    assert [c.path_indices for c in tight] == [(0, 1, 2), (3,), (4,), (5,)]
+
+    # Slicing Paths returns path_indices relative to the slice.
+    sliced = paths[3:5]
+    sliced_clusters = sliced.clusters(x_tolerance=3.0, y_tolerance=3.0)
+    assert len(sliced_clusters) == 1
+    assert sliced_clusters[0].path_indices == (0, 1)
+    assert sliced_clusters[0].bbox == pytest.approx(icon.bbox)
+
+    # Record invariants: frozen dataclass with slots, kw-only, hashable, picklable, public module.
+    assert PathCluster.__module__ == "pyropdf"
+    assert dataclasses.is_dataclass(chart)
+    assert "__slots__" in vars(PathCluster)
+    assert hash(chart) == hash(PathCluster(bbox=chart.bbox, path_indices=chart.path_indices))
+    assert pickle.loads(pickle.dumps(chart)) == chart  # noqa: S301 - a value pickled here.
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        chart.bbox = Rect(0, 0, 1, 1)  # ty: ignore[invalid-assignment]
+
+    # Manually constructed and unpickled Content run the same Rust clustering path,
+    # and degenerate zero-area fill-only paths are omitted.
+    degenerate_fill = pyropdf.Path(
+        segments=(MoveTo(Point(170, 50)), LineTo(Point(190, 50))),
+        fill=Color(0, 0, 0),
+        fill_rule=FillRule.NONZERO,
+        stroke=None,
+        bbox=Rect(170, 50, 190, 50),
+        context=GraphicsContext(clips=(), groups=(), marked_content=()),
+        blend_mode=BlendMode.NORMAL,
+        soft_mask=None,
+    )
+    constructed = Content(items=(*content.items, degenerate_fill))
+    assert constructed.path_clusters() == clusters
+    unpickled = pickle.loads(pickle.dumps(content))  # noqa: S301 - a value pickled here.
+    assert unpickled.path_clusters() == clusters
+
+
+def test_path_clustering_rotated_and_cropped_pages_and_background_exclusion() -> None:
+    # Full-page background fill plus two separate figures; verify across rotation and CropBox.
+    stream = (
+        "1 1 1 rg 0 0 200 100 re f\n"  # full-page background rectangle
+        "1 0 0 rg 20 20 30 20 re f\n"  # figure A (PDF x=20..50, y=20..40)
+        "0 0 1 rg 140 60 30 20 re f"  # figure B (PDF x=140..170, y=60..80)
+    )
+    for rotate in (0, 90, 180, 270):
+        page = page_with(stream, rotate=rotate)
+        clusters = page.paths().clusters()
+        assert len(clusters) == 2
+        assert clusters == page.content().path_clusters()
+        for cluster in clusters:
+            assert cluster.count == 1
+            assert 0 <= cluster.bbox.x0 < cluster.bbox.x1 <= page.rect.width
+            assert 0 <= cluster.bbox.y0 < cluster.bbox.y1 <= page.rect.height
+        # Disabling background exclusion collapses everything into the full-page background.
+        with_bg = page.paths().clusters(exclude_background=False)
+        assert len(with_bg) == 1
+        assert with_bg[0].path_indices == (0, 1, 2)
+        assert with_bg[0].bbox == pytest.approx(page.rect)
+
+    # Cropped page: background covering the full visible CropBox is excluded in display space.
+    cropped_pdf = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>",
+            3: "<< /Type /Page /Parent 2 0 R /CropBox [20 10 180 90] /Rotate 90 /Contents 4 0 R >>",
+            4: stream_object(
+                "1 1 1 rg 0 0 200 100 re f\n"  # bleeds past CropBox; covers 100% of visible page
+                "1 0 0 rg 30 20 20 15 re f\n"
+                "0 0 1 rg 130 55 20 15 re f"
+            ),
+        }
+    )
+    cropped_page = pyropdf.open(cropped_pdf).pages[0]
+    cropped_clusters = cropped_page.paths().clusters()
+    assert len(cropped_clusters) == 2
+    for cluster in cropped_clusters:
+        assert 0 <= cluster.bbox.x0 < cluster.bbox.x1 <= cropped_page.rect.width
+        assert 0 <= cluster.bbox.y0 < cluster.bbox.y1 <= cropped_page.rect.height
+    assert len(cropped_page.paths().clusters(exclude_background=False)) == 1
+
+    # A full-page diagonal line is NOT a background rectangle and stays clustered.
+    diag_page = page_with("2 w 0 0 m 200 100 l S")
+    diag_clusters = diag_page.paths().clusters(exclude_background=True)
+    assert len(diag_clusters) == 1
+    assert diag_clusters[0].path_indices == (0,)
+
+
+def test_path_clustering_validation_limits_and_near_linear_scaling() -> None:
+    # Build a page with 4,000 paths arranged in 40 disjoint clusters of 100 overlapping paths each.
+    ops: list[str] = []
+    for cluster_idx in range(40):
+        bx = (cluster_idx % 8) * 100
+        by = (cluster_idx // 8) * 100
+        for j in range(100):
+            dx = (j % 10) * 4
+            dy = (j // 10) * 4
+            ops.append(f"{bx + dx} {by + dy} 5 5 re f")
+    pdf = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 1000 600] >>",
+            3: "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+            4: stream_object("\n".join(ops)),
+        }
+    )
+
+    doc = pyropdf.open(pdf)
+    paths = doc.pages[0].paths()
+    assert len(paths) == 4000
+
+    t0 = time.perf_counter()
+    clusters = paths.clusters()
+    elapsed = time.perf_counter() - t0
+    assert len(clusters) == 40
+    assert all(cluster.count == 100 for cluster in clusters)
+    # Near-linear Rust sweep should finish far below any quadratic runtime.
+    assert elapsed < 5.0
+
+    # max_clusters refuses with typed LimitError (content_element_count); None lifts the cap.
+    with pytest.raises(LimitError) as exc_info:
+        paths.clusters(max_clusters=10)
+    assert exc_info.value.code == "content_element_count"
+    assert len(paths.clusters(max_clusters=None)) == 40
+
+    # DocumentLimits.max_memory_size refuses clustering working buffers with LimitError (memory_size).
+    # Distinct Y coordinates per path ensure the segment tree exceeds a tight memory cap while
+    # Page.paths() itself stays well under the cap.
+    distinct_y_ops = "\n".join(f"{(i % 20) * 20} {i * 0.25:.2f} 4 0.2 re f" for i in range(4000))
+    distinct_y_pdf = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 500 1200] >>",
+            3: "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+            4: stream_object(distinct_y_ops),
+        }
+    )
+    low_mem_doc = pyropdf.open(distinct_y_pdf, limits=DocumentLimits(max_memory_size=320 * 1024))
+    low_mem_paths = low_mem_doc.pages[0].paths()
+    assert len(low_mem_paths) == 4000
+    with pytest.raises(LimitError) as mem_err:
+        low_mem_paths.clusters()
+    assert mem_err.value.code == "memory_size"
+
+    # DocumentLimits cancellation token refuses with LimitError (cancelled).
+    token = CancellationToken()
+    cancel_doc = pyropdf.open(distinct_y_pdf, limits=DocumentLimits(cancellation=token))
+    cancel_paths = cancel_doc.pages[0].paths()
+    token.cancel()
+    with pytest.raises(LimitError) as cancel_err:
+        cancel_paths.clusters()
+    assert cancel_err.value.code == "cancelled"
+
+    # Option validation errors.
+    for bad_tol in (-1.0, float("nan"), float("inf"), True, "3"):
+        with pytest.raises(ValueError, match="x_tolerance"):
+            paths.clusters(x_tolerance=bad_tol)  # ty: ignore[invalid-argument-type]
+        with pytest.raises(ValueError, match="y_tolerance"):
+            paths.clusters(y_tolerance=bad_tol)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="exclude_background"):
+        paths.clusters(exclude_background=1)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="max_clusters"):
+        paths.clusters(max_clusters=0)
+    with pytest.raises(TypeError, match="max_clusters"):
+        paths.clusters(max_clusters=True)
+
+
+def test_path_clustering_real_world_forms_tables_and_background() -> None:
+    # Real-world forms and tables produce deterministic, bounded clusters in display space.
+    for rel_path in (
+        "f1040.pdf",
+        "forms/mhlw-deposit-report.pdf",
+        "nics-background-checks-2015-11.pdf",
+        "bill-hr815.pdf",
+    ):
+        with pyropdf.open(REAL_WORLD / rel_path) as doc:
+            page = doc.pages[0]
+            paths = page.paths()
+            assert len(paths) > 0
+            clusters = paths.clusters()
+            assert clusters == page.content().path_clusters()
+            assert len(clusters) > 0
+            assert len(clusters) < len(paths)
+            # Every cluster's path_indices are strictly ascending valid indices and cover its bbox.
+            seen: set[int] = set()
+            for cluster in clusters:
+                assert cluster.count == len(cluster.path_indices) > 0
+                assert list(cluster.path_indices) == sorted(cluster.path_indices)
+                assert all(0 <= idx < len(paths) for idx in cluster.path_indices)
+                assert seen.isdisjoint(cluster.path_indices)
+                seen.update(cluster.path_indices)
+                assert cluster.bbox.x0 <= cluster.bbox.x1
+                assert cluster.bbox.y0 <= cluster.bbox.y1
+
+    # Full-page background rectangle in profile-sources/4-fail.pdf is excluded by default.
+    bg_pdf = Path(__file__).parent / "assets" / "profile-sources" / "4-fail.pdf"
+    with pyropdf.open(bg_pdf) as doc:
+        paths = doc.pages[0].paths()
+        assert len(paths) == 1
+        assert paths.clusters(exclude_background=True) == []
+        with_bg = paths.clusters(exclude_background=False)
+        assert len(with_bg) == 1
+        assert with_bg[0].path_indices == (0,)
+        assert with_bg[0].bbox == pytest.approx(doc.pages[0].rect)

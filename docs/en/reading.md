@@ -220,6 +220,12 @@ thousand lines reads in about the time that rendering the page takes.
 `column()` returns a column as a read-only `memoryview` that NumPy reads
 without a copy, and pyarrow, polars, and DuckDB import the whole table
 through the Arrow PyCapsule interface. Rows are `Path` records on demand.
+`paths.clusters()` (and `page.content().path_clusters()`) groups nearby
+stroked and filled paths in display space into immutable `PathCluster`
+records (`bbox`, `path_indices`, and `count`) within configurable
+`x_tolerance` and `y_tolerance`, excluding full-page background rectangles by
+default (`exclude_background=True`) and bounding the result count with
+`max_clusters` while honoring `DocumentLimits`.
 
 ```python
 import pyropdf
@@ -230,6 +236,8 @@ with pyropdf.open("input.pdf") as doc:
     # numpy.asarray(paths.column("stroke_red")) reads the same buffer.
     red = paths.column("stroke_red")
     print([path.bbox for path, value in zip(paths, red) if value == 1])
+    for cluster in paths.clusters(x_tolerance=3.0, y_tolerance=3.0):
+        print(cluster.bbox, cluster.count)
 ```
 
 `page.chars()` (and `page.layout(chars=True).chars`) exposes characters in the

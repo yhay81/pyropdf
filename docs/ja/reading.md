@@ -197,7 +197,11 @@ with pyropdf.open("input.pdf") as doc:
 別の列に並び、パスやセグメントごとの Python オブジェクトは作らないので、数十万本の線の図面も
 ページを描画するのとほぼ同じ時間で読めます。`column()` は NumPy がコピーなしで読める読み取り専用の
 `memoryview` を返し、pyarrow・polars・DuckDB は Arrow PyCapsule interface で表全体を取り込めます。
-行は必要に応じて `Path` レコードになります。
+行は必要に応じて `Path` レコードになります。`paths.clusters()`（および
+`page.content().path_clusters()`）は近接するベクタパスを表示座標でまとめ、不変の
+`PathCluster` レコード（`bbox`・`path_indices`・`count`）を返します。許容間隔は
+`x_tolerance`・`y_tolerance` で指定でき、既定ではページ全面の背景矩形を除外し
+（`exclude_background=True`）、`max_clusters` と `DocumentLimits` に従って上限を守ります。
 
 ```python
 import pyropdf
@@ -208,6 +212,8 @@ with pyropdf.open("input.pdf") as doc:
     # numpy.asarray(paths.column("stroke_red")) は同じバッファを読む
     red = paths.column("stroke_red")
     print([path.bbox for path, value in zip(paths, red) if value == 1])
+    for cluster in paths.clusters(x_tolerance=3.0, y_tolerance=3.0):
+        print(cluster.bbox, cluster.count)
 ```
 
 `page.chars()`（および `page.layout(chars=True).chars`）も文字を同じ列指向の

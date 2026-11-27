@@ -49,6 +49,7 @@ pub fn page_content(
     max_elements: Option<u64>,
 ) -> PyResult<Py<PyAny>> {
     crate::errors::boundary(|| {
+        let limits = document.document().limits().clone();
         let content = with_content(
             py,
             document,
@@ -57,7 +58,7 @@ pub fn page_content(
             (annotations, clip, max_elements),
             |content| Ok(content.clone()),
         )?;
-        let columns = PathColumns::new(&content);
+        let columns = PathColumns::new(&content, limits);
         let mut items = Vec::new();
         items
             .try_reserve_exact(content.items.len())
@@ -102,14 +103,66 @@ pub fn page_paths(
     max_elements: Option<u64>,
 ) -> PyResult<PathColumns> {
     crate::errors::boundary(|| {
+        let limits = document.limits().clone();
         with_content(
             py,
             PageSource::Live(document),
             (number, generation),
             (false, true, false),
             (annotations, clip, max_elements),
-            |content| Ok(PathColumns::new(content)),
+            |content| Ok(PathColumns::new(content, limits)),
         )
+    })?
+}
+
+/// Clusters externally supplied path geometry tuples (for constructed or
+/// unpickled `Content` objects without a backing `PathColumns`) with the GIL
+/// released under default operational limits.
+#[pyfunction]
+#[expect(
+    clippy::type_complexity,
+    reason = "compact geometry tuple crossing into Rust for constructed Content"
+)]
+pub fn cluster_path_boxes(
+    py: Python<'_>,
+    boxes: Vec<(f64, f64, f64, f64, bool, bool, f64, bool)>,
+    page_size: Option<(f64, f64)>,
+    x_tolerance: f64,
+    y_tolerance: f64,
+    exclude_background: bool,
+    max_clusters: Option<usize>,
+) -> PyResult<Vec<extract::PathClusterTuple>> {
+    crate::errors::boundary(|| {
+        let options = extract::ClusterOptions {
+            x_tolerance,
+            y_tolerance,
+            exclude_background,
+            max_clusters,
+        };
+        py.detach(|| {
+            let budget = pyropdf_store::budget::Budget::default();
+            let mut inputs = pyropdf_store::budget::BudgetVec::new(&budget);
+            inputs
+                .try_reserve_exact(boxes.len())
+                .map_err(|refusal| limit_error(&refusal))?;
+            for (x0, y0, x1, y1, has_fill, has_stroke, stroke_width, is_rect) in boxes {
+                inputs
+                    .try_push(extract::ClusterInput {
+                        bbox: (x0, y0, x1, y1),
+                        has_fill,
+                        has_stroke,
+                        stroke_width,
+                        is_rect,
+                    })
+                    .map_err(|refusal| limit_error(&refusal))?;
+            }
+            extract::cluster_path_inputs(inputs.as_slice(), page_size, options, &budget).map_err(
+                |error| match error {
+                    Error::Limit(refusal) => limit_error(&refusal),
+                    other => PdfError::new_err(other.to_string()),
+                },
+            )
+        })
     })?
 }
 
