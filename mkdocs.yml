@@ -66,6 +66,7 @@ nav:
       - Versions and saving: versions.md
       - Limits and errors: limits.md
       - Recipes: recipes.md
+      - Migrating from PyMuPDF: migrating.md
   - API reference:
       - api/index.md
       - Core:
@@ -178,6 +179,7 @@ plugins:
           - versions.md
           - limits.md
           - recipes.md
+          - migrating.md
         API reference:
           - api/*.md
         Project:
