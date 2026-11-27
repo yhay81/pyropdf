@@ -220,6 +220,137 @@ def test_the_budget_counts_actual_text() -> None:
     assert refused.value.code == "text_size"
 
 
+def test_actual_text_false_extracts_underlying_glyphs_across_views() -> None:
+    stream = "BT /F1 20 Tf 72 700 Td /Span << /ActualText (Replacement) >> BDC (Original) Tj EMC ET"
+    page = pyropdf.open(build_text_pdf(stream)).pages[0]
+
+    # Default and explicit actual_text=True substitute /ActualText.
+    assert page.text() == "Replacement\n"
+    assert page.text(actual_text=True) == "Replacement\n"
+    assert [word.text for word in page.words(actual_text=True)] == ["Replacement"]
+    assert [span.text for span in page.layout(actual_text=True).blocks[0].lines[0].spans] == ["Replacement"]
+    assert [char.text for char in page.chars(actual_text=True)] == ["Replacement"]
+    assert len(page.search("Replacement", actual_text=True)) == 1
+    assert page.search("Original", actual_text=True) == []
+
+    # actual_text=False exposes the underlying glyph Unicode across all views.
+    assert page.text(actual_text=False) == "Original\n"
+    assert [word.text for word in page.words(actual_text=False)] == ["Original"]
+    assert [span.text for span in page.layout(actual_text=False).blocks[0].lines[0].spans] == ["Original"]
+    assert [char.text for char in page.chars(actual_text=False)] == list("Original")
+    assert len(page.search("Original", actual_text=False)) == 1
+    assert page.search("Replacement", actual_text=False) == []
+
+
+def test_actual_text_false_exposes_glyphs_under_empty_nested_and_annotation_actual_text() -> None:
+    empty = "BT /F1 20 Tf 72 700 Td (a) Tj /Span << /ActualText () >> BDC (x) Tj EMC (b) Tj ET"
+    empty_page = pyropdf.open(build_text_pdf(empty)).pages[0]
+    assert empty_page.text() == "a b\n"
+    assert empty_page.text(actual_text=False) == "axb\n"
+    assert [word.text for word in empty_page.words(actual_text=False)] == ["axb"]
+    assert [char.text for char in empty_page.chars(actual_text=False)] == ["a", "x", "b"]
+    assert len(empty_page.search("axb", actual_text=False)) == 1
+
+    nested = (
+        "/Span << /ActualText (Outer) >> BDC /Span << /ActualText (Inner) >> BDC "
+        "BT /F1 20 Tf 72 700 Td (Original) Tj ET EMC EMC"
+    )
+    nested_page = pyropdf.open(build_text_pdf(nested)).pages[0]
+    assert nested_page.text() == "Outer\n"
+    assert nested_page.text(actual_text=False) == "Original\n"
+
+    unmapped = "/Span << /ActualText (A) >> BDC BT /F1 20 Tf 72 700 Td <01> Tj ET EMC"
+    unmapped_page = pyropdf.open(build_text_pdf(unmapped, to_unicode={0x41: "A"})).pages[0]
+    assert unmapped_page.text() == "A\n"
+    with pytest.warns(pyropdf.PyropdfWarning, match="no Unicode mapping"):
+        assert unmapped_page.text(actual_text=False) == ""
+    assert unmapped_page.text(actual_text=False, unmapped="replacement") == "\ufffd\n"
+
+    # Annotation appearance with /ActualText.
+    ap_stream = "BT /F1 12 Tf 4 20 Td /Span << /ActualText (Replacement) >> BDC (Original) Tj EMC ET"
+    annot_pdf = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Annots [4 0 R] >>",
+            4: "<< /Type /Annot /Subtype /Stamp /Rect [10 10 150 50] /P 3 0 R /AP << /N 5 0 R >> >>",
+            5: (
+                f"<< /Type /XObject /Subtype /Form /BBox [0 0 140 40] "
+                f"/Resources << /Font << /F1 6 0 R >> >> /Length {len(ap_stream)} >>\n"
+                f"stream\n{ap_stream}\nendstream"
+            ),
+            6: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        }
+    )
+    annotation = pyropdf.open(annot_pdf).pages[0].annotations[0]
+    assert annotation.text() == "Replacement\n"
+    assert annotation.text(actual_text=False) == "Original\n"
+
+
+def test_actual_text_validation_and_memoization_isolation() -> None:
+    stream = "BT /F1 20 Tf 72 700 Td /Span << /ActualText (Replacement) >> BDC (Original) Tj EMC ET"
+    document = pyropdf.open(build_text_pdf(stream))
+    page = document.pages[0]
+
+    for bad in (1, 0, None, "yes"):
+        with pytest.raises(TypeError, match="actual_text must be True or False"):
+            page.text(actual_text=bad)  # ty: ignore[invalid-argument-type]
+        with pytest.raises(TypeError, match="actual_text must be True or False"):
+            page.words(actual_text=bad)  # ty: ignore[invalid-argument-type]
+        with pytest.raises(TypeError, match="actual_text must be True or False"):
+            page.layout(actual_text=bad)  # ty: ignore[invalid-argument-type]
+        with pytest.raises(TypeError, match="actual_text must be True or False"):
+            page.chars(actual_text=bad)  # ty: ignore[invalid-argument-type]
+        with pytest.raises(TypeError, match="actual_text must be True or False"):
+            page.search("Original", actual_text=bad)  # ty: ignore[invalid-argument-type]
+
+    ap_stream = "BT /F1 12 Tf 4 20 Td (Note) Tj ET"
+    annot_doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Annots [4 0 R] >>",
+                4: "<< /Type /Annot /Subtype /Stamp /Rect [10 10 150 50] /P 3 0 R /AP << /N 5 0 R >> >>",
+                5: (
+                    f"<< /Type /XObject /Subtype /Form /BBox [0 0 140 40] "
+                    f"/Resources << /Font << /F1 6 0 R >> >> /Length {len(ap_stream)} >>\n"
+                    f"stream\n{ap_stream}\nendstream"
+                ),
+                6: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            }
+        )
+    )
+    with pytest.raises(TypeError, match="actual_text must be True or False"):
+        annot_doc.pages[0].annotations[0].text(actual_text=1)  # ty: ignore[invalid-argument-type]
+
+    # Memoized calls with actual_text=True and actual_text=False never alias.
+    hits_before, computed_before = pyropdf._core.page_result_counts(document._core())  # noqa: SLF001
+    assert page.text(actual_text=True) == "Replacement\n"
+    assert page.text(actual_text=False) == "Original\n"
+    assert page.text(actual_text=True) == "Replacement\n"
+    assert page.text(actual_text=False) == "Original\n"
+    hits_text, computed_text = pyropdf._core.page_result_counts(document._core())  # noqa: SLF001
+    assert computed_text == computed_before + 2
+    assert hits_text == hits_before + 2
+
+    assert [w.text for w in page.words(actual_text=True)] == ["Replacement"]
+    assert [w.text for w in page.words(actual_text=False)] == ["Original"]
+    assert [w.text for w in page.words(actual_text=True)] == ["Replacement"]
+    assert [w.text for w in page.words(actual_text=False)] == ["Original"]
+    hits_layout, computed_layout = pyropdf._core.page_result_counts(document._core())  # noqa: SLF001
+    assert computed_layout == computed_text + 2
+    assert hits_layout == hits_text + 2
+
+    assert [c.text for c in page.chars(actual_text=True)] == ["Replacement"]
+    assert [c.text for c in page.chars(actual_text=False)] == list("Original")
+    assert [c.text for c in page.chars(actual_text=True)] == ["Replacement"]
+    assert [c.text for c in page.chars(actual_text=False)] == list("Original")
+    hits_chars, computed_chars = pyropdf._core.page_result_counts(document._core())  # noqa: SLF001
+    assert computed_chars == computed_layout + 2
+    assert hits_chars == hits_layout + 2
+
+
 @pytest.mark.spec("text-extraction", "read")
 def test_unmapped_glyphs_are_skipped_or_stand_for_a_placeholder() -> None:
     page = _unmapped_document().pages[0]

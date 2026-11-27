@@ -1621,6 +1621,7 @@ class Annotation(_AppearanceOwner):
         whitespace: bool = True,
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
+        actual_text: bool = True,
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
         max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
     ) -> str:
@@ -1639,6 +1640,7 @@ class Annotation(_AppearanceOwner):
             whitespace=whitespace,
             dehyphenate=dehyphenate,
             unmapped=unmapped,
+            actual_text=actual_text,
             max_glyphs=max_glyphs,
             max_size=max_size,
         )

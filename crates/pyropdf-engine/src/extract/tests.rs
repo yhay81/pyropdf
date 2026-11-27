@@ -596,6 +596,7 @@ const EXACT: TextOptions = TextOptions {
     dehyphenate: false,
     exact_bboxes: true,
     styles: false,
+    ignore_actual_text: false,
 };
 
 /// Returns faces that draw Japanese in `source`.
@@ -725,6 +726,16 @@ fn actual_text_spans_the_ink_of_its_glyphs_on_the_face() {
     let span = &layout.blocks[0].1[0].1[0];
     assert_eq!(span.1.0, "word");
     assert_eq!(span.0, whole);
+
+    let ignore = TextOptions {
+        ignore_actual_text: true,
+        ..EXACT
+    };
+    let raw = page_layout(&marked, &face, 0, &ignore, true, None, &Budget::default()).unwrap();
+    let raw_span = &raw.blocks[0].1[0].1[0];
+    assert_eq!(raw_span.1.0, "日本語");
+    assert_eq!(raw_span.1.1.len(), 3);
+    assert_eq!(raw_span.0, whole);
 }
 
 #[test]

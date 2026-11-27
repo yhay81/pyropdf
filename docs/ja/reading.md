@@ -23,6 +23,9 @@ with pyropdf.open("input.pdf") as doc:
 ```
 
 `clip` は読み取りを表示座標の矩形に絞ります。表示座標の原点はページの左上です。
+既定では marked-content の `/ActualText` が内包するグリフのテキストを置き換えますが、
+`page.text()`・`page.words()`・`page.layout()`・`page.chars()`・`page.search()`・
+`annotation.text()` に `actual_text=False` を渡すと、元のグリフの Unicode 値を直接取り出せます。
 
 ## レイアウト
 

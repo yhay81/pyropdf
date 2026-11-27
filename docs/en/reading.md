@@ -25,7 +25,11 @@ with pyropdf.open("input.pdf") as doc:
 ```
 
 `clip` limits a reader to a rectangle in display coordinates, whose origin
-is the page's top-left corner.
+is the page's top-left corner. By default, marked-content `/ActualText`
+replaces the text of its enclosed glyphs; pass `actual_text=False` to
+`page.text()`, `page.words()`, `page.layout()`, `page.chars()`,
+`page.search()`, or `annotation.text()` to inspect the underlying glyph
+Unicode values directly.
 
 ## Layout
 

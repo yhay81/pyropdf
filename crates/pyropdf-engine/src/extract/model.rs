@@ -1387,6 +1387,10 @@ pub trait ContentSink {
     }
     /// Receive the start of a marked-content sequence and its `/ActualText`.
     fn begin_marked_content(&mut self, _actual_text: Option<&[u8]>) {}
+    /// Whether [`ContentSink::begin_marked_content`] should receive `/ActualText`.
+    fn wants_actual_text(&self) -> bool {
+        true
+    }
     /// Receive the end of a marked-content sequence.
     fn end_marked_content(&mut self) {}
 }
@@ -2517,17 +2521,24 @@ impl<'a, S: ContentSink> Device<'a> for ContentCollector<'a, '_, S> {
 
     fn begin_marked_content(&mut self, tag: &[u8], properties: Option<&Dict<'_>>) {
         self.pending = None;
-        let mcid = properties.and_then(|properties| properties.get::<i32>(MCID));
         if self.kinds.any() {
+            let mcid = properties.and_then(|properties| properties.get::<i32>(MCID));
             self.run(|this| this.begin_mark(tag, mcid));
         }
-        let actual_text =
-            properties.and_then(|properties| properties.get::<PdfString>(ACTUAL_TEXT));
-        if actual_text.is_some() && self.actual_text_level.is_none() {
+        let wants_actual = self.sink.wants_actual_text();
+        let actual_text = if self.kinds.any() || wants_actual {
+            properties.and_then(|properties| properties.get::<PdfString>(ACTUAL_TEXT))
+        } else {
+            None
+        };
+        if self.kinds.any() && actual_text.is_some() && self.actual_text_level.is_none() {
             self.actual_text_level = Some(self.mark_stack.len());
         }
-        self.sink
-            .begin_marked_content(actual_text.as_ref().map(PdfString::as_bytes));
+        self.sink.begin_marked_content(
+            wants_actual
+                .then(|| actual_text.as_ref().map(PdfString::as_bytes))
+                .flatten(),
+        );
     }
 
     fn end_marked_content(&mut self) {

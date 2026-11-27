@@ -1036,6 +1036,7 @@ class Page:
         whitespace: bool = True,
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
+        actual_text: bool = True,
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
         max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
     ) -> str:
@@ -1046,7 +1047,8 @@ class Page:
         between words are inferred from glyph positions, and lines end with a
         newline. Annotation appearances count as page content. The
         ``/ActualText`` of a marked-content sequence replaces the text of the
-        glyphs inside it.
+        glyphs inside it unless ``actual_text=False``, which extracts the
+        underlying glyph Unicode directly.
 
         ``clip`` keeps the glyphs whose box's center lies inside a
         display-space rectangle, in the page's reading order, which gives the
@@ -1080,6 +1082,7 @@ class Page:
             whitespace=whitespace,
             dehyphenate=dehyphenate,
             unmapped=unmapped,
+            actual_text=actual_text,
             max_glyphs=max_glyphs,
             max_size=max_size,
         )
@@ -1106,6 +1109,7 @@ class Page:
         whitespace: bool = True,
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
+        actual_text: bool = True,
         exact_bboxes: bool = False,
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
         max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
@@ -1131,6 +1135,7 @@ class Page:
             whitespace=whitespace,
             dehyphenate=dehyphenate,
             unmapped=unmapped,
+            actual_text=actual_text,
             max_glyphs=max_glyphs,
             max_size=max_size,
             exact_bboxes=exact_bboxes,
@@ -1148,6 +1153,7 @@ class Page:
         whitespace: bool = True,
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
+        actual_text: bool = True,
         exact_bboxes: bool = False,
         styles: bool = False,
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
@@ -1183,6 +1189,7 @@ class Page:
             whitespace=whitespace,
             dehyphenate=dehyphenate,
             unmapped=unmapped,
+            actual_text=actual_text,
             max_glyphs=max_glyphs,
             max_size=max_size,
             exact_bboxes=exact_bboxes,
@@ -1199,6 +1206,7 @@ class Page:
         whitespace: bool = True,
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
+        actual_text: bool = True,
         exact_bboxes: bool = False,
         styles: bool = False,
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
@@ -1219,6 +1227,7 @@ class Page:
             whitespace=whitespace,
             dehyphenate=dehyphenate,
             unmapped=unmapped,
+            actual_text=actual_text,
             max_glyphs=max_glyphs,
             max_size=max_size,
             exact_bboxes=exact_bboxes,
@@ -1270,6 +1279,7 @@ class Page:
         whitespace: bool = ...,
         dehyphenate: bool = ...,
         unmapped: Unmapped = ...,
+        actual_text: bool = ...,
         exact_bboxes: bool = ...,
         max_glyphs: int | None = ...,
         max_size: int | None = ...,
@@ -1288,6 +1298,7 @@ class Page:
         whitespace: bool = ...,
         dehyphenate: bool = ...,
         unmapped: Unmapped = ...,
+        actual_text: bool = ...,
         exact_bboxes: bool = ...,
         max_glyphs: int | None = ...,
         max_size: int | None = ...,
@@ -1305,6 +1316,7 @@ class Page:
         whitespace: bool = True,
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
+        actual_text: bool = True,
         exact_bboxes: bool = False,
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
         max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
@@ -1352,6 +1364,7 @@ class Page:
             whitespace=whitespace,
             dehyphenate=dehyphenate,
             unmapped=unmapped,
+            actual_text=actual_text,
             max_glyphs=max_glyphs,
             max_size=max_size,
             exact_bboxes=exact_bboxes,
