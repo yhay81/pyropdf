@@ -226,6 +226,31 @@ pub(super) fn decode(
     lookup: &FilterLookup<'_>,
     budget: &Budget,
 ) -> Result<Decoded> {
+    decode_inner(source, number, security, lookup, budget, false)
+}
+
+/// Decodes object stream `number` leniently during a repair scan: when `/N`
+/// overstates the number of valid `(object, offset)` pairs before `/First`,
+/// keeps every complete pair that precedes `/First` rather than discarding
+/// the entire stream.
+pub(super) fn decode_repair(
+    source: &Source<'_>,
+    number: u32,
+    security: Option<&Handler>,
+    lookup: &FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<Decoded> {
+    decode_inner(source, number, security, lookup, budget, true)
+}
+
+fn decode_inner(
+    source: &Source<'_>,
+    number: u32,
+    security: Option<&Handler>,
+    lookup: &FilterLookup<'_>,
+    budget: &Budget,
+    lenient: bool,
+) -> Result<Decoded> {
     let reference = Reference::new(number, 0);
     let bytes = source.uncompressed(reference).ok_or_else(|| {
         Error::malformed("no entry locates it as an uncompressed object of generation 0")
@@ -267,17 +292,37 @@ pub(super) fn decode(
         resolved_selectors,
         budget,
     )?;
+    let table_end = if lenient {
+        usize::try_from(first).unwrap_or(usize::MAX).min(data.len())
+    } else {
+        data.len()
+    };
+    let table = &data[..table_end];
     let mut members = BudgetVec::new(budget);
     let mut ticker = Ticker::default();
     let mut pos = 0;
     for _ in 0..count {
         ticker.tick(budget)?;
-        let (listed, end) = lex::unsigned(&data, lex::skip_space(&data, pos))
-            .ok_or_else(|| Error::malformed("its member table ends early"))?;
-        let (offset, end) = lex::unsigned(&data, lex::skip_space(&data, end))
-            .ok_or_else(|| Error::malformed("its member table ends early"))?;
-        let listed = u32::try_from(listed)
-            .map_err(|_| Error::malformed("its member table lists an object number beyond u32"))?;
+        let Some((listed, end)) = lex::unsigned(table, lex::skip_space(table, pos)) else {
+            if lenient {
+                break;
+            }
+            return Err(Error::malformed("its member table ends early"));
+        };
+        let Some((offset, end)) = lex::unsigned(table, lex::skip_space(table, end)) else {
+            if lenient {
+                break;
+            }
+            return Err(Error::malformed("its member table ends early"));
+        };
+        let Ok(listed) = u32::try_from(listed) else {
+            if lenient {
+                break;
+            }
+            return Err(Error::malformed(
+                "its member table lists an object number beyond u32",
+            ));
+        };
         // A member that begins past the data reads as no object.
         let start = first
             .checked_add(offset)
@@ -285,6 +330,9 @@ pub(super) fn decode(
             .unwrap_or(usize::MAX);
         members.try_push((listed, start))?;
         pos = end;
+    }
+    if lenient && members.is_empty() && count > 0 {
+        return Err(Error::malformed("its member table ends early"));
     }
     Ok(Decoded {
         data,

@@ -9,23 +9,34 @@
 //!   objects. Other data is scanned, as hayro-syntax scans it, so that a
 //!   stream whose length is wrong hides no object after it.
 //! - hayro-syntax parses each object within the bytes before the next
-//!   header, so the scan takes time linear in the size of the input.
+//!   header, so the scan takes time linear in the size of the input. A
+//!   dictionary followed by `stream` is valid only when its stream parses
+//!   within those bytes, so a truncated stream at the end of a cut file is
+//!   not treated as a live object.
 //! - Of the headers of one object number, the last whose value parses
-//!   wins, since an update appends its objects; when none parses, the last.
-//! - Each object stream that wins its number decodes, unless a trailer
-//!   candidate names a security handler, and adds its members. The object
-//!   later in the bytes wins a number, a member counting where its stream
-//!   begins, and within one stream the later index wins. hayro-syntax 0.8
-//!   prefers any uncompressed object to a member, which keeps the old copy
-//!   of an object that an update moved into an object stream.
+//!   wins, since an update appends its objects; an object number whose
+//!   headers never parse is omitted from the rebuilt entries (while its
+//!   header position still bounds the preceding object).
+//! - Each object stream that wins its number decodes leniently, unless a
+//!   trailer candidate names a security handler and no handler is supplied,
+//!   and adds its members. The object later in the bytes wins a number, a
+//!   member counting where its stream begins, and within one stream the
+//!   later index wins. hayro-syntax 0.8 prefers any uncompressed object to
+//!   a member, which keeps the old copy of an object that an update moved
+//!   into an object stream.
 //! - The trailer is the last candidate in the order of the bytes whose
-//!   `/Root` names a dictionary with `/Pages`: a dictionary after a
-//!   `trailer` keyword, or the dictionary of a cross-reference stream.
-//!   Without one, the trailer names the last object whose dictionary has
-//!   `/Type /Catalog`; without that, it is the last candidate, and without
-//!   any, it is empty. The index still locates the objects that the scan
-//!   found, such as the pages of a file that lost its end.
+//!   `/Root` names a dictionary with a live `/Pages` target: a dictionary
+//!   after a `trailer` keyword, or the dictionary of a cross-reference
+//!   stream. Without one, the scan picks the last `/Type /Catalog` (or an
+//!   untyped dictionary with `/Pages` pointing to a live `/Type /Pages`),
+//!   preserving `/Encrypt`, `/ID`, and `/Info` from trailer candidates.
+//!   When no catalog reaches a live page tree and intact `/Type /Pages` or
+//!   `/Type /Page` dictionaries exist (and the file is not locked), the
+//!   scan synthesizes the missing Catalog (and `/Pages` root when needed)
+//!   into appended bytes charged to the budget. Otherwise it falls back to
+//!   any catalog or trailer candidate, or an empty trailer.
 
+use std::fmt::Write as _;
 use std::iter;
 use std::ops::Range;
 
@@ -33,7 +44,7 @@ use hayro_syntax::object::{self as syntax, FromBytes, MaybeRef};
 
 use super::lex::{self, Header, Tokens};
 use super::objstm::{self, Decoded};
-use super::{Entry, Location, Source, Ticker, find, guard, sorted};
+use super::{Entry, Location, Source, Ticker, count, find, guard, sorted};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::security::Handler;
 use crate::value::{Bytes, Dict, Name, Reference, Value};
@@ -41,14 +52,16 @@ use crate::{Error, Result};
 
 /// The index that a scan rebuilt.
 pub(super) struct Rebuilt {
+    /// Replacement backing bytes when synthetic Catalog/Pages objects were
+    /// appended; `None` when the original bytes are reused unchanged.
+    pub(super) bytes: Option<Bytes>,
     /// The in-use entries, ascending by object number.
     pub(super) entries: Vec<(u32, Entry)>,
     /// Where the objects that the scan found begin, ascending.
     pub(super) bounds: Vec<usize>,
     pub(super) trailer: Dict,
     /// Where the trailer's dictionary begins, or `None` when the scan made
-    /// the trailer: one that names the catalog that it found, or an empty
-    /// one.
+    /// or modified the trailer.
     pub(super) trailer_at: Option<usize>,
     /// The object streams that the scan decoded, with their object numbers.
     pub(super) streams: Vec<(u32, Decoded)>,
@@ -61,15 +74,21 @@ struct Found {
     generation: u16,
     /// Where its header begins.
     pos: usize,
-    /// Whether hayro-syntax parses a value after the header, within the
-    /// bytes before the next header.
+    /// Whether hayro-syntax parses a complete value after the header, within
+    /// the bytes before the next header.
     valid: bool,
+    /// Whether the object is a stream rather than a bare dictionary.
+    is_stream: bool,
     kind: Kind,
+    /// Whether its dictionary has a `/Type` key.
+    has_type: bool,
     /// Where its dictionary begins and ends, if its value is a dictionary
     /// or a stream.
     dict: Option<(usize, usize)>,
     /// Whether its dictionary has `/Pages`, as a catalog's must.
     pages: bool,
+    /// Whether its dictionary has `/MediaBox`.
+    has_media_box: bool,
 }
 
 /// What an object's dictionary says that it is.
@@ -77,6 +96,8 @@ struct Found {
 enum Kind {
     Other,
     Catalog,
+    Pages,
+    Page,
     ObjectStream,
     XRefStream,
 }
@@ -84,7 +105,7 @@ enum Kind {
 /// Rebuilds the index of `bytes` by scanning them for object headers.
 /// An encrypted document's object streams decode only with `security`.
 ///
-/// Refuses with a malformed input error bytes that hold no object header,
+/// Refuses with a malformed input error bytes that hold no parseable object,
 /// and with the budget's limits.
 pub(super) fn rebuild(
     bytes: &Bytes,
@@ -104,8 +125,13 @@ pub(super) fn rebuild(
     let mut bounds = BudgetVec::new(budget);
     bounds.try_reserve_exact(found.len())?;
     bounds.try_extend(found.iter().map(|object| object.pos))?;
-    let bounds = sorted(bounds);
+    let mut bounds = sorted(bounds);
     let winners = winners(found, budget)?;
+    if winners.is_empty() {
+        return Err(Error::malformed(
+            "no cross-reference data reads, and the bytes hold no valid object",
+        ));
+    }
     let mut uncompressed = BudgetVec::new(budget);
     uncompressed.try_reserve_exact(winners.len())?;
     uncompressed.try_extend(winners.iter().map(|object| {
@@ -125,12 +151,13 @@ pub(super) fn rebuild(
         .iter()
         .any(|(_, trailer)| trailer.get("Encrypt").is_some());
     // Without a key, an encrypted document's object streams are ciphertext.
-    let streams = if encrypted && security.is_none() {
+    let locked = encrypted && security.is_none();
+    let streams = if locked {
         BudgetVec::new(budget)
     } else {
         decode_streams(&source, &winners, security, budget)?
     };
-    let entries = entries(&uncompressed, &streams, budget)?;
+    let mut entries = entries(&uncompressed, &streams, budget)?;
     let mut by_number = BudgetVec::new(budget);
     by_number.try_reserve_exact(streams.len())?;
     by_number.try_extend(
@@ -141,14 +168,33 @@ pub(super) fn rebuild(
     )?;
     by_number.sort_unstable();
     let choice = Choice {
+        bytes,
         entries: &entries,
         winners: &winners,
         streams: &streams,
         by_number: &by_number,
+        locked,
         budget,
     };
-    let (trailer, trailer_at) = choice.trailer(candidates)?;
+    let (trailer, trailer_at, synthetic) = choice.trailer(candidates)?;
     drop(by_number);
+    let mut out_bytes = None;
+    if let Some(synth) = synthetic {
+        let appended = append_synthetic(bytes, &entries, &synth, budget)?;
+        // Merge the new (strictly larger) object numbers and offsets.
+        let mut next_entries = BudgetVec::counting(budget, LimitCode::ObjectCount);
+        next_entries.try_reserve_exact(entries.len() + appended.entries.len())?;
+        next_entries.try_extend_from_slice(&entries)?;
+        next_entries.try_extend_from_slice(&appended.entries)?;
+        entries = next_entries.into_vec();
+
+        let mut next_bounds = BudgetVec::new(budget);
+        next_bounds.try_reserve_exact(bounds.len() + appended.bounds.len())?;
+        next_bounds.try_extend_from_slice(&bounds)?;
+        next_bounds.try_extend_from_slice(&appended.bounds)?;
+        bounds = sorted(next_bounds);
+        out_bytes = Some(appended.bytes);
+    }
     let mut decoded = BudgetVec::new(budget);
     decoded.try_reserve_exact(streams.len())?;
     decoded.try_extend(
@@ -158,6 +204,7 @@ pub(super) fn rebuild(
             .map(|(_, number, stream)| (number, stream)),
     )?;
     Ok(Rebuilt {
+        bytes: out_bytes,
         entries,
         bounds,
         trailer,
@@ -220,22 +267,41 @@ fn objects<'b>(
             generation: header.generation,
             pos,
             valid: false,
+            is_stream: false,
             kind: Kind::Other,
+            has_type: false,
             dict: None,
             pages: false,
+            has_media_box: false,
         };
         if value.starts_with(b"<<") {
             if let Some(dict) = guard(|| syntax::Dict::from_bytes(value)) {
                 let dict_end = header.body + dict.data().len();
-                object.valid = true;
-                object.dict = Some((header.body, dict_end));
-                object.kind = kind(&dict);
-                object.pages = dict.contains_key(b"Pages");
-                if let Some(data_end) = stream_end(bytes, dict_end, &dict) {
-                    skipped.try_push(dict_end..data_end)?;
-                    while headers.get(next).is_some_and(|&(next, _)| next < data_end) {
-                        next += 1;
+                let is_stream =
+                    lex::keyword(bytes, lex::skip_space(bytes, dict_end), b"stream").is_some();
+                object.is_stream = is_stream;
+                if is_stream {
+                    if let Some(data_end) = stream_end(bytes, dict_end, &dict) {
+                        object.valid = true;
+                        skipped.try_push(dict_end..data_end)?;
+                        while headers.get(next).is_some_and(|&(next, _)| next < data_end) {
+                            next += 1;
+                        }
+                    } else {
+                        // A stream without a matching direct `/Length` is valid
+                        // only when hayro-syntax parses a complete stream
+                        // ending at `endstream` before the next object header.
+                        object.valid = super::stream(value).is_some();
                     }
+                } else {
+                    object.valid = true;
+                }
+                if object.valid {
+                    object.dict = Some((header.body, dict_end));
+                    object.kind = kind(&dict);
+                    object.has_type = dict.contains_key(b"Type");
+                    object.pages = dict.contains_key(b"Pages");
+                    object.has_media_box = dict.contains_key(b"MediaBox");
                 }
             }
         } else {
@@ -250,6 +316,8 @@ fn objects<'b>(
 fn kind(dict: &syntax::Dict<'_>) -> Kind {
     match dict.get::<syntax::Name<'_>>(b"Type").as_deref() {
         Some(b"Catalog") => Kind::Catalog,
+        Some(b"Pages") => Kind::Pages,
+        Some(b"Page") => Kind::Page,
         Some(b"ObjStm") => Kind::ObjectStream,
         Some(b"XRef") => Kind::XRefStream,
         _ => Kind::Other,
@@ -302,7 +370,7 @@ fn candidates<'b>(
     }
     for object in found
         .iter()
-        .filter(|object| object.kind == Kind::XRefStream)
+        .filter(|object| object.valid && object.kind == Kind::XRefStream)
     {
         if let Some((start, end)) = object.dict
             && let Some(dict) = dictionary(bytes, start..end, budget)?
@@ -327,8 +395,9 @@ fn dictionary(bytes: &Bytes, range: Range<usize>, budget: &Budget) -> Result<Opt
     }
 }
 
-/// Returns, ascending by object number, the object that wins each number
-/// among `found`: the last whose value parses, or the last when none does.
+/// Returns, ascending by object number, the last parseable object for each
+/// number among `found`. Object numbers whose headers never parse are
+/// omitted.
 fn winners<'b>(
     mut found: BudgetVec<'b, Found>,
     budget: &'b Budget,
@@ -336,9 +405,10 @@ fn winners<'b>(
     found.sort_unstable_by_key(|object| (object.number, object.valid, object.pos));
     let mut winners = BudgetVec::new(budget);
     for (index, object) in found.iter().enumerate() {
-        if found
-            .get(index + 1)
-            .is_none_or(|next| next.number != object.number)
+        if object.valid
+            && found
+                .get(index + 1)
+                .is_none_or(|next| next.number != object.number)
         {
             winners.try_push(*object)?;
         }
@@ -373,7 +443,7 @@ fn decode_streams<'b>(
                 })
                 .transpose()
         };
-        match objstm::decode(source, number, security, &lookup, budget) {
+        match objstm::decode_repair(source, number, security, &lookup, budget) {
             Ok(decoded) => streams.try_push((pos, number, decoded))?,
             Err(error) if error.limit().is_some() => return Err(error),
             Err(_) => {}
@@ -439,8 +509,161 @@ fn entries(
     Ok(entries.into_vec())
 }
 
+/// Synthetic catalog / page-tree objects to append when no intact catalog
+/// reaches a live page tree.
+struct SyntheticPlan {
+    /// Synthetic `/Type /Pages` object (if needed): `(number, kids, total_count, add_mediabox)`.
+    pages: Option<(u32, Vec<Reference>, usize, bool)>,
+    /// Synthetic `/Type /Catalog` object: `(number, pages_ref)`.
+    catalog: (u32, Reference),
+}
+
+/// Extended bytes and new entries produced by [`append_synthetic`].
+struct Appended {
+    bytes: Bytes,
+    entries: Vec<(u32, Entry)>,
+    bounds: Vec<usize>,
+}
+
+/// Appends the objects described by `plan` to a budgeted copy of `bytes`.
+fn append_synthetic(
+    bytes: &Bytes,
+    entries: &[(u32, Entry)],
+    plan: &SyntheticPlan,
+    budget: &Budget,
+) -> Result<Appended> {
+    let mut tail = BudgetVec::new(budget);
+    tail.try_push(b'\n')?;
+    let mut added_entries = BudgetVec::new(budget);
+    let mut added_bounds = BudgetVec::new(budget);
+    let base_len = bytes.len();
+
+    if let Some((pages_num, kids, total_count, add_mediabox)) = &plan.pages {
+        let offset = base_len
+            .checked_add(tail.len())
+            .ok_or_else(|| Error::malformed("synthetic repair object offset overflow"))?;
+        let mut buf = BudgetVec::new(budget);
+        write_header(&mut buf, *pages_num)?;
+        buf.try_extend_from_slice(b"<< /Type /Pages /Kids [")?;
+        let mut ticker = Ticker::default();
+        for (i, kid) in kids.iter().enumerate() {
+            ticker.tick(budget)?;
+            if i > 0 {
+                buf.try_push(b' ')?;
+            }
+            write_ref(&mut buf, *kid)?;
+        }
+        buf.try_extend_from_slice(b"] /Count ")?;
+        write_usize(&mut buf, *total_count)?;
+        if *add_mediabox {
+            buf.try_extend_from_slice(b" /MediaBox [0 0 612 792]")?;
+        }
+        buf.try_extend_from_slice(b" >>\nendobj\n")?;
+        tail.try_extend_from_slice(&buf)?;
+        added_entries.try_push((
+            *pages_num,
+            Entry {
+                generation: 0,
+                location: Location::Offset(offset),
+            },
+        ))?;
+        added_bounds.try_push(offset)?;
+    }
+
+    let (cat_num, pages_ref) = plan.catalog;
+    let cat_offset = base_len
+        .checked_add(tail.len())
+        .ok_or_else(|| Error::malformed("synthetic repair object offset overflow"))?;
+    let mut cat_buf = BudgetVec::new(budget);
+    write_header(&mut cat_buf, cat_num)?;
+    cat_buf.try_extend_from_slice(b"<< /Type /Catalog /Pages ")?;
+    write_ref(&mut cat_buf, pages_ref)?;
+    cat_buf.try_extend_from_slice(b" >>\nendobj\n")?;
+    tail.try_extend_from_slice(&cat_buf)?;
+    added_entries.try_push((
+        cat_num,
+        Entry {
+            generation: 0,
+            location: Location::Offset(cat_offset),
+        },
+    ))?;
+    added_bounds.try_push(cat_offset)?;
+
+    let total_len = base_len
+        .checked_add(tail.len())
+        .ok_or_else(|| Error::malformed("repaired file size overflow"))?;
+    budget.check(LimitCode::FileSize, count(total_len))?;
+    budget.check(
+        LimitCode::ObjectCount,
+        count(entries.len() + added_entries.len()),
+    )?;
+    let mut combined = BudgetVec::new(budget);
+    combined.try_reserve_exact(total_len)?;
+    combined.try_extend_from_slice(bytes)?;
+    combined.try_extend_from_slice(&tail)?;
+    Ok(Appended {
+        bytes: Bytes::from(combined.into_vec()),
+        entries: added_entries.into_vec(),
+        bounds: added_bounds.into_vec(),
+    })
+}
+
+fn write_header(buf: &mut BudgetVec<'_, u8>, number: u32) -> Result<()> {
+    let mut tmp = FixedBuf::new();
+    let _ = writeln!(tmp, "{number} 0 obj");
+    buf.try_extend_from_slice(tmp.as_bytes())?;
+    Ok(())
+}
+
+fn write_ref(buf: &mut BudgetVec<'_, u8>, reference: Reference) -> Result<()> {
+    let mut tmp = FixedBuf::new();
+    let _ = write!(tmp, "{} {} R", reference.number(), reference.generation());
+    buf.try_extend_from_slice(tmp.as_bytes())?;
+    Ok(())
+}
+
+fn write_usize(buf: &mut BudgetVec<'_, u8>, value: usize) -> Result<()> {
+    let mut tmp = FixedBuf::new();
+    let _ = write!(tmp, "{value}");
+    buf.try_extend_from_slice(tmp.as_bytes())?;
+    Ok(())
+}
+
+/// Tiny stack-allocated formatting buffer for fixed-size numbers and keywords.
+struct FixedBuf {
+    buf: [u8; 64],
+    len: usize,
+}
+
+impl FixedBuf {
+    const fn new() -> Self {
+        Self {
+            buf: [0; 64],
+            len: 0,
+        }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+}
+
+impl std::fmt::Write for FixedBuf {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let bytes = s.as_bytes();
+        let end = self.len + bytes.len();
+        if end > self.buf.len() {
+            return Err(std::fmt::Error);
+        }
+        self.buf[self.len..end].copy_from_slice(bytes);
+        self.len = end;
+        Ok(())
+    }
+}
+
 /// What choosing the trailer of a rebuilt index reads.
 struct Choice<'a> {
+    bytes: &'a Bytes,
     entries: &'a [(u32, Entry)],
     /// The objects that won their numbers, ascending by object number.
     winners: &'a [Found],
@@ -449,44 +672,145 @@ struct Choice<'a> {
     /// The object number of each of `streams` and its index there,
     /// ascending.
     by_number: &'a [(u32, usize)],
+    /// Whether the document appears encrypted and has no security handler yet.
+    locked: bool,
     budget: &'a Budget,
 }
 
 impl Choice<'_> {
     /// Returns the trailer among `candidates`, or one that the scan makes,
-    /// and where its dictionary begins: see the module's rules.
+    /// where its dictionary begins (if taken verbatim), and any synthetic
+    /// catalog/page-tree plan needed to recover unreferenced pages.
     fn trailer(
         &self,
         mut candidates: BudgetVec<'_, (usize, Dict)>,
-    ) -> Result<(Dict, Option<usize>)> {
-        // Whether the object of each entry is a catalog, once checked.
-        let mut checked = BudgetVec::new(self.budget);
-        checked.try_reserve_exact(self.entries.len())?;
-        checked.try_extend(iter::repeat_n(None, self.entries.len()))?;
+    ) -> Result<(Dict, Option<usize>, Option<SyntheticPlan>)> {
+        // Whether the object of each entry is a catalog with a live `/Pages`
+        // dictionary, once checked.
+        let mut checked_live = BudgetVec::new(self.budget);
+        checked_live.try_reserve_exact(self.entries.len())?;
+        checked_live.try_extend(iter::repeat_n(None, self.entries.len()))?;
+
+        // Step A: latest trailer candidate whose `/Root` names a dictionary
+        // with a live `/Pages` dictionary.
+        for index in (0..candidates.len()).rev() {
+            if let Some(&Value::Reference(root)) = candidates[index].1.get("Root")
+                && self.has_live_page_tree(root, &mut checked_live)?
+            {
+                candidates.truncate(index + 1);
+                let (start, trailer) = candidates.pop().expect("index is in range");
+                return Ok((trailer, Some(start), None));
+            }
+        }
+
+        // Step B: latest `/Type /Catalog` (or untyped dict with `/Pages`
+        // pointing to a live `/Type /Pages`) whose page tree is live.
+        if let Some(root) = self.live_catalog(&mut checked_live)? {
+            let trailer = self.merge_trailer(&candidates, root);
+            return Ok((trailer, None, None));
+        }
+
+        // Step C: synthesize a Catalog (and `/Pages` root when needed) from
+        // unreferenced `/Type /Pages` roots or orphan `/Type /Page` objects.
+        if !self.locked
+            && let Some(plan) = self.synthesize_page_tree()?
+        {
+            let root = Reference::new(plan.catalog.0, 0);
+            let trailer = self.merge_trailer(&candidates, root);
+            return Ok((trailer, None, Some(plan)));
+        }
+
+        // Step D: fallback when no live pages exist — latest candidate whose
+        // `/Root` has `/Pages`, else latest `/Type /Catalog`, else last
+        // candidate, else empty trailer.
+        let mut checked_any = BudgetVec::new(self.budget);
+        checked_any.try_reserve_exact(self.entries.len())?;
+        checked_any.try_extend(iter::repeat_n(None, self.entries.len()))?;
         let mut chosen = None;
         for index in (0..candidates.len()).rev() {
             if let Some(&Value::Reference(root)) = candidates[index].1.get("Root")
-                && self.is_catalog(root, &mut checked)?
+                && self.is_catalog(root, &mut checked_any)?
             {
                 chosen = Some(index);
                 break;
             }
         }
         if chosen.is_none()
-            && let Some(root) = self.catalog()?
+            && let Some(root) = self.any_catalog()?
         {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "the trailer that the scan makes has one entry, its `/Root`"
-            )]
-            let trailer = Dict::from_iter([(Name::from("Root"), Value::Reference(root))]);
-            return Ok((trailer, None));
+            let trailer = self.merge_trailer(&candidates, root);
+            return Ok((trailer, None, None));
         }
         candidates.truncate(chosen.map_or(candidates.len(), |index| index + 1));
         Ok(candidates.pop().map_or_else(
-            || (Dict::new(), None),
-            |(start, trailer)| (trailer, Some(start)),
+            || (Dict::new(), None, None),
+            |(start, trailer)| (trailer, Some(start), None),
         ))
+    }
+
+    /// Builds a trailer pointing `/Root` at `root`, preserving security and
+    /// document metadata (`/Encrypt`, `/ID`, `/Info`) from `candidates`.
+    fn merge_trailer(&self, candidates: &[(usize, Dict)], root: Reference) -> Dict {
+        let mut trailer = candidates
+            .last()
+            .map(|(_, dict)| dict.clone())
+            .unwrap_or_default();
+        if trailer.get("Encrypt").is_none()
+            && let Some((_, enc_dict)) = candidates
+                .iter()
+                .rev()
+                .find(|(_, d)| d.get("Encrypt").is_some())
+        {
+            if let Some(enc) = enc_dict.get("Encrypt") {
+                insert_const(&mut trailer, "Encrypt", enc.clone());
+            }
+            if trailer.get("ID").is_none()
+                && let Some(id) = enc_dict.get("ID")
+            {
+                insert_const(&mut trailer, "ID", id.clone());
+            }
+        }
+        if trailer.get("Info").is_none()
+            && let Some(info) = candidates.iter().rev().find_map(|(_, d)| d.get("Info"))
+        {
+            insert_const(&mut trailer, "Info", info.clone());
+        }
+        insert_const(&mut trailer, "Root", Value::Reference(root));
+        trailer
+    }
+
+    /// Returns whether `root` names an object whose dictionary has `/Pages`
+    /// resolving to a live dictionary in `self.entries`.
+    fn has_live_page_tree(&self, root: Reference, checked: &mut [Option<bool>]) -> Result<bool> {
+        let Ok(slot) = self
+            .entries
+            .binary_search_by_key(&root.number(), |&(number, _)| number)
+        else {
+            return Ok(false);
+        };
+        let entry = self.entries[slot].1;
+        if entry.generation != root.generation() {
+            return Ok(false);
+        }
+        if let Some(known) = checked[slot] {
+            return Ok(known);
+        }
+        let live = match self.dict_at(slot)? {
+            Some(dict) => match dict.get("Pages") {
+                Some(Value::Dict(_)) => true,
+                Some(&Value::Reference(pages_ref)) => self.is_live_dict(pages_ref)?,
+                _ => false,
+            },
+            None => false,
+        };
+        checked[slot] = Some(live);
+        Ok(live)
+    }
+
+    /// Returns whether `reference` resolves to a live dictionary in
+    /// `self.entries`.
+    fn is_live_dict(&self, reference: Reference) -> Result<bool> {
+        Ok(self.resolve_dict(reference)?.is_some())
     }
 
     /// Returns whether `root` names an object whose value is a dictionary
@@ -510,33 +834,120 @@ impl Choice<'_> {
                 .winners
                 .binary_search_by_key(&root.number(), |object| object.number)
                 .is_ok_and(|index| self.winners[index].pages),
-            Location::Member { stream, index } => {
-                let decoded = self
-                    .by_number
-                    .binary_search_by_key(&stream, |&(number, _)| number)
-                    .ok()
-                    .map(|slot| &self.streams[self.by_number[slot].1].2);
-                match decoded {
-                    Some(decoded) => self
-                        .member(decoded, index, root.number())?
-                        .is_some_and(|dict| dict.get("Pages").is_some()),
-                    None => false,
-                }
-            }
+            Location::Member { stream, index } => self
+                .member_dict(stream, index, root.number())?
+                .is_some_and(|dict| dict.get("Pages").is_some()),
         };
         checked[slot] = Some(catalog);
         Ok(catalog)
     }
 
+    /// Returns the last catalog object with a live `/Pages` target: first
+    /// any `/Type /Catalog`, then any untyped dictionary whose `/Pages`
+    /// points to a live `/Type /Pages` dictionary.
+    fn live_catalog(&self, checked: &mut [Option<bool>]) -> Result<Option<Reference>> {
+        // 1. Explicit `/Type /Catalog` with live `/Pages`.
+        let mut best: Option<(usize, Reference)> = None;
+        for object in self.winners {
+            if object.kind == Kind::Catalog
+                && !object.is_stream
+                && find(self.entries, object.number)
+                    .is_some_and(|entry| entry.location == Location::Offset(object.pos))
+            {
+                let reference = Reference::new(object.number, object.generation);
+                if self.has_live_page_tree(reference, checked)?
+                    && best.is_none_or(|(pos, _)| object.pos > pos)
+                {
+                    best = Some((object.pos, reference));
+                }
+            }
+        }
+        if let Some((_, reference)) = best {
+            return Ok(Some(reference));
+        }
+        let catalog = Value::Name(Name::from("Catalog"));
+        for (_, stream, decoded) in self.streams.iter().rev() {
+            for (index, &(number, _)) in decoded.members().iter().enumerate().rev() {
+                let Ok(index) = u32::try_from(index) else {
+                    continue;
+                };
+                let location = Location::Member {
+                    stream: *stream,
+                    index,
+                };
+                if find(self.entries, number).is_some_and(|entry| entry.location == location)
+                    && self
+                        .member(decoded, index, number)?
+                        .is_some_and(|dict| dict.get("Type") == Some(&catalog))
+                {
+                    let reference = Reference::new(number, 0);
+                    if self.has_live_page_tree(reference, checked)? {
+                        return Ok(Some(reference));
+                    }
+                }
+            }
+        }
+
+        // 2. Untyped dictionary (no `/Type` key) with `/Pages` pointing to a
+        //    live `/Type /Pages` dictionary.
+        let pages_type = Value::Name(Name::from("Pages"));
+        let mut untyped_best: Option<(usize, Reference)> = None;
+        for object in self.winners {
+            if !object.has_type
+                && object.pages
+                && !object.is_stream
+                && find(self.entries, object.number)
+                    .is_some_and(|entry| entry.location == Location::Offset(object.pos))
+            {
+                let reference = Reference::new(object.number, object.generation);
+                if let Some(dict) = self.resolve_dict(reference)?
+                    && let Some(&Value::Reference(pages_ref)) = dict.get("Pages")
+                    && self
+                        .resolve_dict(pages_ref)?
+                        .is_some_and(|pages_dict| pages_dict.get("Type") == Some(&pages_type))
+                    && untyped_best.is_none_or(|(pos, _)| object.pos > pos)
+                {
+                    untyped_best = Some((object.pos, reference));
+                }
+            }
+        }
+        if let Some((_, reference)) = untyped_best {
+            return Ok(Some(reference));
+        }
+        for (_, stream, decoded) in self.streams.iter().rev() {
+            for (index, &(number, _)) in decoded.members().iter().enumerate().rev() {
+                let Ok(index) = u32::try_from(index) else {
+                    continue;
+                };
+                let location = Location::Member {
+                    stream: *stream,
+                    index,
+                };
+                if find(self.entries, number).is_some_and(|entry| entry.location == location)
+                    && let Some(dict) = self.member(decoded, index, number)?
+                    && dict.get("Type").is_none()
+                    && let Some(&Value::Reference(pages_ref)) = dict.get("Pages")
+                    && self
+                        .resolve_dict(pages_ref)?
+                        .is_some_and(|pages_dict| pages_dict.get("Type") == Some(&pages_type))
+                {
+                    return Ok(Some(Reference::new(number, 0)));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// Returns the last object in the order of the bytes whose dictionary
     /// has `/Type /Catalog`: an uncompressed one, or else a member of the
     /// latest object stream that holds one.
-    fn catalog(&self) -> Result<Option<Reference>> {
+    fn any_catalog(&self) -> Result<Option<Reference>> {
         if let Some(object) = self
             .winners
             .iter()
             .filter(|object| {
                 object.kind == Kind::Catalog
+                    && !object.is_stream
                     && find(self.entries, object.number)
                         .is_some_and(|entry| entry.location == Location::Offset(object.pos))
             })
@@ -566,6 +977,246 @@ impl Choice<'_> {
         Ok(None)
     }
 
+    /// Scans `self.entries` for intact `/Type /Pages` roots and orphan
+    /// `/Type /Page` dictionaries, and builds a [`SyntheticPlan`] when at
+    /// least one page can be recovered.
+    fn synthesize_page_tree(&self) -> Result<Option<SyntheticPlan>> {
+        let mut ticker = Ticker::default();
+        let pages_name = Value::Name(Name::from("Pages"));
+        let page_name = Value::Name(Name::from("Page"));
+
+        // Collect all `/Type /Pages` and `/Type /Page` non-stream dicts in
+        // deterministic file order `(major_offset, minor_index)`.
+        let mut pages_nodes: BudgetVec<'_, (usize, u32, usize, Reference)> =
+            BudgetVec::new(self.budget);
+        let mut page_objs: BudgetVec<'_, (usize, u32, usize, Reference, bool)> =
+            BudgetVec::new(self.budget);
+
+        for (slot, &(number, entry)) in self.entries.iter().enumerate() {
+            ticker.tick(self.budget)?;
+            match entry.location {
+                Location::Offset(pos) => {
+                    let Ok(wi) = self
+                        .winners
+                        .binary_search_by_key(&number, |object| object.number)
+                    else {
+                        continue;
+                    };
+                    let object = self.winners[wi];
+                    if object.is_stream {
+                        continue;
+                    }
+                    let reference = Reference::new(number, entry.generation);
+                    match object.kind {
+                        Kind::Pages => pages_nodes.try_push((pos, 0, slot, reference))?,
+                        Kind::Page => {
+                            page_objs.try_push((pos, 0, slot, reference, object.has_media_box))?
+                        }
+                        _ => {}
+                    }
+                }
+                Location::Member { stream, index } => {
+                    let Ok(bi) = self.by_number.binary_search_by_key(&stream, |&(s, _)| s) else {
+                        continue;
+                    };
+                    let (stream_pos, _, ref decoded) = self.streams[self.by_number[bi].1];
+                    let Some(dict) = self.member(decoded, index, number)? else {
+                        continue;
+                    };
+                    let reference = Reference::new(number, entry.generation);
+                    if dict.get("Type") == Some(&pages_name) {
+                        pages_nodes.try_push((stream_pos, index, slot, reference))?;
+                    } else if dict.get("Type") == Some(&page_name) {
+                        page_objs.try_push((
+                            stream_pos,
+                            index,
+                            slot,
+                            reference,
+                            dict.get("MediaBox").is_some(),
+                        ))?;
+                    }
+                }
+            }
+        }
+
+        if pages_nodes.is_empty() && page_objs.is_empty() {
+            return Ok(None);
+        }
+
+        pages_nodes.sort_unstable_by_key(|&(pos, idx, _, r)| (pos, idx, r.number()));
+        page_objs.sort_unstable_by_key(|&(pos, idx, _, r, _)| (pos, idx, r.number()));
+
+        // Find root `/Type /Pages` nodes (no live `/Parent` in `entries`) that
+        // reach at least one valid `/Type /Page` object, tracking reached slots.
+        // `state[slot]`: 0 = unvisited, 1 = explored (empty / rejected), 2 = claimed by a root.
+        // Each slot is explored at most once, keeping the pass strictly linear (F6).
+        let mut state: BudgetVec<'_, u8> = BudgetVec::new(self.budget);
+        state.try_reserve_exact(self.entries.len())?;
+        state.try_extend(iter::repeat_n(0, self.entries.len()))?;
+
+        let mut root_pages: BudgetVec<'_, (Reference, usize)> = BudgetVec::new(self.budget);
+        let mut stack: BudgetVec<'_, usize> = BudgetVec::new(self.budget);
+        let mut visited_now: BudgetVec<'_, usize> = BudgetVec::new(self.budget);
+
+        for &(_, _, root_slot, root_ref) in pages_nodes.iter() {
+            ticker.tick(self.budget)?;
+            if state[root_slot] != 0 {
+                continue;
+            }
+            let Some(root_dict) = self.dict_at(root_slot)? else {
+                state[root_slot] = 1;
+                continue;
+            };
+            let has_live_parent = matches!(
+                root_dict.get("Parent"),
+                Some(&Value::Reference(parent)) if self.is_live_dict(parent)?
+            );
+            if has_live_parent {
+                continue;
+            }
+            // Iterative bounded walk from `root_slot` to count reached pages.
+            stack.clear();
+            visited_now.clear();
+            stack.try_push(root_slot)?;
+            state[root_slot] = 1;
+            visited_now.try_push(root_slot)?;
+            let mut count_pages = 0usize;
+            let mut overlaps_claimed = false;
+            while let Some(cur_slot) = stack.pop() {
+                ticker.tick(self.budget)?;
+                let Some(dict) = self.dict_at(cur_slot)? else {
+                    continue;
+                };
+                if dict.get("Type") == Some(&pages_name) {
+                    if let Some(Value::Array(kids)) = dict.get("Kids") {
+                        for kid in kids.iter() {
+                            ticker.tick(self.budget)?;
+                            if let &Value::Reference(kid_ref) = kid
+                                && let Some(kid_slot) = self.slot_of(kid_ref)
+                            {
+                                match state[kid_slot] {
+                                    0 => {
+                                        state[kid_slot] = 1;
+                                        visited_now.try_push(kid_slot)?;
+                                        stack.try_push(kid_slot)?;
+                                    }
+                                    2 => {
+                                        overlaps_claimed = true;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                } else if dict.get("Type") == Some(&page_name) {
+                    count_pages += 1;
+                }
+            }
+            if count_pages > 0 && !overlaps_claimed {
+                for &slot in visited_now.iter() {
+                    state[slot] = 2;
+                }
+                root_pages.try_push((root_ref, count_pages))?;
+            }
+        }
+
+        // Gather orphan `/Type /Page` objects not reached by any root `/Pages`.
+        let mut orphan_pages: BudgetVec<'_, (Reference, bool)> = BudgetVec::new(self.budget);
+        for &(_, _, slot, page_ref, has_mb) in page_objs.iter() {
+            if state[slot] != 2 {
+                orphan_pages.try_push((page_ref, has_mb))?;
+            }
+        }
+
+        if root_pages.is_empty() && orphan_pages.is_empty() {
+            return Ok(None);
+        }
+
+        // Allocate fresh object numbers above every existing entry.
+        let max_num = self.entries.last().map_or(0, |&(n, _)| n);
+        let Some(first_new) = max_num.checked_add(1) else {
+            return Ok(None);
+        };
+
+        // Case 1: a single intact root `/Pages` already reaches every page.
+        if root_pages.len() == 1 && orphan_pages.is_empty() {
+            return Ok(Some(SyntheticPlan {
+                pages: None,
+                catalog: (first_new, root_pages[0].0),
+            }));
+        }
+
+        // Case 2: synthesize a top-level `/Type /Pages` combining intact roots
+        // and/or orphan `/Type /Page` objects, plus a `/Type /Catalog`.
+        let Some(second_new) = first_new.checked_add(1) else {
+            return Ok(None);
+        };
+        let mut kids = BudgetVec::new(self.budget);
+        let mut total_count = 0usize;
+        for &(root_ref, cnt) in root_pages.iter() {
+            kids.try_push(root_ref)?;
+            total_count = total_count.saturating_add(cnt);
+        }
+        let mut needs_mediabox = false;
+        for &(page_ref, has_mb) in orphan_pages.iter() {
+            kids.try_push(page_ref)?;
+            total_count = total_count.saturating_add(1);
+            if !has_mb {
+                needs_mediabox = true;
+            }
+        }
+        Ok(Some(SyntheticPlan {
+            pages: Some((first_new, kids.into_vec(), total_count, needs_mediabox)),
+            catalog: (second_new, Reference::new(first_new, 0)),
+        }))
+    }
+
+    fn slot_of(&self, reference: Reference) -> Option<usize> {
+        let slot = self
+            .entries
+            .binary_search_by_key(&reference.number(), |&(number, _)| number)
+            .ok()?;
+        (self.entries[slot].1.generation == reference.generation()).then_some(slot)
+    }
+
+    fn resolve_dict(&self, reference: Reference) -> Result<Option<Dict>> {
+        let Some(slot) = self.slot_of(reference) else {
+            return Ok(None);
+        };
+        self.dict_at(slot)
+    }
+
+    fn dict_at(&self, slot: usize) -> Result<Option<Dict>> {
+        let (number, entry) = self.entries[slot];
+        match entry.location {
+            Location::Offset(_) => {
+                let Ok(wi) = self
+                    .winners
+                    .binary_search_by_key(&number, |object| object.number)
+                else {
+                    return Ok(None);
+                };
+                let Some((start, end)) = self.winners[wi].dict else {
+                    return Ok(None);
+                };
+                dictionary(self.bytes, start..end, self.budget)
+            }
+            Location::Member { stream, index } => self.member_dict(stream, index, number),
+        }
+    }
+
+    fn member_dict(&self, stream: u32, index: u32, number: u32) -> Result<Option<Dict>> {
+        let decoded = self
+            .by_number
+            .binary_search_by_key(&stream, |&(s, _)| s)
+            .ok()
+            .map(|slot| &self.streams[self.by_number[slot].1].2);
+        match decoded {
+            Some(decoded) => self.member(decoded, index, number),
+            None => Ok(None),
+        }
+    }
+
     /// Returns the dictionary of member `index` of `decoded`, if its table
     /// lists object `number` there and the member's value is a dictionary.
     fn member(&self, decoded: &Decoded, index: u32, number: u32) -> Result<Option<Dict>> {
@@ -578,4 +1229,12 @@ impl Choice<'_> {
             _ => Ok(None),
         }
     }
+}
+
+fn insert_const(dict: &mut Dict, key: &'static str, value: Value) {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "inserts a single constant trailer key (`Root`, `Encrypt`, `ID`, or `Info`)"
+    )]
+    dict.insert(Name::from(key), value);
 }
