@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 import unicodedata
 from pathlib import Path
 
@@ -328,3 +329,45 @@ def test_the_api_reference_is_current() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_stability_policy_matches_package_metadata_and_limits() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    requires_python = pyproject["project"]["requires-python"]
+    extras = set(pyproject["project"]["optional-dependencies"])
+    limits_data = tomllib.loads((ROOT / "limits.toml").read_text(encoding="utf-8"))
+    assert limits_data["codes"]
+
+    assert "https://pyropdf.haya.works/stability/" in (ROOT / "README.md").read_text(encoding="utf-8")
+
+    anchor_ids: dict[str, list[str]] = {}
+    for language, config_name in (("en", "mkdocs.yml"), ("ja", "mkdocs.ja.yml")):
+        policy_path = DOCS / language / "stability.md"
+        assert policy_path.is_file(), policy_path
+        text = policy_path.read_text(encoding="utf-8")
+        status_text = (DOCS / language / "status.md").read_text(encoding="utf-8")
+        config_text = (ROOT / config_name).read_text(encoding="utf-8")
+
+        assert "(stability.md)" in status_text, language
+        assert ": stability.md" in config_text, config_name
+        assert "- stability.md" in config_text, config_name
+
+        assert f'requires-python = "{requires_python}"' in text, (language, requires_python)
+        for extra in sorted(extras):
+            assert f"`{extra}`" in text, (language, extra)
+        for token in (
+            "pyropdf.__all__",
+            "pyropdf.typed.__all__",
+            "LimitError.code",
+            "LIMIT_CODES",
+            "limits.toml",
+            "DeprecationWarning",
+            "PyropdfWarning",
+            "capabilities.zip",
+        ):
+            assert token in text, (language, token)
+
+        anchor_ids[language] = re.findall(r"\{#([A-Za-z0-9_:-]+)\}", text)
+
+    assert anchor_ids["en"]
+    assert anchor_ids["ja"] == anchor_ids["en"]

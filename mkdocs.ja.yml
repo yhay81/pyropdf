@@ -70,6 +70,7 @@ nav:
   - プロジェクト:
       - pyropdf を選ぶ: choosing.md
       - 状態と安全性: status.md
+      - API の安定性: stability.md
       - 仕様の対応状況: specification.md
       - 設計: https://github.com/yhay81/pyropdf/blob/main/DESIGN.md
       - 変更履歴: https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md
@@ -140,6 +141,7 @@ plugins:
         プロジェクト:
           - choosing.md
           - status.md
+          - stability.md
           - specification.md
   # A social card and Open Graph metadata for every page.
   - social:

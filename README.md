@@ -103,7 +103,9 @@ and limitations with PyMuPDF, pypdf, and pikepdf.
 **0.4 series, alpha.** The API may change between minor versions.
 [Release notes](https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md)
 describe each release. See [status and safety](https://pyropdf.haya.works/status/)
-for current coverage and limitations.
+for current coverage and limitations and the
+[API stability policy](https://pyropdf.haya.works/stability/) for pre-1.0 and
+1.0+ compatibility guarantees.
 
 No pyropdf release claims safety for untrusted input before hayro's bounded
 construction (I2, [#15](https://github.com/yhay81/pyropdf/issues/15)) is

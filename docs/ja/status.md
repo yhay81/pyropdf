@@ -7,7 +7,7 @@ description: pyropdf 0.4 が対応するもの、まだ対応しないもの、�
 
 ## 状態
 
-API はマイナーバージョンのあいだで変わることがあり、
+API はマイナーバージョンのあいだで変わることがあり（[API の安定性ポリシー](stability.md) を参照）、
 変更は[変更履歴](https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md)に
 載せます。土台は [DESIGN.md](https://github.com/yhay81/pyropdf/blob/main/DESIGN.md) に、
 ISO 32000-2 のどこまでに対応しているかは[仕様の対応状況](specification.md)にあります。
