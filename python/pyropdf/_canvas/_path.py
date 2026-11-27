@@ -149,7 +149,7 @@ def _color(value: object, name: str) -> Color:
     return value
 
 
-def _paint(value: object, name: str) -> Color | Gradient | PatternPaint | ShadingPattern:
+def _paint(value: object, name: str) -> Color | Gradient | PatternPaint | ShadingPattern | TilingPattern:
     """Return what a canvas paints with, checked as far as it can be without its stops."""
     if isinstance(value, (LinearGradient, RadialGradient, PatternPaint)):
         return value
@@ -158,6 +158,8 @@ def _paint(value: object, name: str) -> Color | Gradient | PatternPaint | Shadin
         and value.shading_type in (ShadingType.AXIAL, ShadingType.RADIAL)
         and value._source is not None  # noqa: SLF001 - the content model's retained paint.
     ):
+        return value
+    if isinstance(value, TilingPattern) and value._source is not None:  # noqa: SLF001 - retained cell.
         return value
     if isinstance(value, (ShadingPattern, TilingPattern)):
         msg = f"{name} is a {type(value).__name__}, which does not hold what it paints; pass its stored PatternPaint"
@@ -168,11 +170,15 @@ def _paint(value: object, name: str) -> Color | Gradient | PatternPaint | Shadin
     return _color(value, name)
 
 
-def _stroke(value: Stroke | Color | Gradient | PatternPaint | None) -> Stroke | None:
+def _stroke(value: Stroke | Color | Gradient | PatternPaint | ShadingPattern | TilingPattern | None) -> Stroke | None:
     """Return a stroke from a :class:`Stroke`, a :class:`Color`, or a gradient, checked."""
     if value is None:
         return None
-    stroke = Stroke(paint=value) if isinstance(value, (Color, LinearGradient, RadialGradient, PatternPaint)) else value
+    stroke = (
+        Stroke(paint=value)
+        if isinstance(value, (Color, LinearGradient, RadialGradient, PatternPaint, ShadingPattern, TilingPattern))
+        else value
+    )
     if not isinstance(stroke, Stroke):
         msg = f"stroke must be a Stroke, Color, gradient or PatternPaint, not {type(value).__name__}"
         raise TypeError(msg)

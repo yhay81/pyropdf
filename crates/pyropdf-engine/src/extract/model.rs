@@ -25,7 +25,7 @@ use crate::display::Display;
 use hayro::hayro_interpret::color::ColorSpace as HayroColorSpace;
 use hayro::hayro_interpret::font::{Glyph, GlyphRun, OutlineGlyph, Type3Glyph};
 use hayro::hayro_interpret::hayro_cmap::{BfString, WritingMode};
-use hayro::hayro_interpret::pattern::{Pattern, ShadingPattern};
+use hayro::hayro_interpret::pattern::{Pattern, ShadingPattern, TilingPattern};
 use hayro::hayro_interpret::shading::ShadingType;
 use hayro::hayro_interpret::{
     BlendMode, CacheKey, ClipPath, Device, DrawMode, DrawProps, FillRule, Image, ImageDrawProps,
@@ -41,6 +41,9 @@ use hayro::kurbo::{Affine, BezPath, Cap, Join, PathEl, Point, Rect, Shape};
 use hayro_font::Font;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 
+use super::images::{
+    CapturedRaster, CapturedStencil, capture_raster_image, image_interpolate, pack_stencil_mask,
+};
 use super::stretch::{Stretches, without_stretch};
 use super::{
     DEFAULT_IMAGE_RESOLUTION, Error, extraction_context, image_color_space, jpeg_resolution,
@@ -107,7 +110,8 @@ pub type PathTuple = (
 /// and color space name.
 pub type ImageFormatTuple = (u32, u32, u8, u8, String);
 /// An image: xref, format, stencil flag, mask kind, encoded size, resolution,
-/// unit-square matrix, bbox, and item context.
+/// unit-square matrix, bbox, item context, optional stencil fill paint, and
+/// optional index into [`PathTable::inline_images`] for inline payloads.
 pub type ImageTuple = (
     u32,
     ImageFormatTuple,
@@ -118,6 +122,8 @@ pub type ImageTuple = (
     Coefficients,
     BBox,
     ItemContextTuple,
+    Option<PaintTuple>,
+    Option<u32>,
 );
 /// A font: name, Type 3 flag, weight, italic, serif, monospace, PDF dictionary
 /// object number (`None` when direct or absent), PDF `/Subtype`, and whether
@@ -185,6 +191,106 @@ const MASK_COLOR_KEY: u8 = 3;
 /// Glyph outlines kept per interpretation, so that a page reusing many
 /// distinct glyphs cannot grow the cache without bound.
 const MAX_CACHED_GLYPHS: usize = 65_536;
+
+/// Maximum nesting depth of tiling patterns and Type 3 glyph procedures
+/// captured inside a tiling pattern cell (DESIGN.md F6).
+const MAX_TILING_DEPTH: u8 = 4;
+
+/// Maximum clip or transparency group stack depth inside a tiling cell.
+const MAX_TILING_STACK_DEPTH: usize = 64;
+
+/// Owned image payload captured for an inline raster image or inline stencil
+/// mask (`xref == 0`) so `Canvas.draw` can promote it to a PDF Image XObject.
+#[derive(Clone, Debug)]
+pub enum InlineImageData {
+    Raster(CapturedRaster),
+    Stencil(CapturedStencil),
+}
+
+/// Paint used by an operation inside a [`CapturedTilingCell`].
+#[derive(Clone, Debug)]
+pub enum CellPaint {
+    /// Solid sRGB color with alpha `(r, g, b, a)`.
+    Color([f64; 4]),
+    /// Owned axial or radial shading pattern, sampled lazily on draw, with its
+    /// pattern-space matrix.
+    Shading {
+        shading: Box<ShadingPattern>,
+        matrix: Coefficients,
+    },
+    /// Nested tiling pattern cell (bounded by `MAX_TILING_DEPTH`), with its
+    /// pattern-space matrix and overall opacity.
+    Tiling {
+        cell: Box<CapturedTilingCell>,
+        matrix: Coefficients,
+        opacity: f64,
+    },
+}
+
+/// Stroke style and paint for a path inside a [`CapturedTilingCell`].
+#[derive(Clone, Debug)]
+pub struct CellStroke {
+    pub paint: CellPaint,
+    pub width: f64,
+    pub cap: u8,
+    pub join: u8,
+    pub miter_limit: f64,
+    pub dashes: Vec<f64>,
+    pub dash_offset: f64,
+}
+
+/// One painted or graphics-state operation captured inside a tiling cell in
+/// pattern space.
+#[derive(Clone, Debug)]
+pub enum TilingCellOp {
+    PushClip {
+        kinds: Vec<u8>,
+        coords: Vec<f64>,
+        even_odd: bool,
+    },
+    PopClip,
+    PushGroup {
+        opacity: f64,
+        blend: u8,
+    },
+    PopGroup,
+    Path {
+        kinds: Vec<u8>,
+        coords: Vec<f64>,
+        fill: Option<CellPaint>,
+        even_odd: bool,
+        stroke: Option<CellStroke>,
+        blend: u8,
+    },
+    RasterImage {
+        image: CapturedRaster,
+        /// Maps unit square `[0, 1]^2` (row 0 at y = 0) into pattern space.
+        matrix: Coefficients,
+        blend: u8,
+    },
+    StencilImage {
+        stencil: CapturedStencil,
+        fill: CellPaint,
+        /// Maps unit square `[0, 1]^2` (row 0 at y = 0) into pattern space.
+        matrix: Coefficients,
+        blend: u8,
+    },
+}
+
+/// Owned representation of a PDF tiling pattern cell captured via
+/// `TilingPattern::interpret` in pattern space.
+#[derive(Clone, Debug)]
+pub struct CapturedTilingCell {
+    pub bbox: BBox,
+    pub x_step: f64,
+    pub y_step: f64,
+    pub ops: Vec<TilingCellOp>,
+    /// Non-`None` when the cell contained a construct that `Canvas.draw`
+    /// cannot faithfully reproduce (e.g. a soft mask, non-axial/radial
+    /// shading, or excessive nesting); `Page.content()` still succeeds and
+    /// `Canvas.draw` refuses atomically with this reason.
+    pub refusal: Option<&'static str>,
+}
 
 /// One painted item: a text run or an image in the tuple form that crosses
 /// into Python, or a path as its row in [`PageContent::paths`].
@@ -915,6 +1021,12 @@ pub struct PathTable {
     shadings: Vec<Option<ShadingPattern>>,
     /// Visible display size of the page `(width, height)` in points.
     pub page_size: (f64, f64),
+    /// Owned tiling pattern cells captured in pattern space, parallel to
+    /// `patterns`. Non-tiling patterns hold `None`.
+    tilings: Vec<Option<CapturedTilingCell>>,
+    /// Owned decoded payloads for inline raster images and inline stencil masks
+    /// (`xref == 0`), indexed by `ImageTuple`'s trailing inline index.
+    inline_images: Vec<InlineImageData>,
 }
 
 /// Whether the gradient is axial, its coordinates and extension flags, and
@@ -964,6 +1076,82 @@ fn shading_interval(
     Ok(())
 }
 
+/// Samples one owned axial/radial [`ShadingPattern`] under `budget`.
+pub fn sample_shading_pattern(
+    paint: &ShadingPattern,
+    budget: &Budget,
+) -> Result<Option<SampledShadingTuple>, Error> {
+    let ShadingType::RadialAxial {
+        coords,
+        domain,
+        function,
+        extend,
+        axial,
+    } = paint.shading.shading_type.as_ref()
+    else {
+        return Ok(None);
+    };
+    // hayro's function reader bounds inputs and outputs to 32 components.
+    if function.num_outputs() > 32 {
+        return Ok(None);
+    }
+    let sample = |offset: f32| {
+        budget.charge(LimitCode::InterpretationFuel, 1)?;
+        let input = domain[0] + (domain[1] - domain[0]) * offset;
+        let mut output = [0.0; 32];
+        let output = &mut output[..function.num_outputs()];
+        if function.eval(&[input], output).is_none() {
+            return Ok([0.0; 4]);
+        }
+        let rgba = paint.shading.color_space.to_rgba(output, paint.opacity);
+        let rgba = paint
+            .transfer_function
+            .as_ref()
+            .map_or(rgba, |tf| tf.apply(&rgba));
+        Ok(rgba.components())
+    };
+    let mut stops = BudgetVec::counting(budget, LimitCode::ContentElementCount);
+    let start = (0.0, sample(0.0)?);
+    let [r, g, b, a] = start.1.map(f64::from);
+    stops.try_push([0.0, r, g, b, a])?;
+    shading_interval(&sample, &mut stops, start, (1.0, sample(1.0)?), 0)?;
+    // hayro has already transformed the clip into display space. Restore
+    // the shading's box before writing it under the pattern matrix again.
+    let bounds = paint
+        .shading
+        .clip_path
+        .as_ref()
+        .and_then(|path| {
+            let det = paint.matrix.determinant();
+            if !det.is_finite() || det == 0.0 {
+                return None;
+            }
+            let inverse = paint.matrix.inverse();
+            if !affine_is_finite(inverse) {
+                return None;
+            }
+            path_bbox(path, inverse)
+        })
+        .map(bbox_tuple);
+    let background = paint.shading.background.as_ref().map(|components| {
+        let rgba = paint.shading.color_space.to_rgba(components, paint.opacity);
+        paint
+            .transfer_function
+            .as_ref()
+            .map_or(rgba, |tf| tf.apply(&rgba))
+            .components()
+            .map(f64::from)
+    });
+    Ok(Some((
+        *axial,
+        coords.map(f64::from),
+        *extend,
+        stops.into_vec(),
+        bounds,
+        background,
+    )))
+}
+
 impl PathTable {
     /// Samples one axial/radial paint on demand, under the drawing operation's
     /// budget. The owned hayro functions and colour space outlive the source
@@ -976,75 +1164,17 @@ impl PathTable {
         let Some(Some(paint)) = self.shadings.get(pattern) else {
             return Ok(None);
         };
-        let ShadingType::RadialAxial {
-            coords,
-            domain,
-            function,
-            extend,
-            axial,
-        } = paint.shading.shading_type.as_ref()
-        else {
-            return Ok(None);
-        };
-        // hayro's function reader bounds inputs and outputs to 32 components.
-        if function.num_outputs() > 32 {
-            return Ok(None);
-        }
-        let sample = |offset: f32| {
-            budget.charge(LimitCode::InterpretationFuel, 1)?;
-            let input = domain[0] + (domain[1] - domain[0]) * offset;
-            let mut output = [0.0; 32];
-            let output = &mut output[..function.num_outputs()];
-            if function.eval(&[input], output).is_none() {
-                return Ok([0.0; 4]);
-            }
-            let rgba = paint.shading.color_space.to_rgba(output, paint.opacity);
-            let rgba = paint
-                .transfer_function
-                .as_ref()
-                .map_or(rgba, |tf| tf.apply(&rgba));
-            Ok(rgba.components())
-        };
-        let mut stops = BudgetVec::counting(budget, LimitCode::ContentElementCount);
-        let start = (0.0, sample(0.0)?);
-        let [r, g, b, a] = start.1.map(f64::from);
-        stops.try_push([0.0, r, g, b, a])?;
-        shading_interval(&sample, &mut stops, start, (1.0, sample(1.0)?), 0)?;
-        // hayro has already transformed the clip into display space. Restore
-        // the shading's box before writing it under the pattern matrix again.
-        let bounds = paint
-            .shading
-            .clip_path
-            .as_ref()
-            .and_then(|path| {
-                let det = paint.matrix.determinant();
-                if !det.is_finite() || det == 0.0 {
-                    return None;
-                }
-                let inverse = paint.matrix.inverse();
-                if !affine_is_finite(inverse) {
-                    return None;
-                }
-                path_bbox(path, inverse)
-            })
-            .map(bbox_tuple);
-        let background = paint.shading.background.as_ref().map(|components| {
-            let rgba = paint.shading.color_space.to_rgba(components, paint.opacity);
-            paint
-                .transfer_function
-                .as_ref()
-                .map_or(rgba, |tf| tf.apply(&rgba))
-                .components()
-                .map(f64::from)
-        });
-        Ok(Some((
-            *axial,
-            coords.map(f64::from),
-            *extend,
-            stops.into_vec(),
-            bounds,
-            background,
-        )))
+        sample_shading_pattern(paint, budget)
+    }
+
+    /// Returns the captured tiling pattern cell for `pattern`, if any.
+    pub fn tiling_cell(&self, pattern: usize) -> Option<&CapturedTilingCell> {
+        self.tilings.get(pattern).and_then(Option::as_ref)
+    }
+
+    /// Returns the captured inline raster or stencil payload at `index`.
+    pub fn inline_image(&self, index: usize) -> Option<&InlineImageData> {
+        self.inline_images.get(index)
     }
 
     fn new(page_size: (f64, f64)) -> Self {
@@ -1238,8 +1368,14 @@ impl PathTable {
     }
 
     /// Keep the rows whose box meets `clip`, numbered in order, and the
-    /// patterns that they use.
-    fn retain_meeting(&mut self, clip: BBox) -> Result<(), Error> {
+    /// patterns and inline images that kept paths and images use.
+    fn retain_meeting(
+        &mut self,
+        clip: BBox,
+        image_patterns: &mut [Option<i32>],
+        image_inlines: &mut [Option<u32>],
+        dropped_images: bool,
+    ) -> Result<(), Error> {
         let rows = self.rows();
         let mut keep = with_capacity(rows, PATH_COLUMNS)?;
         #[expect(
@@ -1248,6 +1384,10 @@ impl PathTable {
         )]
         keep.extend((0..rows).map(|row| meets(self.bbox(row), clip)));
         if keep.iter().all(|&kept| kept) {
+            if dropped_images {
+                self.retain_patterns(image_patterns)?;
+                self.retain_inline_images(image_inlines)?;
+            }
             return Ok(());
         }
         retain_rows(&mut self.x0, &keep);
@@ -1285,15 +1425,17 @@ impl PathTable {
                 self.path[segment] = row as u32;
             }
         }
-        self.retain_patterns()?;
+        self.retain_patterns(image_patterns)?;
+        self.retain_inline_images(image_inlines)?;
         self.retain_stored_colors()
     }
 
-    /// Keep the patterns that the rows use, in the order in which they first
-    /// use them.
-    fn retain_patterns(&mut self) -> Result<(), Error> {
+    /// Keep the patterns that the kept path rows and kept image fills use, in
+    /// the order in which they first use them.
+    fn retain_patterns(&mut self, image_patterns: &mut [Option<i32>]) -> Result<(), Error> {
         let mut patterns = std::mem::take(&mut self.patterns);
         let mut shadings = std::mem::take(&mut self.shadings);
+        let mut tilings = std::mem::take(&mut self.tilings);
         let mut indexes = with_capacity(patterns.len(), PATH_COLUMNS)?;
         #[expect(
             clippy::disallowed_methods,
@@ -1310,9 +1452,61 @@ impl PathTable {
                     let paint = std::mem::take(&mut patterns[pattern]);
                     push(&mut self.patterns, paint, PATH_COLUMNS)?;
                     push(&mut self.shadings, shadings[pattern].take(), PATH_COLUMNS)?;
+                    push(&mut self.tilings, tilings[pattern].take(), PATH_COLUMNS)?;
                 }
                 column[row] = indexes[pattern];
             }
+        }
+        for slot in image_patterns.iter_mut() {
+            let Some(pattern) = slot.and_then(|value| usize::try_from(value).ok()) else {
+                continue;
+            };
+            if indexes[pattern] < 0 {
+                indexes[pattern] = offset(self.patterns.len())?;
+                let paint = std::mem::take(&mut patterns[pattern]);
+                push(&mut self.patterns, paint, PATH_COLUMNS)?;
+                push(&mut self.shadings, shadings[pattern].take(), PATH_COLUMNS)?;
+                push(&mut self.tilings, tilings[pattern].take(), PATH_COLUMNS)?;
+            }
+            *slot = Some(indexes[pattern]);
+        }
+        Ok(())
+    }
+
+    /// Keep only the inline image payloads referenced by kept `Image` records.
+    fn retain_inline_images(&mut self, image_inlines: &mut [Option<u32>]) -> Result<(), Error> {
+        if self.inline_images.is_empty() {
+            return Ok(());
+        }
+        let mut inline_images = std::mem::take(&mut self.inline_images);
+        let mut moved = with_capacity(inline_images.len(), PATH_COLUMNS)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above"
+        )]
+        moved.extend(inline_images.drain(..).map(Some));
+        let mut indexes = with_capacity(moved.len(), PATH_COLUMNS)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above"
+        )]
+        indexes.resize(moved.len(), None);
+        for slot in image_inlines.iter_mut() {
+            let Some(index) = slot.map(|value| value as usize) else {
+                continue;
+            };
+            let new_index = match indexes[index] {
+                Some(existing) => existing,
+                None => {
+                    let next = index_of(self.inline_images.len())?;
+                    if let Some(payload) = moved[index].take() {
+                        push(&mut self.inline_images, payload, PATH_COLUMNS)?;
+                    }
+                    indexes[index] = Some(next);
+                    next
+                }
+            };
+            *slot = Some(new_index);
         }
         Ok(())
     }
@@ -1380,6 +1574,8 @@ impl PathTable {
         self.patterns.shrink_to_fit();
         self.stored_colors.shrink_to_fit();
         self.shadings.shrink_to_fit();
+        self.tilings.shrink_to_fit();
+        self.inline_images.shrink_to_fit();
         Ok(())
     }
 }
@@ -1441,6 +1637,13 @@ impl TextRunRecord {
     }
 }
 
+/// The fill paint of a stencil image mask: either a solid color tuple or an
+/// index into [`PathTable::patterns`].
+enum ImageFill {
+    Color(PaintTuple),
+    Pattern(i32),
+}
+
 struct ImageRecord {
     xref: u32,
     format: ImageFormatTuple,
@@ -1451,6 +1654,8 @@ struct ImageRecord {
     matrix: Coefficients,
     bbox: Rect,
     context: ItemContext,
+    fill: Option<ImageFill>,
+    inline_index: Option<u32>,
 }
 
 /// An item in paint order; a path is a row of the collector's [`PathTable`].
@@ -1471,7 +1676,7 @@ impl Record {
     }
 
     /// The record as an item; a path is the row `path_row`.
-    fn into_item(self, path_row: u32) -> ContentItem {
+    fn into_item(self, path_row: u32, patterns: &[PaintTuple]) -> ContentItem {
         match self {
             Self::Text(run) => {
                 let run = *run;
@@ -1490,6 +1695,12 @@ impl Record {
             Self::Path(_) => ContentItem::Path(path_row),
             Self::Image(image) => {
                 let image = *image;
+                let fill = image.fill.and_then(|fill| match fill {
+                    ImageFill::Color(tuple) => Some(tuple),
+                    ImageFill::Pattern(index) => usize::try_from(index)
+                        .ok()
+                        .and_then(|idx| patterns.get(idx).cloned()),
+                });
                 ContentItem::Image(Box::new((
                     image.xref,
                     image.format,
@@ -1500,6 +1711,8 @@ impl Record {
                     image.matrix,
                     bbox_tuple(image.bbox),
                     image.context.into_tuple(),
+                    fill,
+                    image.inline_index,
                 )))
             }
         }
@@ -1598,6 +1811,11 @@ pub trait ContentSink {
     /// Whether the sink refused more input, so that the collector stops
     /// sending glyphs.
     fn stopped(&self) -> bool;
+    /// Whether the sink decodes selected images itself, so the collector
+    /// should skip capturing inline image payloads and stencil fill paints.
+    fn handles_image_decode(&self) -> bool {
+        false
+    }
     /// Receive the image that the collector records as the page's image
     /// `ordinal`, counted from 0 in paint order, when it records images.
     fn image(&mut self, _ordinal: usize, _image: &Image<'_, '_>) -> Result<(), Error> {
@@ -1769,6 +1987,454 @@ impl<'a> Device<'a> for InkBounds {
     fn pop_transparency_group(&mut self) {}
 }
 
+/// A `Device` that captures a [`TilingPattern`] cell's painted operations in
+/// pattern space, strictly bounded by `budget` and `MAX_TILING_DEPTH`.
+struct TilingCellCollector<'b> {
+    ops: Vec<TilingCellOp>,
+    /// Tracks raw `push_clip_path` depth so the synthetic outer `/BBox` clip
+    /// that `TilingPattern::interpret` pushes at depth 0 is skipped.
+    raw_clip_depth: usize,
+    group_depth: usize,
+    depth: u8,
+    budget: &'b Budget,
+    refusal: Option<&'static str>,
+    error: Option<Error>,
+}
+
+impl<'b> TilingCellCollector<'b> {
+    fn new(depth: u8, budget: &'b Budget) -> Self {
+        Self {
+            ops: Vec::new(),
+            raw_clip_depth: 0,
+            group_depth: 0,
+            depth,
+            budget,
+            refusal: None,
+            error: None,
+        }
+    }
+
+    fn stopped(&self) -> bool {
+        self.error.is_some() || self.refusal.is_some()
+    }
+
+    fn run(&mut self, callback: impl FnOnce(&mut Self) -> Result<(), Error>) {
+        if !self.stopped()
+            && let Err(error) = callback(self)
+        {
+            self.error = Some(error);
+        }
+    }
+
+    fn push_op(&mut self, op: TilingCellOp) -> Result<(), Error> {
+        self.budget.charge(LimitCode::ContentElementCount, 1)?;
+        self.budget.charge(LimitCode::InterpretationFuel, 1)?;
+        self.budget.charge(
+            LimitCode::MemorySize,
+            std::mem::size_of::<TilingCellOp>() as u64,
+        )?;
+        push(&mut self.ops, op, "tiling pattern cell operations")
+    }
+
+    fn cell_paint<'a>(
+        &mut self,
+        paint: &Paint<'a>,
+        is_stroke: bool,
+    ) -> Result<Option<CellPaint>, Error> {
+        match paint {
+            Paint::Color(color) => {
+                let rgba = color.to_rgba().components().map(f64::from);
+                if !rgba.iter().all(|value| value.is_finite()) {
+                    return Ok(None);
+                }
+                Ok(Some(CellPaint::Color(rgba)))
+            }
+            Paint::Pattern(pattern) => match pattern.as_ref() {
+                Pattern::Shading(shading) => {
+                    if !matches!(
+                        shading.shading.shading_type.as_ref(),
+                        ShadingType::RadialAxial { .. }
+                    ) {
+                        self.refusal = Some(
+                            "a tiling pattern cell with a non-axial/radial shading cannot be drawn",
+                        );
+                        return Ok(None);
+                    }
+                    let matrix = shading.matrix.as_coeffs();
+                    if !matrix.iter().all(|value| value.is_finite()) || !shading.opacity.is_finite()
+                    {
+                        return Ok(None);
+                    }
+                    self.budget.charge(
+                        LimitCode::MemorySize,
+                        std::mem::size_of::<ShadingPattern>() as u64,
+                    )?;
+                    Ok(Some(CellPaint::Shading {
+                        shading: Box::new(shading.clone()),
+                        matrix,
+                    }))
+                }
+                Pattern::Tiling(nested) => {
+                    if self.depth >= MAX_TILING_DEPTH {
+                        self.refusal = Some("a tiling pattern nests too deeply to draw");
+                        return Ok(None);
+                    }
+                    let matrix = nested.matrix.as_coeffs();
+                    let opacity = f64::from(nested.opacity);
+                    if !matrix.iter().all(|value| value.is_finite()) || !opacity.is_finite() {
+                        return Ok(None);
+                    }
+                    let cell = capture_tiling_cell(nested, is_stroke, self.depth + 1, self.budget)?;
+                    if let Some(reason) = cell.refusal {
+                        self.refusal = Some(reason);
+                        return Ok(None);
+                    }
+                    Ok(Some(CellPaint::Tiling {
+                        cell: Box::new(cell),
+                        matrix,
+                        opacity,
+                    }))
+                }
+            },
+        }
+    }
+
+    fn record_cell_path<'a>(
+        &mut self,
+        path: &BezPath,
+        path_transform: Affine,
+        stroke_transform: Affine,
+        props: &DrawProps<'a>,
+        mode: &DrawMode,
+    ) -> Result<(), Error> {
+        if matches!(mode, DrawMode::Invisible) {
+            return Ok(());
+        }
+        if props.soft_mask.is_some() {
+            self.refusal = Some("a tiling pattern cell with a soft mask cannot be drawn");
+            return Ok(());
+        }
+        let Some(segs) = segments(path, path_transform)? else {
+            return Ok(());
+        };
+        if segs.kinds.is_empty() {
+            return Ok(());
+        }
+        let seg_bytes = segs
+            .kinds
+            .len()
+            .saturating_add(segs.coords.len().saturating_mul(std::mem::size_of::<f64>()));
+        self.budget
+            .charge(LimitCode::ContentElementCount, segs.count() as u64)?;
+        self.budget
+            .charge(LimitCode::MemorySize, seg_bytes as u64)?;
+
+        let (fill, even_odd, stroke) = match mode {
+            DrawMode::Fill(rule) => {
+                let Some(paint) = self.cell_paint(&props.paint, false)? else {
+                    return Ok(());
+                };
+                (Some(paint), *rule == FillRule::EvenOdd, None)
+            }
+            DrawMode::Stroke(stroke_props) => {
+                let style = StrokeStyle::new(stroke_props, stroke_transform)?;
+                if !style.is_finite() {
+                    return Ok(());
+                }
+                let Some(paint) = self.cell_paint(&props.paint, true)? else {
+                    return Ok(());
+                };
+                self.budget
+                    .charge(LimitCode::ContentElementCount, style.dash_count() as u64)?;
+                self.budget.charge(
+                    LimitCode::MemorySize,
+                    (style
+                        .dashes
+                        .len()
+                        .saturating_mul(std::mem::size_of::<f64>())) as u64,
+                )?;
+                (
+                    None,
+                    false,
+                    Some(CellStroke {
+                        paint,
+                        width: style.width,
+                        cap: style.cap,
+                        join: style.join,
+                        miter_limit: style.miter_limit,
+                        dashes: style.dashes,
+                        dash_offset: style.dash_offset,
+                    }),
+                )
+            }
+            DrawMode::FillAndStroke(rule, stroke_props) => {
+                let style = StrokeStyle::new(stroke_props, stroke_transform)?;
+                if !style.is_finite() {
+                    return Ok(());
+                }
+                let Some(paint) = self.cell_paint(&props.paint, false)? else {
+                    return Ok(());
+                };
+                self.budget
+                    .charge(LimitCode::ContentElementCount, style.dash_count() as u64)?;
+                self.budget.charge(
+                    LimitCode::MemorySize,
+                    (style
+                        .dashes
+                        .len()
+                        .saturating_mul(std::mem::size_of::<f64>())) as u64,
+                )?;
+                (
+                    Some(paint.clone()),
+                    *rule == FillRule::EvenOdd,
+                    Some(CellStroke {
+                        paint,
+                        width: style.width,
+                        cap: style.cap,
+                        join: style.join,
+                        miter_limit: style.miter_limit,
+                        dashes: style.dashes,
+                        dash_offset: style.dash_offset,
+                    }),
+                )
+            }
+            DrawMode::Invisible => return Ok(()),
+        };
+        self.push_op(TilingCellOp::Path {
+            kinds: segs.kinds,
+            coords: segs.coords,
+            fill,
+            even_odd,
+            stroke,
+            blend: blend_code(props.blend_mode),
+        })
+    }
+}
+
+impl<'a> Device<'a> for TilingCellCollector<'_> {
+    fn draw_path(&mut self, path: &BezPath, props: DrawProps<'a>, mode: &DrawMode) {
+        self.run(|this| {
+            this.record_cell_path(path, props.transform, props.transform, &props, mode)
+        });
+    }
+
+    fn push_clip_path(&mut self, clip: &ClipPath) {
+        let depth = self.raw_clip_depth;
+        self.raw_clip_depth = self.raw_clip_depth.saturating_add(1);
+        if depth == 0 {
+            // `TilingPattern::interpret` pushes the pattern `/BBox` as the
+            // outermost clip; the written PDF pattern's `/BBox` already clips.
+            return;
+        }
+        self.run(|this| {
+            if depth > MAX_TILING_STACK_DEPTH {
+                this.refusal = Some("a tiling pattern cell clips too deeply to draw");
+                return Ok(());
+            }
+            let segs = segments(&clip.path, Affine::IDENTITY)?.unwrap_or_default();
+            let seg_bytes = segs
+                .kinds
+                .len()
+                .saturating_add(segs.coords.len().saturating_mul(std::mem::size_of::<f64>()));
+            this.budget
+                .charge(LimitCode::ContentElementCount, segs.count() as u64)?;
+            this.budget
+                .charge(LimitCode::MemorySize, seg_bytes as u64)?;
+            this.push_op(TilingCellOp::PushClip {
+                kinds: segs.kinds,
+                coords: segs.coords,
+                even_odd: clip.fill == FillRule::EvenOdd,
+            })
+        });
+    }
+
+    fn pop_clip(&mut self) {
+        if self.raw_clip_depth == 0 {
+            return;
+        }
+        self.raw_clip_depth -= 1;
+        if self.raw_clip_depth == 0 {
+            return;
+        }
+        self.run(|this| this.push_op(TilingCellOp::PopClip));
+    }
+
+    fn push_transparency_group(
+        &mut self,
+        opacity: f32,
+        mask: Option<SoftMask<'a>>,
+        blend: BlendMode,
+    ) {
+        let depth = self.group_depth;
+        self.group_depth = self.group_depth.saturating_add(1);
+        self.run(|this| {
+            if mask.is_some() {
+                this.refusal = Some("a tiling pattern cell with a soft mask cannot be drawn");
+                return Ok(());
+            }
+            if depth >= MAX_TILING_STACK_DEPTH {
+                this.refusal = Some("a tiling pattern cell nests groups too deeply to draw");
+                return Ok(());
+            }
+            let opacity = f64::from(opacity);
+            if !opacity.is_finite() {
+                return Ok(());
+            }
+            this.push_op(TilingCellOp::PushGroup {
+                opacity,
+                blend: blend_code(blend),
+            })
+        });
+    }
+
+    fn pop_transparency_group(&mut self) {
+        if self.group_depth == 0 {
+            return;
+        }
+        self.group_depth -= 1;
+        self.run(|this| this.push_op(TilingCellOp::PopGroup));
+    }
+
+    fn draw_glyph_run(&mut self, run: &GlyphRun<'_, 'a>, props: DrawProps<'a>, mode: &DrawMode) {
+        if matches!(mode, DrawMode::Invisible) || self.stopped() {
+            return;
+        }
+        if props.soft_mask.is_some() {
+            self.refusal = Some("a tiling pattern cell with a soft mask cannot be drawn");
+            return;
+        }
+        for glyph in run.glyphs() {
+            if self.stopped() {
+                break;
+            }
+            match &**glyph {
+                Glyph::Outline(outline) => {
+                    let outline_path = outline.outline();
+                    let transform = props.transform * glyph.transform();
+                    self.run(|this| {
+                        this.record_cell_path(
+                            &outline_path,
+                            transform,
+                            props.transform,
+                            &props,
+                            mode,
+                        )
+                    });
+                }
+                Glyph::Type3(type3) => {
+                    if self.depth >= MAX_TILING_DEPTH {
+                        self.refusal = Some("a tiling pattern nests too deeply to draw");
+                        break;
+                    }
+                    self.depth += 1;
+                    type3.interpret(self, props.transform, glyph.transform(), &props.paint);
+                    self.depth -= 1;
+                }
+            }
+        }
+    }
+
+    fn draw_image(&mut self, image: Image<'a, '_>, props: ImageDrawProps<'a>) {
+        self.run(|this| {
+            if props.soft_mask.is_some() {
+                this.refusal = Some("a tiling pattern cell with a soft mask cannot be drawn");
+                return Ok(());
+            }
+            let (width, height) = (image.width(), image.height());
+            let matrix =
+                props.transform * Affine::scale_non_uniform(f64::from(width), f64::from(height));
+            if !affine_is_finite(matrix) {
+                return Ok(());
+            }
+            let blend = blend_code(props.blend_mode);
+            match image {
+                Image::Raster(raster) => {
+                    let Some(captured) = capture_raster_image(&raster, this.budget)? else {
+                        this.refusal = Some(
+                            "a raster image inside a tiling pattern cell could not be decoded",
+                        );
+                        return Ok(());
+                    };
+                    this.push_op(TilingCellOp::RasterImage {
+                        image: captured,
+                        matrix: matrix.as_coeffs(),
+                        blend,
+                    })
+                }
+                Image::Stencil(stencil) => {
+                    let budget = this.budget;
+                    let interpolate = image_interpolate(stencil.stream());
+                    let pixels =
+                        u64::from(stencil.width()).saturating_mul(u64::from(stencil.height()));
+                    budget.charge(LimitCode::TotalDecompressedSize, pixels)?;
+                    let mut captured = None;
+                    stencil.with_stencil(
+                        |luma, paint| {
+                            captured = Some((|| -> Result<_, Error> {
+                                let Some(fill) = this.cell_paint(paint, false)? else {
+                                    return Ok(None);
+                                };
+                                let packed = pack_stencil_mask(&luma, interpolate, budget)?;
+                                Ok(Some((packed, fill)))
+                            })());
+                        },
+                        None,
+                    );
+                    let Some(result) = captured else {
+                        this.refusal = Some(
+                            "a stencil mask inside a tiling pattern cell could not be decoded",
+                        );
+                        return Ok(());
+                    };
+                    if let Some((stencil, fill)) = result? {
+                        this.push_op(TilingCellOp::StencilImage {
+                            stencil,
+                            fill,
+                            matrix: matrix.as_coeffs(),
+                            blend,
+                        })?;
+                    }
+                    Ok(())
+                }
+            }
+        });
+    }
+}
+
+/// Captures a `TilingPattern` cell's painted operations in pattern space.
+fn capture_tiling_cell<'a>(
+    tiling: &TilingPattern<'a>,
+    is_stroke: bool,
+    depth: u8,
+    budget: &Budget,
+) -> Result<CapturedTilingCell, Error> {
+    budget.charge(LimitCode::InterpretationFuel, 1)?;
+    let bbox = bbox_tuple(tiling.bbox);
+    let x_step = f64::from(tiling.x_step);
+    let y_step = f64::from(tiling.y_step);
+    let mut collector = TilingCellCollector::new(depth, budget);
+    let interpreted = tiling.interpret(&mut collector, Affine::IDENTITY, is_stroke);
+    if let Some(error) = collector.error {
+        return Err(error);
+    }
+    let refusal = collector.refusal.or_else(|| {
+        interpreted
+            .is_none()
+            .then_some("the tiling pattern stream could not be decoded")
+    });
+    if refusal.is_some() {
+        collector.ops.clear();
+    }
+    collector.ops.shrink_to_fit();
+    Ok(CapturedTilingCell {
+        bbox,
+        x_step,
+        y_step,
+        ops: collector.ops,
+        refusal,
+    })
+}
+
 /// The kinds of item that a collector records.
 #[derive(Clone, Copy)]
 pub struct ItemKinds {
@@ -1796,9 +2462,10 @@ pub(crate) struct ContentCollector<'a, 'b, 'c, S> {
     kinds: ItemKinds,
     records: Vec<Record>,
     paths: PathTable,
-    /// The index of each pattern by hayro's key, including its source,
-    /// matrix, and opacity. Repeated paints need no new tuple allocation.
-    pattern_indexes: HashMap<u128, i32>,
+    /// The index of each pattern by hayro's key (and stroke flag for tiling
+    /// patterns, since uncolored tilings use separate fill and stroke colors).
+    /// Repeated paints need no new tuple allocation.
+    pattern_indexes: HashMap<(u128, bool), i32>,
     /// The index of each unique stored PDF color `(space_code, f32 bit patterns)`
     /// in [`PathTable::stored_colors`].
     stored_color_indexes: HashMap<(u8, Vec<u32>), i32>,
@@ -2110,7 +2777,11 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
     /// The form of `paint` in the path columns, adding a pattern or stored
     /// color to the table when it is new, or `None` when a value of the paint
     /// is not finite.
-    fn path_paint(&mut self, paint: &Paint<'_>) -> Result<Option<PathPaint>, Error> {
+    fn path_paint(
+        &mut self,
+        paint: &Paint<'a>,
+        is_stroke: bool,
+    ) -> Result<Option<PathPaint>, Error> {
         if let Paint::Color(color) = paint {
             let rgba = color.to_rgba().components();
             let raw_components = color.components();
@@ -2126,14 +2797,14 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         let Paint::Pattern(pattern) = paint else {
             unreachable!("colors returned above");
         };
-        let shading = match pattern.as_ref() {
-            Pattern::Shading(shading) => Some(shading),
-            Pattern::Tiling(_) => None,
+        let (shading, tiling) = match pattern.as_ref() {
+            Pattern::Shading(shading) => (Some(shading), None),
+            Pattern::Tiling(tiling) => (None, Some(tiling.as_ref())),
         };
         // hayro's cache key does not include a transfer function. Keep such
         // paints separate so that two transfers of one shading cannot alias.
         let cacheable = shading.is_none_or(|shading| shading.transfer_function.is_none());
-        let key = pattern.cache_key();
+        let key = (pattern.cache_key(), tiling.is_some() && is_stroke);
         if cacheable && let Some(&index) = self.pattern_indexes.get(&key) {
             return Ok(Some(PathPaint::Pattern(index)));
         }
@@ -2141,12 +2812,16 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         if !paint_is_finite(&paint) {
             return Ok(None);
         }
+        let captured_tiling = match tiling {
+            Some(tiling) => Some(capture_tiling_cell(tiling, is_stroke, 0, self.budget)?),
+            None => None,
+        };
         let index = offset(self.paths.patterns.len())?;
         push(&mut paint.1, f64::from(index), "paint values")?;
         #[expect(
             clippy::disallowed_methods,
-            reason = "one pattern per paint of a path, whose row the collector charges to \
-                      content_element_count"
+            reason = "one pattern per paint of a path or stencil, whose item the collector charges \
+                      to content_element_count"
         )]
         self.pattern_indexes.try_reserve(1).map_err(|error| {
             Error::Allocation(format!("failed to grow the pattern index: {error}"))
@@ -2159,10 +2834,11 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
             )
         });
         push(&mut self.paths.shadings, retained.cloned(), PATH_COLUMNS)?;
+        push(&mut self.paths.tilings, captured_tiling, PATH_COLUMNS)?;
         #[expect(
             clippy::disallowed_methods,
-            reason = "one pattern per paint of a path, whose row the collector charges to \
-                      content_element_count"
+            reason = "one pattern per paint of a path or stencil, whose item the collector charges \
+                      to content_element_count"
         )]
         if cacheable {
             self.pattern_indexes.insert(key, index);
@@ -2170,10 +2846,25 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         Ok(Some(PathPaint::Pattern(index)))
     }
 
+    /// Captures the fill paint of a stencil image mask, registering pattern
+    /// paints in [`PathTable`] so they keep their shading/tiling sources.
+    fn image_fill(&mut self, paint: &Paint<'a>) -> Result<Option<ImageFill>, Error> {
+        match paint {
+            Paint::Color(_) => {
+                let tuple = paint_tuple(paint, self.budget)?;
+                Ok(paint_is_finite(&tuple).then_some(ImageFill::Color(tuple)))
+            }
+            Paint::Pattern(_) => Ok(match self.path_paint(paint, false)? {
+                Some(PathPaint::Pattern(index)) => Some(ImageFill::Pattern(index)),
+                _ => None,
+            }),
+        }
+    }
+
     fn record_path(
         &mut self,
         path: &BezPath,
-        props: &DrawProps<'_>,
+        props: &DrawProps<'a>,
         fill: Option<FillRule>,
         stroke: Option<&StrokeProps>,
         pending: Option<Pending>,
@@ -2191,7 +2882,8 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         if !stroke.as_ref().is_none_or(StrokeStyle::is_finite) {
             return Ok(());
         }
-        let Some(paint) = self.path_paint(&props.paint)? else {
+        let is_stroke = fill.is_none() && stroke.is_some();
+        let Some(paint) = self.path_paint(&props.paint, is_stroke)? else {
             return Ok(());
         };
         self.charge(stroke.as_ref().map_or(0, StrokeStyle::dash_count))?;
@@ -2486,8 +3178,8 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
 
     fn record_image(
         &mut self,
-        image: &Image<'_, '_>,
-        props: &ImageDrawProps<'_>,
+        image: &Image<'a, '_>,
+        props: &ImageDrawProps<'a>,
     ) -> Result<(), Error> {
         let (width, height) = (image.width(), image.height());
         let matrix =
@@ -2500,12 +3192,51 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         self.charge(1)?;
         self.sink.image(self.images, image)?;
         self.images += 1;
+        let skip_decode = self.sink.handles_image_decode();
         let default_resolution = (DEFAULT_IMAGE_RESOLUTION, DEFAULT_IMAGE_RESOLUTION);
         let record = match image {
             Image::Stencil(stencil) => {
                 let stream = stencil.stream();
+                let xref = stream.obj_id().obj_number;
+                let interpolate = image_interpolate(stream);
+                let (fill, inline_index) = if skip_decode {
+                    (None, None)
+                } else {
+                    let budget = self.budget;
+                    let mut captured = None;
+                    let pixels =
+                        u64::from(stencil.width()).saturating_mul(u64::from(stencil.height()));
+                    budget.charge(LimitCode::TotalDecompressedSize, pixels)?;
+                    stencil.with_stencil(
+                        |luma, paint| {
+                            captured = Some((|| -> Result<_, Error> {
+                                let fill = self.image_fill(paint)?;
+                                let packed = if xref == 0 {
+                                    Some(pack_stencil_mask(&luma, interpolate, budget)?)
+                                } else {
+                                    None
+                                };
+                                Ok((fill, packed))
+                            })());
+                        },
+                        None,
+                    );
+                    match captured.transpose()? {
+                        Some((fill, Some(packed))) => {
+                            let idx = index_of(self.paths.inline_images.len())?;
+                            push(
+                                &mut self.paths.inline_images,
+                                InlineImageData::Stencil(packed),
+                                PATH_COLUMNS,
+                            )?;
+                            (fill, Some(idx))
+                        }
+                        Some((fill, None)) => (fill, None),
+                        None => (None, None),
+                    }
+                };
                 ImageRecord {
-                    xref: stream.obj_id().obj_number,
+                    xref,
                     format: (width, height, 1, 1, String::new()),
                     is_stencil: true,
                     mask: MASK_NONE,
@@ -2514,10 +3245,13 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
                     matrix: matrix.as_coeffs(),
                     bbox,
                     context,
+                    fill,
+                    inline_index,
                 }
             }
             Image::Raster(raster) => {
                 let stream = raster.stream();
+                let xref = stream.obj_id().obj_number;
                 let dict = stream.dict();
                 let (components, color_space) = image_color_space(dict);
                 let bits = dict
@@ -2539,8 +3273,24 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
                 } else {
                     default_resolution
                 };
+                let inline_index = if xref == 0 && !skip_decode {
+                    match capture_raster_image(raster, self.budget)? {
+                        Some(captured) => {
+                            let idx = index_of(self.paths.inline_images.len())?;
+                            push(
+                                &mut self.paths.inline_images,
+                                InlineImageData::Raster(captured),
+                                PATH_COLUMNS,
+                            )?;
+                            Some(idx)
+                        }
+                        None => None,
+                    }
+                } else {
+                    None
+                };
                 ImageRecord {
-                    xref: stream.obj_id().obj_number,
+                    xref,
                     format: (width, height, bits, components, color_space),
                     is_stencil: false,
                     mask,
@@ -2549,6 +3299,8 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
                     matrix: matrix.as_coeffs(),
                     bbox,
                     context,
+                    fill: None,
+                    inline_index,
                 }
             }
         };
@@ -2696,26 +3448,79 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         if let Some(error) = self.error {
             return Err(error);
         }
-        let mut items = with_capacity(self.records.len(), "content items")?;
-        let mut path_row = 0;
+        let mut kept_records = with_capacity(self.records.len(), "content items")?;
+        let mut dropped_images = false;
         for record in self.records {
             if clip.is_some_and(|clip| !meets(record.bbox(&self.paths), clip)) {
+                if matches!(record, Record::Image(_)) {
+                    dropped_images = true;
+                }
                 continue;
             }
-            let item = record.into_item(path_row);
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "fills the capacity reserved above: one item per record at most"
+            )]
+            kept_records.push(record);
+        }
+        if let Some(clip) = clip {
+            let image_count = kept_records
+                .iter()
+                .filter(|record| matches!(record, Record::Image(_)))
+                .count();
+            let mut image_patterns = with_capacity(image_count, PATH_COLUMNS)?;
+            let mut image_inlines = with_capacity(image_count, PATH_COLUMNS)?;
+            for record in &kept_records {
+                if let Record::Image(image) = record {
+                    let pattern = match image.fill {
+                        Some(ImageFill::Pattern(index)) => Some(index),
+                        _ => None,
+                    };
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "fills the capacity reserved above: one entry per kept image"
+                    )]
+                    image_patterns.push(pattern);
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "fills the capacity reserved above: one entry per kept image"
+                    )]
+                    image_inlines.push(image.inline_index);
+                }
+            }
+            self.paths.retain_meeting(
+                clip,
+                &mut image_patterns,
+                &mut image_inlines,
+                dropped_images,
+            )?;
+            let mut image_cursor = 0usize;
+            for record in &mut kept_records {
+                if let Record::Image(image) = record {
+                    if let Some(ImageFill::Pattern(index)) = &mut image.fill
+                        && let Some(remapped) = image_patterns[image_cursor]
+                    {
+                        *index = remapped;
+                    }
+                    image.inline_index = image_inlines[image_cursor];
+                    image_cursor += 1;
+                }
+            }
+        }
+        self.paths.seal()?;
+        let mut items = with_capacity(kept_records.len(), "content items")?;
+        let mut path_row = 0;
+        for record in kept_records {
+            let item = record.into_item(path_row, &self.paths.patterns);
             if matches!(item, ContentItem::Path(_)) {
                 path_row += 1;
             }
             #[expect(
                 clippy::disallowed_methods,
-                reason = "fills the capacity reserved above: one item per record"
+                reason = "fills the capacity reserved above: one item per kept record"
             )]
             items.push(item);
         }
-        if let Some(clip) = clip {
-            self.paths.retain_meeting(clip)?;
-        }
-        self.paths.seal()?;
         let content = PageContent {
             items,
             paths: Arc::new(self.paths),
@@ -3302,6 +4107,96 @@ mod tests {
         assert!(matches!(
             err,
             Error::Limit(refusal) if refusal.code() == LimitCode::MemorySize
+        ));
+    }
+
+    #[test]
+    fn tiling_cells_separate_fill_stroke_and_bound_budget() {
+        let content = "/PCS cs 0 0 1 /P1 scn /PCS CS 1 0 0 /P1 SCN 4 w 10 10 80 40 re B";
+        let pattern_body = "0 0 5 5 re f";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << \
+             /ColorSpace << /PCS [/Pattern /DeviceRGB] >> /Pattern << /P1 5 0 R >> >> >>"
+                .to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
+            format!(
+                "<< /Type /Pattern /PatternType 1 /PaintType 2 /TilingType 1 \
+                 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << >> /Length {} >>\nstream\n{pattern_body}\nendstream",
+                pattern_body.len()
+            ),
+        ];
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (at, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", at + 1).as_bytes());
+        }
+        let xref = out.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+
+        let bridged = Bridged::of_bytes(out);
+        let kinds = ItemKinds {
+            text_runs: false,
+            paths: true,
+            images: false,
+        };
+        let content = page_content(
+            &bridged,
+            &Fallback::default(),
+            0,
+            kinds,
+            true,
+            None,
+            &Budget::default(),
+        )
+        .unwrap();
+        // Uncolored tiling pattern used for fill (blue) and stroke (red) creates two distinct cells.
+        assert_eq!(content.paths.patterns.len(), 2);
+        let fill_cell = content.paths.tiling_cell(0).unwrap();
+        let stroke_cell = content.paths.tiling_cell(1).unwrap();
+        assert!(fill_cell.refusal.is_none());
+        assert!(stroke_cell.refusal.is_none());
+        let TilingCellOp::Path {
+            fill: Some(CellPaint::Color(fill_rgba)),
+            ..
+        } = &fill_cell.ops[0]
+        else {
+            panic!("expected colored path in fill tiling cell");
+        };
+        let TilingCellOp::Path {
+            fill: Some(CellPaint::Color(stroke_rgba)),
+            ..
+        } = &stroke_cell.ops[0]
+        else {
+            panic!("expected colored path in stroke tiling cell");
+        };
+        assert!((fill_rgba[2] - 1.0).abs() < 1e-4 && fill_rgba[0].abs() < 1e-4);
+        assert!((stroke_rgba[0] - 1.0).abs() < 1e-4 && stroke_rgba[2].abs() < 1e-4);
+
+        // Tight element count refuses cell capture cleanly.
+        let tight = Budget::default().with_limit(LimitCode::ContentElementCount, Some(2));
+        let err =
+            page_content(&bridged, &Fallback::default(), 0, kinds, true, None, &tight).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Limit(refusal) if refusal.code() == LimitCode::ContentElementCount
         ));
     }
 }

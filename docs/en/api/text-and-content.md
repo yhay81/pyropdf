@@ -583,6 +583,7 @@ Image(
     context: GraphicsContext,
     blend_mode: BlendMode,
     soft_mask: SoftMask | None,
+    fill: Paint | None = None,
 )
 ```
 
@@ -746,7 +747,8 @@ Start a new subpath at `to`.
 Paint: TypeAlias = Color | PatternPaint | ShadingPattern | TilingPattern | Gradient
 ```
 
-A solid color, pattern, shading, or gradient paint; a canvas also repaints axial/radial `ShadingPattern` values.
+A solid color, pattern, shading, or gradient paint; a canvas also repaints
+axial/radial `ShadingPattern` and `TilingPattern` values.
 
 ## `Path`
 
@@ -1243,6 +1245,9 @@ TilingPattern(
 ```
 
 A paint that repeats a pattern cell.
+
+Read tiling patterns retain their captured cell operations in pattern space
+so `Canvas.draw` can repaint them.
 
 ## `TransparencyGroup`
 

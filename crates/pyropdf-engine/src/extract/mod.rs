@@ -37,13 +37,14 @@ pub use clusters::{
     ClusterInput, ClusterOptions, PathClusterTuple, cluster_path_inputs, cluster_path_table,
 };
 pub use glyphs::used_glyphs;
-pub use images::{DecodedImage, page_image, page_thumbnail};
+pub use images::{CapturedRaster, CapturedStencil, DecodedImage, page_image, page_thumbnail};
 pub use model::{
-    BBox, ClipTuple, ContentItem, ContentSink, Contexts, FontTuple, GlyphStyle, GlyphsTuple,
-    GroupTuple, ImageFormatTuple, ImageTuple, ItemContextTuple, ItemKinds, MarkTuple, PageContent,
-    PaintColumns, PaintTuple, PathTable, PathTuple, RENDER_FILL, RENDER_FILL_STROKE,
-    RENDER_INVISIBLE, RENDER_STROKE, StateTuple, StoredColorTuple, StrokeTuple, TextRunTuple,
-    WRITING_HORIZONTAL, WRITING_VERTICAL,
+    BBox, CapturedTilingCell, CellPaint, CellStroke, ClipTuple, ContentItem, ContentSink, Contexts,
+    FontTuple, GlyphStyle, GlyphsTuple, GroupTuple, ImageFormatTuple, ImageTuple, InlineImageData,
+    ItemContextTuple, ItemKinds, MarkTuple, PageContent, PaintColumns, PaintTuple, PathTable,
+    PathTuple, RENDER_FILL, RENDER_FILL_STROKE, RENDER_INVISIBLE, RENDER_STROKE,
+    SampledShadingTuple, StateTuple, StoredColorTuple, StrokeTuple, TextRunTuple, TilingCellOp,
+    WRITING_HORIZONTAL, WRITING_VERTICAL, sample_shading_pattern,
 };
 pub use reads::read_page;
 pub use text::{

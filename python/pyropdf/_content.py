@@ -237,7 +237,11 @@ class ShadingPattern:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TilingPattern:
-    """A paint that repeats a pattern cell."""
+    """A paint that repeats a pattern cell.
+
+    Read tiling patterns retain their captured cell operations in pattern space
+    so :meth:`Canvas.draw` can repaint them.
+    """
 
     bbox: Rect
     """The pattern cell in pattern space."""
@@ -247,6 +251,7 @@ class TilingPattern:
     """The transform from pattern space to display space."""
     opacity: float = 1.0
     """The opacity of the pattern cell as a whole."""
+    _source: _TilingSource | None = field(default=None, init=False, repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -314,8 +319,64 @@ Gradient: TypeAlias = LinearGradient | RadialGradient
 _ReadGradient: TypeAlias = tuple[
     Gradient, tuple[float, float, float, float] | None, tuple[float, float, float, float] | None
 ]
-#: A solid color, pattern, shading, or gradient paint; a canvas also repaints axial/radial `ShadingPattern` values.
+_InlinePayload: TypeAlias = tuple[
+    bool,
+    int,
+    int,
+    bool,
+    bytes,
+    tuple[int, int, bytes] | None,
+    bool,
+]
+_TilingCellData: TypeAlias = tuple[
+    tuple[float, float, float, float],
+    float,
+    float,
+    str | None,
+    list[Any],
+]
+#: A solid color, pattern, shading, or gradient paint; a canvas also repaints
+#: axial/radial `ShadingPattern` and `TilingPattern` values.
 Paint: TypeAlias = Color | PatternPaint | ShadingPattern | TilingPattern | Gradient
+
+
+def _sampled_to_gradient(
+    raw: tuple[
+        bool,
+        Sequence[float],
+        Sequence[bool],
+        Sequence[Sequence[float]],
+        tuple[float, float, float, float] | None,
+        Sequence[float] | None,
+    ],
+) -> _ReadGradient:
+    """Convert a core sampled-shading tuple into a ``(Gradient, bbox, background)`` triple."""
+    axial, coords, ends, samples, bbox, background = raw
+    bg: tuple[float, float, float, float] | None = None
+    if background is not None:
+        r, g, b, a = background
+        bg = (r, g, b, a)
+    extend = {
+        (False, False): GradientExtend.NONE,
+        (True, True): GradientExtend.PAD,
+        (True, False): GradientExtend.PAD_START,
+        (False, True): GradientExtend.PAD_END,
+    }[(ends[0], ends[1])]
+    stops = tuple(ColorStop(offset, Color(r, g, b, a)) for offset, r, g, b, a in samples)
+    if axial:
+        gradient: Gradient = LinearGradient(
+            start=Point(coords[0], coords[1]), end=Point(coords[2], coords[3]), stops=stops, extend=extend
+        )
+    else:
+        gradient = RadialGradient(
+            start=Point(coords[0], coords[1]),
+            start_radius=coords[2],
+            end=Point(coords[3], coords[4]),
+            end_radius=coords[5],
+            stops=stops,
+            extend=extend,
+        )
+    return gradient, bbox, bg
 
 
 class _ShadingSource:
@@ -363,33 +424,84 @@ class _ShadingSource:
             if raw is None:
                 msg = "the ShadingPattern does not retain an axial or radial paint; draw one read from Page.content()"
                 raise TypeError(msg)
-            axial, coords, ends, samples, self._bbox, background = raw
-            if background is not None:
-                r, g, b, a = background
-                self._background = (r, g, b, a)
-            extend = {
-                (False, False): GradientExtend.NONE,
-                (True, True): GradientExtend.PAD,
-                (True, False): GradientExtend.PAD_START,
-                (False, True): GradientExtend.PAD_END,
-            }[(ends[0], ends[1])]
-            stops = tuple(ColorStop(offset, Color(r, g, b, a)) for offset, r, g, b, a in samples)
-            if axial:
-                gradient: Gradient = LinearGradient(
-                    start=Point(coords[0], coords[1]), end=Point(coords[2], coords[3]), stops=stops, extend=extend
-                )
-            else:
-                gradient = RadialGradient(
-                    start=Point(coords[0], coords[1]),
-                    start_radius=coords[2],
-                    end=Point(coords[3], coords[4]),
-                    end_radius=coords[5],
-                    stops=stops,
-                    extend=extend,
-                )
+            gradient, self._bbox, self._background = _sampled_to_gradient(raw)
             self._gradient = gradient
             self._columns = None
             return gradient, self._bbox, self._background
+
+
+class _TilingSource:
+    """A shared, version-stable tiling pattern cell, materialized on first drawing."""
+
+    __slots__ = ("_cell", "_columns", "_index", "_lock")
+
+    def __init__(
+        self,
+        columns: PathColumns | None,
+        index: int,
+        cell: _TilingCellData | None = None,
+    ) -> None:
+        self._columns = columns
+        self._index = index
+        self._cell = cell
+        self._lock = threading.Lock()
+
+    def __reduce__(
+        self,
+    ) -> tuple[type[_TilingSource], tuple[None, int, _TilingCellData | None]]:
+        return _TilingSource, (None, self._index, self._cell)
+
+    def cell(self, operation: _OperationBudget) -> _TilingCellData:
+        """Return the captured cell under the active canvas's budget."""
+        operation.check("content_element_count", 0)
+        with self._lock:
+            if self._cell is not None:
+                return self._cell
+            raw = None if self._columns is None else self._columns.tiling_cell(self._index, operation)
+            if raw is None:
+                msg = "the TilingPattern does not retain its pattern cell; draw one read from Page.content()"
+                raise TypeError(msg)
+            self._cell = raw
+            self._columns = None
+            return raw
+
+
+class _InlineImageSource:
+    """A retained inline raster or stencil image payload, materialized on first drawing."""
+
+    __slots__ = ("_columns", "_data", "_index", "_lock")
+
+    def __init__(
+        self,
+        columns: PathColumns | None,
+        index: int,
+        data: _InlinePayload | None = None,
+    ) -> None:
+        self._columns = columns
+        self._index = index
+        self._data = data
+        self._lock = threading.Lock()
+
+    def __reduce__(
+        self,
+    ) -> tuple[type[_InlineImageSource], tuple[None, int, None]]:
+        # Unpickled inline images drop native payloads just like indirect _Source.
+        return _InlineImageSource, (None, self._index, None)
+
+    def data(self, operation: _OperationBudget) -> _InlinePayload | None:
+        """Return the decoded inline payload under the active canvas's budget."""
+        operation.check("content_element_count", 0)
+        with self._lock:
+            if self._data is not None:
+                return self._data
+            if self._columns is None:
+                return None
+            raw = self._columns.inline_image(self._index, operation)
+            if raw is None:
+                return None
+            self._data = raw
+            self._columns = None
+            return raw
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -649,7 +761,10 @@ class Image:
     context: GraphicsContext
     blend_mode: BlendMode
     soft_mask: SoftMask | None
+    fill: Paint | None = None
+    """The fill paint of a stencil mask, or ``None`` for a raster image."""
     _source: _Source | None = field(default=None, init=False, repr=False, compare=False)
+    _inline: _InlineImageSource | None = field(default=None, init=False, repr=False, compare=False)
 
 
 #: One painted item yielded by `Page.content`: a `TextRun`, `Path`, or `Image`.
@@ -1199,7 +1314,10 @@ def _soft_mask(code: int | None) -> SoftMask | None:
 
 
 def _pattern(
-    kind: int, values: Sequence[float], source: _ShadingSource | None = None
+    kind: int,
+    values: Sequence[float],
+    columns: PathColumns | None = None,
+    index: int | None = None,
 ) -> ShadingPattern | TilingPattern:
     """Build the pattern paint of one of the core's paint tuples."""
     if kind == _SHADING:
@@ -1209,15 +1327,19 @@ def _pattern(
             matrix=_matrix(values[1:7]),
             opacity=values[7],
         )
-        object.__setattr__(pattern, "_source", source)
+        if columns is not None and index is not None:
+            object.__setattr__(pattern, "_source", _ShadingSource(columns, index))
         return pattern
-    return TilingPattern(
+    tiling = TilingPattern(
         bbox=_rect(values[0:4]),
         x_step=values[4],
         y_step=values[5],
         matrix=_matrix(values[6:12]),
         opacity=values[12],
     )
+    if columns is not None and index is not None:
+        object.__setattr__(tiling, "_source", _TilingSource(columns, index))
+    return tiling
 
 
 class _Converter:
@@ -1226,6 +1348,7 @@ class _Converter:
     def __init__(
         self, fonts: list[Any], states: _Contexts, columns: PathColumns, source: _Source | None = None
     ) -> None:
+        self._columns = columns
         self.font_source = source
         self.source = _Source(source.document) if source is not None else None
         self.fonts = [
@@ -1244,7 +1367,7 @@ class _Converter:
         ]
         self.states = states
         self.paints: dict[Any, Paint] = {
-            (kind, tuple(values)): _pattern(kind, values, _ShadingSource(columns, index))
+            (kind, tuple(values)): _pattern(kind, values, columns, index)
             for index, (kind, values, _) in enumerate(columns.patterns())
         }
 
@@ -1330,6 +1453,8 @@ class _Converter:
             matrix,
             bbox,
             (state, blend, soft_mask),
+            fill,
+            inline_index,
         ) = raw
         image = Image(
             xref=xref,
@@ -1347,8 +1472,11 @@ class _Converter:
             context=self.states[state],
             blend_mode=_BLEND_MODES[blend],
             soft_mask=_soft_mask(soft_mask),
+            fill=None if fill is None else self.paint(fill),
         )
         object.__setattr__(image, "_source", self.source)
+        if inline_index is not None:
+            object.__setattr__(image, "_inline", _InlineImageSource(self._columns, inline_index))
         return image
 
 
@@ -1440,7 +1568,7 @@ class _PathValues:
                     shared = self._shared = (
                         tuple(contexts[index] for index in range(len(states))),
                         tuple(
-                            _pattern(kind, values, _ShadingSource(self._columns, index))
+                            _pattern(kind, values, self._columns, index)
                             for index, (kind, values, _) in enumerate(self._columns.patterns())
                         ),
                         tuple(

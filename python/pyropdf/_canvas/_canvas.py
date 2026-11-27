@@ -39,7 +39,12 @@ from pyropdf._canvas._path import (
     _unit,
     _user_from_display,
 )
-from pyropdf._canvas._patterns import _pattern_operands
+from pyropdf._canvas._patterns import (
+    _compile_tiling_cell,
+    _CompiledTilingCell,
+    _pattern_operands,
+    _write_tiling_stream,
+)
 from pyropdf._canvas._resources import (
     _cache,
     _contents,
@@ -76,6 +81,7 @@ from pyropdf._content import (
     GradientExtend,
     Image,
     LinearGradient,
+    LineTo,
     MoveTo,
     Path,
     PatternPaint,
@@ -85,6 +91,7 @@ from pyropdf._content import (
     Stroke,
     TextRenderMode,
     TextRun,
+    TilingPattern,
 )
 from pyropdf._errors import LimitError, PdfError, StaleObjectError
 from pyropdf._fonts import (
@@ -198,6 +205,7 @@ class Canvas:
         "_entered",
         "_fonts",
         "_gstates",
+        "_inline_xobjects",
         "_layers",
         "_marked",
         "_masks",
@@ -216,6 +224,8 @@ class Canvas:
         "_shadings",
         "_tagged",
         "_tags",
+        "_tiling_cells",
+        "_tiling_names",
         "_underlay",
         "_xobjects",
     )
@@ -255,6 +265,9 @@ class Canvas:
         # space; and the objects that are written.
         self._masks: dict[int, str] = {}
         self._pattern_names: dict[tuple[int, Matrix, bool], str] = {}
+        self._tiling_cells: dict[object, _CompiledTilingCell] = {}
+        self._tiling_names: dict[tuple[object, Matrix, bool], str] = {}
+        self._inline_xobjects: dict[tuple[object, ...], int] = {}
         self._patterns: dict[str, int | Dictionary] = {}
         self._pattern_spaces: dict[str, Array] = {}
         # From the space of what the canvas draws to the default space of the buffer that it goes to: the
@@ -581,6 +594,9 @@ class Canvas:
         for (shading, inner, in_page), name in self._pattern_names.items():
             if in_page:
                 self._patterns[name] = self._write_pattern(shading, inner * matrix)
+        for (source, inner, in_page), name in self._tiling_names.items():
+            if in_page:
+                self._patterns[name] = _write_tiling_stream(self, self._tiling_cells[source], inner * matrix)
 
     def _pattern(self, shading: int, matrix: Matrix | None = None) -> str:
         """Return the resource name of the pattern that paints ``shading`` in the current space."""
@@ -594,8 +610,135 @@ class Canvas:
                 self._patterns[name] = self._write_pattern(shading, matrix)
         return name
 
+    def _tiling_pattern(self, paint: TilingPattern) -> str:
+        """Return the resource name of the pattern that paints ``paint`` in the current space."""
+        source = paint._source  # noqa: SLF001 - validated before opening the item's context.
+        if source is None:
+            msg = "the TilingPattern does not retain its pattern cell"
+            raise TypeError(msg)
+        compiled = self._tiling_cells.get(source)
+        if compiled is None:
+            cell = source.cell(self._active)
+            compiled = _compile_tiling_cell(self, cell, _max_content_size())
+            self._tiling_cells[source] = compiled
+        in_page = len(self._layers) == 1
+        inner = paint.matrix * self._matrix
+        key = (source, inner, in_page)
+        name = self._tiling_names.get(key)
+        if name is None:
+            name = self._tiling_names[key] = f"PyroT{len(self._tiling_names) + 1}"
+            if not in_page:
+                self._patterns[name] = _write_tiling_stream(self, compiled, inner)
+        return name
+
+    def _validate_paint(self, paint: Color | Gradient | PatternPaint | ShadingPattern | TilingPattern | None) -> None:
+        """Validate a retained tiling pattern before any graphics-state scope opens."""
+        if isinstance(paint, TilingPattern):
+            source = paint._source  # noqa: SLF001
+            if source is None:
+                msg = "the TilingPattern does not retain its pattern cell"
+                raise TypeError(msg)
+            cell = source.cell(self._active)
+            if cell[3] is not None:
+                raise ValueError(cell[3])
+
+    def _write_captured_raster(
+        self,
+        payload: tuple[int, int, bool, bytes, tuple[int, int, bytes] | None, bool],
+    ) -> int:
+        """Write a captured 8-bit raster image as a deduplicated PDF Image XObject."""
+        width, height, gray, color, alpha, interpolate = payload
+        alpha_key: tuple[object, ...] | None = None
+        if alpha is not None:
+            aw, ah, alpha_bytes = alpha
+            alpha_key = (aw, ah, len(alpha_bytes), hashlib.sha256(alpha_bytes).digest())
+        key: tuple[object, ...] = (
+            False,
+            width,
+            height,
+            gray,
+            interpolate,
+            len(color),
+            hashlib.sha256(color).digest(),
+            alpha_key,
+        )
+        known = self._inline_xobjects.get(key)
+        if known is not None:
+            return known
+        document = self._page.document
+        objects = document.objects
+        smask_xref: int | None = None
+        if alpha is not None:
+            aw, ah, alpha_bytes = alpha
+            _require_version(document, document.catalog, (1, 4))
+            with self._scratch(len(alpha_bytes) + 256):
+                smask_xref = objects.add_stream(
+                    alpha_bytes,
+                    {
+                        "Type": Name("XObject"),
+                        "Subtype": Name("Image"),
+                        "Width": aw,
+                        "Height": ah,
+                        "ColorSpace": Name("DeviceGray"),
+                        "BitsPerComponent": 8,
+                    },
+                )
+        entries: dict[str, object] = {
+            "Type": Name("XObject"),
+            "Subtype": Name("Image"),
+            "Width": width,
+            "Height": height,
+            "ColorSpace": Name("DeviceGray" if gray else "DeviceRGB"),
+            "BitsPerComponent": 8,
+        }
+        if interpolate:
+            entries["Interpolate"] = True
+        if smask_xref is not None:
+            entries["SMask"] = objects[smask_xref]
+        with self._scratch(len(color) + 256):
+            xref = objects.add_stream(color, entries)
+        self._inline_xobjects[key] = xref
+        return xref
+
+    def _write_captured_stencil(
+        self,
+        width: int,
+        height: int,
+        mask_bits: bytes,
+        interpolate: bool,  # noqa: FBT001
+    ) -> int:
+        """Write a captured 1-bit stencil mask as a deduplicated PDF ``/ImageMask true`` XObject."""
+        key: tuple[object, ...] = (
+            True,
+            width,
+            height,
+            interpolate,
+            len(mask_bits),
+            hashlib.sha256(mask_bits).digest(),
+        )
+        known = self._inline_xobjects.get(key)
+        if known is not None:
+            return known
+        entries: dict[str, object] = {
+            "Type": Name("XObject"),
+            "Subtype": Name("Image"),
+            "Width": width,
+            "Height": height,
+            "ImageMask": True,
+            "BitsPerComponent": 1,
+        }
+        if interpolate:
+            entries["Interpolate"] = True
+        with self._scratch(len(mask_bits) + 256):
+            xref = self._page.document.objects.add_stream(mask_bits, entries)
+        self._inline_xobjects[key] = xref
+        return xref
+
     def _setting(
-        self, paint: Color | Gradient | PatternPaint | ShadingPattern, segments: list[Segment], stroke: Stroke | None
+        self,
+        paint: Color | Gradient | PatternPaint | ShadingPattern | TilingPattern,
+        segments: list[Segment],
+        stroke: Stroke | None,
     ) -> _Painting:
         """Return how to paint ``segments`` with ``paint``, as the fill, or as ``stroke`` if there is one."""
         if isinstance(paint, Color):
@@ -613,6 +756,11 @@ class Canvas:
             colorspace = b"/" + space.encode() + (b" cs" if stroke is None else b" CS")
             select = operands + b"/" + name.encode() + (b" scn" if stroke is None else b" SCN")
             return _Painting((colorspace, select), None, None)
+        if isinstance(paint, TilingPattern):
+            tname = self._tiling_pattern(paint).encode("ascii")
+            space, operator = (b"/Pattern cs", b" scn") if stroke is None else (b"/Pattern CS", b" SCN")
+            alpha = None if paint.opacity >= 1 else paint.opacity
+            return _Painting((space, b"/" + tname + operator), alpha, None)
         # Past the path by half a line, or by a miter or a square cap, and a thin line's own width.
         pad = 1.0 if stroke is None else max(stroke.width, 1.0) / 2 * max(stroke.miter_limit, math.sqrt(2)) + 1.0
         area = _bounds(segments, pad)
@@ -720,8 +868,8 @@ class Canvas:
         self,
         path: PathInput,
         *,
-        fill: Color | Gradient | PatternPaint | ShadingPattern | None = None,
-        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
+        fill: Color | Gradient | PatternPaint | ShadingPattern | TilingPattern | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | ShadingPattern | TilingPattern | None = None,
         fill_rule: FillRule = FillRule.NONZERO,
     ) -> None:
         """Draw a path: a :class:`PathBuilder`, a :class:`Path` item's geometry, or segments."""
@@ -738,7 +886,9 @@ class Canvas:
         stroking = None
         if painted_stroke is not None:
             stroking = self._setting(
-                cast("Color | Gradient | PatternPaint | ShadingPattern", painted_stroke.paint), segments, painted_stroke
+                painted_stroke.paint,
+                segments,
+                painted_stroke,
             )
         if filling is not None and stroking is not None and (filling.mask is not None or stroking.mask is not None):
             # A soft mask is one graphics state, so each paints in its own.
@@ -1707,13 +1857,20 @@ class Canvas:
         document version. Its RGB approximation is sampled on the first
         drawing, preserving its matrix, domain, opacity, and extension at
         either end, its clip box, and its background. Sampling is bounded
-        to 1,025 stops; features between the probes can be lost.
-        Function-based and mesh shadings and :class:`TilingPattern`
-        paints cannot be drawn yet. An image is drawn from its object, with the
-        image's own masks: a canvas on a page of the item's document draws
+        to 1,025 stops; features between the probes can be lost. A
+        :class:`TilingPattern` retains its captured pattern cell and is
+        written as a bounded ``/PatternType 1`` stream preserving its cell
+        box, steps, matrix, and opacity; cells containing soft masks,
+        function/mesh shadings, or excessive nesting raise :class:`ValueError`.
+        Function-based and mesh shadings cannot be drawn yet.
+
+        An indirect image or stencil image mask is drawn from its object, with
+        the image's own masks: a canvas on a page of the item's document draws
         that object again, and one of another document copies it, with the
         objects it reaches but pages, as it is when this call is made. Inline
-        images and stencil image masks cannot be drawn.
+        raster images and inline stencil image masks (``xref == 0``) promote
+        their captured payloads into bounded, deduplicated image XObjects.
+        Stencil masks paint with their :attr:`Image.fill` paint.
 
         A text run uses its original PDF codes and positioned text matrices.
         Its font dictionary, encoding, and embedded program are copied from
@@ -1736,8 +1893,11 @@ class Canvas:
             msg = f"draw() paints Path, Image and TextRun items, not {type(item).__name__}"
             raise TypeError(msg)
         fill = None if item.fill is None else _paint(item.fill, "fill")
-        # Checked before any scope opens, so that a refused stroke draws nothing.
+        # Checked before any scope opens, so that a refused paint or stroke draws nothing.
         stroke = _stroke(item.stroke)
+        self._validate_paint(fill)
+        if stroke is not None:
+            self._validate_paint(stroke.paint)
         with self._item_context(item):
             self.path(item.segments, fill=fill, stroke=stroke, fill_rule=item.fill_rule)
 
@@ -1792,14 +1952,21 @@ class Canvas:
             with self._item_context(item):
                 self._emit(painted)
 
-    def _draw_image(self, item: Image) -> None:
-        """Paint an :class:`Image` item from the object it names."""
-        if item.is_stencil:
-            msg = "a stencil image mask cannot be drawn yet"
-            raise ValueError(msg)
+    def _resolve_image_xobject(self, item: Image) -> int:
+        """Return the Image XObject xref in this document for an indirect or inline ``Image``."""
         if item.xref == 0:
-            msg = "an image without an object number cannot be drawn yet"
-            raise ValueError(msg)
+            inline = item._inline  # noqa: SLF001 - captured inline payload.
+            payload = None if inline is None else inline.data(self._active)
+            if payload is None:
+                msg = "inline image has no captured data; draw an Image that Page.content() returned"
+                raise ValueError(msg)
+            is_stencil_payload, width, height, gray, data, alpha, interpolate = payload
+            if is_stencil_payload != item.is_stencil:
+                msg = "the inline image payload does not match its stencil flag"
+                raise ValueError(msg)
+            if is_stencil_payload:
+                return self._write_captured_stencil(width, height, data, interpolate)
+            return self._write_captured_raster((width, height, gray, data, alpha, interpolate))
         if item._source is None or item._source.document is None:  # noqa: SLF001
             msg = "the image does not name its document; draw an Image that Page.content() returned"
             raise ValueError(msg)
@@ -1807,21 +1974,46 @@ class Canvas:
         document = self._page.document
         if source is document:
             _image_stream(document, item.xref)
-            xref = item.xref
-        else:
-            known = self._copies.get((source, item.xref))
-            if known is None:
-                copy = _core.canvas_copy_image(document._core(), source._core(), item.xref, self._active)  # noqa: SLF001
-                if copy is None:
-                    msg = f"object {item.xref} of the item's document is not an image XObject"
-                    raise ValueError(msg)
-                known = self._copies[source, item.xref] = copy
-            xref = known
+            return item.xref
+        known = self._copies.get((source, item.xref))
+        if known is None:
+            copy = _core.canvas_copy_image(document._core(), source._core(), item.xref, self._active)  # noqa: SLF001
+            if copy is None:
+                msg = f"object {item.xref} of the item's document is not an image XObject"
+                raise ValueError(msg)
+            known = self._copies[source, item.xref] = copy
+        return known
+
+    def _draw_image(self, item: Image) -> None:
+        """Paint an :class:`Image` item, indirect or inline, raster or stencil mask."""
+        stencil_fill: Color | Gradient | PatternPaint | ShadingPattern | TilingPattern | None = None
+        if item.is_stencil:
+            if item.fill is None:
+                msg = "a stencil image mask without a fill paint cannot be drawn"
+                raise ValueError(msg)
+            stencil_fill = _paint(item.fill, "fill")
+            self._validate_paint(stencil_fill)
+        xref = self._resolve_image_xobject(item)
         # The item's square holds the first row at y = 0, PDF's at y = 1.
         matrix = tuple(Matrix(1, 0, 0, -1, 0, 1) * item.matrix)
         with self._item_context(item):
             name = self._add_xobject(xref)
-            self._emit(b"q\n" + _numbers(*matrix) + b" cm\n/" + name.encode() + b" Do\nQ")
+            if stencil_fill is None:
+                self._emit(b"q\n" + b" ".join(map(_real, matrix)) + b" cm\n/" + name.encode() + b" Do\nQ")
+                return
+            box = item.bbox
+            area_segments: list[Segment] = [MoveTo(Point(box.x0, box.y0)), LineTo(Point(box.x1, box.y1))]
+            painting = self._setting(stencil_fill, area_segments, None)
+            parts = [b"q"]
+            if painting.alpha is not None:
+                parts.append(b"/" + self._gstate(fill_alpha=painting.alpha).encode() + b" gs")
+            if painting.mask is not None:
+                parts.append(b"/" + painting.mask.encode() + b" gs")
+            parts.extend(painting.operators)
+            parts.append(b" ".join(map(_real, matrix)) + b" cm")
+            parts.append(b"/" + name.encode() + b" Do")
+            parts.append(b"Q")
+            self._emit(b"\n".join(parts))
 
     @contextmanager
     def _item_context(self, item: Path | Image | TextRun) -> Generator[None]:
