@@ -38,17 +38,23 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
 ```
 
 `doc.pages.new_from_image(source)` adds a page per image frame, sized by
-the image's resolution. JPEG and JPEG 2000 are embedded without
-recompression, and PNG is read directly, keeping its alpha as a soft mask;
-TIFF, GIF, and other formats go through Pillow when it is installed:
+the image's resolution (or fitted centered into a uniform `size=(width, height)`
+page), honoring Exif orientation (1–8) without recompressing JPEG or JPEG 2000
+streams. PNG is read directly, keeping its alpha as a soft mask; TIFF, GIF,
+and other formats go through Pillow when it is installed. To convert a sequence
+of images or a CBZ (`.cbz` / ZIP) archive in one undoable transaction—sorting
+archive entries naturally, ignoring `__MACOSX` and metadata files, and enforcing
+`DocumentLimits` on every chunk—use `doc.pages.new_from_images(sources)` or
+`doc.pages.new_from_cbz(source)`:
 
 ```python
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
-    pixmap = doc.pages[0].pixmap(dpi=72)
+    pixmaps = [page.pixmap(dpi=72) for page in doc.pages]
     scan = pyropdf.Document()
-    scan.pages.new_from_image(pixmap)       # or a path, or JPEG/PNG bytes
+    scan.pages.new_from_image(pixmaps[0])            # one image (path, bytes, or Pixmap)
+    scan.pages.new_from_images(pixmaps, size=(595, 842))  # a batch fitted to A4
     scan.save("scan.pdf")
 ```
 

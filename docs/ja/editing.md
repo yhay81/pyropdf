@@ -36,17 +36,23 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
     doc.pages.select([0, 1])        # この 2 ページだけを、この順で残す
 ```
 
-`doc.pages.new_from_image(source)` は画像のフレームごとに、その解像度に合わせた大きさのページを
-加えます。JPEG と JPEG 2000 は再圧縮せずに埋め込み、PNG も Pillow なしで直接読んでアルファを
-ソフトマスクに保ちます。TIFF や GIF などは Pillow があれば Pillow を通して読みます：
+`doc.pages.new_from_image(source)` は画像のフレームごとに、解像度に合わせた大きさ
+（または均一な `size=(width, height)` に縦横比を保って中央配置）のページを加えます。
+JPEG と JPEG 2000 は再圧縮せずに埋め込み、Exif の向き（1〜8）も再圧縮なしで反映します。
+PNG は Pillow なしで直接読んでアルファをソフトマスクに保ち、TIFF や GIF などは Pillow があれば
+Pillow を通して読みます。複数の画像列や CBZ（`.cbz` / ZIP）アーカイブを 1 回の取り消し可能な
+トランザクションでページ化するには、`doc.pages.new_from_images(sources)` と
+`doc.pages.new_from_cbz(source)` を使います。CBZ ではエントリを自然順で並べ、`__MACOSX` や
+メタデータファイルを除き、チャンク読み込みで `DocumentLimits` を厳格に適用します：
 
 ```python
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
-    pixmap = doc.pages[0].pixmap(dpi=72)
+    pixmaps = [page.pixmap(dpi=72) for page in doc.pages]
     scan = pyropdf.Document()
-    scan.pages.new_from_image(pixmap)       # パスや JPEG/PNG のバイト列も渡せます
+    scan.pages.new_from_image(pixmaps[0])            # 1 枚の画像（パス・バイト列・Pixmap）
+    scan.pages.new_from_images(pixmaps, size=(595, 842))  # 複数画像を A4 に収めて一括追加
     scan.save("scan.pdf")
 ```
 

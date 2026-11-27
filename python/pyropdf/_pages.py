@@ -6,12 +6,25 @@ import io
 import math
 import os
 from collections.abc import Iterable, Iterator, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, overload
 
 from pyropdf import _core
 from pyropdf._collections import _has_named_pages, _prune_named_pages_for_removed_pages
 from pyropdf._errors import LimitError
-from pyropdf._images import _J2K_SIGNATURE, _JP2_SIGNATURE, _PNG_SIGNATURE, add_image
+from pyropdf._geometry import Matrix
+from pyropdf._images import (
+    _J2K_SIGNATURE,
+    _JP2_SIGNATURE,
+    _PNG_SIGNATURE,
+    _effective_limit,
+    _encoded_image_size,
+    _open_cbz_archive,
+    _read_bounded_stream,
+    _read_cbz_member,
+    _select_cbz_entries,
+    add_image,
+)
 from pyropdf._interchange import _has_dparts, _prune_dparts_for_removed_pages
 from pyropdf._page import Page
 from pyropdf._page_labels import _label, _read_page_labels
@@ -23,10 +36,17 @@ from pyropdf._threads import (
 from pyropdf._web_capture import _guard_capture_pages, _has_capture_indexes
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import BinaryIO, TypeAlias
+
     from PIL.Image import Image as PillowImage
 
+    from pyropdf._canvas._canvas import Canvas
     from pyropdf._core import Pixmap
     from pyropdf._document import Document
+
+    _ImageSource: TypeAlias = str | os.PathLike[str] | bytes | bytearray | memoryview | Pixmap
+    _CbzSource: TypeAlias = str | os.PathLike[str] | bytes | bytearray | memoryview | BinaryIO
 
 #: The largest finite PDF real that readers keep (a 32-bit float).
 _FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
@@ -43,9 +63,12 @@ _MAX_FRAMES = 4096
 _MAX_FRAME_PIXELS = 256_000_000
 #: The most bytes of encoded image data that one call reads.
 _MAX_IMAGE_INPUT = 268_435_456
-#: The Exif tags of a resolution and its unit, and the units that the unit tag names.
+#: The Exif tags of orientation, resolution, and its unit, and the units that the unit tag names.
+_EXIF_ORIENTATION = 0x0112
 _EXIF_X_RESOLUTION, _EXIF_Y_RESOLUTION, _EXIF_RESOLUTION_UNIT = 0x011A, 0x011B, 0x0128
 _EXIF_UNITS = {2: 1.0, 3: _CM_PER_INCH}
+_EXIF_MAX_ORIENTATION = 8
+_TRANSPOSED_ORIENTATIONS = frozenset({5, 6, 7, 8})
 
 
 def _is_int(value: object) -> bool:
@@ -219,48 +242,261 @@ class Pages(Sequence[Page]):
 
     def new_from_image(
         self,
-        source: str | os.PathLike[str] | bytes | bytearray | memoryview | Pixmap,
+        source: _ImageSource,
         *,
         dpi: float | tuple[float, float] | None = None,
+        size: tuple[float, float] | None = None,
         index: int | None = None,
     ) -> list[Page]:
-        """Add one page per frame of an image, each the size of its frame at its resolution, in one transaction.
+        """Add one page per frame of an image, sized by its resolution or fitted into ``size``, in one transaction.
 
         ``source`` is a path, encoded bytes, or a :class:`Pixmap`. JPEG and
         JPEG 2000 data is embedded as it is, without recompression, and PNG
-        keeps its alpha as a soft mask; each is one frame. Other formats,
+        keeps its alpha as a soft mask; each is one frame. Exif orientation
+        (1–8) is honored without recompressing JPEG streams. Other formats,
         such as multi-page TIFF, GIF, or WebP, are read through Pillow when
         it is installed, one frame per page, up to 4,096 frames and 256
-        million pixels in all, from up to 256 MiB of data. A frame's resolution comes from its JFIF
-        density or Exif resolution, PNG ``pHYs``, or Pillow's ``dpi``, else
-        96 dpi, and ``dpi``, one number or ``(x, y)``,
-        overrides it. The pages go where :meth:`new` puts one, in order, and
-        are returned.
+        million pixels in all, from up to 256 MiB of data. A frame's
+        resolution comes from its JFIF density or Exif resolution, PNG
+        ``pHYs``, or Pillow's ``dpi``, else 96 dpi. Pass ``dpi``, one number
+        or ``(x, y)``, to override it, or ``size``, a ``(width, height)``
+        page size in points, to fit each frame centered inside that size at
+        its aspect ratio (mutually exclusive with ``dpi``). The pages go where
+        :meth:`new` puts one, in order, and are returned.
         """
+        override, page_size, start = self._image_page_options(dpi=dpi, size=size, index=index)
+        return self._add_image_sources((source,), "new_from_image", override=override, page_size=page_size, start=start)
+
+    def new_from_images(
+        self,
+        sources: Iterable[_ImageSource],
+        *,
+        dpi: float | tuple[float, float] | None = None,
+        size: tuple[float, float] | None = None,
+        index: int | None = None,
+    ) -> list[Page]:
+        """Add pages from an ordered collection of images in one undoable transaction.
+
+        Each item of ``sources`` is a path, encoded bytes, or a
+        :class:`Pixmap`, converted with the same lossless JPEG/JPEG 2000
+        passthrough, PNG alpha soft-mask handling, and Exif orientation as
+        :meth:`new_from_image`. All frames across ``sources`` share the 4,096
+        frame limit, the 256 million pixel cap, and the document's
+        :class:`DocumentLimits`. An empty iterable returns ``[]`` without
+        modifying the document.
+        """
+        from pyropdf._core import Pixmap  # noqa: PLC0415 - the stub names the extension's class.
+
+        if isinstance(sources, (str, bytes, bytearray, memoryview, os.PathLike, Pixmap)) or not isinstance(
+            sources, Iterable
+        ):
+            msg = f"sources must be an iterable of image sources, not {type(sources).__name__}"
+            raise TypeError(msg)
+        override, page_size, start = self._image_page_options(dpi=dpi, size=size, index=index)
+        return self._add_image_sources(sources, "new_from_images", override=override, page_size=page_size, start=start)
+
+    def new_from_cbz(
+        self,
+        source: _CbzSource,
+        *,
+        dpi: float | tuple[float, float] | None = None,
+        size: tuple[float, float] | None = None,
+        index: int | None = None,
+    ) -> list[Page]:
+        """Add pages from the image entries of a CBZ (ZIP) archive in one undoable transaction.
+
+        ``source`` is a path, bytes, or a binary file-like object. Image
+        entries are sorted in deterministic natural filename order, skipping
+        ``__MACOSX`` and non-image metadata files. Path-traversal names,
+        symbolic links, encrypted entries, and corrupt archive members are
+        refused atomically with :class:`ValueError`. Each member is read in
+        bounded chunks charged against the document's :class:`DocumentLimits`
+        (file size, per-entry and total decompressed size, decompression
+        ratio, memory size, page count, duration, and cancellation) as well
+        as the 4,096 frame and 256 million pixel caps. JPEG and JPEG 2000
+        members are embedded without lossy recompression, PNG keeps its alpha
+        soft mask, and Exif orientation is honored.
+        """
+        override, page_size, start = self._image_page_options(dpi=dpi, size=size, index=index)
         document = self._document
-        frames = _image_frames(document, source)
+        core = document._core()  # noqa: SLF001
+        operation = _core.begin_operation(core, "new_from_cbz")
+        pages: list[Page] = []
+        try:
+            with _open_cbz_archive(source, operation, max_input=_MAX_IMAGE_INPUT) as (archive, archive_size):
+                entries = _select_cbz_entries(
+                    archive,
+                    operation,
+                    archive_size=archive_size,
+                    max_frames=_MAX_FRAMES,
+                    max_input=_MAX_IMAGE_INPUT,
+                )
+                operation.check("page_count", len(self) + len(entries))
+                state = _ImageBatch(operation, existing_pages=len(self), override=override, page_size=page_size)
+                total_decompressed = 0
+                for info in entries:
+                    operation.poll()
+                    raw = _read_cbz_member(
+                        archive,
+                        info,
+                        operation,
+                        archive_size=archive_size,
+                        max_input=_MAX_IMAGE_INPUT,
+                        total_so_far=total_decompressed,
+                    )
+                    total_decompressed += len(raw)
+                    try:
+                        self._append_encoded_frames(raw, state, pages, start=start)
+                    finally:
+                        operation.release("memory_size", len(raw))
+        except BaseException:
+            _core.abort_canvas(core, operation)
+            raise
+        _core.end_transaction(core, True)  # noqa: FBT003 - commit all pages as one transaction.
+        return pages
+
+    def _image_page_options(
+        self,
+        *,
+        dpi: float | tuple[float, float] | None,
+        size: tuple[float, float] | None,
+        index: int | None,
+    ) -> tuple[tuple[float, float] | None, tuple[float, float] | None, int | None]:
+        """Validate ``dpi``, ``size``, and ``index`` for ``new_from_image*``."""
+        if dpi is not None and size is not None:
+            msg = "pass either dpi or size, not both"
+            raise ValueError(msg)
         override = _dpi_pair(dpi) if dpi is not None else None
+        page_size = _validate_size(size) if size is not None else None
         if index is not None:
             if not _is_int(index):
                 msg = f"page indexes must be integers, not {type(index).__name__}"
                 raise TypeError(msg)
             # Resolve a negative index once, so later frames follow earlier ones.
             index = max(0, index + len(self)) if index < 0 else index
+        return override, page_size, index
+
+    def _add_image_sources(
+        self,
+        sources: Iterable[_ImageSource],
+        name: str,
+        *,
+        override: tuple[float, float] | None,
+        page_size: tuple[float, float] | None,
+        start: int | None,
+    ) -> list[Page]:
+        """Convert an iterable of image sources into pages in one budgeted transaction."""
+        document = self._document
+        core = document._core()  # noqa: SLF001
+        iterator = iter(sources)
+        try:
+            first = next(iterator)
+        except StopIteration:
+            return []
+        operation = _core.begin_operation(core, name)
         pages: list[Page] = []
-        with document.transaction("new_from_image"):
-            for offset, (data, found) in enumerate(frames):
-                xref = add_image(document, data)
-                stream = document.objects[xref]
-                x_dpi, y_dpi = override or found or (_DEFAULT_DPI, _DEFAULT_DPI)
-                size = (
-                    stream["Width"] * _POINTS_PER_INCH / x_dpi,
-                    stream["Height"] * _POINTS_PER_INCH / y_dpi,
-                )
-                page = self.new(size, index=None if index is None else index + offset)
-                with page.draw() as canvas:
-                    canvas.image((0, 0, *size), xref, keep_aspect=False)
-                pages.append(page)
+        try:
+            state = _ImageBatch(operation, existing_pages=len(self), override=override, page_size=page_size)
+            self._append_image_source(first, state, pages, start=start)
+            for item in iterator:
+                operation.poll()
+                self._append_image_source(item, state, pages, start=start)
+        except BaseException:
+            _core.abort_canvas(core, operation)
+            raise
+        _core.end_transaction(core, True)  # noqa: FBT003 - commit all pages as one transaction.
         return pages
+
+    def _append_image_source(
+        self,
+        source: _ImageSource,
+        state: _ImageBatch,
+        pages: list[Page],
+        *,
+        start: int | None,
+    ) -> None:
+        """Read one image source under ``state.budget`` and append one page per frame."""
+        from pyropdf._core import Pixmap  # noqa: PLC0415 - the stub names the extension's class.
+
+        budget = state.budget
+        budget.poll()
+        if isinstance(source, Pixmap):
+            state.charge_frame(source.width, source.height)
+            x_dpi, y_dpi = source.resolution
+            data = _core.pixmap_png(self._document._core(), source)  # noqa: SLF001
+            self._append_frame_page(data, (float(x_dpi), float(y_dpi)), 1, state, pages, start=start)
+            return
+        data, charged = _read_image_input(source, budget)
+        try:
+            self._append_encoded_frames(data, state, pages, start=start)
+        finally:
+            if charged:
+                budget.release("memory_size", charged)
+
+    def _append_encoded_frames(
+        self,
+        data: bytes,
+        state: _ImageBatch,
+        pages: list[Page],
+        *,
+        start: int | None,
+    ) -> None:
+        """Decode or pass through encoded image bytes and append pages under ``state``."""
+        if data.startswith(b"\xff\xd8\xff"):
+            width, height = _require_encoded_size(data)
+            state.charge_frame(width, height)
+            found, orientation = _jpeg_info(data)
+            self._append_frame_page(data, found, orientation, state, pages, start=start)
+            return
+        if data.startswith(_PNG_SIGNATURE):
+            width, height = _require_encoded_size(data)
+            state.charge_frame(width, height)
+            found, orientation = _png_info(data)
+            self._append_frame_page(data, found, orientation, state, pages, start=start)
+            return
+        if data.startswith((_JP2_SIGNATURE, _J2K_SIGNATURE)):
+            width, height = _require_encoded_size(data)
+            state.charge_frame(width, height)
+            self._append_frame_page(data, None, 1, state, pages, start=start)
+            return
+        for frame_data, found, orientation in _pillow_frames(data, state):
+            self._append_frame_page(frame_data, found, orientation, state, pages, start=start)
+
+    def _append_frame_page(  # noqa: PLR0913 - page creation state and frame metadata.
+        self,
+        data: bytes,
+        found_dpi: tuple[float, float] | None,
+        orientation: int,
+        state: _ImageBatch,
+        pages: list[Page],
+        *,
+        start: int | None,
+    ) -> None:
+        """Embed one frame and draw it on a new page, honoring Exif orientation and page fitting."""
+        document = self._document
+        xref = add_image(document, data)
+        stream = document.objects[xref]
+        raw_w, raw_h = float(stream["Width"]), float(stream["Height"])
+        x_dpi, y_dpi = state.override or found_dpi or (_DEFAULT_DPI, _DEFAULT_DPI)
+        if orientation in _TRANSPOSED_ORIENTATIONS:
+            display_w = raw_h * _POINTS_PER_INCH / y_dpi
+            display_h = raw_w * _POINTS_PER_INCH / x_dpi
+        else:
+            display_w = raw_w * _POINTS_PER_INCH / x_dpi
+            display_h = raw_h * _POINTS_PER_INCH / y_dpi
+        if state.page_size is not None:
+            page_w, page_h = state.page_size
+            scale = min(page_w / display_w, page_h / display_h)
+            drawn_w, drawn_h = display_w * scale, display_h * scale
+            x0, y0 = (page_w - drawn_w) / 2.0, (page_h - drawn_h) / 2.0
+        else:
+            page_w, page_h = display_w, display_h
+            drawn_w, drawn_h = display_w, display_h
+            x0, y0 = 0.0, 0.0
+        page = self.new((page_w, page_h), index=None if start is None else start + len(pages))
+        with page.draw() as canvas:
+            _draw_oriented_image(canvas, xref, (x0, y0, drawn_w, drawn_h), orientation)
+        pages.append(page)
 
     def insert(self, index: int, pages: Page | Iterable[Page]) -> None:
         """Insert copies of ``pages`` before ``index``, clamped as ``list.insert`` clamps it, in one transaction.
@@ -452,47 +688,111 @@ def _dpi_pair(dpi: float | tuple[float, float]) -> tuple[float, float]:
     return (numbers[0], numbers[1])
 
 
-def _image_frames(
-    document: Document,
-    source: str | os.PathLike[str] | bytes | bytearray | memoryview | Pixmap,
-) -> Iterable[tuple[bytes, tuple[float, float] | None]]:
-    """Return each frame of ``source`` as JPEG, JPEG 2000, or PNG data with the resolution it records."""
-    from pyropdf._core import Pixmap  # noqa: PLC0415 - the stub names the extension's class.
+@dataclass(slots=True)
+class _ImageBatch:
+    """Shared frame, pixel, and document-limit accounting across one ``new_from_*`` call."""
 
-    if isinstance(source, Pixmap):
-        x_dpi, y_dpi = source.resolution
-        return [(_core.pixmap_png(document._core(), source), (float(x_dpi), float(y_dpi)))]  # noqa: SLF001
+    budget: _core._OperationBudget
+    existing_pages: int
+    override: tuple[float, float] | None
+    page_size: tuple[float, float] | None
+    frames: int = 0
+    pixels: int = 0
+
+    def charge_frame(self, width: int, height: int) -> None:
+        """Enforce frame count, pixel cap, page count, and cancellation for one frame."""
+        self.budget.poll()
+        self.frames += 1
+        if self.frames > _MAX_FRAMES:
+            code = "content_element_count"
+            msg = f"the image has more than {_MAX_FRAMES} frames"
+            raise LimitError(code, msg)
+        self.budget.check("page_count", self.existing_pages + self.frames)
+        self.pixels += width * height
+        if self.pixels > _MAX_FRAME_PIXELS:
+            code = "content_element_count"
+            msg = f"the frames of the image have more than {_MAX_FRAME_PIXELS} pixels in all"
+            raise LimitError(code, msg)
+
+
+def _draw_oriented_image(
+    canvas: Canvas,
+    xref: int,
+    placement: tuple[float, float, float, float],
+    orientation: int,
+) -> None:
+    """Draw image ``xref`` into ``(x0, y0, dw, dh)`` honoring Exif ``orientation`` (1–8)."""
+    x0, y0, dw, dh = placement
+    if orientation == 1:
+        canvas.image((x0, y0, x0 + dw, y0 + dh), xref, keep_aspect=False)
+        return
+    matrices = {
+        2: Matrix(-1, 0, 0, 1, x0 + dw, y0),
+        3: Matrix(-1, 0, 0, -1, x0 + dw, y0 + dh),
+        4: Matrix(1, 0, 0, -1, x0, y0 + dh),
+        5: Matrix(0, 1, 1, 0, x0, y0),
+        6: Matrix(0, 1, -1, 0, x0 + dw, y0),
+        7: Matrix(0, -1, -1, 0, x0 + dw, y0 + dh),
+        8: Matrix(0, -1, 1, 0, x0, y0 + dh),
+    }
+    raw_w, raw_h = (dh, dw) if orientation in _TRANSPOSED_ORIENTATIONS else (dw, dh)
+    with canvas.transform(matrices[orientation]):
+        canvas.image((0, 0, raw_w, raw_h), xref, keep_aspect=False)
+
+
+def _require_encoded_size(data: bytes) -> tuple[int, int]:
+    """Return ``(width, height)`` for JPEG, JPEG 2000, or PNG bytes."""
+    size = _encoded_image_size(data)
+    if size is None:
+        msg = "the image data has no readable dimensions"
+        raise ValueError(msg)
+    return size
+
+
+def _read_image_input(
+    source: str | os.PathLike[str] | bytes | bytearray | memoryview,
+    budget: _core._OperationBudget,
+) -> tuple[bytes, int]:
+    """Read one path or buffer image source under ``image_input_size`` and ``memory_size``."""
+    limit = _effective_limit(budget, _MAX_IMAGE_INPUT, "image_input_size")
     if isinstance(source, (bytes, bytearray, memoryview)):
         size = source.nbytes if isinstance(source, memoryview) else len(source)
-        if size > _MAX_IMAGE_INPUT:
-            raise _image_input_error()
-        data = bytes(source)
-    elif isinstance(source, (str, os.PathLike)):
+        if size > limit:
+            raise _image_input_error(limit)
+        budget.check("image_input_size", size)
+        budget.charge("memory_size", size)
+        try:
+            data = source if isinstance(source, bytes) else bytes(source)
+        except BaseException:
+            budget.release("memory_size", size)
+            raise
+        return data, size
+    if isinstance(source, (str, os.PathLike)):
         with open(source, "rb") as file:  # noqa: PTH123 - os.PathLike and str alike.
-            data = file.read(_MAX_IMAGE_INPUT + 1)
-        if len(data) > _MAX_IMAGE_INPUT:
-            raise _image_input_error()
-    else:
-        msg = f"source must be a path, bytes, or a Pixmap, not {type(source).__name__}"
-        raise TypeError(msg)
-    if data.startswith(b"\xff\xd8\xff"):
-        return [(data, _jpeg_dpi(data))]
-    if data.startswith(_PNG_SIGNATURE):
-        return [(data, _png_dpi(data))]
-    if data.startswith((_JP2_SIGNATURE, _J2K_SIGNATURE)):
-        return [(data, None)]
-    return _pillow_frames(data)
+            file_size = os.fstat(file.fileno()).st_size
+            if file_size > limit:
+                raise _image_input_error(limit)
+            if file_size > 0:
+                budget.check("image_input_size", file_size)
+                budget.check("memory_size", file_size)
+            return _read_bounded_stream(file, budget, hard_max=limit, limit_code="image_input_size")
+    msg = f"source must be a path, bytes, or a Pixmap, not {type(source).__name__}"
+    raise TypeError(msg)
 
 
-def _image_input_error() -> LimitError:
+def _image_input_error(limit: int | None = None) -> LimitError:
     """Return the error for encoded image data larger than one call reads."""
-    msg = f"the image data is larger than {_MAX_IMAGE_INPUT} bytes"
+    effective = _MAX_IMAGE_INPUT if limit is None else limit
+    msg = f"the image data is larger than {effective} bytes"
     return LimitError("image_input_size", msg)
 
 
-def _jpeg_dpi(data: bytes) -> tuple[float, float] | None:
-    """Return the resolution of a JPEG's JFIF density, else of its Exif segment, in inches or centimetres."""
-    exif = None
+def _jpeg_info(data: bytes) -> tuple[tuple[float, float] | None, int]:
+    """Return a JPEG's resolution (JFIF density, else Exif) and its Exif orientation (1–8)."""
+    jfif_dpi: tuple[float, float] | None = None
+    exif_dpi: tuple[float, float] | None = None
+    orientation = 1
+    found_exif = False
     at = 2
     # Each segment before the scan is fill bytes, a marker, a length, and a
     # body; the markers of RST and TEM have neither (ISO/IEC 10918-1 B.1.1).
@@ -506,24 +806,27 @@ def _jpeg_dpi(data: bytes) -> tuple[float, float] | None:
         if marker == 0x01 or 0xD0 <= marker <= 0xD7:  # noqa: PLR2004 - TEM, RST
             continue
         length = int.from_bytes(data[at : at + 2])
+        if length < 2:  # noqa: PLR2004 - length includes its own 2 bytes
+            break
         body = data[at + 2 : at + length]
-        if marker == 0xE0 and body[:5] == b"JFIF\x00" and len(body) >= 12:  # noqa: PLR2004 - APP0 to its densities
+        if marker == 0xE0 and body[:5] == b"JFIF\x00" and len(body) >= 12 and jfif_dpi is None:  # noqa: PLR2004
             unit, x, y = body[7], int.from_bytes(body[8:10]), int.from_bytes(body[10:12])
             if x and y and unit in (1, 2):
                 scale = 1.0 if unit == 1 else _CM_PER_INCH
-                return (x * scale, y * scale)
-        elif marker == 0xE1 and body[:6] == b"Exif\x00\x00" and exif is None:  # noqa: PLR2004 - APP1
-            exif = _exif_dpi(body[6:])
+                jfif_dpi = (x * scale, y * scale)
+        elif marker == 0xE1 and body[:6] == b"Exif\x00\x00" and not found_exif:  # noqa: PLR2004 - APP1
+            exif_dpi, orientation = _exif_info(body[6:])
+            found_exif = True
         at += length
-    return exif
+    return jfif_dpi or exif_dpi, orientation
 
 
-def _exif_dpi(tiff: bytes) -> tuple[float, float] | None:
-    """Return the resolution in the first image directory of Exif data, when it records one in inches or centimetres."""
+def _exif_info(tiff: bytes) -> tuple[tuple[float, float] | None, int]:
+    """Return the resolution and orientation (1–8) from the first image directory of Exif TIFF data."""
     orders: dict[bytes, Literal["little", "big"]] = {b"II": "little", b"MM": "big"}
     order = orders.get(tiff[:2])
     if order is None:
-        return None
+        return None, 1
 
     def number(at: int, size: int) -> int:
         field = tiff[at : at + size]
@@ -531,7 +834,9 @@ def _exif_dpi(tiff: bytes) -> tuple[float, float] | None:
 
     directory = number(4, 4)
     found: dict[int, float] = {}
-    entries = range(directory + 2, directory + 2 + 12 * number(directory, 2), 12)
+    orientation = 1
+    entry_count = min(number(directory, 2), (len(tiff) - directory - 2) // 12) if directory + 2 <= len(tiff) else 0
+    entries = range(directory + 2, directory + 2 + 12 * entry_count, 12)
     for entry in entries:
         tag, kind = number(entry, 2), number(entry + 2, 2)
         if tag in (_EXIF_X_RESOLUTION, _EXIF_Y_RESOLUTION) and kind == 5:  # noqa: PLR2004 - RATIONAL
@@ -540,25 +845,40 @@ def _exif_dpi(tiff: bytes) -> tuple[float, float] | None:
             found[tag] = numerator / denominator if denominator else 0.0
         elif tag == _EXIF_RESOLUTION_UNIT and kind == 3:  # noqa: PLR2004 - SHORT
             found[tag] = number(entry + 8, 2)
+        elif tag == _EXIF_ORIENTATION and kind == 3:  # noqa: PLR2004 - SHORT
+            value = number(entry + 8, 2)
+            if 1 <= value <= _EXIF_MAX_ORIENTATION:
+                orientation = value
     x, y = found.get(_EXIF_X_RESOLUTION), found.get(_EXIF_Y_RESOLUTION)
     scale = _EXIF_UNITS.get(int(found.get(_EXIF_RESOLUTION_UNIT, 2)))
-    return (x * scale, y * scale) if x and y and scale else None
+    dpi = (x * scale, y * scale) if x and y and scale else None
+    return dpi, orientation
 
 
-def _png_dpi(data: bytes) -> tuple[float, float] | None:
-    """Return the resolution of a PNG's ``pHYs`` chunk, when it is in metres."""
+def _png_info(data: bytes) -> tuple[tuple[float, float] | None, int]:
+    """Return a PNG's resolution (``pHYs``, else ``eXIf``) and its Exif orientation (1–8)."""
+    phys_dpi: tuple[float, float] | None = None
+    exif_dpi: tuple[float, float] | None = None
+    orientation = 1
+    found_exif = False
     at = len(_PNG_SIGNATURE)
-    while at + 8 <= len(data):
+    while at + 12 <= len(data):
         length = int.from_bytes(data[at : at + 4])
+        if at + 12 + length > len(data):
+            break
         kind = data[at + 4 : at + 8]
         body = data[at + 8 : at + 8 + length]
-        if kind == b"pHYs" and len(body) == 9 and body[8] == 1:  # noqa: PLR2004 - two sizes and a unit
+        if kind == b"pHYs" and len(body) == 9 and body[8] == 1 and phys_dpi is None:  # noqa: PLR2004
             x, y = int.from_bytes(body[:4]), int.from_bytes(body[4:8])
-            return (_png_resolution(x), _png_resolution(y)) if x and y else None
-        if kind in (b"IDAT", b"IEND"):
-            return None
+            if x and y:
+                phys_dpi = (_png_resolution(x), _png_resolution(y))
+        elif kind == b"eXIf" and not found_exif:
+            exif_dpi, orientation = _exif_info(body)
+            found_exif = True
+        elif kind == b"IEND":
+            break
         at += 12 + length
-    return None
+    return phys_dpi or exif_dpi, orientation
 
 
 def _png_resolution(pixels_per_metre: int) -> float:
@@ -573,10 +893,10 @@ def _png_resolution(pixels_per_metre: int) -> float:
     return rounded if round(rounded / _METRES_PER_INCH) == pixels_per_metre else exact
 
 
-def _pillow_frames(data: bytes) -> Iterator[tuple[bytes, tuple[float, float] | None]]:
-    """Return each frame of an image that Pillow reads, as PNG data with its resolution, one at a time."""
+def _pillow_frames(data: bytes, state: _ImageBatch) -> Iterator[tuple[bytes, tuple[float, float] | None, int]]:
+    """Return each frame of an image that Pillow reads, as PNG data with its resolution and orientation."""
     try:
-        from PIL import Image, ImageSequence  # noqa: PLC0415 - Pillow is optional.
+        from PIL import Image, ImageOps, ImageSequence  # noqa: PLC0415 - Pillow is optional.
     except ImportError:
         msg = "the image is not JPEG, JPEG 2000, or PNG; other formats need Pillow: pip install pillow"
         raise ValueError(msg) from None
@@ -585,31 +905,30 @@ def _pillow_frames(data: bytes) -> Iterator[tuple[bytes, tuple[float, float] | N
     except Exception as exc:  # Pillow raises its own errors for each format.
         msg = f"the image data is not in a format that Pillow reads: {exc}"
         raise ValueError(msg) from exc
-    return _converted_frames(image, ImageSequence.Iterator(image))
+    return _converted_frames(image, ImageSequence.Iterator(image), state, ImageOps.exif_transpose)
 
 
 def _converted_frames(
-    image: PillowImage, sequence: Iterable[PillowImage]
-) -> Iterator[tuple[bytes, tuple[float, float] | None]]:
-    """Yield each frame of ``sequence`` as PNG data with its resolution, within the frame and pixel limits."""
-    pixels = 0
+    image: PillowImage,
+    sequence: Iterable[PillowImage],
+    state: _ImageBatch,
+    exif_transpose: Callable[[PillowImage], PillowImage | None],
+) -> Iterator[tuple[bytes, tuple[float, float] | None, int]]:
+    """Yield each frame of ``sequence`` as PNG data with its resolution and orientation, within limits."""
     with image:
-        for number, frame in enumerate(sequence):
-            if number >= _MAX_FRAMES:
-                code = "content_element_count"
-                msg = f"the image has more than {_MAX_FRAMES} frames"
-                raise LimitError(code, msg)
+        for frame in sequence:
             width, height = frame.size
-            pixels += width * height
-            if pixels > _MAX_FRAME_PIXELS:
-                code = "content_element_count"
-                msg = f"the frames of the image have more than {_MAX_FRAME_PIXELS} pixels in all"
-                raise LimitError(code, msg)
-            alpha = frame.mode in ("RGBA", "LA", "PA") or "transparency" in frame.info
-            gray = frame.mode in ("1", "L", "LA", "I", "I;16", "F")
-            mode = ("LA" if alpha else "L") if gray else ("RGBA" if alpha else "RGB")
-            out = io.BytesIO()
-            frame.convert(mode).save(out, "PNG")
+            state.charge_frame(width, height)
             found = frame.info.get("dpi")
             dpi = (float(found[0]), float(found[1])) if found and found[0] and found[1] else None
-            yield out.getvalue(), dpi
+            oriented = frame
+            if frame.getexif().get(_EXIF_ORIENTATION, 1) != 1:
+                transposed = exif_transpose(frame)
+                if transposed is not None:
+                    oriented = transposed
+            alpha = oriented.mode in ("RGBA", "LA", "PA") or "transparency" in oriented.info
+            gray = oriented.mode in ("1", "L", "LA", "I", "I;16", "F")
+            mode = ("LA" if alpha else "L") if gray else ("RGBA" if alpha else "RGB")
+            out = io.BytesIO()
+            oriented.convert(mode).save(out, "PNG")
+            yield out.getvalue(), dpi, 1

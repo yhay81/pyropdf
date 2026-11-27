@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import io
+import random
+import struct
+import zipfile
+import zlib
 from typing import TYPE_CHECKING
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageOps
 
 import pyropdf
 
@@ -218,3 +222,410 @@ def test_unreadable_sources_are_refused() -> None:
     with pytest.raises(TypeError, match="source"):
         pages.new_from_image(42)  # ty: ignore[invalid-argument-type]
     assert len(pages) == 0
+
+
+def _asymmetric_image(size: tuple[int, int] = (40, 20)) -> Image.Image:
+    """Return a four-quadrant image so every Exif orientation (1..8) renders uniquely."""
+    w, h = size
+    image = Image.new("RGB", size)
+    image.paste((255, 0, 0), (0, 0, w // 2, h // 2))
+    image.paste((0, 255, 0), (w // 2, 0, w, h // 2))
+    image.paste((0, 0, 255), (0, h // 2, w // 2, h))
+    image.paste((255, 255, 0), (w // 2, h // 2, w, h))
+    return image
+
+
+def _with_png_exif(png: bytes, exif_tiff: bytes) -> bytes:
+    """Insert an ``eXIf`` chunk holding raw TIFF bytes right after the PNG ``IHDR`` chunk."""
+    ihdr_len = int.from_bytes(png[8:12])
+    split = 8 + 12 + ihdr_len
+    chunk = struct.pack(">I", len(exif_tiff)) + b"eXIf" + exif_tiff + struct.pack(">I", zlib.crc32(b"eXIf" + exif_tiff))
+    return png[:split] + chunk + png[split:]
+
+
+def _make_cbz(entries: list[tuple[str, bytes]], *, compress: int = zipfile.ZIP_DEFLATED) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=compress) as archive:
+        for name, payload in entries:
+            archive.writestr(name, payload)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("orientation", list(range(1, 9)))
+def test_exif_orientation_all_eight_for_jpeg_lossless(orientation: int) -> None:
+    raw = _asymmetric_image((40, 20))
+    exif = Image.Exif()
+    exif[0x0112] = orientation
+    jpeg = _encoded(raw, "JPEG", quality=95, dpi=(72, 72), exif=exif.tobytes())
+    expected = ImageOps.exif_transpose(Image.open(io.BytesIO(jpeg))).convert("RGB")
+    doc = pyropdf.Document()
+    (page,) = doc.pages.new_from_image(jpeg)
+    # JPEG stream must remain byte-for-byte verbatim (no lossy recompression).
+    stored = page.images()[0].stored()
+    assert stored is not None
+    assert stored.filter == "DCTDecode"
+    assert stored.data == jpeg
+    assert tuple(page.rect) == pytest.approx((0, 0, expected.width, expected.height))
+    assert _close(page.pixmap(dpi=72), expected, JPEG_TOLERANCE)
+
+
+def test_exif_orientation_png_and_tiff() -> None:
+    raw = _asymmetric_image((40, 20))
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    exif_bytes = exif.tobytes()
+    assert exif_bytes.startswith(b"Exif\x00\x00")
+    png = _with_png_exif(_encoded(raw, "PNG", dpi=(72, 72)), exif_bytes[6:])
+    expected = raw.transpose(Image.Transpose.ROTATE_270)
+    doc = pyropdf.Document()
+    (png_page,) = doc.pages.new_from_image(png)
+    assert tuple(png_page.rect) == pytest.approx((0, 0, 20, 40))
+    assert _close(png_page.pixmap(dpi=72), expected, TOLERANCE)
+
+    tiff = _encoded(raw, "TIFF", dpi=(72, 72), tiffinfo={0x0112: 6})
+    (tiff_page,) = doc.pages.new_from_image(tiff)
+    assert tuple(tiff_page.rect) == pytest.approx((0, 0, 20, 40))
+    assert _close(tiff_page.pixmap(dpi=72), expected, TOLERANCE)
+
+    webp = _encoded(raw, "WEBP", lossless=True, exif=exif_bytes)
+    (webp_page,) = doc.pages.new_from_image(webp, dpi=72)
+    assert tuple(webp_page.rect) == pytest.approx((0, 0, 20, 40))
+    assert _close(webp_page.pixmap(dpi=72), expected, TOLERANCE)
+
+
+def test_size_fitting_centers_oriented_image_and_refuses_both_dpi_and_size() -> None:
+    raw = _asymmetric_image((40, 20))
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    jpeg = _encoded(raw, "JPEG", quality=95, dpi=(72, 72), exif=exif.tobytes())
+    doc = pyropdf.Document()
+    with pytest.raises(ValueError, match="either dpi or size"):
+        doc.pages.new_from_image(jpeg, dpi=72, size=(100, 100))
+    # Oriented 20x40 fitted into 100x100 becomes 50x100 centered at x=[25, 75].
+    (page,) = doc.pages.new_from_image(jpeg, size=(100, 100))
+    assert tuple(page.rect) == pytest.approx((0, 0, 100, 100))
+    pix = page.pixmap(dpi=72)
+    # Left and right margins are white; interior carries the rotated quadrants.
+    assert pix.pixel(5, 50) == (255, 255, 255)
+    assert pix.pixel(95, 50) == (255, 255, 255)
+    # Orientation 6 puts original bottom-left (blue) at top-left (x~35, y~20)
+    # and original top-left (red) at top-right (x~65, y~20).
+    assert pix.pixel(35, 20)[2] > 200
+    assert pix.pixel(65, 20)[0] > 200
+
+
+def test_new_from_images_batch_and_undo_atomicity(tmp_path: Path) -> None:
+    img1 = _encoded(_image("RGB", (40, 20)), "JPEG", quality=95, dpi=(72, 72))
+    img2 = _encoded(_image("RGBA", (30, 30)), "PNG", dpi=(72, 72))
+    p1 = tmp_path / "one.jpg"
+    p1.write_bytes(img1)
+    doc = pyropdf.Document()
+    doc.pages.new((100, 100))
+    steps = len(doc.history.steps)
+
+    # Empty collection is a no-op without modifying history.
+    assert doc.pages.new_from_images([]) == []
+    assert len(doc.history.steps) == steps
+
+    pages = doc.pages.new_from_images([p1, img2], index=0)
+    assert len(pages) == 2
+    assert [doc.pages.index(page) for page in pages] == [0, 1]
+    assert len(doc.pages) == 3
+    assert len(doc.history.steps) == steps + 1
+    stored0 = pages[0].images()[0].stored()
+    assert stored0 is not None
+    assert stored0.data == img1
+    assert _close(pages[1].pixmap(dpi=72, alpha=True), _image("RGBA", (30, 30)), TOLERANCE)
+
+    # Single undo removes the entire batch atomically.
+    doc.history.undo()
+    assert len(doc.pages) == 1
+
+    # Passing a single string/bytes/Pixmap directly raises TypeError.
+    for bad in (str(p1), p1, img1):
+        with pytest.raises(TypeError, match="iterable"):
+            doc.pages.new_from_images(bad)  # ty: ignore[invalid-argument-type]
+
+    # A failure mid-batch rolls back earlier images in the same call.
+    with pytest.raises(ValueError, match="Pillow reads"):
+        doc.pages.new_from_images([img1, b"corrupt"])
+    assert len(doc.pages) == 1
+
+
+def test_new_from_cbz_ordering_passthrough_alpha_exif_and_undo(tmp_path: Path) -> None:
+    exif6 = Image.Exif()
+    exif6[0x0112] = 6
+    jpg_plain = _encoded(_image("RGB", (40, 20)), "JPEG", quality=95, dpi=(72, 72))
+    png_alpha = _encoded(_image("RGBA", (30, 24)), "PNG", dpi=(72, 72))
+    jpg_exif = _encoded(_asymmetric_image((40, 20)), "JPEG", quality=95, dpi=(72, 72), exif=exif6.tobytes())
+    png_ch2 = _encoded(_image("L", (22, 18)), "PNG", dpi=(72, 72))
+    png_ch10 = _encoded(_image("RGB", (16, 16)), "PNG", dpi=(72, 72))
+
+    # Deliberately insert entries out of order with metadata noise.
+    entries: list[tuple[str, bytes]] = [
+        ("ComicInfo.xml", b"<ComicInfo/>"),
+        ("__MACOSX/ch1/._page1.jpg", b"not a jpeg"),
+        ("ch1/.DS_Store", b"finder"),
+        ("Thumbs.db", b"windows"),
+        ("ch10/page1.png", png_ch10),
+        ("ch1/page10.jpg", jpg_exif),
+        ("ch2/page1.png", png_ch2),
+        ("ch1/page2.png", png_alpha),
+        ("ch1/page1.jpg", jpg_plain),
+    ]
+    cbz_bytes = _make_cbz(entries)
+    cbz_path = tmp_path / "issue.cbz"
+    cbz_path.write_bytes(cbz_bytes)
+
+    doc = pyropdf.Document()
+    steps = len(doc.history.steps)
+    pages = doc.pages.new_from_cbz(cbz_path)
+    assert len(pages) == 5
+    assert len(doc.history.steps) == steps + 1
+
+    # Verify natural order: ch1/page1, ch1/page2, ch1/page10 (rotated 20x40), ch2/page1, ch10/page1.
+    assert [tuple(page.rect) for page in pages] == [
+        pytest.approx((0, 0, 40, 20)),
+        pytest.approx((0, 0, 30, 24)),
+        pytest.approx((0, 0, 20, 40)),
+        pytest.approx((0, 0, 22, 18)),
+        pytest.approx((0, 0, 16, 16)),
+    ]
+    # JPEGs (plain and EXIF-rotated) pass through without lossy recompression.
+    stored_plain = pages[0].images()[0].stored()
+    stored_exif = pages[2].images()[0].stored()
+    assert stored_plain is not None
+    assert stored_plain.filter == "DCTDecode"
+    assert stored_plain.data == jpg_plain
+    assert stored_exif is not None
+    assert stored_exif.filter == "DCTDecode"
+    assert stored_exif.data == jpg_exif
+
+    # PNG alpha soft mask and EXIF orientation render accurately.
+    assert _close(pages[1].pixmap(dpi=72, alpha=True), _image("RGBA", (30, 24)), TOLERANCE)
+    expected_rotated = ImageOps.exif_transpose(Image.open(io.BytesIO(jpg_exif))).convert("RGB")
+    assert _close(pages[2].pixmap(dpi=72), expected_rotated, JPEG_TOLERANCE)
+
+    # Save and reopen preserves everything.
+    reopened = pyropdf.open(doc.to_bytes())
+    assert len(reopened.pages) == 5
+    assert _close(reopened.pages[2].pixmap(dpi=72), expected_rotated, JPEG_TOLERANCE)
+
+    # One undo reverts the entire CBZ conversion.
+    doc.history.undo()
+    assert len(doc.pages) == 0
+
+
+def test_new_from_cbz_sources_bytes_seekable_and_non_seekable_streams() -> None:
+    jpg = _encoded(_image("RGB", (20, 10)), "JPEG", quality=95, dpi=(72, 72))
+    cbz = _make_cbz([("01.jpg", jpg)])
+
+    class NonSeekableStream(io.RawIOBase):
+        def __init__(self, payload: bytes) -> None:
+            self._inner = io.BytesIO(payload)
+
+        def readable(self) -> bool:
+            return True
+
+        def readinto(self, buffer: object, /) -> int:
+            view = memoryview(buffer).cast("B")  # ty: ignore[invalid-argument-type]
+            chunk = self._inner.read(len(view))
+            view[: len(chunk)] = chunk
+            return len(chunk)
+
+    for source in (cbz, bytearray(cbz), memoryview(cbz), io.BytesIO(cbz), io.BufferedReader(NonSeekableStream(cbz))):
+        doc = pyropdf.Document()
+        (page,) = doc.pages.new_from_cbz(source)
+        assert tuple(page.rect) == pytest.approx((0, 0, 20, 10))
+        stored = page.images()[0].stored()
+        assert stored is not None
+        assert stored.data == jpg
+
+    with pytest.raises(TypeError, match="binary"):
+        pyropdf.Document().pages.new_from_cbz(io.StringIO("abc"))  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="source"):
+        pyropdf.Document().pages.new_from_cbz(123)  # ty: ignore[invalid-argument-type]
+
+
+def test_new_from_cbz_jpeg2000_passthrough() -> None:
+    pytest.importorskip("PIL.Jpeg2KImagePlugin")
+    try:
+        jpx = _encoded(_image(), "JPEG2000")
+    except OSError:
+        pytest.skip("Pillow has no OpenJPEG")
+    cbz = _make_cbz([("01.jp2", jpx)])
+    doc = pyropdf.Document()
+    (page,) = doc.pages.new_from_cbz(cbz)
+    stored = page.images()[0].stored()
+    assert stored is not None
+    assert stored.filter == "JPXDecode"
+    assert stored.data == jpx
+
+
+def test_new_from_cbz_refuses_zip_bombs_atomically() -> None:
+    good_jpg = _encoded(_image("RGB", (20, 10)), "JPEG", quality=95, dpi=(72, 72))
+
+    # 1. High-ratio DEFLATE zip bomb (2 MiB of zeros compresses to ~2 KiB -> ~1000x ratio).
+    bomb_bytes = _make_cbz([("01.jpg", good_jpg), ("02.jpg", b"\x00" * (2 * 1024 * 1024))])
+    doc = pyropdf.Document()
+    doc.pages.new((50, 50))
+    with pytest.raises(pyropdf.LimitError) as raised:
+        doc.pages.new_from_cbz(bomb_bytes)
+    assert raised.value.code == "decompressed_size"
+    assert len(doc.pages) == 1
+
+    # 2. Lying central-directory header: patching uncompressed file_size down to 100 bytes
+    #    refuses atomically during chunked reading without adding earlier pages.
+    patched = bytearray(bomb_bytes)
+    cd_offset = patched.rfind(b"PK\x01\x02")
+    assert cd_offset > 0
+    # In ZIP Central Directory header: offset +24 = file_size (4B).
+    struct.pack_into("<I", patched, cd_offset + 24, 100)
+    with pytest.raises((pyropdf.LimitError, ValueError)):
+        doc.pages.new_from_cbz(bytes(patched))
+    assert len(doc.pages) == 1
+
+    # 3. Forged compress_size creating overlapped entries refuses with ValueError atomically.
+    overlapped = bytearray(bomb_bytes)
+    struct.pack_into("<II", overlapped, cd_offset + 20, 0x7FFFFFFF, 100)
+    with pytest.raises(ValueError, match="corrupt CBZ entry"):
+        doc.pages.new_from_cbz(bytes(overlapped))
+    assert len(doc.pages) == 1
+
+    # 4. Live chunked memory_size charging refuses mid-stream when an entry exceeds memory_size.
+    noise = random.Random(0).randbytes(256 * 256 * 3)  # noqa: S311 - deterministic incompressible test payload
+    big_png = _encoded(Image.frombytes("RGB", (256, 256), noise), "PNG")
+    assert len(big_png) > 100_000
+    big_cbz = _make_cbz([("01.jpg", good_jpg), ("02.png", big_png)], compress=zipfile.ZIP_STORED)
+    # Pass via seekable BytesIO so the archive buffer itself is not charged, only live member chunks.
+    with pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=64 * 1024)) as mem_doc:
+        mem_doc.pages.new((50, 50))
+        with pytest.raises(pyropdf.LimitError) as raised:
+            mem_doc.pages.new_from_cbz(io.BytesIO(big_cbz))
+        assert raised.value.code == "memory_size"
+        assert len(mem_doc.pages) == 1
+
+
+def test_new_from_cbz_enforces_document_limits_atomically() -> None:
+    good_jpg = _encoded(_image("RGB", (20, 10)), "JPEG", quality=95, dpi=(72, 72))
+    two_img = _make_cbz([("01.jpg", good_jpg), ("02.jpg", good_jpg)])
+    with pyropdf.Document(limits=pyropdf.DocumentLimits(max_total_decompressed_size=len(good_jpg))) as lim_doc:
+        with pytest.raises(pyropdf.LimitError) as raised:
+            lim_doc.pages.new_from_cbz(two_img)
+        assert raised.value.code == "total_decompressed_size"
+        assert len(lim_doc.pages) == 0
+
+    with pyropdf.Document(limits=pyropdf.DocumentLimits(max_decompressed_size=len(good_jpg) - 1)) as lim_doc:
+        with pytest.raises(pyropdf.LimitError) as raised:
+            lim_doc.pages.new_from_cbz(two_img)
+        assert raised.value.code == "decompressed_size"
+        assert len(lim_doc.pages) == 0
+
+    with pyropdf.Document(limits=pyropdf.DocumentLimits(max_pages=1)) as lim_doc:
+        with pytest.raises(pyropdf.LimitError) as raised:
+            lim_doc.pages.new_from_cbz(two_img)
+        assert raised.value.code == "page_count"
+        assert len(lim_doc.pages) == 0
+
+    with pyropdf.Document(limits=pyropdf.DocumentLimits(max_file_size=len(two_img) - 1)) as lim_doc:
+        with pytest.raises(pyropdf.LimitError) as raised:
+            lim_doc.pages.new_from_cbz(two_img)
+        assert raised.value.code == "file_size"
+        assert len(lim_doc.pages) == 0
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "../evil.jpg",
+        "dir/../../evil.jpg",
+        "/etc/passwd.jpg",
+        "\\windows\\evil.jpg",
+        "C:\\evil.jpg",
+        "safe/..\\evil.jpg",
+        "../ignored.txt",
+    ],
+)
+def test_new_from_cbz_refuses_path_traversal_and_symlinks(bad_name: str) -> None:
+    good_jpg = _encoded(_image("RGB", (20, 10)), "JPEG", quality=95)
+    cbz = _make_cbz([("01.jpg", good_jpg), (bad_name, good_jpg)])
+    doc = pyropdf.Document()
+    doc.pages.new((50, 50))
+    with pytest.raises(ValueError, match="CBZ entry"):
+        doc.pages.new_from_cbz(cbz)
+    assert len(doc.pages) == 1
+
+
+def test_new_from_cbz_refuses_symlink_entry() -> None:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        info = zipfile.ZipInfo("01.jpg")
+        info.external_attr = 0o120777 << 16
+        archive.writestr(info, b"/etc/passwd")
+    doc = pyropdf.Document()
+    with pytest.raises(ValueError, match="symbolic link"):
+        doc.pages.new_from_cbz(buf.getvalue())
+    assert len(doc.pages) == 0
+
+
+def test_new_from_cbz_refuses_over_4096_frames_and_pixel_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    tiny = _encoded(_image("L", (4, 4)), "PNG")
+    # 4,097 stored image entries exceed the hard 4,096-frame cap before decompression.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as archive:
+        for i in range(4097):
+            archive.writestr(f"{i:05d}.png", tiny)
+    doc = pyropdf.Document()
+    with pytest.raises(pyropdf.LimitError) as raised:
+        doc.pages.new_from_cbz(buf.getvalue())
+    assert raised.value.code == "content_element_count"
+    assert len(doc.pages) == 0
+
+    # Pixel cap across multiple PNGs refuses before decoding the offending image.
+    monkeypatch.setattr("pyropdf._pages._MAX_FRAME_PIXELS", 1000)
+    two_png = _make_cbz(
+        [("01.png", _encoded(_image("RGB", (40, 20)), "PNG")), ("02.png", _encoded(_image("RGB", (40, 20)), "PNG"))]
+    )
+    with pytest.raises(pyropdf.LimitError) as raised:
+        doc.pages.new_from_cbz(two_png)
+    assert raised.value.code == "content_element_count"
+    assert len(doc.pages) == 0
+
+
+def test_new_from_cbz_refuses_corrupt_empty_encrypted_and_cancelled() -> None:
+    good_jpg = _encoded(_image("RGB", (20, 10)), "JPEG", quality=95)
+    doc = pyropdf.Document()
+    doc.pages.new((50, 50))
+
+    # Not a ZIP at all.
+    with pytest.raises(ValueError, match="invalid CBZ"):
+        doc.pages.new_from_cbz(b"not a zip file")
+    assert len(doc.pages) == 1
+
+    # Valid ZIP with no image entries.
+    with pytest.raises(ValueError, match="no image entries"):
+        doc.pages.new_from_cbz(_make_cbz([("ComicInfo.xml", b"<xml/>")]))
+    assert len(doc.pages) == 1
+
+    # Corrupt second image rolls back the valid first image atomically.
+    with pytest.raises(ValueError, match="Pillow reads"):
+        doc.pages.new_from_cbz(_make_cbz([("01.jpg", good_jpg), ("02.jpg", b"not an image")]))
+    assert len(doc.pages) == 1
+
+    # Corrupt CRC-32 inside ZIP member raises ValueError and leaves document unchanged.
+    good_cbz = bytearray(_make_cbz([("01.jpg", good_jpg), ("02.jpg", good_jpg)]))
+    # Flip a byte inside the second entry's compressed payload.
+    second_local = good_cbz.find(b"PK\x03\x04", 4)
+    assert second_local > 0
+    good_cbz[second_local + 40] ^= 0xFF
+    with pytest.raises(ValueError, match="corrupt CBZ entry"):
+        doc.pages.new_from_cbz(bytes(good_cbz))
+    assert len(doc.pages) == 1
+
+    # CancellationToken aborts cleanly before or during chunked archive reading.
+    token = pyropdf.CancellationToken()
+    token.cancel()
+    with pyropdf.Document(limits=pyropdf.DocumentLimits(cancellation=token)) as cancelled_doc:
+        with pytest.raises(pyropdf.LimitError) as raised:
+            cancelled_doc.pages.new_from_cbz(_make_cbz([("01.jpg", good_jpg)]))
+        assert raised.value.code == "cancelled"
