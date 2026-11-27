@@ -301,6 +301,46 @@ fn synthetic_cases() -> Vec<(&'static str, Vec<u8>)> {
         one_page(&body, b"<<>>", &[])
     };
 
+    // DAG depth-bypass regression: shared 20-level chain validated shallow via /CS0 (depth 1 -> 21 <= 32),
+    // then re-entered at depth 16 via /CS1 (total depth 36 > 32). A boolean visited set would miss this.
+    let dag_deeper_cs = {
+        let mut extra = Vec::new();
+        // Objects 5..=24: shared 20-level /Indexed chain ending in /DeviceGray (obj 25).
+        for i in 0..20usize {
+            extra.push(format!("[/Indexed {} 0 R 0 <00>]", 6 + i).into_bytes());
+        }
+        extra.push(b"/DeviceGray".to_vec()); // obj 25
+        // Objects 26..=40: 15 outer /Indexed wrappers ending at shared chain root obj 5.
+        for i in 0..15usize {
+            let target = if i + 1 < 15 { 27 + i } else { 5 };
+            extra.push(format!("[/Indexed {target} 0 R 0 <00>]").into_bytes());
+        }
+        one_page(
+            b"/CS0 cs 0 scn /CS1 cs 0 scn",
+            b"<</ColorSpace<</CS0 5 0 R/CS1 26 0 R>>>>",
+            &extra,
+        )
+    };
+
+    // Image XObject with /SMask carrying a deep /Indexed color space chain.
+    let image_smask_cs = {
+        let mut extra = Vec::new();
+        // obj 5: primary Image XObject referencing /SMask 6 0 R.
+        extra.push(
+            b"<</Type/XObject/Subtype/Image/Width 1/Height 1/BitsPerComponent 8/ColorSpace/DeviceGray/SMask 6 0 R/Length 1>>stream\n\x00\nendstream".to_vec(),
+        );
+        // obj 6: SMask Image XObject with ColorSpace 7 0 R.
+        extra.push(
+            b"<</Type/XObject/Subtype/Image/Width 1/Height 1/BitsPerComponent 8/ColorSpace 7 0 R/Length 1>>stream\n\x00\nendstream".to_vec(),
+        );
+        // objs 7..=46: 40-level /Indexed chain ending at /DeviceGray (obj 47).
+        for i in 0..40usize {
+            extra.push(format!("[/Indexed {} 0 R 0 <00>]", 8 + i).into_bytes());
+        }
+        extra.push(b"/DeviceGray".to_vec());
+        one_page(b"/Im0 Do", b"<</XObject<</Im0 5 0 R>>>>", &extra)
+    };
+
     vec![
         ("type4-braces-50000", type4_50k),
         ("type3-function-cycle", type3_cycle),
@@ -308,6 +348,8 @@ fn synthetic_cases() -> Vec<(&'static str, Vec<u8>)> {
         ("cs-indexed-cycle", cs_indexed_cycle),
         ("cs-icc-alternate-cycle", cs_icc_cycle),
         ("cs-indexed-chain-5000", cs_chain_5k),
+        ("dag-revisited-deeper-cs", dag_deeper_cs),
+        ("image-smask-cs-chain-40", image_smask_cs),
         ("inline-image-nested-200000", inline_200k),
         ("tiling-pattern-cycle", tiling_cycle),
         ("tiling-pattern-chain-2000", tiling_chain_2k),

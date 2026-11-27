@@ -25,11 +25,13 @@
 //!   `LaurenzV/hayro#1832`) — detected in a single linear byte scan before
 //!   `hayro-syntax::content::UntypedIter` ever runs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, StreamKind, try_insert_set};
+use pyropdf_store::budget::{
+    Budget, BudgetVec, LimitCode, StreamKind, try_insert_map, try_insert_set,
+};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::Page;
 use pyropdf_store::value::{Array, Stream, Value};
@@ -124,13 +126,18 @@ impl Report {
     }
 }
 
-/// Reusable validated-object memo across pages of one immutable `Version`.
+/// Reusable depth-aware validated-object memo across pages of one immutable `Version`.
+///
+/// Each entry records the *maximum* entry depth at which the indirect object's
+/// entire reachable subgraph has already been proven safe. Re-visiting an object
+/// at `depth <= recorded` is guaranteed safe; re-visiting at `depth > recorded`
+/// re-walks the subgraph so shared DAG nodes cannot bypass depth bounds.
 #[derive(Default)]
 pub struct CheckedCache {
-    color_spaces: HashSet<u32>,
-    functions: HashSet<u32>,
-    streams: HashSet<u32>,
-    resources: HashSet<u32>,
+    color_spaces: HashMap<u32, usize>,
+    functions: HashMap<u32, usize>,
+    streams: HashMap<u32, usize>,
+    resources: HashMap<u32, usize>,
 }
 
 impl CheckedCache {
@@ -198,10 +205,10 @@ pub fn validate_page(
     let mut guard = PageGuard {
         reads,
         shared,
-        local_cs: HashSet::new(),
-        local_fn: HashSet::new(),
-        local_streams: HashSet::new(),
-        local_resources: HashSet::new(),
+        local_cs: HashMap::new(),
+        local_fn: HashMap::new(),
+        local_streams: HashMap::new(),
+        local_resources: HashMap::new(),
         report: Report::default(),
         steps: 0,
     };
@@ -213,12 +220,38 @@ pub fn validate_page(
 struct PageGuard<'a, 'b> {
     reads: &'a mut Reads<'b>,
     shared: Option<&'a mut CheckedCache>,
-    local_cs: HashSet<u32>,
-    local_fn: HashSet<u32>,
-    local_streams: HashSet<u32>,
-    local_resources: HashSet<u32>,
+    local_cs: HashMap<u32, usize>,
+    local_fn: HashMap<u32, usize>,
+    local_streams: HashMap<u32, usize>,
+    local_resources: HashMap<u32, usize>,
     report: Report,
     steps: usize,
+}
+
+fn depth_checked(
+    local: &HashMap<u32, usize>,
+    shared: Option<&HashMap<u32, usize>>,
+    num: u32,
+    depth: usize,
+) -> bool {
+    local.get(&num).is_some_and(|&d| d >= depth)
+        || shared.is_some_and(|m| m.get(&num).is_some_and(|&d| d >= depth))
+}
+
+fn record_depth(
+    local: &mut HashMap<u32, usize>,
+    shared: Option<&mut HashMap<u32, usize>>,
+    num: u32,
+    depth: usize,
+    budget: &Budget,
+) -> Result<(), Refusal> {
+    let local_max = local.get(&num).copied().unwrap_or(0).max(depth);
+    try_insert_map(local, num, local_max, budget)?;
+    if let Some(cache) = shared {
+        let shared_max = cache.get(&num).copied().unwrap_or(0).max(depth);
+        try_insert_map(cache, num, shared_max, budget)?;
+    }
+    Ok(())
 }
 
 impl<'a, 'b> PageGuard<'a, 'b> {
@@ -242,72 +275,84 @@ impl<'a, 'b> PageGuard<'a, 'b> {
         }
     }
 
-    fn is_cs_checked(&self, num: u32) -> bool {
-        self.local_cs.contains(&num)
-            || self
-                .shared
-                .as_ref()
-                .is_some_and(|c| c.color_spaces.contains(&num))
+    fn is_cs_checked(&self, num: u32, depth: usize) -> bool {
+        depth_checked(
+            &self.local_cs,
+            self.shared.as_ref().map(|c| &c.color_spaces),
+            num,
+            depth,
+        )
     }
 
-    fn mark_cs_checked(&mut self, num: u32) -> Result<(), Refusal> {
+    fn mark_cs_checked(&mut self, num: u32, depth: usize) -> Result<(), Refusal> {
         let budget = self.reads.budget();
-        try_insert_set(&mut self.local_cs, num, budget)?;
-        if let Some(cache) = self.shared.as_deref_mut() {
-            try_insert_set(&mut cache.color_spaces, num, budget)?;
-        }
-        Ok(())
+        record_depth(
+            &mut self.local_cs,
+            self.shared.as_deref_mut().map(|c| &mut c.color_spaces),
+            num,
+            depth,
+            budget,
+        )
     }
 
-    fn is_fn_checked(&self, num: u32) -> bool {
-        self.local_fn.contains(&num)
-            || self
-                .shared
-                .as_ref()
-                .is_some_and(|c| c.functions.contains(&num))
+    fn is_fn_checked(&self, num: u32, depth: usize) -> bool {
+        depth_checked(
+            &self.local_fn,
+            self.shared.as_ref().map(|c| &c.functions),
+            num,
+            depth,
+        )
     }
 
-    fn mark_fn_checked(&mut self, num: u32) -> Result<(), Refusal> {
+    fn mark_fn_checked(&mut self, num: u32, depth: usize) -> Result<(), Refusal> {
         let budget = self.reads.budget();
-        try_insert_set(&mut self.local_fn, num, budget)?;
-        if let Some(cache) = self.shared.as_deref_mut() {
-            try_insert_set(&mut cache.functions, num, budget)?;
-        }
-        Ok(())
+        record_depth(
+            &mut self.local_fn,
+            self.shared.as_deref_mut().map(|c| &mut c.functions),
+            num,
+            depth,
+            budget,
+        )
     }
 
-    fn is_stream_checked(&self, num: u32) -> bool {
-        self.local_streams.contains(&num)
-            || self
-                .shared
-                .as_ref()
-                .is_some_and(|c| c.streams.contains(&num))
+    fn is_stream_checked(&self, num: u32, depth: usize) -> bool {
+        depth_checked(
+            &self.local_streams,
+            self.shared.as_ref().map(|c| &c.streams),
+            num,
+            depth,
+        )
     }
 
-    fn mark_stream_checked(&mut self, num: u32) -> Result<(), Refusal> {
+    fn mark_stream_checked(&mut self, num: u32, depth: usize) -> Result<(), Refusal> {
         let budget = self.reads.budget();
-        try_insert_set(&mut self.local_streams, num, budget)?;
-        if let Some(cache) = self.shared.as_deref_mut() {
-            try_insert_set(&mut cache.streams, num, budget)?;
-        }
-        Ok(())
+        record_depth(
+            &mut self.local_streams,
+            self.shared.as_deref_mut().map(|c| &mut c.streams),
+            num,
+            depth,
+            budget,
+        )
     }
 
-    fn is_resources_checked(&self, num: u32) -> bool {
-        self.local_resources.contains(&num)
-            || self
-                .shared
-                .as_ref()
-                .is_some_and(|c| c.resources.contains(&num))
+    fn is_resources_checked(&self, num: u32, depth: usize) -> bool {
+        depth_checked(
+            &self.local_resources,
+            self.shared.as_ref().map(|c| &c.resources),
+            num,
+            depth,
+        )
     }
 
-    fn mark_resources_checked(&mut self, num: u32) -> Result<(), Refusal> {
+    fn mark_resources_checked(&mut self, num: u32, depth: usize) -> Result<(), Refusal> {
         let budget = self.reads.budget();
-        try_insert_set(&mut self.local_resources, num, budget)?;
-        if let Some(cache) = self.shared.as_deref_mut() {
-            try_insert_set(&mut cache.resources, num, budget)?;
-        }
-        Ok(())
+        record_depth(
+            &mut self.local_resources,
+            self.shared.as_deref_mut().map(|c| &mut c.resources),
+            num,
+            depth,
+            budget,
+        )
     }
 
     fn check_page(&mut self, page: &Page) -> Result<(), Refusal> {
@@ -380,9 +425,9 @@ impl<'a, 'b> PageGuard<'a, 'b> {
         while let Some(frame) = stream_stack.pop() {
             self.tick()?;
             match frame {
-                StreamFrame::Leave(num) => {
+                StreamFrame::Leave(num, depth) => {
                     active_streams.remove(&num);
-                    self.mark_stream_checked(num)?;
+                    self.mark_stream_checked(num, depth)?;
                 }
                 StreamFrame::Enter {
                     stream,
@@ -405,11 +450,11 @@ impl<'a, 'b> PageGuard<'a, 'b> {
                                 detail: format!("cyclic nested stream at object {num}"),
                             });
                         }
-                        if self.is_stream_checked(num) {
+                        if self.is_stream_checked(num, depth) {
                             continue;
                         }
                         try_insert_set(&mut active_streams, num, self.reads.budget())?;
-                        stream_stack.try_push(StreamFrame::Leave(num))?;
+                        stream_stack.try_push(StreamFrame::Leave(num, depth))?;
                     }
                     self.report.objects_visited += 1;
                     let Value::Stream(s) = stream.value() else {
@@ -514,7 +559,7 @@ impl<'a, 'b> PageGuard<'a, 'b> {
         active_streams: &HashSet<u32>,
     ) -> Result<(), Refusal> {
         if let Some(num) = resources.obj_num()
-            && self.is_resources_checked(num)
+            && self.is_resources_checked(num, depth)
         {
             return Ok(());
         }
@@ -609,13 +654,7 @@ impl<'a, 'b> PageGuard<'a, 'b> {
                         })?;
                     }
                     Some(b"Image") => {
-                        if let Some(cs) = stream
-                            .dict()
-                            .get("ColorSpace")
-                            .or_else(|| stream.dict().get("CS"))
-                        {
-                            self.check_color_space(cs)?;
-                        }
+                        self.check_image_xobject(stream)?;
                     }
                     _ => {}
                 }
@@ -671,7 +710,62 @@ impl<'a, 'b> PageGuard<'a, 'b> {
         if active_streams.is_empty()
             && let Some(num) = resources.obj_num()
         {
-            self.mark_resources_checked(num)?;
+            self.mark_resources_checked(num, depth)?;
+        }
+        Ok(())
+    }
+
+    /// Inspect an Image XObject's own `/ColorSpace` (or `/CS`) and any chained
+    /// `/SMask` or `/Mask` image stream color spaces iteratively.
+    fn check_image_xobject(&mut self, root: &Stream) -> Result<(), Refusal> {
+        let mut queue: BudgetVec<'_, Resolved> = BudgetVec::new(self.budget());
+        let mut seen: HashSet<u32> = HashSet::new();
+        self.inspect_image_stream(root, &mut queue)?;
+        let mut depth = 0usize;
+        while let Some(next) = queue.pop() {
+            self.tick()?;
+            depth += 1;
+            if depth > MAX_STREAM_DEPTH {
+                return Err(Refusal::Nesting {
+                    kind: "image_mask_depth",
+                    detail: format!("image mask chain exceeded {MAX_STREAM_DEPTH} levels"),
+                });
+            }
+            if let Some(num) = next.obj_num() {
+                if seen.contains(&num) {
+                    return Err(Refusal::Nesting {
+                        kind: "image_mask_cycle",
+                        detail: format!("cyclic image mask at object {num}"),
+                    });
+                }
+                try_insert_set(&mut seen, num, self.reads.budget())?;
+            }
+            if let Value::Stream(mask_stream) = next.value() {
+                self.inspect_image_stream(mask_stream, &mut queue)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn inspect_image_stream(
+        &mut self,
+        stream: &Stream,
+        queue: &mut BudgetVec<'_, Resolved>,
+    ) -> Result<(), Refusal> {
+        if let Some(cs) = stream
+            .dict()
+            .get("ColorSpace")
+            .or_else(|| stream.dict().get("CS"))
+        {
+            self.check_color_space(cs)?;
+        }
+        for mask_key in ["SMask", "Mask"] {
+            if let Some(mask_val) = stream.dict().get(mask_key)
+                && let Some(mask_res) = resolve(self.reads, mask_val)?
+                && matches!(mask_res.value(), Value::Stream(_))
+            {
+                queue.try_push(mask_res)?;
+            }
         }
         Ok(())
     }
@@ -759,7 +853,7 @@ impl<'a, 'b> PageGuard<'a, 'b> {
     fn check_function_resolved(&mut self, root: Resolved) -> Result<(), Refusal> {
         enum Frame {
             Enter { item: Resolved, depth: usize },
-            Leave(u32),
+            Leave(u32, usize),
         }
         let mut stack: BudgetVec<'_, Frame> = BudgetVec::new(self.budget());
         let mut active: HashSet<u32> = HashSet::new();
@@ -770,9 +864,9 @@ impl<'a, 'b> PageGuard<'a, 'b> {
         while let Some(frame) = stack.pop() {
             self.tick()?;
             match frame {
-                Frame::Leave(num) => {
+                Frame::Leave(num, depth) => {
                     active.remove(&num);
-                    self.mark_fn_checked(num)?;
+                    self.mark_fn_checked(num, depth)?;
                 }
                 Frame::Enter { item, depth } => {
                     if depth > self.report.max_fn_depth {
@@ -793,11 +887,11 @@ impl<'a, 'b> PageGuard<'a, 'b> {
                                 detail: format!("cyclic function graph at object {num}"),
                             });
                         }
-                        if self.is_fn_checked(num) {
+                        if self.is_fn_checked(num, depth) {
                             continue;
                         }
                         try_insert_set(&mut active, num, self.budget())?;
-                        stack.try_push(Frame::Leave(num))?;
+                        stack.try_push(Frame::Leave(num, depth))?;
                     }
                     self.report.objects_visited += 1;
                     let (dict, stream) = match item.value() {
@@ -893,7 +987,7 @@ impl<'a, 'b> PageGuard<'a, 'b> {
     fn check_color_space(&mut self, value: &Value) -> Result<(), Refusal> {
         enum Frame {
             Enter { item: Resolved, depth: usize },
-            Leave(u32),
+            Leave(u32, usize),
         }
         let Some(root) = resolve(self.reads, value)? else {
             return Ok(());
@@ -908,9 +1002,9 @@ impl<'a, 'b> PageGuard<'a, 'b> {
         while let Some(frame) = stack.pop() {
             self.tick()?;
             match frame {
-                Frame::Leave(num) => {
+                Frame::Leave(num, depth) => {
                     active.remove(&num);
-                    self.mark_cs_checked(num)?;
+                    self.mark_cs_checked(num, depth)?;
                 }
                 Frame::Enter { item, depth } => {
                     if depth > self.report.max_cs_depth {
@@ -931,11 +1025,11 @@ impl<'a, 'b> PageGuard<'a, 'b> {
                                 detail: format!("cyclic color space at object {num}"),
                             });
                         }
-                        if self.is_cs_checked(num) {
+                        if self.is_cs_checked(num, depth) {
                             continue;
                         }
                         try_insert_set(&mut active, num, self.budget())?;
-                        stack.try_push(Frame::Leave(num))?;
+                        stack.try_push(Frame::Leave(num, depth))?;
                     }
                     self.report.objects_visited += 1;
                     let Value::Array(arr) = item.value() else {
@@ -1173,7 +1267,7 @@ enum StreamFrame {
         fallback_resources: Option<Resolved>,
         depth: usize,
     },
-    Leave(u32),
+    Leave(u32, usize),
 }
 
 fn array_name(arr: &Array, idx: usize) -> Option<&[u8]> {
@@ -1308,8 +1402,9 @@ fn find_candidate_ei(data: &[u8], start: usize) -> Option<usize> {
     let mut i = start;
     while i + 1 < len {
         if data[i] == b'E' && data[i + 1] == b'I' {
+            let before_ok = i == start || is_whitespace(data[i - 1]);
             let after_ok = i + 2 == len || is_whitespace(data[i + 2]);
-            if after_ok {
+            if before_ok && after_ok {
                 return Some(i);
             }
         }
