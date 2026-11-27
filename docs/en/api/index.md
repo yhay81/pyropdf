@@ -118,6 +118,7 @@ method and property of its classes with its full description.
 - [`CurveTo`](text-and-content.md#curveto): Draw a cubic Bézier curve to `to` with two control points.
 - [`Element`](text-and-content.md#element): One piece of a page's structure, with where it is.
 - [`ElementKind`](text-and-content.md#elementkind): The kind of a structured page `Element`.
+- [`ExportedImage`](text-and-content.md#exportedimage): One image prepared for Markdown, JSON, or chunk export.
 - [`FillRule`](text-and-content.md#fillrule): The rule that decides which areas a path fills or clips.
 - [`FontRef`](text-and-content.md#fontref): The font that a text run uses, from its PDF font dictionary and font program.
 - [`Glyph`](text-and-content.md#glyph): One glyph of a text run.

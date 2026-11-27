@@ -7,7 +7,7 @@
 //! [`Structure::FontSubset`]: pyropdf_store::settle::Structure::FontSubset
 
 use pyropdf_store::Result;
-use pyropdf_store::budget::Budget;
+use pyropdf_store::budget::{Budget, BudgetVec};
 use pyropdf_store::settle::Settler;
 use pyropdf_store::value::{Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
@@ -29,11 +29,63 @@ impl Settler for FontSubsetSettler {
             return Ok(());
         }
         let target = Target::of(transaction.version(), budget)?;
+        // Multiple Type0 fonts (for instance `Identity-H` and `Identity-V` of
+        // the same face) can share one CIDFont descendant and program. Group
+        // them by descendant reference so the program is compacted once and
+        // every Type0 dictionary receives the same subset tag.
+        let mut groups: BudgetVec<'_, FontGroup> = BudgetVec::new(budget);
         for &number in numbers {
-            // A font that is no longer the shape that pyropdf wrote keeps
-            // its program whole.
-            if let Some(font) = Font::read(transaction.version(), number, budget)? {
-                font.subset(transaction, target, budget)?;
+            let Some(font) = Font::read(transaction.version(), number, budget)? else {
+                continue;
+            };
+            if let Some(group) = groups
+                .iter_mut()
+                .find(|group| group.primary.descendant.0 == font.descendant.0)
+            {
+                if group.primary.number != font.number
+                    && group
+                        .extra_type0s
+                        .iter()
+                        .all(|(existing, _)| *existing != font.number)
+                {
+                    group.extra_type0s.try_push((font.number, font.font))?;
+                }
+            } else {
+                groups.try_push(FontGroup {
+                    primary: font,
+                    extra_type0s: BudgetVec::new(budget),
+                })?;
+            }
+        }
+        for group in groups.into_vec() {
+            group.subset(transaction, target, budget)?;
+        }
+        Ok(())
+    }
+}
+
+/// One or more Type0 fonts sharing a single CIDFont descendant and program.
+struct FontGroup<'b> {
+    primary: Font,
+    extra_type0s: BudgetVec<'b, (u32, Dict)>,
+}
+
+impl FontGroup<'_> {
+    fn subset(self, transaction: &mut Transaction, target: Target, budget: &Budget) -> Result<()> {
+        let tagged = self.primary.subset(transaction, target, budget)?;
+        if let Some(tagged) = tagged {
+            for (number, mut font) in self.extra_type0s.into_vec() {
+                if let Some(Value::Name(base)) = font.get("BaseFont")
+                    && has_tag(base.as_bytes())
+                {
+                    continue;
+                }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the dictionary grows by one entry at most"
+                )]
+                font.insert(Name::from("BaseFont"), tagged.clone());
+                transaction.write(number, &Value::Dict(font), budget)?;
             }
         }
         Ok(())
@@ -124,7 +176,9 @@ impl Font {
         let Value::Dict(font) = &**object.value() else {
             return Ok(None);
         };
-        if !is_name(font.get("Subtype"), b"Type0") || !is_name(font.get("Encoding"), b"Identity-H")
+        if !is_name(font.get("Subtype"), b"Type0")
+            || !(is_name(font.get("Encoding"), b"Identity-H")
+                || is_name(font.get("Encoding"), b"Identity-V"))
         {
             return Ok(None);
         }
@@ -167,7 +221,7 @@ impl Font {
             return Ok(None);
         }
         let data = stream.decoded(budget)?;
-        let Some(glyphs) = cid_font.get("W").and_then(widths_glyphs) else {
+        let Some(glyphs) = cid_font_glyphs(&cid_font) else {
             return Ok(None);
         };
         Ok(Some(Self {
@@ -180,22 +234,27 @@ impl Font {
         }))
     }
 
-    fn subset(self, transaction: &mut Transaction, target: Target, budget: &Budget) -> Result<()> {
+    fn subset(
+        self,
+        transaction: &mut Transaction,
+        target: Target,
+        budget: &Budget,
+    ) -> Result<Option<Value>> {
         let base = match self.font.get("BaseFont") {
             #[expect(
                 clippy::disallowed_methods,
                 reason = "a copy of the font's BaseFont, which the version holds"
             )]
             Some(Value::Name(name)) => name.as_bytes().to_vec(),
-            _ => return Ok(()),
+            _ => return Ok(None),
         };
         // A font that a save already tagged is a subset already.
         if has_tag(&base) {
-            return Ok(());
+            return Ok(None);
         }
         let name = String::from_utf8_lossy(&base);
         let Some(compact) = compact(&self.program.1, &self.glyphs, &name) else {
-            return Ok(());
+            return Ok(None);
         };
         // Before PDF 1.6, a CFF face's provisional `/OpenType` stream has no
         // valid subtype, so it still converts to `CIDFontType0C`; PDF/A-1 also
@@ -204,7 +263,7 @@ impl Font {
             && !target.cid_set
             && compact.data.len() >= self.program.1.len()
         {
-            return Ok(());
+            return Ok(None);
         }
         let mut tagged = tag(&compact).into_bytes();
         #[expect(
@@ -283,37 +342,77 @@ impl Font {
             clippy::disallowed_methods,
             reason = "the dictionary grows by one entry at most"
         )]
-        font.insert(Name::from("BaseFont"), tagged);
+        font.insert(Name::from("BaseFont"), tagged.clone());
         transaction.write(self.number, &Value::Dict(font), budget)?;
-        Ok(())
+        Ok(Some(tagged))
     }
 }
 
-/// Returns the glyphs that the `W` array `value` gives widths, in its
-/// `c [w1 w2 ...]` and `c_first c_last w` forms (ISO 32000-2 9.7.4.3),
-/// or `None` when it is not an array of those.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "16-bit glyph IDs, so the result holds 65,536 glyphs at most"
-)]
-fn widths_glyphs(value: &Value) -> Option<Vec<u32>> {
+struct GlyphSweep {
+    edges: [u64; 1024],
+    full_ends: [u16; 1024],
+    first_used: usize,
+    end_used: usize,
+}
+
+impl GlyphSweep {
+    fn new() -> Self {
+        Self {
+            edges: [0_u64; 1024],
+            full_ends: [0_u16; 1024],
+            first_used: 1024,
+            end_used: 0,
+        }
+    }
+
+    fn mark(&mut self, first: u32, end: u32) {
+        if first >= end {
+            return;
+        }
+        let last = end - 1;
+        let (first_word, last_word) =
+            mark_glyph_range(&mut self.edges, &mut self.full_ends, first, last);
+        self.first_used = self.first_used.min(first_word);
+        self.end_used = self.end_used.max(last_word + 1);
+    }
+
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "16-bit glyph IDs, so the result holds 65,536 glyphs at most"
+    )]
+    fn finish(self) -> Vec<u32> {
+        let mut glyphs = Vec::new();
+        let mut full_end = 0;
+        for word in self.first_used..self.end_used {
+            full_end = full_end.max(usize::from(self.full_ends[word]));
+            let mut bits = if word < full_end {
+                u64::MAX
+            } else {
+                self.edges[word]
+            };
+            while bits != 0 {
+                glyphs.push(word as u32 * 64 + bits.trailing_zeros());
+                bits &= bits - 1;
+            }
+        }
+        glyphs
+    }
+}
+
+fn glyph_id(value: Option<&Value>) -> Option<u32> {
+    match value {
+        Some(&Value::Integer(glyph)) => u16::try_from(glyph).ok().map(u32::from),
+        _ => None,
+    }
+}
+
+fn sweep_w(value: &Value, sweep: &mut GlyphSweep) -> Option<()> {
     let Value::Array(array) = value else {
         return None;
     };
-    let glyph = |value: Option<&Value>| match value {
-        Some(&Value::Integer(glyph)) => u16::try_from(glyph).ok().map(u32::from),
-        _ => None,
-    };
-    // Each range writes at most two partial words and one endpoint for its
-    // full words. Sweep those endpoints once below, instead of expanding
-    // overlapping ranges repeatedly. The fixed tables occupy 10 KiB.
-    let mut edges = [0_u64; 1024];
-    let mut full_ends = [0_u16; 1024];
-    let mut first_used = edges.len();
-    let mut end_used = 0;
     let mut at = 0;
     while at < array.len() {
-        let first = glyph(array.get(at))?;
+        let first = glyph_id(array.get(at))?;
         let end = match array.get(at + 1)? {
             Value::Array(widths) => {
                 let last = first.checked_add(u32::try_from(widths.len()).ok()?)?;
@@ -321,34 +420,80 @@ fn widths_glyphs(value: &Value) -> Option<Vec<u32>> {
                 last.min(u32::from(u16::MAX) + 1)
             }
             _ => {
-                let last = glyph(array.get(at + 1))?;
+                let last = glyph_id(array.get(at + 1))?;
                 at += 3;
                 last + 1
             }
         };
-        if first >= end {
-            continue;
-        }
-        let last = end - 1;
-        let (first_word, last_word) = mark_glyph_range(&mut edges, &mut full_ends, first, last);
-        first_used = first_used.min(first_word);
-        end_used = end_used.max(last_word + 1);
+        sweep.mark(first, end);
     }
-    let mut glyphs = Vec::new();
-    let mut full_end = 0;
-    for word in first_used..end_used {
-        full_end = full_end.max(usize::from(full_ends[word]));
-        let mut bits = if word < full_end {
-            u64::MAX
-        } else {
-            edges[word]
+    Some(())
+}
+
+fn sweep_w2(value: &Value, sweep: &mut GlyphSweep) -> Option<()> {
+    let Value::Array(array) = value else {
+        return None;
+    };
+    let mut at = 0;
+    while at < array.len() {
+        let first = glyph_id(array.get(at))?;
+        let end = match array.get(at + 1)? {
+            Value::Array(metrics) => {
+                if !metrics.len().is_multiple_of(3) {
+                    return None;
+                }
+                let count = u32::try_from(metrics.len() / 3).ok()?;
+                let last = first.checked_add(count)?;
+                at += 2;
+                last.min(u32::from(u16::MAX) + 1)
+            }
+            _ => {
+                let last = glyph_id(array.get(at + 1))?;
+                at += 5;
+                last + 1
+            }
         };
-        while bits != 0 {
-            glyphs.push(word as u32 * 64 + bits.trailing_zeros());
-            bits &= bits - 1;
-        }
+        sweep.mark(first, end);
     }
-    Some(glyphs)
+    Some(())
+}
+
+/// Returns the union of glyphs named by a CIDFont's `W` and/or `W2` arrays,
+/// or `None` when neither is present or either present entry is malformed.
+fn cid_font_glyphs(cid_font: &Dict) -> Option<Vec<u32>> {
+    let w = cid_font.get("W");
+    let w2 = cid_font.get("W2");
+    if w.is_none() && w2.is_none() {
+        return None;
+    }
+    let mut sweep = GlyphSweep::new();
+    if let Some(value) = w {
+        sweep_w(value, &mut sweep)?;
+    }
+    if let Some(value) = w2 {
+        sweep_w2(value, &mut sweep)?;
+    }
+    Some(sweep.finish())
+}
+
+/// Returns the glyphs that the `W` array `value` gives widths, in its
+/// `c [w1 w2 ...]` and `c_first c_last w` forms (ISO 32000-2 9.7.4.3),
+/// or `None` when it is not an array of those.
+#[cfg(test)]
+fn widths_glyphs(value: &Value) -> Option<Vec<u32>> {
+    let mut sweep = GlyphSweep::new();
+    sweep_w(value, &mut sweep)?;
+    Some(sweep.finish())
+}
+
+/// Returns the glyphs that the `W2` array `value` gives vertical metrics, in
+/// its `c [w1y vx vy ...]` and `c_first c_last w1y vx vy` forms (ISO 32000-2
+/// 9.7.4.3), or `None` when it is not an array of those.
+#[cfg(test)]
+fn widths2_glyphs(value: &Value) -> Option<Vec<u32>> {
+    let mut sweep = GlyphSweep::new();
+    sweep_w2(value, &mut sweep)?;
+    Some(sweep.finish())
 }
 
 /// Returns the `CIDSet` bitmap of a subset whose CIDs are `glyphs`

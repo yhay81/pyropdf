@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Generator, Iterable, Mapping
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Literal, overload
 
 from pyropdf import _core, _markdown
@@ -73,7 +74,6 @@ from pyropdf._text import (
     _rect,
     _warn_skipped,
     build_layout,
-    build_words,
     text_options,
 )
 from pyropdf._text_edit import replace_text
@@ -81,10 +81,12 @@ from pyropdf._transparency import uses_transparency
 from pyropdf._widgets import Widgets
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    import os
+    from collections.abc import Callable, Mapping, Sequence
 
     from pyropdf._core import CharColumns
     from pyropdf._document import Document
+    from pyropdf._markdown import ExportedImage
     from pyropdf._operations import InlineImage, Operation
     from pyropdf._pixmap import Pixmap
     from pyropdf._targets import Target
@@ -1148,8 +1150,19 @@ class Page:
             max_size=max_size,
             exact_bboxes=exact_bboxes,
         )
-        _, _, blocks, _ = self._layout(options, chars=False, max_glyphs=max_glyphs, max_size=max_size)
-        return build_words(blocks)
+        try:
+            words, skipped = _core.page_words(
+                self._reader(),
+                self._number,
+                self._generation,
+                options,
+                max_glyphs,
+                max_size,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+        _warn_skipped(skipped)
+        return words
 
     def layout(  # noqa: PLR0913 - the text options are all keyword-only
         self,
@@ -1452,19 +1465,65 @@ class Page:
         _warn_skipped(skipped)
         return text
 
-    def markdown(
+    @contextmanager
+    def _export_single(self) -> Generator[Page]:
+        """Pin this page and its document to one version for a single-page export."""
+        if isinstance(self, _ExportPage):
+            yield self
+            return
+        from pyropdf._fallback_fonts import _set_fallback  # noqa: PLC0415
+
+        pinned = self._document._import_source(_core.attachment_reader(self._document._core()))  # noqa: SLF001
+        try:
+            if self._document._fallback is not None:  # noqa: SLF001
+                _set_fallback(pinned, self._document._fallback)  # noqa: SLF001
+            idx = _core.page_index(pinned._core(), self._number, self._generation)  # noqa: SLF001
+            if idx is None:
+                raise self._stale()
+            snapshot = _core.snapshot_pages(pinned._core())  # noqa: SLF001
+            yield _ExportPage(pinned, snapshot, idx)
+        finally:
+            pinned.close()
+
+    def markdown(  # noqa: PLR0913 - keyword-only retrieval export options.
         self,
         *,
         table_strategy: Literal["lines", "text"] | None = "lines",
+        use_structure: Literal["auto", "always", "never"] = "auto",
+        expand_abbreviations: bool = False,
+        margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
+        images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
+        max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
         max_size: int | None = _markdown._DEFAULT_MAX_MARKDOWN_SIZE,  # noqa: SLF001
     ) -> str:
         """Return the current version of the page as Markdown.
 
-        This is :meth:`Document.markdown` of this page alone, which infers
-        heading sizes from this page.
+        This is :meth:`Document.markdown` of this page alone, using the
+        document's structure tree when enabled and trustworthy, or inferring
+        heading sizes from this page when falling back to geometric extraction.
+        ``margins``, ``images``, and ``max_graphics`` work as on
+        :meth:`Document.markdown`.
         """
-        _markdown.validate_options(table_strategy, max_size)
-        return _markdown.pages_markdown([self], table_strategy=table_strategy, max_size=max_size)
+        _markdown.validate_options(
+            table_strategy,
+            max_size,
+            use_structure=use_structure,
+            expand_abbreviations=expand_abbreviations,
+            margins=margins,
+            images=images,
+            max_graphics=max_graphics,
+        )
+        with self._export_single() as export_page:
+            return _markdown.pages_markdown(
+                [export_page],
+                table_strategy=table_strategy,
+                max_size=max_size,
+                use_structure=use_structure,
+                expand_abbreviations=expand_abbreviations,
+                margins=margins,
+                images=images,
+                max_graphics=max_graphics,
+            )
 
     def tables(
         self,

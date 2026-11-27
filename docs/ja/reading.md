@@ -61,6 +61,17 @@ with pyropdf.open("input.pdf") as doc:
 `page.tables()` は罫線から表を見つけます。`strategy="text"` ならテキストの揃いから
 見つけます。`page.markdown()` と `doc.markdown()` は表も含めてページを Markdown にします。
 
+文書がタグ付きで信頼性チェック（`/MarkInfo << /Marked true >>`、`/Suspects` なし、
+正常な構造ツリー、非アーティファクト本文の十分な網羅率）を満たす場合、既定の
+`use_structure="auto"` で構造ツリーから見出し（`H1`〜`H6`・`H`・`Title`）、箇条書き
+（`L`/`LI`/`Lbl`/`LBody`）、表（`Table`/`THead`/`TBody`/`TFoot`/`TR`/`TH`/`TD`）、
+引用、コード、`/Alt` つき図、`/ActualText`、論理読み上げ順を取り出し、`Artifact` の
+ヘッダ・フッタを自動で除外します。独自ロールは `/RoleMap` と PDF 2.0 名前空間で解決
+されます。`/E` による略語展開を使うときは `expand_abbreviations=True`、信頼性チェックを
+省いて構造ツリーを読むときは `use_structure="always"`、幾何レイアウトを強制するときは
+`use_structure="never"` を渡します。`"auto"` では、未タグページや未解決の Form XObject
+を含むページは自動的に幾何レイアウトへフォールバックします。
+
 ```python
 import pyropdf
 
@@ -68,27 +79,65 @@ with pyropdf.open("input.pdf") as doc:
     for table in doc.pages[0].tables():
         print(table.markdown())
     print(doc.markdown())
+    print(doc.markdown(use_structure="never"))  # 幾何レイアウトを強制
 ```
 
 ## JSON と検索チャンク {#json-and-retrieval-chunks}
 
-`doc.to_json()` は同じレイアウト要素（見出し、段落、箇条書き項目、表、画像）を
-ページ番号と表示座標の矩形つきで JSON として出力します。`doc.to_chunks()` は
-連続する要素を文字数上限（`max_chars`、既定は 2000）以内の Markdown 検索チャンクに
-まとめます。見出しごとに新しいチャンクが始まり、各 `Chunk` は上位見出しの `section`、
-対象ページの `pages`、出典つきの `elements` を保持します。表・画像・見出しは分割されず
-（上限を超えると `chunk.oversized` が `True` になります）、どちらのメソッドも `pages=` と
-`table_strategy=` を受け取ります。
+`doc.to_json()` は同じページ要素（見出し、段落、箇条書き項目、表、画像、引用、コードブロック）を
+ページ番号と表示座標の矩形つきで JSON として出力します。構造ツリーから抽出した場合は、
+要素の `alt_text` や継承された BCP 47 の `language` を、画像エクスポートを有効にした場合は
+`image` も含めます。`doc.to_chunks()` は連続する要素を文字数上限（`max_chars`、既定は 2000）
+以内の Markdown 検索チャンクにまとめます。見出しごとに新しいチャンクが始まり、各 `Chunk` は
+上位見出しの `section`、対象ページの `pages`、主要言語 `language`、出典つきの `elements` を
+保持します。表・画像・見出し・コードブロックは分割されません（上限を超えると `chunk.oversized`
+が `True` になります）。
+
+`doc.markdown()`・`doc.to_json()`・`doc.to_chunks()` は検索用途に向けた共通の制御オプションを
+備えています（単一ページの `page.markdown()` でも `margins`・`images`・`max_graphics` を使えます）。
+
+- **`margins`**: 正立・回転いずれのページでも表示座標の余白を指定し、本文領域外のヘッダ・
+  フッタ・サイドバー・表・画像を除外します。4 辺共通の数値、`(horizontal, vertical)`、または
+  `(left, top, right, bottom)` を指定できます。
+- **`ignore_headers_footers=True`**: 複数ページにまたがる上下帯の反復ヘッダ・フッタを
+  決定論的に除去します。`Page 1 of 10`・`1 / 10`・`- 1 -`・ローマ数字（`Page iv of xii` 等）の
+  連番ページ番号を正規化して判定しつつ、先頭ページの固有タイトルや本文行は保持します。
+- **`images`**: 既定は `None`（完全インメモリ・ディスク書き込みなし・画像デコードなし）です。
+  ディレクトリパスを渡すと、エクスポート完了後に境界つきの PNG または JPEG ファイル
+  （`page-{page}-image-{index}.{ext}`）を書き出して Markdown 画像リンクを出力します。
+  コールバックを渡すと、ディスクに書き込まずに各 `ExportedImage`（`page`・`index`・`bbox`・
+  `filename`・`media_type`・`data`・`width`・`height`・`alt_text`）を受け取り、返したリンク先
+  （または `None` で省略）を出力に使います。
+- **`max_graphics`**: 1 ページあたりに検査するグラフィックス要素（パス・セグメント・クリップ・
+  画像）の上限です（既定 65,536。CAD や地図 PDF などで上限を超えると処理が停滞せずに
+  `LimitError`（コード `content_element_count`）を送出します。信頼できる入力では `None` で解除）。
 
 ```python
 import json
+from pathlib import Path
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
-    data = json.loads(doc.to_json())
+    md = doc.markdown(
+        margins=(36, 54, 36, 54),
+        ignore_headers_footers=True,
+        images=Path("exported_images"),
+        max_graphics=10_000,
+    )
+    data = json.loads(
+        doc.to_json(
+            ignore_headers_footers=True,
+            images=lambda img: f"https://cdn.example/{img.filename}",
+        )
+    )
     print(len(data["pages"]), [elem["kind"] for elem in data["pages"][0]["elements"]])
-    for chunk in doc.to_chunks(max_chars=500):
-        print(chunk.index, chunk.pages, chunk.section, chunk.text)
+    for chunk in doc.to_chunks(
+        max_chars=500,
+        margins=(36, 54),
+        ignore_headers_footers=True,
+        expand_abbreviations=True,
+    ):
+        print(chunk.index, chunk.pages, chunk.section, chunk.language, chunk.text)
 ```
 
 ## タグ付き読み上げ順 {#tagged-reading-order}

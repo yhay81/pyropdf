@@ -7,7 +7,8 @@ description: What pyropdf 0.4 covers, what it does not yet, and what pyropdf doe
 
 ## Status
 
-The API may change between minor versions, and the
+The API may change between minor versions (see the
+[API stability policy](stability.md)), and the
 [changelog](https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md) lists
 each change. [DESIGN.md](https://github.com/yhay81/pyropdf/blob/main/DESIGN.md)
 describes its foundation, and [Specification coverage](specification.md)

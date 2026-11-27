@@ -12,6 +12,7 @@ tests of ``tests/test_tables.py``. The differences:
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,6 +20,8 @@ from test_content import build_raw_pdf
 from test_tables import _bordered_table_pdf, _sparse_row_grid_pdf, build_visual_rtl_pdf
 
 import pyropdf
+
+_PDFUA_ASSETS = Path(__file__).parent / "assets" / "pdfua"
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -585,3 +588,825 @@ def test_sparse_row_grid_markdown_keeps_logical_orientation(rotation: int) -> No
     assert "| Item1 | 1 | 10 |" in markdown
     assert "| Item5 | 5 | 50 |" in markdown
     assert markdown.count("Item3") == 1
+
+
+def _stream_obj(data: str, extra: str = "") -> str:
+    return f"<< /Length {len(data)} {extra} >>\nstream\n{data}\nendstream"
+
+
+def _rich_tagged_pdf(*, marked: bool = True, suspects: bool = False) -> bytes:
+    """Build a uniform-12pt tagged PDF covering headings, lists, tables, quotes, code, figures, and artifacts."""
+    stream = (
+        "BT /F1 12 Tf "
+        "40 760 Td /Artifact BMC (Running Header) Tj EMC "
+        "0 -20 Td /P << /MCID 1 >> BDC (Second logically) Tj EMC "
+        "0 -20 Td /H1 << /MCID 0 >> BDC (Main Title) Tj EMC "
+        "0 -20 Td /H << /MCID 2 >> BDC (Nested Heading) Tj EMC "
+        "0 -20 Td /P << /MCID 3 >> BDC (Intro ) Tj EMC "
+        "50 0 Td /Strong << /MCID 4 >> BDC (bold) Tj EMC "
+        "40 0 Td /Em << /MCID 5 >> BDC (italic) Tj EMC "
+        "50 0 Td /Code << /MCID 6 >> BDC (x=1) Tj EMC "
+        "-140 -20 Td /Lbl << /MCID 7 >> BDC (*) Tj EMC "
+        "12 0 Td /LBody << /MCID 8 >> BDC (First item) Tj EMC "
+        "-12 -20 Td /LBody << /MCID 9 >> BDC (Nested item) Tj EMC "
+        "0 -20 Td /LBody << /MCID 10 >> BDC (Ordered one) Tj EMC "
+        "0 -20 Td /BlockQuote << /MCID 11 >> BDC (Quoted line) Tj EMC "
+        "0 -20 Td /Code << /MCID 12 >> BDC (print(1)) Tj EMC "
+        "0 -20 Td /TH << /MCID 13 >> BDC (Metric) Tj EMC "
+        "100 0 Td /TD << /MCID 14 >> BDC (100) Tj EMC "
+        "-100 -20 Td /Span /Abbr BDC (API) Tj EMC "
+        "0 -20 Td /P << /MCID 16 >> BDC (SkipMeArtifactElem) Tj EMC "
+        "ET\n"
+        "/Figure << /MCID 17 >> BDC 0 0 1 rg 40 200 80 40 re f EMC\n"
+        "BT /F1 12 Tf 40 40 Td /Artifact BMC (Page 1 of 1) Tj EMC ET"
+    )
+    mark_info = f"<< /Marked {'true' if marked else 'false'} /Suspects {'true' if suspects else 'false'} >>"
+    return build_raw_pdf(
+        {
+            1: (f"<< /Type /Catalog /Pages 2 0 R /Lang (en-US) /MarkInfo {mark_info} /StructTreeRoot 10 0 R >>"),
+            2: (
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> "
+                "/Properties << /Abbr << /MCID 15 /E (Application Programming Interface) >> >> >> >>"
+            ),
+            3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /StructParents 0 >>",
+            4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            5: _stream_obj(stream),
+            10: "<< /Type /StructTreeRoot /K 11 0 R >>",
+            11: (
+                "<< /Type /StructElem /S /Document /P 10 0 R /Pg 3 0 R "
+                "/K [12 0 R 13 0 R 14 0 R 16 0 R 20 0 R 24 0 R 26 0 R 27 0 R 28 0 R 33 0 R 34 0 R 35 0 R] >>"
+            ),
+            # Reading order places H1 (MCID 0) BEFORE P (MCID 1) even though MCID 1 is visually above MCID 0.
+            12: "<< /Type /StructElem /S /H1 /P 11 0 R /Pg 3 0 R /K 0 >>",
+            13: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K 1 >>",
+            14: "<< /Type /StructElem /S /Sect /P 11 0 R /Pg 3 0 R /K [15 0 R] >>",
+            15: "<< /Type /StructElem /S /H /P 14 0 R /Pg 3 0 R /K 2 >>",
+            16: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K [3 17 0 R 18 0 R 19 0 R] >>",
+            17: "<< /Type /StructElem /S /Strong /P 16 0 R /Pg 3 0 R /K 4 >>",
+            18: "<< /Type /StructElem /S /Em /P 16 0 R /Pg 3 0 R /K 5 >>",
+            19: "<< /Type /StructElem /S /Code /P 16 0 R /Pg 3 0 R /K 6 >>",
+            20: "<< /Type /StructElem /S /L /P 11 0 R /Pg 3 0 R /K [21 0 R] >>",
+            21: "<< /Type /StructElem /S /LI /P 20 0 R /Pg 3 0 R /K [22 0 R 23 0 R] >>",
+            22: "<< /Type /StructElem /S /Lbl /P 21 0 R /Pg 3 0 R /K 7 >>",
+            23: "<< /Type /StructElem /S /LBody /P 21 0 R /Pg 3 0 R /K [8 36 0 R] >>",
+            36: "<< /Type /StructElem /S /L /P 23 0 R /Pg 3 0 R /K [37 0 R] >>",
+            37: "<< /Type /StructElem /S /LI /P 36 0 R /Pg 3 0 R /K [38 0 R] >>",
+            38: "<< /Type /StructElem /S /LBody /P 37 0 R /Pg 3 0 R /K 9 >>",
+            24: (
+                "<< /Type /StructElem /S /L /P 11 0 R /Pg 3 0 R "
+                "/A << /O /List /ListNumbering /Decimal >> /K [25 0 R] >>"
+            ),
+            25: "<< /Type /StructElem /S /LI /P 24 0 R /Pg 3 0 R /K [39 0 R] >>",
+            39: "<< /Type /StructElem /S /LBody /P 25 0 R /Pg 3 0 R /K 10 >>",
+            26: "<< /Type /StructElem /S /BlockQuote /P 11 0 R /Pg 3 0 R /Lang (fr) /K 11 >>",
+            27: "<< /Type /StructElem /S /Code /P 11 0 R /Pg 3 0 R /K 12 >>",
+            28: "<< /Type /StructElem /S /Table /P 11 0 R /Pg 3 0 R /K [29 0 R 31 0 R] >>",
+            29: "<< /Type /StructElem /S /THead /P 28 0 R /Pg 3 0 R /K [30 0 R] >>",
+            30: "<< /Type /StructElem /S /TR /P 29 0 R /Pg 3 0 R /K [40 0 R] >>",
+            40: "<< /Type /StructElem /S /TH /P 30 0 R /Pg 3 0 R /A << /O /Table /ColSpan 2 >> /K 13 >>",
+            31: "<< /Type /StructElem /S /TBody /P 28 0 R /Pg 3 0 R /K [32 0 R] >>",
+            32: "<< /Type /StructElem /S /TR /P 31 0 R /Pg 3 0 R /K [41 0 R 42 0 R] >>",
+            41: "<< /Type /StructElem /S /TD /P 32 0 R /Pg 3 0 R /K 14 >>",
+            42: "<< /Type /StructElem /S /TD /P 32 0 R /Pg 3 0 R /ActualText (OK) /K [] >>",
+            33: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K 15 >>",
+            34: "<< /Type /StructElem /S /Artifact /P 11 0 R /Pg 3 0 R /K 16 >>",
+            35: "<< /Type /StructElem /S /Figure /P 11 0 R /Pg 3 0 R /Alt (Blue bar chart) /K 17 >>",
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected_alt"),
+    [
+        ("pdfua-1.pdf", "A blue rectangle crossed by a red line"),
+        ("pdfua-2.pdf", "Water level rose at each of three readings; the final level was three times the first."),
+        (
+            "pdfua-2-pdfa-4.pdf",
+            "Water level rose at each of three readings; the final level was three times the first.",
+        ),
+    ],
+)
+@pytest.mark.spec("tagged-pdf", "interpret")
+def test_markdown_reads_pdfua_figure_alt_from_structure_tree(filename: str, expected_alt: str) -> None:
+    with pyropdf.open(_PDFUA_ASSETS / filename) as doc:
+        expected = f"![{expected_alt}]()"
+        assert doc.markdown() == expected
+        assert doc.pages[0].markdown() == expected
+        assert doc.markdown(use_structure="never") == ""
+
+
+@pytest.mark.spec("tagged-pdf", "interpret")
+def test_markdown_uses_structure_tree_roles_reading_order_and_artifact_exclusion() -> None:
+    with pyropdf.open(_rich_tagged_pdf()) as doc:
+        md = doc.markdown()
+        assert md.startswith("# Main Title\n\nSecond logically\n\n## Nested Heading")
+        assert "**bold**" in md
+        assert "*italic*" in md
+        assert "`x=1`" in md
+        assert "- First item\n  - Nested item\n1. Ordered one" in md
+        assert "> Quoted line" in md
+        assert "```\nprint(1)\n```" in md
+        assert "| Metric | Metric |\n| --- | --- |\n| 100 | OK |" in md
+        assert "![Blue bar chart]()" in md
+        assert "API" in md
+        assert "Application Programming Interface" not in md
+        assert "Running Header" not in md
+        assert "Page 1 of 1" not in md
+        assert "SkipMeArtifactElem" not in md
+
+        expanded = doc.markdown(expand_abbreviations=True)
+        assert "Application Programming Interface" in expanded
+
+        # Geometric mode ignores structure roles and artifacts.
+        geometric = doc.markdown(use_structure="never")
+        assert "Running Header" in geometric
+        assert "# Main Title" not in geometric
+        assert geometric.index("Second logically") < geometric.index("Main Title")
+
+        # table_strategy=None emits structure table cells without Markdown table syntax.
+        no_tables = doc.markdown(table_strategy=None)
+        assert "| --- |" not in no_tables
+        assert "Metric" in no_tables
+
+
+@pytest.mark.spec("tagged-pdf", "interpret")
+def test_markdown_resolves_role_map_and_pdf2_namespaces() -> None:
+    stream = (
+        "BT /F1 12 Tf "
+        "40 740 Td /CustomArt << /MCID 0 >> BDC (HeaderToDrop) Tj EMC "
+        "0 -20 Td /MyTitle << /MCID 1 >> BDC (Chapter One) Tj EMC "
+        "0 -20 Td /NsHeading << /MCID 2 >> BDC (Subsection) Tj EMC "
+        "0 -20 Td /NsNote << /MCID 3 >> BDC (Important callout) Tj EMC "
+        "0 -20 Td /NsBody << /MCID 4 >> BDC (Body content) Tj EMC ET"
+    )
+    pdf = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Version /2.0 /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 10 0 R >>",
+            2: (
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] "
+                "/Resources << /Font << /F1 4 0 R >> >> >>"
+            ),
+            3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /StructParents 0 >>",
+            4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            5: _stream_obj(stream),
+            10: (
+                "<< /Type /StructTreeRoot /K 11 0 R "
+                "/RoleMap << /MyTitle /ChapterHead /ChapterHead /H1 /CustomArt /Artifact >> "
+                "/Namespaces [20 0 R 21 0 R] >>"
+            ),
+            11: (
+                "<< /Type /StructElem /S /Document /NS 20 0 R /P 10 0 R /Pg 3 0 R "
+                "/K [12 0 R 13 0 R 14 0 R 15 0 R 16 0 R] >>"
+            ),
+            12: "<< /Type /StructElem /S /CustomArt /P 11 0 R /Pg 3 0 R /K 0 >>",
+            13: "<< /Type /StructElem /S /MyTitle /P 11 0 R /Pg 3 0 R /K 1 >>",
+            14: "<< /Type /StructElem /S /NsHeading /NS 21 0 R /P 11 0 R /Pg 3 0 R /K 2 >>",
+            15: "<< /Type /StructElem /S /NsNote /NS 21 0 R /P 11 0 R /Pg 3 0 R /K 3 >>",
+            16: "<< /Type /StructElem /S /NsBody /NS 21 0 R /P 11 0 R /Pg 3 0 R /K 4 >>",
+            20: "<< /Type /Namespace /NS (http://iso.org/pdf2/ssn) >>",
+            21: (
+                "<< /Type /Namespace /NS (https://example.com/custom-ns) "
+                "/RoleMapNS << /NsHeading [/H2 20 0 R] /NsNote [/BlockQuote 20 0 R] /NsBody /P >> >>"
+            ),
+        }
+    )
+    with pyropdf.open(pdf) as doc:
+        md = doc.markdown()
+        assert md == "# Chapter One\n\n## Subsection\n\n> Important callout\n\nBody content"
+        assert "HeaderToDrop" not in md
+
+
+def test_markdown_trustworthiness_and_fallback_controls() -> None:
+    # Marked=false falls back in auto mode, but always mode uses structure.
+    with pyropdf.open(_rich_tagged_pdf(marked=False)) as doc:
+        assert "# Main Title" not in doc.markdown(use_structure="auto")
+        assert doc.markdown(use_structure="always").startswith("# Main Title")
+
+    # Suspects=true falls back in auto mode, but always mode uses structure.
+    with pyropdf.open(_rich_tagged_pdf(marked=True, suspects=True)) as doc:
+        assert "# Main Title" not in doc.markdown(use_structure="auto")
+        assert doc.markdown(use_structure="always").startswith("# Main Title")
+
+    # Partially tagged page (<70% non-artifact text coverage) falls back to geometric without losing text.
+    partial_stream = (
+        "BT /F1 12 Tf 40 740 Td /H1 << /MCID 0 >> BDC (Short) Tj EMC "
+        "0 -20 Td (A much longer untagged body paragraph that must never be dropped silently.) Tj ET"
+    )
+    partial_pdf = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 10 0 R >>",
+            2: (
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] "
+                "/Resources << /Font << /F1 4 0 R >> >> >>"
+            ),
+            3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /StructParents 0 >>",
+            4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            5: _stream_obj(partial_stream),
+            10: "<< /Type /StructTreeRoot /K 11 0 R >>",
+            11: "<< /Type /StructElem /S /Document /P 10 0 R /Pg 3 0 R /K [12 0 R] >>",
+            12: "<< /Type /StructElem /S /H1 /P 11 0 R /Pg 3 0 R /K 0 >>",
+        }
+    )
+    with pyropdf.open(partial_pdf) as doc:
+        auto_md = doc.markdown()
+        assert "must never be dropped silently" in auto_md
+        assert "# Short" not in auto_md
+        assert doc.markdown(use_structure="always") == "# Short"
+
+    # Broken/cyclic structure tree falls back cleanly in auto mode and raises in always mode.
+    with pyropdf.open(_rich_tagged_pdf()) as doc:
+        doc.structure[0].children[0].obj["K"] = doc.structure[0].obj
+        fallback_md = doc.markdown(use_structure="auto")
+        assert "Main Title" in fallback_md
+        assert "# Main Title" not in fallback_md
+        with pytest.raises(pyropdf.MalformedPdfError, match="cycle"):
+            doc.markdown(use_structure="always")
+
+    # Mixed 2-page PDF: page 0 is tagged and trustworthy, page 1 is untagged and falls back cleanly.
+    mixed_pdf = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 10 0 R >>",
+            2: (
+                "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 /MediaBox [0 0 612 792] "
+                "/Resources << /Font << /F1 4 0 R >> >> >>"
+            ),
+            3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /StructParents 0 >>",
+            4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            5: _stream_obj("BT /F1 12 Tf 40 740 Td /H1 << /MCID 0 >> BDC (Tagged Page) Tj EMC ET"),
+            6: "<< /Type /Page /Parent 2 0 R /Contents 7 0 R >>",
+            7: _stream_obj("BT /F1 12 Tf 40 740 Td (Untagged second page body) Tj ET"),
+            10: "<< /Type /StructTreeRoot /K 11 0 R >>",
+            11: "<< /Type /StructElem /S /Document /P 10 0 R /Pg 3 0 R /K [12 0 R] >>",
+            12: "<< /Type /StructElem /S /H1 /P 11 0 R /Pg 3 0 R /K 0 >>",
+        }
+    )
+    with pyropdf.open(mixed_pdf) as doc:
+        assert doc.markdown() == "# Tagged Page\n\nUntagged second page body"
+
+
+def test_markdown_canvas_form_stream_coverage_and_replacement() -> None:
+    # Unresolved Form XObject tags (#989) without actual_text fall back to geometric without losing text.
+    with pyropdf.Document() as doc:
+        page = doc.pages.new((360, 200))
+        with page.draw() as canvas:
+            with canvas.tag(pyropdf.TagRole.HEADING_1):
+                canvas.text("Unreplaced Heading", (36, 40), size=18)
+            with canvas.tag(pyropdf.TagRole.PARAGRAPH):
+                canvas.text("Body paragraph text", (36, 70), size=12)
+        auto_md = doc.markdown()
+        assert "Unreplaced Heading" in auto_md
+        assert "Body paragraph text" in auto_md
+
+    # Tagged Form XObject with explicit actual_text/alt/expanded uses structure and skips Artifact.
+    with pyropdf.Document() as doc:
+        page = doc.pages.new((360, 200))
+        with page.draw() as canvas:
+            with canvas.tag(pyropdf.TagRole.HEADING_1, actual_text="Summary"):
+                canvas.text("Summary", (36, 40), size=12)
+            with canvas.tag(pyropdf.TagRole.PARAGRAPH, actual_text="PDF", expanded="Portable Document Format"):
+                canvas.text("PDF", (36, 70), size=12)
+            with canvas.tag(pyropdf.TagRole.FIGURE, alt="Revenue chart"):
+                canvas.rect((36, 90, 140, 140), fill=pyropdf.Color(0.2, 0.4, 0.8))
+            with canvas.tag(pyropdf.TagRole.ARTIFACT):
+                canvas.text("Page 1", (36, 180), size=9)
+        assert doc.markdown() == "# Summary\n\nPDF\n\n![Revenue chart]()"
+        assert doc.markdown(expand_abbreviations=True) == "# Summary\n\nPortable Document Format\n\n![Revenue chart]()"
+
+
+def test_markdown_structure_options_validation_and_max_size() -> None:
+    with pyropdf.open(_rich_tagged_pdf()) as doc:
+        for bad_mode in ("true", True, None, 1):
+            with pytest.raises(ValueError, match="use_structure"):
+                doc.markdown(use_structure=bad_mode)  # ty: ignore[invalid-argument-type]
+        for bad_expand in ("yes", 1, None):
+            with pytest.raises(TypeError, match="expand_abbreviations"):
+                doc.markdown(expand_abbreviations=bad_expand)  # ty: ignore[invalid-argument-type]
+
+        expected = doc.markdown(max_size=None)
+        exact = len(expected.encode())
+        assert doc.markdown(max_size=exact) == expected
+        with pytest.raises(pyropdf.LimitError) as caught:
+            doc.markdown(max_size=exact - 1)
+        assert caught.value.code == "markdown_output_size"
+
+
+def _positioned_pdf(
+    pages: list[str],
+    *,
+    media_box: str = "0 0 400 400",
+    extra_objects: dict[int, bytes | str] | None = None,
+    resources: str = "<< /Font << /F1 3 0 R >> >>",
+) -> bytes:
+    """Build a multi-page PDF from raw content streams with Helvetica on ``/F1``."""
+    count = len(pages)
+    kids = " ".join(f"{10 + 2 * i} 0 R" for i in range(count))
+    objects: dict[int, bytes | str] = {
+        1: "<< /Type /Catalog /Pages 2 0 R >>",
+        2: f"<< /Type /Pages /Kids [{kids}] /Count {count} /MediaBox [{media_box}] /Resources {resources} >>",
+        3: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    }
+    if extra_objects:
+        objects.update(extra_objects)
+    for i, stream in enumerate(pages):
+        page_num = 10 + 2 * i
+        stream_num = page_num + 1
+        objects[page_num] = f"<< /Type /Page /Parent 2 0 R /Contents {stream_num} 0 R >>"
+        objects[stream_num] = _stream_obj(stream)
+    return build_raw_pdf(objects)
+
+
+def _sample_jpeg_bytes() -> bytes:
+    """Encode a tiny valid RGB JPEG through pyropdf's own Pixmap encoder."""
+    pam = b"P7\nWIDTH 4\nHEIGHT 4\nDEPTH 3\nMAXVAL 255\nTUPLTYPE RGB\nENDHDR\n" + bytes([200, 60, 40] * 16)
+    return pyropdf.Pixmap.from_bytes(pam).to_bytes("jpeg", quality=90)
+
+
+def _dual_image_pdf() -> bytes:
+    """Build a page with text, an RGB image (PNG export), and a DCTDecode image (JPEG export)."""
+    rgb_pixels = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0])
+    jpeg_bytes = _sample_jpeg_bytes()
+    stream = (
+        "BT /F1 16 Tf 40 360 Td (Visual Report) Tj ET\n"
+        "BT /F1 11 Tf 40 320 Td (Intro paragraph.) Tj ET\n"
+        "q 60 0 0 40 40 240 cm /Im1 Do Q\n"
+        "BT /F1 11 Tf 40 200 Td (Middle paragraph.) Tj ET\n"
+        "q 60 0 0 40 40 120 cm /Im2 Do Q\n"
+        "BT /F1 11 Tf 40 80 Td (Closing paragraph.) Tj ET\n"
+    )
+    img1 = (
+        b"<< /Type /XObject /Subtype /Image /Width 2 /Height 2 "
+        b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Length "
+        + str(len(rgb_pixels)).encode()
+        + b" >>\nstream\n"
+        + rgb_pixels
+        + b"\nendstream"
+    )
+    img2 = (
+        b"<< /Type /XObject /Subtype /Image /Width 4 /Height 4 "
+        b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "
+        + str(len(jpeg_bytes)).encode()
+        + b" >>\nstream\n"
+        + jpeg_bytes
+        + b"\nendstream"
+    )
+    return _positioned_pdf(
+        [stream],
+        extra_objects={4: img1, 5: img2},
+        resources="<< /Font << /F1 3 0 R >> /XObject << /Im1 4 0 R /Im2 5 0 R >> >>",
+    )
+
+
+def test_markdown_margins_clip_headers_footers_sidebars_and_tables(tmp_path: Path) -> None:
+    pixels = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0])
+    img_obj = (
+        b"<< /Type /XObject /Subtype /Image /Width 2 /Height 2 "
+        b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Length "
+        + str(len(pixels)).encode()
+        + b" >>\nstream\n"
+        + pixels
+        + b"\nendstream"
+    )
+    # MediaBox 0 0 400 400 -> display y = 400 - pdf_y.
+    # Header at y~20 (pdf y=380), footer at y~380 (pdf y=20), left sidebar at x=10, right sidebar at x=340.
+    # Header logo at display y=10..30 (pdf y=370..390), body image at display y=280..310 (pdf y=90..120).
+    stream = (
+        "BT /F1 10 Tf 140 380 Td (Top Header) Tj ET\n"
+        "q 20 0 0 20 100 370 cm /Im1 Do Q\n"
+        "BT /F1 10 Tf 10 200 Td (LeftNav) Tj ET\n"
+        "BT /F1 10 Tf 345 200 Td (RightNav) Tj ET\n"
+        "BT /F1 16 Tf 100 320 Td (Body Title) Tj ET\n"
+        "BT /F1 10 Tf 100 290 Td (Main body sentence.) Tj ET\n"
+        "0.5 w 100 250 m 280 250 l S 100 230 m 280 230 l S 100 210 m 280 210 l S\n"
+        "100 250 m 100 210 l S 190 250 m 190 210 l S 280 250 m 280 210 l S\n"
+        "BT /F1 10 Tf 108 236 Td (Key) Tj 90 0 Td (Val) Tj ET\n"
+        "BT /F1 10 Tf 108 216 Td (A) Tj 90 0 Td (1) Tj ET\n"
+        "q 30 0 0 30 100 90 cm /Im1 Do Q\n"
+        "BT /F1 10 Tf 140 20 Td (Bottom Footer) Tj ET\n"
+    )
+    pdf = _positioned_pdf(
+        [stream],
+        extra_objects={4: img_obj},
+        resources="<< /Font << /F1 3 0 R >> /XObject << /Im1 4 0 R >> >>",
+    )
+    with pyropdf.open(pdf) as doc:
+        unclipped = doc.markdown()
+        assert "Top Header" in unclipped
+        assert "Bottom Footer" in unclipped
+        assert "LeftNav" in unclipped
+        assert "RightNav" in unclipped
+
+        # Zero margins behave like unclipped.
+        assert doc.markdown(margins=0) == unclipped
+        assert doc.markdown(margins=(0, 0)) == unclipped
+        assert doc.markdown(margins=(0, 0, 0, 0)) == unclipped
+
+        # 4-tuple margins exclude top header, bottom footer, left/right sidebars, and header logo,
+        # while keeping the body heading, paragraph, table, and body image (paint index 1).
+        out_dir = tmp_path / "clipped_imgs"
+        clipped = doc.markdown(margins=(65, 45, 65, 45), images=out_dir)
+        assert "Top Header" not in clipped
+        assert "Bottom Footer" not in clipped
+        assert "LeftNav" not in clipped
+        assert "RightNav" not in clipped
+        assert "# Body Title" in clipped
+        assert "Main body sentence." in clipped
+        assert "| Key | Val |" in clipped
+        assert "![](page-0-image-1.png)" in clipped
+        assert "page-0-image-0" not in clipped
+        assert sorted(p.name for p in out_dir.iterdir()) == ["page-0-image-1.png"]
+
+        # 2-tuple (horizontal, vertical) and scalar margins match Page.markdown().
+        assert doc.markdown(margins=(65, 45)) == doc.pages[0].markdown(margins=(65, 45))
+        scalar = doc.markdown(margins=65)
+        assert "Body Title" in scalar
+        assert "Top Header" not in scalar
+        assert "LeftNav" not in scalar
+
+        # Margins larger than page dimensions return empty Markdown without error.
+        empty_dir = tmp_path / "empty_imgs"
+        assert doc.markdown(margins=250, images=empty_dir) == ""
+        assert not empty_dir.exists()
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_markdown_margins_work_in_display_coordinates_on_rotated_pages(rotation: int) -> None:
+    # MediaBox 0 0 400 300 with one token near each of the 4 physical edges and one in the center.
+    stream = (
+        "BT /F1 12 Tf 180 280 Td (NorthEdge) Tj ET\n"
+        "BT /F1 12 Tf 180 15 Td (SouthEdge) Tj ET\n"
+        "BT /F1 12 Tf 10 150 Td (WestEdge) Tj ET\n"
+        "BT /F1 12 Tf 320 150 Td (EastEdge) Tj ET\n"
+        "BT /F1 12 Tf 170 150 Td (CenterBody) Tj ET\n"
+    )
+    pdf = _positioned_pdf([stream], media_box="0 0 400 300")
+    with pyropdf.open(pdf) as doc:
+        page = doc.pages[0]
+        page.rotation = rotation
+        words = {w.text: w.bbox for w in page.words()}
+        _, width, height = page._geometry()  # noqa: SLF001
+
+        # Uniform margin excludes all four edges in display coordinates while keeping CenterBody.
+        md = doc.markdown(margins=55)
+        assert "CenterBody" in md
+        for edge in ("NorthEdge", "SouthEdge", "WestEdge", "EastEdge"):
+            assert edge not in md
+
+        # Asymmetric top-only margin excludes ONLY the token closest to the display top (y=0).
+        top_token = min(words, key=lambda name: (words[name].y0 + words[name].y1) * 0.5)
+        bottom_token = max(words, key=lambda name: (words[name].y0 + words[name].y1) * 0.5)
+        top_clipped = doc.markdown(margins=(0, 55, 0, 0))
+        assert top_token not in top_clipped
+        assert bottom_token in top_clipped
+        assert "CenterBody" in top_clipped
+        assert width > 0
+        assert height > 0
+
+
+def test_markdown_margins_filter_tagged_structure_blocks() -> None:
+    # Tagged PDF where header, sidebar, and footer are tagged as P (not Artifact).
+    stream = (
+        "BT /F1 10 Tf 120 380 Td /P << /MCID 0 >> BDC (Header Banner) Tj EMC ET\n"
+        "BT /F1 10 Tf 10 200 Td /P << /MCID 1 >> BDC (SideNote) Tj EMC ET\n"
+        "BT /F1 16 Tf 100 300 Td /H1 << /MCID 2 >> BDC (Structured Title) Tj EMC ET\n"
+        "BT /F1 12 Tf 100 260 Td /P << /MCID 3 >> BDC (Structured body text.) Tj EMC ET\n"
+        "BT /F1 10 Tf 120 20 Td /P << /MCID 4 >> BDC (Footer Line) Tj EMC ET\n"
+    )
+    pdf = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 10 0 R >>",
+            2: (
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 400 400] "
+                "/Resources << /Font << /F1 4 0 R >> >> >>"
+            ),
+            3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /StructParents 0 >>",
+            4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            5: _stream_obj(stream),
+            10: "<< /Type /StructTreeRoot /K 11 0 R >>",
+            11: "<< /Type /StructElem /S /Document /P 10 0 R /Pg 3 0 R /K [12 0 R 13 0 R 14 0 R 15 0 R 16 0 R] >>",
+            12: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K 0 >>",
+            13: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K 1 >>",
+            14: "<< /Type /StructElem /S /H1 /P 11 0 R /Pg 3 0 R /K 2 >>",
+            15: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K 3 >>",
+            16: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K 4 >>",
+        }
+    )
+    with pyropdf.open(pdf) as doc:
+        assert "Header Banner" in doc.markdown()
+        clipped = doc.markdown(margins=(65, 45, 65, 45))
+        assert clipped == "# Structured Title\n\nStructured body text."
+
+
+def test_markdown_ignore_headers_footers_suppresses_repeated_bands_and_page_numbers() -> None:
+    pages = [
+        # Page 0: unique cover title near top, shared middle body line, sequential footer.
+        (
+            "BT /F1 18 Tf 40 375 Td (Quarterly Engineering Report) Tj ET\n"
+            "BT /F1 11 Tf 40 220 Td (Executive overview.) Tj ET\n"
+            "BT /F1 11 Tf 40 190 Td (Repeated body statement.) Tj ET\n"
+            "BT /F1 9 Tf 150 20 Td (Page 1 of 4) Tj ET\n"
+        ),
+        (
+            "BT /F1 9 Tf 40 380 Td (ACME Confidential Draft) Tj ET\n"
+            "BT /F1 11 Tf 40 220 Td (Second page findings.) Tj ET\n"
+            "BT /F1 11 Tf 40 190 Td (Repeated body statement.) Tj ET\n"
+            "BT /F1 9 Tf 150 20 Td (Page 2 of 4) Tj ET\n"
+        ),
+        (
+            "BT /F1 9 Tf 40 380 Td (ACME Confidential Draft) Tj ET\n"
+            "BT /F1 11 Tf 40 220 Td (Third page metrics.) Tj ET\n"
+            "BT /F1 11 Tf 40 190 Td (Repeated body statement.) Tj ET\n"
+            "BT /F1 9 Tf 150 20 Td (Page 3 of 4) Tj ET\n"
+        ),
+        (
+            "BT /F1 9 Tf 40 380 Td (ACME Confidential Draft) Tj ET\n"
+            "BT /F1 11 Tf 40 220 Td (Fourth page outlook.) Tj ET\n"
+            "BT /F1 11 Tf 40 190 Td (Repeated body statement.) Tj ET\n"
+            "BT /F1 9 Tf 150 20 Td (Page 4 of 4) Tj ET\n"
+        ),
+    ]
+    with pyropdf.open(_positioned_pdf(pages)) as doc:
+        default_md = doc.markdown()
+        assert "ACME Confidential Draft" in default_md
+        assert "Page 1 of 4" in default_md
+
+        clean_md = doc.markdown(ignore_headers_footers=True)
+        assert "ACME Confidential Draft" not in clean_md
+        for n in range(1, 5):
+            assert f"Page {n} of 4" not in clean_md
+        # Unique first-page title and all body lines (including repeated middle-of-page lines) stay.
+        assert "# Quarterly Engineering Report" in clean_md
+        assert clean_md.count("Repeated body statement.") == 4
+        assert "Executive overview." in clean_md
+        assert "Fourth page outlook." in clean_md
+
+        # Single-page selection does not suppress anything.
+        single = doc.markdown([1], ignore_headers_footers=True)
+        assert "ACME Confidential Draft" in single
+        assert "Page 2 of 4" in single
+
+
+def test_markdown_ignore_headers_footers_handles_roman_slash_dash_and_recto_verso() -> None:
+    romans = ("i", "ii", "iii", "iv")
+    pages = [
+        (
+            f"BT /F1 9 Tf 40 380 Td ({'Even Header' if i % 2 == 0 else 'Odd Header'} - {i + 1} / 4) Tj ET\n"
+            + ("BT /F1 11 Tf 40 360 Td (I write this unique intro.) Tj ET\n" if i == 0 else "")
+            + f"BT /F1 11 Tf 40 200 Td (Body paragraph {i + 1}.) Tj ET\n"
+            + f"BT /F1 9 Tf 160 35 Td (Preface - {romans[i]}  Page {romans[i]} of iv) Tj ET\n"
+            + f"BT /F1 9 Tf 190 15 Td ({romans[i]}) Tj ET\n"
+        )
+        for i in range(4)
+    ]
+    with pyropdf.open(_positioned_pdf(pages)) as doc:
+        cleaned = doc.markdown(ignore_headers_footers=True)
+        assert "Even Header" not in cleaned
+        assert "Odd Header" not in cleaned
+        assert "Preface -" not in cleaned
+        assert "of iv" not in cleaned
+        assert cleaned.splitlines()[-1] == "Body paragraph 4."
+        assert "I write this unique intro." in cleaned
+        for i in range(1, 5):
+            assert f"Body paragraph {i}." in cleaned
+
+
+def test_markdown_ignore_headers_footers_works_on_tagged_documents() -> None:
+    # 3-page tagged PDF with running headers/footers tagged as P instead of Artifact.
+    objects: dict[int, bytes | str] = {
+        1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 10 0 R >>",
+        2: (
+            "<< /Type /Pages /Kids [3 0 R 6 0 R 8 0 R] /Count 3 /MediaBox [0 0 400 400] "
+            "/Resources << /Font << /F1 4 0 R >> >> >>"
+        ),
+        3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /StructParents 0 >>",
+        4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        5: _stream_obj(
+            "BT /F1 16 Tf 40 375 Td /H1 << /MCID 0 >> BDC (Unique Cover Title) Tj EMC ET\n"
+            "BT /F1 11 Tf 40 200 Td /P << /MCID 1 >> BDC (Tagged page one.) Tj EMC ET\n"
+            "BT /F1 9 Tf 160 20 Td /P << /MCID 2 >> BDC (- 1 -) Tj EMC ET\n"
+        ),
+        6: "<< /Type /Page /Parent 2 0 R /Contents 7 0 R /StructParents 1 >>",
+        7: _stream_obj(
+            "BT /F1 9 Tf 40 380 Td /P << /MCID 0 >> BDC (Running Doc Header) Tj EMC ET\n"
+            "BT /F1 11 Tf 40 200 Td /P << /MCID 1 >> BDC (Tagged page two.) Tj EMC ET\n"
+            "BT /F1 9 Tf 160 20 Td /P << /MCID 2 >> BDC (- 2 -) Tj EMC ET\n"
+        ),
+        8: "<< /Type /Page /Parent 2 0 R /Contents 9 0 R /StructParents 2 >>",
+        9: _stream_obj(
+            "BT /F1 9 Tf 40 380 Td /P << /MCID 0 >> BDC (Running Doc Header) Tj EMC ET\n"
+            "BT /F1 11 Tf 40 200 Td /P << /MCID 1 >> BDC (Tagged page three.) Tj EMC ET\n"
+            "BT /F1 9 Tf 160 20 Td /P << /MCID 2 >> BDC (- 3 -) Tj EMC ET\n"
+        ),
+        10: "<< /Type /StructTreeRoot /K 11 0 R >>",
+        11: (
+            "<< /Type /StructElem /S /Document /P 10 0 R "
+            "/K [12 0 R 13 0 R 14 0 R 15 0 R 16 0 R 17 0 R 18 0 R 19 0 R 20 0 R] >>"
+        ),
+        12: "<< /Type /StructElem /S /H1 /P 11 0 R /Pg 3 0 R /K 0 >>",
+        13: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K 1 >>",
+        14: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K 2 >>",
+        15: "<< /Type /StructElem /S /P /P 11 0 R /Pg 6 0 R /K 0 >>",
+        16: "<< /Type /StructElem /S /P /P 11 0 R /Pg 6 0 R /K 1 >>",
+        17: "<< /Type /StructElem /S /P /P 11 0 R /Pg 6 0 R /K 2 >>",
+        18: "<< /Type /StructElem /S /P /P 11 0 R /Pg 8 0 R /K 0 >>",
+        19: "<< /Type /StructElem /S /P /P 11 0 R /Pg 8 0 R /K 1 >>",
+        20: "<< /Type /StructElem /S /P /P 11 0 R /Pg 8 0 R /K 2 >>",
+    }
+    with pyropdf.open(build_raw_pdf(objects)) as doc:
+        md = doc.markdown(ignore_headers_footers=True)
+        assert md == "# Unique Cover Title\n\nTagged page one.\n\nTagged page two.\n\nTagged page three."
+
+
+def test_markdown_image_export_default_directory_and_callback(tmp_path: Path) -> None:
+    pdf = _dual_image_pdf()
+    with pyropdf.open(pdf) as doc:
+        # Default images=None performs no disk writes and emits no image links.
+        plain = doc.markdown()
+        assert "![" not in plain
+        assert list(tmp_path.iterdir()) == []
+
+        # Directory export writes PNG for uncompressed RGB and JPEG passthrough for DCTDecode.
+        out_dir = tmp_path / "exported"
+        md = doc.markdown(images=out_dir)
+        assert md == (
+            "# Visual Report\n\n"
+            "Intro paragraph.\n\n"
+            "![](page-0-image-0.png)\n\n"
+            "Middle paragraph.\n\n"
+            "![](page-0-image-1.jpg)\n\n"
+            "Closing paragraph."
+        )
+        assert sorted(p.name for p in out_dir.iterdir()) == ["page-0-image-0.png", "page-0-image-1.jpg"]
+        assert (out_dir / "page-0-image-0.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert (out_dir / "page-0-image-1.jpg").read_bytes().startswith(b"\xff\xd8")
+
+        # Page.markdown() supports directory export identically.
+        page_dir = tmp_path / "page_only"
+        assert doc.pages[0].markdown(images=page_dir) == md
+        assert sorted(p.name for p in page_dir.iterdir()) == ["page-0-image-0.png", "page-0-image-1.jpg"]
+
+        # Callback export inspects ExportedImage records without writing anything to disk.
+        seen: list[pyropdf.ExportedImage] = []
+
+        def handle_image(img: pyropdf.ExportedImage) -> str | None:
+            seen.append(img)
+            if img.index == 0:
+                return f"assets/{img.filename}"
+            return None
+
+        cb_md = doc.markdown(images=handle_image)
+        assert [(img.page, img.index, img.filename, img.media_type, img.width, img.height) for img in seen] == [
+            (0, 0, "page-0-image-0.png", "image/png", 2, 2),
+            (0, 1, "page-0-image-1.jpg", "image/jpeg", 4, 4),
+        ]
+        assert seen[0].data.startswith(b"\x89PNG\r\n\x1a\n")
+        assert seen[1].data.startswith(b"\xff\xd8")
+        assert "![](assets/page-0-image-0.png)" in cb_md
+        assert "page-0-image-1" not in cb_md
+
+        # Callback destination containing spaces/parentheses is wrapped safely in angle brackets.
+        spaced = doc.markdown(images=lambda img: f"my images/fig ({img.index}).png")
+        assert "![](<my images/fig (0).png>)" in spaced
+
+
+def test_markdown_image_export_atomicity_and_limits(tmp_path: Path) -> None:
+    pdf = _dual_image_pdf()
+    with pyropdf.open(pdf) as doc:
+        # Atomic failure: exceeding max_size writes zero files and does not create the directory.
+        fail_dir = tmp_path / "should_not_exist"
+        with pytest.raises(pyropdf.LimitError) as caught:
+            doc.markdown(images=fail_dir, max_size=20)
+        assert caught.value.code == "markdown_output_size"
+        assert not fail_dir.exists()
+
+    # Tight DocumentLimits.max_memory_size bounds image export bytes atomically.
+    # Build a 64x64 non-uniform RGB image whose encoded PNG exceeds 4 KiB while the PDF opens easily.
+    noisy = bytes(((x * 37 + y * 91 + c * 53) & 0xFF) for y in range(64) for x in range(64) for c in range(3))
+    noisy_img = (
+        b"<< /Type /XObject /Subtype /Image /Width 64 /Height 64 "
+        b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Length "
+        + str(len(noisy)).encode()
+        + b" >>\nstream\n"
+        + noisy
+        + b"\nendstream"
+    )
+    noisy_pdf = _positioned_pdf(
+        ["BT /F1 11 Tf 40 300 Td (Big image) Tj ET\nq 64 0 0 64 40 180 cm /Im1 Do Q\n"],
+        extra_objects={4: noisy_img},
+        resources="<< /Font << /F1 3 0 R >> /XObject << /Im1 4 0 R >> >>",
+    )
+    mem_dir = tmp_path / "mem_fail"
+    with pyropdf.open(noisy_pdf, limits=pyropdf.DocumentLimits(max_memory_size=4096)) as doc:
+        with pytest.raises(pyropdf.LimitError) as caught:
+            doc.markdown(images=mem_dir)
+        assert caught.value.code == "memory_size"
+        assert not mem_dir.exists()
+
+    # Directory target on a text-only PDF does not create an empty directory.
+    text_only_dir = tmp_path / "unused_dir"
+    with pyropdf.open(_positioned_pdf(["BT /F1 12 Tf 40 300 Td (No images here.) Tj ET"])) as doc:
+        assert doc.markdown(images=text_only_dir) == "No images here."
+        assert not text_only_dir.exists()
+
+
+def test_markdown_image_export_preserves_tagged_figure_alt_text_and_skips_artifacts(tmp_path: Path) -> None:
+    pixels = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0])
+    img_obj = (
+        b"<< /Type /XObject /Subtype /Image /Width 2 /Height 2 "
+        b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Length "
+        + str(len(pixels)).encode()
+        + b" >>\nstream\n"
+        + pixels
+        + b"\nendstream"
+    )
+    stream = (
+        "/Artifact BMC q 20 0 0 20 40 360 cm /Im1 Do Q EMC\n"
+        "BT /F1 16 Tf 40 320 Td /H1 << /MCID 0 >> BDC (Tagged Gallery) Tj EMC ET\n"
+        "/Figure << /MCID 1 >> BDC q 80 0 0 60 40 200 cm /Im1 Do Q EMC\n"
+    )
+    pdf = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 10 0 R >>",
+            2: (
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 400 400] "
+                "/Resources << /Font << /F1 4 0 R >> /XObject << /Im1 6 0 R >> >> >>"
+            ),
+            3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /StructParents 0 >>",
+            4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            5: _stream_obj(stream),
+            6: img_obj,
+            10: "<< /Type /StructTreeRoot /K 11 0 R >>",
+            11: "<< /Type /StructElem /S /Document /P 10 0 R /Pg 3 0 R /K [12 0 R 13 0 R] >>",
+            12: "<< /Type /StructElem /S /H1 /P 11 0 R /Pg 3 0 R /K 0 >>",
+            13: "<< /Type /StructElem /S /Figure /P 11 0 R /Pg 3 0 R /Alt (Revenue chart) /K 1 >>",
+        }
+    )
+    with pyropdf.open(pdf) as doc:
+        out_dir = tmp_path / "tagged_imgs"
+        md = doc.markdown(images=out_dir)
+        # Artifact image at paint index 0 is skipped; Figure image at paint index 1 is exported with alt text.
+        assert md == "# Tagged Gallery\n\n![Revenue chart](page-0-image-1.png)"
+        assert sorted(p.name for p in out_dir.iterdir()) == ["page-0-image-1.png"]
+
+        captured: list[pyropdf.ExportedImage] = []
+        cb_md = doc.markdown(images=lambda img: (captured.append(img), f"cdn/{img.filename}")[1])
+        assert cb_md == "# Tagged Gallery\n\n![Revenue chart](cdn/page-0-image-1.png)"
+        assert len(captured) == 1
+        assert captured[0].alt_text == "Revenue chart"
+
+
+def test_markdown_max_graphics_bounds_vector_heavy_pages() -> None:
+    lines = "\n".join(f"10 {20 + i} m 390 {20 + i} l S" for i in range(120))
+    stream = f"BT /F1 12 Tf 40 350 Td (CAD Plan) Tj ET\n0.5 w\n{lines}\n"
+    pdf = _positioned_pdf([stream])
+    with pyropdf.open(pdf) as doc:
+        with pytest.raises(pyropdf.LimitError) as caught:
+            doc.markdown(max_graphics=50)
+        assert caught.value.code == "content_element_count"
+        with pytest.raises(pyropdf.LimitError) as caught_page:
+            doc.pages[0].markdown(max_graphics=50)
+        assert caught_page.value.code == "content_element_count"
+        with pytest.raises(pyropdf.LimitError) as caught_no_tables:
+            doc.markdown(table_strategy=None, max_graphics=50)
+        assert caught_no_tables.value.code == "content_element_count"
+
+        assert doc.markdown(max_graphics=5000) == "CAD Plan"
+        assert doc.markdown(max_graphics=None) == "CAD Plan"
+
+    token = pyropdf.CancellationToken()
+    with pyropdf.open(pdf, limits=pyropdf.DocumentLimits(cancellation=token)) as doc:
+        token.cancel()
+        with pytest.raises(pyropdf.LimitError) as cancelled:
+            doc.markdown()
+        assert cancelled.value.code == "cancelled"
+
+
+def test_markdown_retrieval_control_option_validation(tmp_path: Path) -> None:
+    existing_file = tmp_path / "not_a_dir.txt"
+    existing_file.write_text("x", encoding="utf-8")
+
+    with pyropdf.open(_dual_image_pdf()) as doc:
+        for bad_margin_type in (True, "10", [10, 20], (True, 10)):
+            with pytest.raises(TypeError, match="margins"):
+                doc.markdown(margins=bad_margin_type)  # ty: ignore[invalid-argument-type]
+        for bad_margin_val in (-1, float("nan"), float("inf"), (), (10,), (1, 2, 3), (1, -2, 3, 4)):
+            with pytest.raises(ValueError, match="margins"):
+                doc.markdown(margins=bad_margin_val)  # ty: ignore[invalid-argument-type]
+        for bad_hf in ("yes", 1, None):
+            with pytest.raises(TypeError, match="ignore_headers_footers"):
+                doc.markdown(ignore_headers_footers=bad_hf)  # ty: ignore[invalid-argument-type]
+        for bad_images_type in (123, b"/tmp"):
+            with pytest.raises(TypeError, match="images"):
+                doc.markdown(images=bad_images_type)  # ty: ignore[invalid-argument-type]
+        for bad_images_val in ("", existing_file):
+            with pytest.raises(ValueError, match="images"):
+                doc.markdown(images=bad_images_val)
+        with pytest.raises(TypeError, match="images callback"):
+            doc.markdown(images=lambda _img: 123)  # ty: ignore[invalid-argument-type]
+        with pytest.raises(ValueError, match="single-line"):
+            doc.markdown(images=lambda _img: "bad\nlink.png")
+        for bad_gfx_type in (True, 1.5, "10"):
+            with pytest.raises(TypeError, match="max_graphics"):
+                doc.markdown(max_graphics=bad_gfx_type)  # ty: ignore[invalid-argument-type]
+        for bad_gfx_val in (0, -5):
+            with pytest.raises(ValueError, match="max_graphics"):
+                doc.markdown(max_graphics=bad_gfx_val)

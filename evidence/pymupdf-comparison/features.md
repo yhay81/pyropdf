@@ -33,7 +33,7 @@ trackers where appropriate. Text and layout accuracy are scored separately in
 
 | Capability | PyMuPDF 2.1 | pyropdf main | Work |
 | --- | --- | --- | --- |
-| Open, repair and probe | `open`, `repair`, `is_repaired` | Available: `open`, `probe`, `is_repaired`; damaged-PDF repair benchmarking and hardening continue | #252, #1190 |
+| Open, repair and probe | `open`, `repair`, `is_repaired` | Available: `open`, `probe`, `is_repaired`; deterministic repair benchmarked and hardened across 316 damaged PDFs against PyMuPDF, qpdf, and pdfium ([report](../repair-coverage/README.md)) | #252 |
 | Insert, move, delete and select pages | `insert_pdf`, `move_page`, `delete_pages`, `select` | Available: `doc.pages` with identity and referential rules | |
 | Rotate and flatten | `set_rotation`, `bake` | Available: `page.rotation`, `page.flatten`, `doc.flatten` | |
 | Normalize rotation without changing appearance | `remove_rotation` | Available: `page.remove_rotation()` keeps content, boxes, annotations, links, and widgets as displayed | |

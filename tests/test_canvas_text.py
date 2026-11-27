@@ -18,6 +18,7 @@ differences:
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -696,3 +697,113 @@ def test_text_gradient_paint_modes(*, fill_gradient: bool, stroke_gradient: bool
     if not split:
         assert runs[0].render_mode is TextRenderMode.FILL_STROKE
     assert pyropdf.open(doc.to_bytes()).pages[0].text() == page.text()
+
+
+def test_invisible_text_draws_no_ink_and_extracts() -> None:
+    doc, page = _new_page(240, 120)
+    blank = bytes(page.pixmap(dpi=72))
+    with page.draw() as canvas:
+        canvas.text("Searchable secret", (20, 40), size=14, render_mode=TextRenderMode.INVISIBLE)
+        fit = canvas.textbox((20, 60, 220, 110), "Hidden box text", size=12, render_mode="invisible")
+    assert fit.fits
+    assert bytes(page.pixmap(dpi=72)) == blank
+    assert page.text().splitlines() == ["Searchable secret", "Hidden box text"]
+    runs = page.content().text_runs
+    assert len(runs) == 2
+    assert all(run.render_mode is TextRenderMode.INVISIBLE for run in runs)
+    reopened = pyropdf.open(doc.to_bytes()).pages[0]
+    assert bytes(reopened.pixmap(dpi=72)) == blank
+    assert reopened.text().splitlines() == ["Searchable secret", "Hidden box text"]
+
+
+def test_render_mode_validation() -> None:
+    _doc, page = _new_page()
+    with page.draw() as canvas:
+        with pytest.raises(ValueError, match="render_mode='fill' requires a fill"):
+            canvas.text("x", (10, 20), fill=None, render_mode=TextRenderMode.FILL)
+        with pytest.raises(ValueError, match="render_mode='stroke' requires a stroke"):
+            canvas.text("x", (10, 20), render_mode=TextRenderMode.STROKE)
+        with pytest.raises(ValueError, match="render_mode='fill_stroke' requires both"):
+            canvas.text("x", (10, 20), fill=RED, render_mode=TextRenderMode.FILL_STROKE)
+        with pytest.raises(ValueError, match="render_mode"):
+            canvas.text("x", (10, 20), render_mode="clip")
+        with pytest.raises(TypeError, match="render_mode"):
+            canvas.text("x", (10, 20), render_mode=3)  # ty: ignore[invalid-argument-type]
+        with pytest.raises(ValueError, match="direction"):
+            canvas.text("x", (10, 20), direction="diagonal")  # ty: ignore[invalid-argument-type]
+        with pytest.raises(ValueError, match="vertical writing requires embedded OpenType fonts"):
+            canvas.text("x", (10, 20), direction="vertical")
+        with pytest.raises(TypeError, match="fallback_fonts"):
+            canvas.text("x", (10, 20), fallback_fonts="Helvetica")  # ty: ignore[invalid-argument-type]
+    assert page.text() == ""
+
+
+def test_clip_text_modes_clip_subsequent_drawings() -> None:
+    cases: tuple[tuple[int, Color | None, Stroke | None], ...] = (
+        (7, None, None),
+        (4, BLUE, None),
+        (5, None, Stroke(paint=GREEN, width=2)),
+        (6, BLUE, Stroke(paint=GREEN, width=2)),
+    )
+    for tr_expected, fill, stroke in cases:
+        doc, page = _new_page(200, 140)
+        with (
+            page.draw() as canvas,
+            canvas.clip_text(
+                "H",
+                (30, 110),
+                font=pyropdf.Font.standard("Helvetica-Bold"),
+                size=96,
+                fill=fill,
+                stroke=stroke,
+            ),
+        ):
+            canvas.rect((0, 0, 200, 140), fill=RED)
+        tr_ops = [op.operands[0] for op in page.operations if op.operator == "Tr"]
+        assert tr_expected in tr_ops
+        pix = page.pixmap(dpi=72)
+        # Corners outside the glyph remain white; glyph interior is painted red.
+        assert pix.pixel(2, 2)[:3] == (255, 255, 255)
+        assert pix.pixel(197, 137)[:3] == (255, 255, 255)
+        raw = bytes(pix)
+        red_pixels = sum(1 for offset in range(0, len(raw), 3) if raw[offset] > 200 and raw[offset + 1] < 50)
+        assert red_pixels > 500
+        reopened = pyropdf.open(doc.to_bytes()).pages[0]
+        assert reopened.text().strip() == "H"
+        assert bytes(reopened.pixmap(dpi=72)) == raw
+
+
+def test_clip_text_does_not_leak_alpha_or_clip_outside_scope() -> None:
+    _doc, page = _new_page(200, 140)
+    with page.draw() as canvas:
+        with canvas.clip_text(
+            "H",
+            (30, 110),
+            font=pyropdf.Font.standard("Helvetica-Bold"),
+            size=96,
+            fill=Color(0, 0, 1, 0.25),
+        ):
+            canvas.rect((0, 0, 200, 140), fill=RED)
+        # Outside clip_text, a solid green square at top-left must be unclipped and opaque.
+        canvas.rect((2, 2, 16, 16), fill=GREEN)
+    pix = page.pixmap(dpi=72)
+    assert pix.pixel(8, 8)[:3] == (0, 128, 0)
+
+
+def test_clip_text_empty_clips_everything() -> None:
+    _doc, page = _new_page(100, 100)
+    blank = bytes(page.pixmap(dpi=72))
+    with page.draw() as canvas, canvas.clip_text("", (20, 60), size=48):
+        canvas.rect((0, 0, 100, 100), fill=RED)
+    assert bytes(page.pixmap(dpi=72)) == blank
+
+
+def test_clip_text_marks_artifact_on_tagged_documents() -> None:
+    root = Path(__file__).resolve().parent.parent
+    font = pyropdf.Font.from_file(root / "crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf")
+    for fixture in ("tests/assets/pdfua/pdfua-1.pdf", "tests/assets/pdfua/pdfua-2.pdf"):
+        with pyropdf.open(root / fixture) as doc:
+            with doc.pages[0].draw() as canvas, canvas.clip_text("AV", (20, 100), font=font, size=24):
+                canvas.rect((0, 70, 80, 110), fill=RED)
+            assert doc.changes(incremental=False).claims == ()
+            assert doc.changes(incremental=True).claims == ()

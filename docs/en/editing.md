@@ -94,8 +94,8 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
 `canvas.image` takes JPEG, PNG, or JPEG 2000 data, a path, a `Pixmap`, or
 an image of the document; `canvas.page` places a page of any open document,
 optionally clipped and turned. An image or a page drawn several times is
-stored once. `clip`, `transform`, `opacity`, `blend`, `layer`, and `tag` are
-scopes for everything drawn inside them.
+stored once. `clip`, `clip_text`, `transform`, `opacity`, `blend`, `layer`,
+and `tag` are scopes for everything drawn inside them.
 
 ### Gradients
 
@@ -190,11 +190,37 @@ line, or the negative shortfall. `Font.text_height` and
 `Font.text_width` measure text exactly as the canvas lays it out, so a
 caller can size a box before drawing. Lines break where Unicode allows,
 and a word wider than the box breaks between grapheme clusters. If even
-one cluster is too wide, `PdfError` is raised. `align` is
-`"left"`, `"center"`, `"right"`, or `"justify"`, and `line_height`
+one cluster is too wide, `PdfError` is raised. `align` is `"left"`, `"center"`, `"right"`, or `"justify"`, and `line_height`
 spaces lines in multiples of `size`. Text is filled black by default;
-pass `stroke` to outline it and `fill=None` to leave it hollow. `rotate`
+pass `stroke` to outline it, `fill=None` to leave it hollow, or
+`render_mode=TextRenderMode.INVISIBLE` (`3 Tr`) to emit searchable invisible
+text without drawing ink. To clip subsequent paths or images to glyph outlines
+(`4 Tr`–`7 Tr`), enter a `with canvas.clip_text(...):` scope (clip-only by
+default, or pass `fill` and/or `stroke` to paint and clip together). `rotate`
 turns text by a right angle, and `canvas.transform` by any other.
+
+Pass `direction="vertical"` with embedded OpenType faces to shape vertical text
+with `harfrust` and embed `Identity-V` with `/DW2`/`/W2` vertical metrics;
+columns run top-to-bottom and stack right-to-left. For mixed-script strings,
+pass an explicit `fallback_fonts` sequence (or `doc.fallback_fonts`) to resolve
+missing grapheme clusters per face without any global font registry; each used
+face is embedded once and subsetted at save.
+
+```python
+import pyropdf
+from pyropdf import Color, Font, TextRenderMode
+
+doc = pyropdf.Document()
+page = doc.pages.new((300, 200))
+latin = Font.standard("Helvetica")
+with page.draw() as canvas:
+    canvas.text("Hidden OCR layer", (20, 30), render_mode=TextRenderMode.INVISIBLE)
+    with canvas.clip_text("CLIP", (20, 120), font=Font.standard("Helvetica-Bold"), size=48):
+        canvas.rect((0, 70, 220, 140), fill=Color(0.2, 0.5, 0.9))
+    if "ja" in doc.fallback_fonts and (jp := doc.fallback_fonts["ja"].sans) is not None:
+        canvas.text("Hello 日本語", (20, 160), font=latin, fallback_fonts=(jp,), size=14)
+        canvas.text("縦書き\n二行目", (260, 30), font=jp, size=16, direction="vertical")
+```
 
 Text is limited by default to 1 MiB of UTF-8 and 4,096 lines per call, refused with
 `LimitError` before anything is drawn; pass `max_text_size=None` for

@@ -181,6 +181,7 @@ from pyropdf._layers import Layer, LayerConfig, LayerMembership, Layers, Visibil
 from pyropdf._limit_codes import LimitCode
 from pyropdf._limits import LIMIT_CODES, CancellationToken, DocumentLimits
 from pyropdf._links import Destinations, Link, Links
+from pyropdf._markdown import ExportedImage
 from pyropdf._measurement import (
     CoordinateSystem,
     DocumentRequirement,
@@ -309,6 +310,7 @@ _PUBLIC_MODULE_EXPORTS = (
     Dictionary,
     Duplex,
     Element,
+    ExportedImage,
     FallbackFont,
     FallbackFonts,
     Layout,
@@ -458,6 +460,7 @@ __all__ = [
     "EncryptedDocumentError",
     "EncryptedPayload",
     "Encryption",
+    "ExportedImage",
     "Extensions",
     "FallbackFont",
     "FallbackFonts",

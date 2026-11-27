@@ -78,6 +78,10 @@ impl<'a> Stretches<'a> {
 /// stretch of 1. Only a stretch that `Tz` cancels exactly goes unseen.
 fn may_be_stretched(transform: Affine) -> bool {
     let [a, b, c, d, _, _] = transform.as_coeffs();
+    if b == 0.0 && c == 0.0 {
+        let (x, y) = (a.abs(), d.abs());
+        return (x - y).abs() > y * SAME_LENGTH;
+    }
     let (x, y) = (a.hypot(b), c.hypot(d));
     (x - y).abs() > y * SAME_LENGTH
 }

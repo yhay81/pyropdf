@@ -1,0 +1,160 @@
+{
+  "platform": "Darwin arm64 (Apple Silicon)",
+  "rten_version": "0.28.0",
+  "rten_features": [
+    "rten_format"
+  ],
+  "pyropdf_heuristic_baseline": {
+    "mean_layout_ms": 5.52,
+    "mean_markdown_ms": 13.4,
+    "mean_render_150dpi_ms": 9.8
+  },
+  "pymupdf_layout_baseline": {
+    "version": "pymupdf 2.2 + pymupdf-layout 2.2 + pymupdf4llm 2.2",
+    "mean_json_ms": 357.6,
+    "mean_md_ms": 344.6,
+    "peak_rss_mib": 1224.83
+  },
+  "provenance": [
+    {
+      "repo": "PaddlePaddle/PP-DocLayout-S",
+      "sha": "8ac289e66575bb9bba6e15c53719d8b15cc9b3b2",
+      "license": "apache-2.0",
+      "last_modified": "2025-07-22"
+    },
+    {
+      "repo": "stefanj0/PP-DocLayout-S-ONNX",
+      "sha": "7e851b9e5ad66613d7318a3213ab3336ebe0a514",
+      "license": "apache-2.0",
+      "last_modified": "2026-05-26"
+    },
+    {
+      "repo": "PaddlePaddle/PP-DocLayout-M",
+      "sha": "7dbfcce3154a55776dc71ca026a4a2a8388dad8d",
+      "license": "apache-2.0",
+      "last_modified": "2025-07-22"
+    },
+    {
+      "repo": "PaddlePaddle/PP-DocLayout-L",
+      "sha": "ca760c3336d922ee63cdbff85003181222e3911c",
+      "license": "apache-2.0",
+      "last_modified": "2025-07-22"
+    },
+    {
+      "repo": "PaddlePaddle/PP-DocLayout_plus-L",
+      "sha": "aa52b8528c84f9b1a34ac3a88fe0e576edb9d11d",
+      "license": "apache-2.0",
+      "last_modified": "2025-07-22"
+    },
+    {
+      "repo": "PaddlePaddle/PP-DocLayout_plus-L_onnx",
+      "sha": "feb74619326f634e0e883218598096a3733ad9f7",
+      "license": "apache-2.0",
+      "last_modified": "2026-06-10"
+    },
+    {
+      "repo": "PaddlePaddle/PP-DocLayoutV2_onnx",
+      "sha": "7d44592493df02e28110d99de8ca4b1fbc7309bd",
+      "license": "apache-2.0",
+      "last_modified": "2026-06-10"
+    },
+    {
+      "repo": "PaddlePaddle/PP-DocLayoutV3_onnx",
+      "sha": "46bbdf188bb0a772c08aed74882ce7e51a8f1ea6",
+      "license": "apache-2.0",
+      "last_modified": "2026-06-10"
+    }
+  ],
+  "models": [
+    {
+      "key": "doclayout_s_fp32",
+      "label": "PP-DocLayout-S (FP32, 480x480)",
+      "classes": 23,
+      "unique_ops": 28,
+      "raw_rten_bytes": 4958804,
+      "zip9_wheel_bytes": 4462692,
+      "fits_pypi_100mib": true,
+      "load_1t_ms": 6.24,
+      "load_4t_ms": 4.26,
+      "mean_pre_ms": 1.78,
+      "mean_infer_1t_ms": 68.13,
+      "mean_infer_4t_ms": 21.93,
+      "median_infer_4t_ms": 21.81,
+      "peak_rss_1t_bytes": 53968896,
+      "peak_rss_4t_bytes": 59768832,
+      "sha256_rten": "bc5bb04ade924a47"
+    },
+    {
+      "key": "doclayout_plus_l_fp32",
+      "label": "PP-DocLayout_plus-L (FP32, 800x800)",
+      "classes": 20,
+      "unique_ops": 39,
+      "raw_rten_bytes": 129947280,
+      "zip9_wheel_bytes": 117725490,
+      "fits_pypi_100mib": false,
+      "load_1t_ms": 53.11,
+      "load_4t_ms": 53.49,
+      "mean_pre_ms": 4.95,
+      "mean_infer_1t_ms": 2984.98,
+      "mean_infer_4t_ms": 656.9,
+      "median_infer_4t_ms": 596.77,
+      "peak_rss_1t_bytes": 569786368,
+      "peak_rss_4t_bytes": 576864256,
+      "sha256_rten": "22a978d24b8d7baf"
+    },
+    {
+      "key": "doclayout_plus_l_int8",
+      "label": "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)",
+      "classes": 20,
+      "unique_ops": 41,
+      "raw_rten_bytes": 34425280,
+      "zip9_wheel_bytes": 24219396,
+      "fits_pypi_100mib": true,
+      "load_1t_ms": 23.95,
+      "load_4t_ms": 18.37,
+      "mean_pre_ms": 5.0,
+      "mean_infer_1t_ms": 987.7,
+      "mean_infer_4t_ms": 369.91,
+      "median_infer_4t_ms": 362.24,
+      "peak_rss_1t_bytes": 427163648,
+      "peak_rss_4t_bytes": 435027968,
+      "sha256_rten": "9f41f26cfae97491"
+    },
+    {
+      "key": "doclayout_v3_fp32",
+      "label": "PP-DocLayoutV3 (FP32, 800x800)",
+      "classes": 25,
+      "unique_ops": 42,
+      "raw_rten_bytes": 130726000,
+      "zip9_wheel_bytes": 117920142,
+      "fits_pypi_100mib": false,
+      "load_1t_ms": 37.27,
+      "load_4t_ms": 43.12,
+      "mean_pre_ms": 5.41,
+      "mean_infer_1t_ms": 2379.7,
+      "mean_infer_4t_ms": 856.72,
+      "median_infer_4t_ms": 706.33,
+      "peak_rss_1t_bytes": 962723840,
+      "peak_rss_4t_bytes": 1028014080,
+      "sha256_rten": "2dfaf96a29b709dd"
+    },
+    {
+      "key": "doclayout_v3_int8_conv",
+      "label": "PP-DocLayoutV3 (INT8 Conv-only, 800x800)",
+      "classes": 25,
+      "unique_ops": 43,
+      "raw_rten_bytes": 56809984,
+      "zip9_wheel_bytes": 44996244,
+      "fits_pypi_100mib": true,
+      "load_1t_ms": 38.54,
+      "load_4t_ms": 23.65,
+      "mean_pre_ms": 4.94,
+      "mean_infer_1t_ms": 1422.83,
+      "mean_infer_4t_ms": 484.13,
+      "median_infer_4t_ms": 474.62,
+      "peak_rss_1t_bytes": 976764928,
+      "peak_rss_4t_bytes": 988102656,
+      "sha256_rten": "6fe2e5eb257c76b8"
+    }
+  ]
+}

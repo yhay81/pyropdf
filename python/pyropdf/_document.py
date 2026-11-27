@@ -8,7 +8,7 @@ import stat
 import sys
 import threading
 from collections.abc import Mapping
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -153,7 +153,7 @@ from pyropdf._threads import Threads, _delete_all_threads
 from pyropdf._web_capture import WebCapture
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Sequence
+    from collections.abc import Callable, Generator, Iterable, Sequence
     from datetime import datetime
     from types import TracebackType
     from typing import Self
@@ -164,6 +164,7 @@ if TYPE_CHECKING:
     from pyropdf._chunks import Chunk
     from pyropdf._fallback_fonts import FallbackFont, _FontPackage
     from pyropdf._fonts import Font
+    from pyropdf._markdown import ExportedImage
     from pyropdf._page import Page
     from pyropdf._profiles import Profiles
     from pyropdf._revisions import Revision
@@ -1615,48 +1616,123 @@ class Document:
         _warn_skipped(skipped)
         return text
 
-    def _export_pages(self, pages: Iterable[int] | None) -> list[_ExportPage]:
-        """Resolve the selection and all subsequent reads against one version."""
-        snapshot = _core.snapshot_pages(self._core())
-        count = len(snapshot)
-        indexes = range(count) if pages is None else _page_entries(pages, count)
-        return [_ExportPage(self, snapshot, _resolve(index, count)) for index in indexes]
+    @contextmanager
+    def _export_view(self, pages: Iterable[int] | None) -> Generator[list[_ExportPage]]:
+        """Pin one version and page selection for the lifetime of an export."""
+        pinned = self._import_source(_core.attachment_reader(self._core()))
+        try:
+            if self._fallback is not None:
+                _set_fallback(pinned, self._fallback)
+            snapshot = _core.snapshot_pages(pinned._core())  # noqa: SLF001
+            count = len(snapshot)
+            indexes = range(count) if pages is None else _page_entries(pages, count)
+            yield [_ExportPage(pinned, snapshot, _resolve(index, count)) for index in indexes]
+        finally:
+            pinned.close()
 
-    def markdown(
+    def markdown(  # noqa: PLR0913 - keyword-only retrieval export options.
         self,
         pages: Iterable[int] | None = None,
         *,
         table_strategy: Literal["lines", "text"] | None = "lines",
+        use_structure: Literal["auto", "always", "never"] = "auto",
+        expand_abbreviations: bool = False,
+        margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
+        ignore_headers_footers: bool = False,
+        images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
+        max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
         max_size: int | None = _markdown._DEFAULT_MAX_MARKDOWN_SIZE,  # noqa: SLF001
     ) -> str:
         """Return the given pages of the current version as Markdown, joined in their order.
 
         Page selection and extraction use one version even while another thread edits the document.
 
-        Headings come from font sizes: the size that holds the most text is
-        the body's, and larger sizes map in descending order to ``#``
-        through ``####``. Wrapped CJK lines join without spaces, leading
-        bullets and ``1.`` or ``1)`` become Markdown lists, and the bold and
-        italic of embedded fonts become emphasis. Multicolumn text follows
-        its gutters, and vertical CJK columns read top to bottom and right to
-        left; ruby and mixed orientations are not interpreted.
+        With ``use_structure="auto"`` (the default), a tagged document whose
+        structure tree passes trustworthiness checks (``/MarkInfo /Marked true``,
+        no ``/Suspects``, well-formed tree, and sufficient coverage of
+        non-artifact page text) drives headings (``H1``–``H6``, ``H``,
+        ``Title``), lists (``L``/``LI``/``Lbl``/``LBody``), tables
+        (``Table``/``THead``/``TBody``/``TFoot``/``TR``/``TH``/``TD``),
+        block quotes, code, figures with ``/Alt`` descriptions, ``/ActualText``
+        replacements, and logical reading order while omitting ``Artifact``
+        content. Custom roles resolve through ``/RoleMap`` and PDF 2.0
+        namespaces. Pass ``expand_abbreviations=True`` to prefer ``/E``
+        abbreviation expansions. Pages that are untagged, fail coverage checks,
+        or contain unresolved Form XObject marked content fall back
+        deterministically to geometric layout extraction. ``use_structure="always"``
+        reads from the structure tree whenever present without trustworthiness
+        checks (raising :class:`MalformedPdfError` on broken trees);
+        ``use_structure="never"`` always uses geometric layout extraction.
+
+        In geometric extraction, headings come from font sizes: the size that
+        holds the most text is the body's, and larger sizes map in descending
+        order to ``#`` through ``####``. Wrapped CJK lines join without spaces,
+        leading bullets and ``1.`` or ``1)`` become Markdown lists, and the
+        bold and italic of embedded fonts become emphasis. Multicolumn text
+        follows its gutters, and vertical CJK columns read top to bottom and
+        right to left; ruby and mixed orientations are not interpreted.
+
+        ``margins`` excludes content outside the display-space body region
+        (inset from the page's top, bottom, left, and right edges after
+        rotation): a single non-negative number applies to all four sides, a
+        2-tuple gives ``(horizontal, vertical)``, and a 4-tuple gives
+        ``(left, top, right, bottom)``. ``ignore_headers_footers=True``
+        suppresses repeated running headers and footers (including sequential
+        Arabic and Roman page numbers) in the top and bottom bands across
+        multi-page selections while keeping unique first-page titles and body
+        text. ``images`` controls image export: ``None`` (the default) performs
+        no filesystem writes and skips image decoding; a directory path stages
+        and writes bounded PNG or JPEG files named
+        ``page-{page}-image-{index}.{ext}`` after the export succeeds and emits
+        Markdown image links; a callable receives each :class:`ExportedImage`
+        and returns a Markdown link destination (or ``None`` to omit the link)
+        without writing to disk. ``max_graphics`` bounds the graphic elements
+        (paths, segments, clips, and images) inspected per page, raising
+        :class:`LimitError` with code ``content_element_count`` when exceeded;
+        ``None`` removes the bound for trusted input.
 
         Complete bordered tables of :meth:`Page.tables` become Markdown
         tables in reading order; ``table_strategy="text"`` adds the
         borderless tables that overlap none of them, and ``None`` converts no
-        table. ``pages`` is as for :meth:`text`. More than ``max_size`` bytes
-        of UTF-8 in all raise :class:`LimitError` with code
-        ``markdown_output_size`` without a partial result;
-        ``max_size=None`` lifts the limit.
+        table (also emitting structure tables as plain paragraphs). ``pages``
+        is as for :meth:`text`. More than ``max_size`` bytes of UTF-8 in all
+        raise :class:`LimitError` with code ``markdown_output_size`` without a
+        partial result; ``max_size=None`` lifts the limit.
         """
-        _markdown.validate_options(table_strategy, max_size)
-        return _markdown.pages_markdown(self._export_pages(pages), table_strategy=table_strategy, max_size=max_size)
+        _markdown.validate_options(
+            table_strategy,
+            max_size,
+            use_structure=use_structure,
+            expand_abbreviations=expand_abbreviations,
+            margins=margins,
+            ignore_headers_footers=ignore_headers_footers,
+            images=images,
+            max_graphics=max_graphics,
+        )
+        with self._export_view(pages) as export_pages:
+            return _markdown.pages_markdown(
+                export_pages,
+                table_strategy=table_strategy,
+                max_size=max_size,
+                use_structure=use_structure,
+                expand_abbreviations=expand_abbreviations,
+                margins=margins,
+                ignore_headers_footers=ignore_headers_footers,
+                images=images,
+                max_graphics=max_graphics,
+            )
 
-    def to_json(
+    def to_json(  # noqa: PLR0913 - keyword-only retrieval export options.
         self,
         pages: Iterable[int] | None = None,
         *,
         table_strategy: Literal["lines", "text"] | None = "lines",
+        use_structure: Literal["auto", "always", "never"] = "auto",
+        expand_abbreviations: bool = False,
+        margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
+        ignore_headers_footers: bool = False,
+        images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
+        max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
         max_size: int | None = _chunks._DEFAULT_MAX_EXPORT_SIZE,  # noqa: SLF001
     ) -> str:
         """Return the given pages of the current version as JSON: each page's size and its elements.
@@ -1666,22 +1742,50 @@ class Document:
         The document is ``{"pages": [...]}``, each page ``{"index",
         "width", "height", "elements"}``, and each element as
         :meth:`Element.to_dict` gives it: a heading, paragraph, list item,
-        table, or image in reading order with its page index and its box in
-        display space. Headings, lists, and tables are found as
-        :meth:`markdown` finds them, and ``pages`` and ``table_strategy``
-        are as for it. More than ``max_size`` bytes of UTF-8 element text
-        raise :class:`LimitError` with code ``export_output_size`` without a
-        partial result; ``max_size=None`` lifts the limit.
+        table, image, block quote, or code block in reading order with its
+        page index and its box in display space. Structure-tree extraction,
+        ``use_structure``, ``expand_abbreviations``, ``margins``,
+        ``ignore_headers_footers``, ``images``, ``max_graphics``, ``pages``,
+        and ``table_strategy`` are as for :meth:`markdown`. More than
+        ``max_size`` bytes of UTF-8 element text raise :class:`LimitError`
+        with code ``export_output_size`` without a partial result;
+        ``max_size=None`` lifts the limit.
         """
-        _chunks.validate_options(table_strategy, max_size)
-        return _chunks.export_json(self._export_pages(pages), table_strategy=table_strategy, max_size=max_size)
+        _chunks.validate_options(
+            table_strategy,
+            max_size,
+            use_structure=use_structure,
+            expand_abbreviations=expand_abbreviations,
+            margins=margins,
+            ignore_headers_footers=ignore_headers_footers,
+            images=images,
+            max_graphics=max_graphics,
+        )
+        with self._export_view(pages) as export_pages:
+            return _chunks.export_json(
+                export_pages,
+                table_strategy=table_strategy,
+                max_size=max_size,
+                use_structure=use_structure,
+                expand_abbreviations=expand_abbreviations,
+                margins=margins,
+                ignore_headers_footers=ignore_headers_footers,
+                images=images,
+                max_graphics=max_graphics,
+            )
 
-    def to_chunks(
+    def to_chunks(  # noqa: PLR0913 - keyword-only retrieval export options.
         self,
         pages: Iterable[int] | None = None,
         *,
         max_chars: int = _chunks._DEFAULT_MAX_CHARS,  # noqa: SLF001
         table_strategy: Literal["lines", "text"] | None = "lines",
+        use_structure: Literal["auto", "always", "never"] = "auto",
+        expand_abbreviations: bool = False,
+        margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
+        ignore_headers_footers: bool = False,
+        images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
+        max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
         max_size: int | None = _chunks._DEFAULT_MAX_EXPORT_SIZE,  # noqa: SLF001
     ) -> list[Chunk]:
         """Return the elements of :meth:`to_json` grouped into retrieval chunks of at most ``max_chars`` characters.
@@ -1690,22 +1794,41 @@ class Document:
 
         A chunk is a run of consecutive elements joined as Markdown, headings
         marked with ``#``; each heading starts a chunk, and
-        :attr:`Chunk.section` names the headings above it. A paragraph or
-        list item longer than ``max_chars`` is split at white space, its
-        pieces keeping its page and box; a table, image, or heading is never
-        split, and a chunk of one that is longer is
-        :attr:`Chunk.oversized`. Every element keeps its page index and box,
-        and :meth:`Chunk.to_dict` gives JSON-safe values. ``pages``,
-        ``table_strategy``, and ``max_size`` are as for :meth:`to_json`.
+        :attr:`Chunk.section` names the headings above it. A paragraph,
+        list item, or block quote longer than ``max_chars`` is split at white
+        space, its pieces keeping its page and box; a table, image, heading,
+        or code block is never split, and a chunk of one that is longer is
+        :attr:`Chunk.oversized`. Every element keeps its page index, box, and
+        any structure ``alt_text``, ``language``, or exported ``image``
+        metadata, and :meth:`Chunk.to_dict` gives JSON-safe values. ``pages``,
+        ``table_strategy``, ``use_structure``, ``expand_abbreviations``,
+        ``margins``, ``ignore_headers_footers``, ``images``, ``max_graphics``,
+        and ``max_size`` are as for :meth:`to_json`.
         """
         _chunks.validate_max_chars(max_chars)
-        _chunks.validate_options(table_strategy, max_size)
-        return _chunks.export_chunks(
-            self._export_pages(pages),
-            max_chars=max_chars,
-            table_strategy=table_strategy,
-            max_size=max_size,
+        _chunks.validate_options(
+            table_strategy,
+            max_size,
+            use_structure=use_structure,
+            expand_abbreviations=expand_abbreviations,
+            margins=margins,
+            ignore_headers_footers=ignore_headers_footers,
+            images=images,
+            max_graphics=max_graphics,
         )
+        with self._export_view(pages) as export_pages:
+            return _chunks.export_chunks(
+                export_pages,
+                max_chars=max_chars,
+                table_strategy=table_strategy,
+                max_size=max_size,
+                use_structure=use_structure,
+                expand_abbreviations=expand_abbreviations,
+                margins=margins,
+                ignore_headers_footers=ignore_headers_footers,
+                images=images,
+                max_graphics=max_graphics,
+            )
 
     def flatten(self, *, annotations: bool = True, widgets: bool = True) -> None:
         """Draw annotation and widget appearances into page content and take them off their pages.

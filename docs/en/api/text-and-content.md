@@ -158,14 +158,16 @@ Chunk(
     elements: tuple[Element, ...],
     section: tuple[str, ...],
     oversized: bool,
+    language: str | None = None,
 )
 ```
 
 Consecutive elements within one section, joined as Markdown in `text`.
 
 `index` is the chunk's position in the export, `section` the
-headings above it from the outermost, and `oversized` whether its one
-indivisible element passes the budget.
+headings above it from the outermost, `oversized` whether its one
+indivisible element passes the budget, and `language` the dominant
+BCP 47 `/Lang` tag of its elements when reading from the structure tree.
 
 ### `pages`
 
@@ -373,17 +375,24 @@ Element(
     text: str,
     level: int | None = None,
     rows: tuple[tuple[str | None, ...], ...] | None = None,
+    alt_text: str | None = None,
+    language: str | None = None,
+    image: str | None = None,
 )
 ```
 
 One piece of a page's structure, with where it is.
 
-`text` is a heading's or paragraph's plain text, a list item with its
-bullet as `- ` or its number as `1. `, a table's Markdown, or empty
-for an image. `page` is the page's index and `bbox` the box in
-display space; a paragraph's box spans its lines. `level` is a
-heading's level, 1 through 4, and `rows` a table's cells as
-`Table.rows` holds them.
+`text` is a heading's, paragraph's, block quote's, or code block's text,
+a list item with its bullet as `- ` or its number as `1. `, a table's
+Markdown, or an image's alternate description when tagged (empty
+otherwise). `page` is the page's index and `bbox` the box in display
+space; a paragraph's box spans its lines. `level` is a heading's level,
+1 through 6 (1 through 4 when inferred geometrically), `rows` a table's
+cells as `Table.rows` holds them, `alt_text` an element's `/Alt`
+description when present, `language` its inherited BCP 47 `/Lang`
+tag when reading from the structure tree, and `image` its exported
+image filename or callback reference when `images=...` is configured.
 
 ### `to_dict`
 
@@ -391,15 +400,51 @@ heading's level, 1 through 4, and `rows` a table's cells as
 Element.to_dict() -> dict[str, Any]
 ```
 
-Return the element as JSON-safe values: `kind`, `page`, `bbox`, `text`, and `level` or `rows`.
+Return the element as JSON-safe values: `kind`, `page`, `bbox`, `text`, and optional metadata.
 
 ## `ElementKind`
 
 ```python
-ElementKind: TypeAlias = Literal['heading', 'paragraph', 'list_item', 'table', 'image']
+ElementKind: TypeAlias = Literal[
+    'heading',
+    'paragraph',
+    'list_item',
+    'table',
+    'image',
+    'blockquote',
+    'code',
+]
 ```
 
 The kind of a structured page `Element`.
+
+## `ExportedImage`
+
+```python
+ExportedImage(
+    *,
+    page: int,
+    index: int,
+    bbox: Rect,
+    filename: str,
+    media_type: str,
+    data: bytes,
+    width: int,
+    height: int,
+    alt_text: str | None = None,
+)
+```
+
+One image prepared for Markdown, JSON, or chunk export.
+
+Passed to a callable supplied via `images=...` on `Document.markdown`,
+`Page.markdown`, `Document.to_json`, or `Document.to_chunks`.
+`page` is the 0-based page index, `index` the paint-order image index on
+that page, `bbox` its display-space rectangle, `filename` its stable
+suggested name (`page-{page}-image-{index}.{ext}`), `media_type` its
+MIME type (`"image/png"` or `"image/jpeg"`), `data` its encoded bytes,
+`width` and `height` its pixel dimensions, and `alt_text` any
+structure-tree `/Alt` description when available.
 
 ## `FillRule`
 

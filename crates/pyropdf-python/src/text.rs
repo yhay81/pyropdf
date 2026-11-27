@@ -4,8 +4,14 @@
 //! and `select_text` in `rust/src/document/extraction.rs` at
 //! 036be111cafe77755db4bb2be17bc70a8f2f9d82.
 
+use std::ptr;
+use std::sync::Arc;
+
 use pyo3::exceptions::PyValueError;
+use pyo3::ffi;
 use pyo3::prelude::*;
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyList, PyString};
 use pyropdf_engine::content::PageContent;
 use pyropdf_engine::extract::{
     self, BBox, BlockTuple, Error, PageLayout, QuadTuple, SearchHits, TableTuple, TextOptions,
@@ -13,7 +19,7 @@ use pyropdf_engine::extract::{
 };
 use pyropdf_engine::render::Fallback;
 use pyropdf_store::ErrorKind;
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, LimitCode, SharedBudget};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::value::Reference;
 
@@ -160,7 +166,7 @@ pub fn page_text(
     options: OptionsTuple,
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
-) -> PyResult<(String, usize)> {
+) -> PyResult<(Py<PyString>, usize)> {
     crate::errors::boundary(|| {
         let key = text_key(options, &Fallback::default());
         let options = text_options(options)?;
@@ -169,7 +175,7 @@ pub fn page_text(
             (LimitCode::TextSize, max_size),
         ])?;
         let (version, index) = crate::pages::index_with(document, None, &budget)?;
-        py.detach(|| {
+        let result = py.detach(|| {
             let reference = Reference::new(number, generation);
             let (at, page) = index
                 .index_of(reference)
@@ -179,33 +185,35 @@ pub fn page_text(
                 page: reference,
                 kind: PageKind::Text(key),
             };
-            let result = document.page_result(
-            &key,
-            &version,
-            page,
-            &budget,
-            |result| matches!(result, &PageResult::Text { peak, .. } if text_fits(&budget, peak)),
-            || {
-                let bridged = document
-                    .bridge
-                    .get(&version, &index, &budget)
-                    .map_err(|e| bridge_error(&e))?;
-                let mut text = String::new();
-                let (skipped, peak) =
-                    extract::page_text(&bridged, at, &options, &budget, &mut text)
-                        .map_err(text_error)?;
-                Ok(PageResult::Text {
-                    text,
-                    skipped,
-                    peak,
-                })
-            },
-        )?;
-            match &*result {
-                PageResult::Text { text, skipped, .. } => Ok((text.clone(), *skipped)),
-                _ => Err(mismatch()),
+            document.page_result(
+                &key,
+                &version,
+                page,
+                &budget,
+                |result| matches!(result, &PageResult::Text { peak, .. } if text_fits(&budget, peak)),
+                || {
+                    let bridged = document
+                        .bridge
+                        .get(&version, &index, &budget)
+                        .map_err(|e| bridge_error(&e))?;
+                    let mut text = String::new();
+                    let (skipped, peak) =
+                        extract::page_text(&bridged, at, &options, &budget, &mut text)
+                            .map_err(text_error)?;
+                    Ok(PageResult::Text {
+                        text,
+                        skipped,
+                        peak,
+                    })
+                },
+            )
+        })?;
+        match &*result {
+            PageResult::Text { text, skipped, .. } => {
+                Ok((PyString::new(py, text).unbind(), *skipped))
             }
-        })
+            _ => Err(mismatch()),
+        }
     })?
 }
 
@@ -329,19 +337,229 @@ pub fn page_chars(
     })?
 }
 
-/// Calls `then` with the memoized layout of the page `(number,
-/// generation)`, computing it with `options`, chars when `chars` is set, and
-/// the budgets `(max_glyphs, max_size)` where the memo has none, with the
-/// GIL released.
-fn with_layout<T: Send>(
+/// Cached Python constructors and slot setters for building `pyropdf.Word`
+/// instances directly from the memoized layout without cloning spans or
+/// crossing the Python loop boundary per word.
+struct WordFactory {
+    word_type: Py<PyAny>,
+    rect_type: Py<PyAny>,
+    new_object: Py<PyAny>,
+    new_tuple: Py<PyAny>,
+    set_text: Py<PyAny>,
+    set_bbox: Py<PyAny>,
+    set_block: Py<PyAny>,
+    set_line: Py<PyAny>,
+    set_index: Py<PyAny>,
+}
+
+static WORD_FACTORY: PyOnceLock<WordFactory> = PyOnceLock::new();
+
+impl WordFactory {
+    fn get(py: Python<'_>) -> PyResult<&'static Self> {
+        WORD_FACTORY.get_or_try_init(py, || {
+            let text_mod = py.import("pyropdf._text")?;
+            let geom_mod = py.import("pyropdf._geometry")?;
+            let builtins = py.import("builtins")?;
+            let word_type = text_mod.getattr("Word")?;
+            let rect_type = geom_mod.getattr("Rect")?;
+            let new_object = builtins.getattr("object")?.getattr("__new__")?;
+            let new_tuple = builtins.getattr("tuple")?.getattr("__new__")?;
+            let set_text = word_type.getattr("text")?.getattr("__set__")?;
+            let set_bbox = word_type.getattr("bbox")?.getattr("__set__")?;
+            let set_block = word_type.getattr("block")?.getattr("__set__")?;
+            let set_line = word_type.getattr("line")?.getattr("__set__")?;
+            let set_index = word_type.getattr("index")?.getattr("__set__")?;
+            Ok(Self {
+                word_type: word_type.unbind(),
+                rect_type: rect_type.unbind(),
+                new_object: new_object.unbind(),
+                new_tuple: new_tuple.unbind(),
+                set_text: set_text.unbind(),
+                set_bbox: set_bbox.unbind(),
+                set_block: set_block.unbind(),
+                set_line: set_line.unbind(),
+                set_index: set_index.unbind(),
+            })
+        })
+    }
+
+    fn build_rect<'py>(
+        &self,
+        py: Python<'py>,
+        coords_buf: *mut ffi::PyObject,
+        bbox: BBox,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let (x0, y0, x1, y1) = bbox;
+        if (x0 + y0 + x1 + y1).is_finite() {
+            // SAFETY: Uses only Python 3.11+ Limited API calls with checked
+            // non-null pointers. Reusing a single 4-element list avoids
+            // allocating a temporary 4-tuple per word (`PyList_SetItem`
+            // decrefs the previous float and steals the new reference).
+            unsafe {
+                for (slot, value) in [x0, y0, x1, y1].into_iter().enumerate() {
+                    let float_obj = ffi::PyFloat_FromDouble(value);
+                    if float_obj.is_null() {
+                        return Err(PyErr::fetch(py));
+                    }
+                    if ffi::PyList_SetItem(coords_buf, slot as ffi::Py_ssize_t, float_obj) < 0 {
+                        return Err(PyErr::fetch(py));
+                    }
+                }
+                let rect = ffi::PyObject_CallFunctionObjArgs(
+                    self.new_tuple.as_ptr(),
+                    self.rect_type.as_ptr(),
+                    coords_buf,
+                    ptr::null_mut::<ffi::PyObject>(),
+                );
+                Bound::from_owned_ptr_or_err(py, rect)
+            }
+        } else {
+            self.rect_type.bind(py).call1((x0, y0, x1, y1))
+        }
+    }
+
+    fn set_slot(
+        py: Python<'_>,
+        setter: &Py<PyAny>,
+        word: *mut ffi::PyObject,
+        value: *mut ffi::PyObject,
+    ) -> PyResult<()> {
+        // SAFETY: `setter`, `word`, and `value` are valid Python object
+        // pointers; the returned `None` reference is immediately decref'd.
+        unsafe {
+            let result = ffi::PyObject_CallFunctionObjArgs(
+                setter.as_ptr(),
+                word,
+                value,
+                ptr::null_mut::<ffi::PyObject>(),
+            );
+            if result.is_null() {
+                return Err(PyErr::fetch(py));
+            }
+            ffi::Py_DECREF(result);
+            Ok(())
+        }
+    }
+
+    fn build_words<'py>(
+        &self,
+        py: Python<'py>,
+        blocks: &[BlockTuple],
+    ) -> PyResult<Bound<'py, PyList>> {
+        let total: usize = blocks
+            .iter()
+            .flat_map(|(_, lines)| lines.iter())
+            .map(|(_, _, words, _, _, _)| words.len())
+            .sum();
+        let list_len = ffi::Py_ssize_t::try_from(total)
+            .map_err(|_| PyValueError::new_err("the page has too many words"))?;
+        // SAFETY: `PyList_New` allocates a list of `list_len` null slots; each
+        // slot is populated exactly once via `PyList_SetItem` (which steals the
+        // reference), and `Bound::from_owned_ptr` cleans up cleanly on error.
+        let list = unsafe {
+            let ptr = ffi::PyList_New(list_len);
+            if ptr.is_null() {
+                return Err(PyErr::fetch(py));
+            }
+            Bound::from_owned_ptr(py, ptr).cast_into_unchecked::<PyList>()
+        };
+        if total == 0 {
+            return Ok(list);
+        }
+        // Single reusable 4-element list backing `tuple.__new__(Rect, buf)`.
+        let coords_buf = unsafe {
+            let ptr = ffi::PyList_New(4);
+            Bound::from_owned_ptr_or_err(py, ptr)?
+        };
+        let mut out_index: ffi::Py_ssize_t = 0;
+        for (block_index, (_, lines)) in blocks.iter().enumerate() {
+            let block_py = unsafe {
+                let ptr = ffi::PyLong_FromSize_t(block_index);
+                Bound::from_owned_ptr_or_err(py, ptr)?
+            };
+            for (line_index, (_, _, words, _, _, _)) in lines.iter().enumerate() {
+                let line_py = unsafe {
+                    let ptr = ffi::PyLong_FromSize_t(line_index);
+                    Bound::from_owned_ptr_or_err(py, ptr)?
+                };
+                for (word_index, (bbox, text)) in words.iter().enumerate() {
+                    let word = unsafe {
+                        let ptr = ffi::PyObject_CallFunctionObjArgs(
+                            self.new_object.as_ptr(),
+                            self.word_type.as_ptr(),
+                            ptr::null_mut::<ffi::PyObject>(),
+                        );
+                        Bound::from_owned_ptr_or_err(py, ptr)?
+                    };
+                    let text_py = PyString::new(py, text);
+                    let rect_py = self.build_rect(py, coords_buf.as_ptr(), *bbox)?;
+                    let index_py = unsafe {
+                        let ptr = ffi::PyLong_FromSize_t(word_index);
+                        Bound::from_owned_ptr_or_err(py, ptr)?
+                    };
+                    Self::set_slot(py, &self.set_text, word.as_ptr(), text_py.as_ptr())?;
+                    Self::set_slot(py, &self.set_bbox, word.as_ptr(), rect_py.as_ptr())?;
+                    Self::set_slot(py, &self.set_block, word.as_ptr(), block_py.as_ptr())?;
+                    Self::set_slot(py, &self.set_line, word.as_ptr(), line_py.as_ptr())?;
+                    Self::set_slot(py, &self.set_index, word.as_ptr(), index_py.as_ptr())?;
+                    unsafe {
+                        if ffi::PyList_SetItem(list.as_ptr(), out_index, word.into_ptr()) < 0 {
+                            return Err(PyErr::fetch(py));
+                        }
+                    }
+                    out_index += 1;
+                }
+            }
+        }
+        Ok(list)
+    }
+}
+
+/// Returns the words of the page whose object is `number` and `generation` as
+/// a list of `pyropdf.Word` records and the glyphs without Unicode that it
+/// left out. Shares the memoized layout with [`page_layout`] (`chars=False`),
+/// reading its words directly without cloning spans or converting them to
+/// Python tuples.
+#[pyfunction]
+pub fn page_words(
+    py: Python<'_>,
+    document: PageSource<'_>,
+    number: u32,
+    generation: u16,
+    options: OptionsTuple,
+    max_glyphs: Option<u64>,
+    max_size: Option<u64>,
+) -> PyResult<(Py<PyList>, usize)> {
+    crate::errors::boundary(|| {
+        let factory = WordFactory::get(py)?;
+        let (result, _) = layout_result(
+            py,
+            document,
+            (number, generation),
+            options,
+            false,
+            (max_glyphs, max_size),
+        )?;
+        match &*result {
+            PageResult::Layout(layout) => {
+                let words = factory.build_words(py, &layout.blocks)?;
+                Ok((words.unbind(), layout.skipped))
+            }
+            _ => Err(mismatch()),
+        }
+    })?
+}
+
+/// Computes or looks up the memoized layout of the page `(number, generation)`
+/// with the GIL released.
+fn layout_result(
     py: Python<'_>,
     source: PageSource<'_>,
     (number, generation): (u32, u16),
     options: OptionsTuple,
     chars: bool,
     (max_glyphs, max_size): (Option<u64>, Option<u64>),
-    then: impl FnOnce(&PageLayout, &Budget) -> PyResult<T> + Send,
-) -> PyResult<T> {
+) -> PyResult<(Arc<PageResult>, SharedBudget)> {
     let document = source.document();
     let fallback = source.fallback();
     let key = text_key(options, &fallback);
@@ -351,7 +569,7 @@ fn with_layout<T: Send>(
         (LimitCode::TextSize, max_size),
     ])?;
     let (version, index) = source.index(&budget)?;
-    py.detach(|| {
+    let result = py.detach(|| {
         let reference = Reference::new(number, generation);
         let (at, page) = index
             .index_of(reference)
@@ -361,7 +579,7 @@ fn with_layout<T: Send>(
             page: reference,
             kind: PageKind::Layout(key, chars),
         };
-        let result = document.page_result(
+        document.page_result(
             &key,
             &version,
             page,
@@ -397,11 +615,28 @@ fn with_layout<T: Send>(
                 .map(PageResult::Layout)
                 .map_err(text_error)
             },
-        )?;
-        match &*result {
-            PageResult::Layout(layout) => then(layout, &budget),
-            _ => Err(mismatch()),
-        }
+        )
+    })?;
+    Ok((result, budget))
+}
+
+/// Calls `then` with the memoized layout of the page `(number,
+/// generation)`, computing it with `options`, chars when `chars` is set, and
+/// the budgets `(max_glyphs, max_size)` where the memo has none, with the
+/// GIL released.
+fn with_layout<T: Send>(
+    py: Python<'_>,
+    source: PageSource<'_>,
+    page_id: (u32, u16),
+    options: OptionsTuple,
+    chars: bool,
+    limits: (Option<u64>, Option<u64>),
+    then: impl FnOnce(&PageLayout, &Budget) -> PyResult<T> + Send,
+) -> PyResult<T> {
+    let (result, budget) = layout_result(py, source, page_id, options, chars, limits)?;
+    py.detach(|| match &*result {
+        PageResult::Layout(layout) => then(layout, &budget),
+        _ => Err(mismatch()),
     })
 }
 

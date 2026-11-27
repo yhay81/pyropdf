@@ -88,7 +88,7 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
 
 `canvas.image` は JPEG、PNG、JPEG 2000 のデータ、パス、`Pixmap`、文書内の画像を
 受け取ります。`canvas.page` は開いている任意の文書のページを、切り抜きや回転を付けて
-配置します。何度も描いた画像やページは一度だけ保存されます。`clip`、`transform`、
+配置します。何度も描いた画像やページは一度だけ保存されます。`clip`、`clip_text`、`transform`、
 `opacity`、`blend`、`layer`、`tag` は、その中で描くもの全体に効くスコープです。
 
 ### グラデーション
@@ -179,11 +179,36 @@ for number, page in enumerate(doc.pages, start=1):
 不足分です。`Font.text_height` と `Font.text_width` はキャンバスと同じ配置で
 テキストを測るので、描く前に箱の大きさを決められます。行は Unicode が許す位置で
 折り返し、箱より幅の広い単語は書記素クラスタの間で分けます。一つのクラスタも
-幅に収まらないときは `PdfError` になります。`align` は `"left"`、
-`"center"`、`"right"`、`"justify"` のいずれかで、`line_height` は行の間隔を
-`size` の倍数で指定します。テキストは既定で黒く塗ります。`stroke` で輪郭を描き、
-`fill=None` で中を塗らずに残します。`rotate` は直角単位で、`canvas.transform` は
+幅に収まらないときは `PdfError` になります。`align` は `"left"`、`"center"`、`"right"`、`"justify"` のいずれかで、
+`line_height` は行の間隔を `size` の倍数で指定します。テキストは既定で黒く塗ります。
+`stroke` で輪郭を描き、`fill=None` で中を塗らずに残し、`render_mode=TextRenderMode.INVISIBLE`
+（`3 Tr`）を指定するとインクを描かずに検索・抽出できる不可視テキストを埋め込めます。
+グリフの輪郭で後続の図形や画像をクリップするには（`4 Tr`〜`7 Tr`）、
+`with canvas.clip_text(...):` スコープを使います（既定はクリップのみ、`fill` や `stroke`
+を渡すと塗りや線とクリップを同時に行います）。`rotate` は直角単位で、`canvas.transform` は
 任意の角度でテキストを回します。
+
+埋め込み OpenType フォントで `direction="vertical"` を指定すると、`harfrust` の縦組みシェーピングと
+`Identity-V`・`/DW2`・`/W2` を用いて縦書き（上から下へ進み、行は右から左へ並ぶ）を描画します。
+複数スクリプトが混在する文字列には、`fallback_fonts` に明示的な `Font` 列（または `doc.fallback_fonts`）
+を渡すと、プロセス全体のグローバルなフォントレジストリを持たずに書記素クラスタ単位でフォールバックし、
+実際に使用した書体だけを文書内に一度だけ埋め込んで保存時にサブセット化します。
+
+```python
+import pyropdf
+from pyropdf import Color, Font, TextRenderMode
+
+doc = pyropdf.Document()
+page = doc.pages.new((300, 200))
+latin = Font.standard("Helvetica")
+with page.draw() as canvas:
+    canvas.text("Hidden OCR layer", (20, 30), render_mode=TextRenderMode.INVISIBLE)
+    with canvas.clip_text("CLIP", (20, 120), font=Font.standard("Helvetica-Bold"), size=48):
+        canvas.rect((0, 70, 220, 140), fill=Color(0.2, 0.5, 0.9))
+    if "ja" in doc.fallback_fonts and (jp := doc.fallback_fonts["ja"].sans) is not None:
+        canvas.text("Hello 日本語", (20, 160), font=latin, fallback_fonts=(jp,), size=14)
+        canvas.text("縦書き\n二行目", (260, 30), font=jp, size=16, direction="vertical")
+```
 
 テキストは既定では一回の呼び出しで UTF-8 で 1 MiB、4,096 行までで、超えると何も描く前に
 `LimitError` で拒否します。信頼できる入力には `max_text_size=None` を渡します。

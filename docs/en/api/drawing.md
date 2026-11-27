@@ -172,9 +172,12 @@ Canvas.text(
     at: Sequence[float],
     *,
     font: Font | None = None,
+    fallback_fonts: Sequence[Font] | FallbackFonts = (),
     size: float = 11,
     fill: Color | Gradient | PatternPaint | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     stroke: Stroke | Color | Gradient | PatternPaint | None = None,
+    render_mode: TextRenderMode | str | None = None,
+    direction: Literal['horizontal', 'vertical'] = 'horizontal',
     line_height: float | None = None,
     rotate: int = 0,
     max_text_size: int | None = 1048576,
@@ -188,19 +191,30 @@ times `size` apart, by default at the font's own line height.
 `rotate` turns the text clockwise about `at` by 0, 90, 180, or
 270 degrees, so that at 90 the lines run down the page and stack
 leftward; `transform` turns it by any other angle. `font`
-defaults to Helvetica. Text is filled, stroked, or both; at least one
-is needed. Both accept a `LinearGradient` or `RadialGradient`,
-in the canvas coordinate space. If a soft mask requires separate fill
-and stroke objects, the second uses empty `ActualText` so extraction
-reads the text once. Gradient tolerances are those of `Canvas`.
-The text is limited to 1 MiB of UTF-8 and 4,096 lines by
-default (`max_text_size`, `None` for trusted input), refused with
-`LimitError` code `text_input_size` or `text_line_count`.
-A colour glyph that COLR paints or a PNG strike holds draws in its own
-colours, which `fill` and `stroke` do not change, except for a COLR layer
-in the text's colour, which takes the fill. Any other colour glyph with no
-outline in an OpenType face raises `PdfError`, naming the character,
-the glyph, and the paint; see `Font`.
+defaults to Helvetica. Pass `fallback_fonts`—an ordered sequence of
+`Font` faces or a document's `Document.fallback_fonts`—to
+resolve missing grapheme clusters deterministically across faces without
+any global font registry; only faces that draw at least one glyph are
+embedded. Text is filled, stroked, both, or—with
+`render_mode=TextRenderMode.INVISIBLE`—emitted invisibly (`3 Tr`) so
+it leaves no ink while remaining searchable and extractable. To clip
+subsequent drawings to glyph outlines (`4 Tr`–`7 Tr`), use
+`clip_text`. Pass `direction="vertical"` with embedded OpenType
+faces to shape and embed vertical text (`Identity-V` and `/W2`),
+where glyphs run downward from `at` and subsequent columns stack
+right-to-left. Fill and stroke accept a `LinearGradient` or
+`RadialGradient`, in the canvas coordinate space. If a soft mask
+requires separate fill and stroke objects, the second uses empty
+`ActualText` so extraction reads the text once. Gradient tolerances
+are those of `Canvas`. The text is limited to 1 MiB of UTF-8 and
+4,096 lines by default (`max_text_size`, `None` for trusted input),
+refused with `LimitError` code `text_input_size` or
+`text_line_count`. A colour glyph that COLR paints or a PNG strike
+holds draws in its own colours, which `fill` and `stroke` do not
+change, except for a COLR layer in the text's colour, which takes the
+fill. Any other colour glyph with no outline in an OpenType face raises
+`PdfError`, naming the character, the glyph, and the paint; see
+`Font`.
 
 ### `textbox`
 
@@ -210,11 +224,14 @@ Canvas.textbox(
     text: str,
     *,
     font: Font | None = None,
+    fallback_fonts: Sequence[Font] | FallbackFonts = (),
     size: float = 11,
     align: Literal['left', 'center', 'right', 'justify'] = 'left',
     line_height: float | None = None,
     fill: Color | Gradient | PatternPaint | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     stroke: Stroke | Color | Gradient | PatternPaint | None = None,
+    render_mode: TextRenderMode | str | None = None,
+    direction: Literal['horizontal', 'vertical'] = 'horizontal',
     rotate: int = 0,
     max_text_size: int | None = 1048576,
 ) -> TextFit
@@ -224,20 +241,51 @@ Wrap text inside `rect` and report how it fits.
 
 Lines break at Unicode line-break opportunities (UAX #14) and, for a
 word wider than the box, between grapheme clusters. They are placed
-as `text` places them: the first baseline one
+as `text` places them: in horizontal mode, the first baseline one
 `Font.ascender` below the top of `rect` and later ones
 `line_height` times `size` apart, by default at the font's own
 line height, and the text fits when the descender of the last line
-does. When the text does not fit, nothing is drawn and
+does; in vertical mode (`direction="vertical"`), columns run downward
+along the box height and stack right-to-left from its right edge. When
+the text does not fit, nothing is drawn and
 `TextFit.spare_height` is the negative shortfall;
 `Font.text_height` measures the height that the text needs
 without drawing it. Tabs become single spaces. `rotate` turns the
 text clockwise inside `rect` by 0, 90, 180, or 270 degrees: at 90
-lines run down the box and stack from its right edge leftward, so
-they wrap at the box's height and fill its width, and at 270 they run
-up and stack from the left edge. The font, paint, and size options
-follow `text`, and text that fits refuses as there: a colour
-glyph with no outline raises `PdfError`.
+horizontal lines run down the box and stack from its right edge
+leftward, so they wrap at the box's height and fill its width, and at
+270 they run up and stack from the left edge. The `font`,
+`fallback_fonts`, `fill`, `stroke`, `render_mode`,
+`direction`, and `size` options follow `text`, and text that
+fits refuses as there: a colour glyph with no outline raises
+`PdfError`.
+
+### `clip_text`
+
+```python
+Canvas.clip_text(
+    text: str,
+    at: Sequence[float],
+    *,
+    font: Font | None = None,
+    fallback_fonts: Sequence[Font] | FallbackFonts = (),
+    size: float = 11,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
+    direction: Literal['horizontal', 'vertical'] = 'horizontal',
+    line_height: float | None = None,
+    rotate: int = 0,
+    max_text_size: int | None = 1048576,
+) -> AbstractContextManager[None]
+```
+
+Clip what the block draws to the glyph outlines of `text` (`4 Tr`–`7 Tr`).
+
+With neither `fill` nor `stroke` (the default), the text clips
+without painting ink (`7 Tr`). Passing `fill`, `stroke`, or both
+also paints the text while adding its outlines to the clipping path
+(`4 Tr`, `5 Tr`, or `6 Tr`). Bitmap-only fonts without glyph
+outlines cannot clip and raise `PdfError`.
 
 ### `image`
 
@@ -632,8 +680,10 @@ TextFit(*, spare_height: float)
 
 How text fits a `Canvas.textbox`: the height left below its last line.
 
-A negative `spare_height` is the shortfall of text that did not
-fit, and was not drawn.
+In horizontal mode, `spare_height` is the height remaining below the
+last line; in vertical mode, it is the width remaining past the last
+column. A negative `spare_height` is the shortfall of text that did
+not fit, and was not drawn.
 
 ### `fits`
 

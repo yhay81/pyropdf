@@ -2,6 +2,8 @@
 //! aligns, ported from pylopdf's `TablePage` and table detection in
 //! `rust/src/extract.rs` at 036be111cafe77755db4bb2be17bc70a8f2f9d82.
 
+use std::sync::Arc;
+
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 
 use super::layout::{RuleSegment, glyphs_bbox};
@@ -73,7 +75,7 @@ pub type TableTuple = (
 /// while detection runs, and the text of the cells of a ruled table against
 /// `text_size` for the rest of the operation. A refusal keeps nothing.
 pub fn page_tables(
-    bridged: &Bridged,
+    bridged: &Arc<Bridged>,
     index: usize,
     text_strategy: bool,
     clip: Option<BBox>,
@@ -2526,8 +2528,9 @@ mod tests {
             zero_advance: false,
             direction: (1.0, 0.0),
             writing_mode: 0,
-            font_key: 0,
-            font: super::super::FontInfo::default(),
+            font_id: 0,
+            extent_asc: super::super::DEFAULT_ASCENDER,
+            extent_desc: -super::super::DEFAULT_DESCENDER,
             color: None,
             render_mode: 0,
             is_clipped: false,

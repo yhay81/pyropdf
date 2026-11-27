@@ -1,0 +1,12 @@
+{
+  "iterations": 50,
+  "f6_budget_refusals": {"shaped_glyph_count": true, "text_line_count": true, "memory_size": true},
+  "mixed_base14_opentype_runs": 2,
+  "cases": [
+  {"case": "styled-latin-justified", "parley_ms": 0.0207, "parley_lines": 2, "parley_glyphs": 36, "option_b_ms": 0.0488, "option_b_lines": 2, "option_b_glyphs": 35, "option_b_budget_peak_bytes": 6216, "option_b_decorations": 3, "option_b_links": 1},
+  {"case": "bidi-ltr-with-hebrew-and-digits", "parley_ms": 0.0176, "parley_lines": 1, "parley_glyphs": 25, "option_b_ms": 0.0567, "option_b_lines": 1, "option_b_glyphs": 25, "option_b_budget_peak_bytes": 3844, "option_b_decorations": 1, "option_b_links": 1},
+  {"case": "bidi-rtl-arabic-wrapped", "parley_ms": 0.0200, "parley_lines": 2, "parley_glyphs": 35, "option_b_ms": 0.0600, "option_b_lines": 2, "option_b_glyphs": 34, "option_b_budget_peak_bytes": 4554, "option_b_decorations": 1, "option_b_links": 1},
+  {"case": "multilingual-cjk-hebrew-arabic", "parley_ms": 0.0210, "parley_lines": 3, "parley_glyphs": 35, "option_b_ms": 0.0723, "option_b_lines": 3, "option_b_glyphs": 33, "option_b_budget_peak_bytes": 6706, "option_b_decorations": 2, "option_b_links": 1},
+  {"case": "long-bidi-500-tokens", "parley_ms": 0.3614, "parley_lines": 33, "parley_glyphs": 1760, "option_b_ms": 0.8656, "option_b_lines": 33, "option_b_glyphs": 1727, "option_b_budget_peak_bytes": 215800, "option_b_decorations": 0, "option_b_links": 0}
+  ]
+}

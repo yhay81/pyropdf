@@ -274,6 +274,15 @@ impl Index {
         damage: Damage,
         budget: &Budget,
     ) -> Result<Self> {
+        let bytes = rebuilt.bytes.unwrap_or(bytes);
+        let origin = if origin == 0 && !bytes.starts_with(b"%PDF-") {
+            bytes
+                .windows(b"%PDF-".len())
+                .position(|window| window == b"%PDF-")
+                .unwrap_or(0)
+        } else {
+            origin
+        };
         let streams = objstm::Streams::new(&rebuilt.entries, budget)?;
         for (number, decoded) in rebuilt.streams {
             streams.fill(number, decoded, budget)?;

@@ -1786,3 +1786,276 @@ def test_gradient_text_matches_painted_area_inside_glyphs(
         max(abs(actual[offset + channel] - reference[offset + channel]) for offset in interior for channel in range(3))
         <= tolerance
     )
+
+
+def _pdftotext(data: bytes) -> str:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "page.pdf"
+        path.write_bytes(data)
+        return subprocess.run(  # noqa: S603 - fixed poppler tool on test output.
+            [shutil.which("pdftotext") or "pdftotext", "-enc", "UTF-8", str(path), "-"],
+            check=True,
+            capture_output=True,
+        ).stdout.decode("utf-8")
+
+
+def test_invisible_embedded_text_draws_no_ink_and_extracts(japanese: pyropdf.Font) -> None:
+    document, page = _new_page(300, 120)
+    blank = bytes(page.pixmap(dpi=72))
+    with page.draw() as canvas:
+        canvas.text("日本語、かな。", (20, 60), font=japanese, size=18, render_mode=pyropdf.TextRenderMode.INVISIBLE)
+    data = document.to_bytes()
+    reopened = pyropdf.open(data).pages[0]
+    assert bytes(page.pixmap(dpi=72)) == blank
+    assert bytes(reopened.pixmap(dpi=72)) == blank
+    assert _text_without_warning(reopened).strip() == "日本語、かな。"
+    if shutil.which("pdftoppm") is not None:
+        poppler_gray, _ = _poppler_gray(data)
+        assert min(poppler_gray) == 255
+    if shutil.which("pdftotext") is not None:
+        assert _pdftotext(data).strip() == "日本語、かな。"
+
+
+@pytest.mark.skipif(shutil.which("pdftoppm") is None, reason="poppler's pdftoppm is not installed")
+@pytest.mark.parametrize(
+    ("mode", "kwargs"),
+    [
+        (7, {}),
+        (4, {"fill": pyropdf.Color(0, 0, 1)}),
+        (5, {"stroke": pyropdf.Stroke(paint=pyropdf.Color(0, 0.5, 0), width=2)}),
+        (6, {"fill": pyropdf.Color(0, 0, 1), "stroke": pyropdf.Stroke(paint=pyropdf.Color(0, 0.5, 0), width=2)}),
+    ],
+    ids=["tr7-clip", "tr4-fill-clip", "tr5-stroke-clip", "tr6-fill-stroke-clip"],
+)
+def test_clip_text_matches_poppler_for_tr4_through_tr7(
+    japanese: pyropdf.Font, mode: int, kwargs: dict[str, Any]
+) -> None:
+    document, page = _new_page(260, 140)
+    with page.draw() as canvas, canvas.clip_text("日本", (30, 110), font=japanese, size=80, **kwargs):
+        canvas.rect((0, 0, 260, 140), fill=pyropdf.Color(1, 0, 0))
+    tr_ops = [op.operands[0] for op in page.operations if op.operator == "Tr"]
+    assert mode in tr_ops
+    data = document.to_bytes()
+    poppler, width = _poppler_gray(data)
+    hayro = pyropdf.open(data).pages[0].pixmap(dpi=72).to_gray()
+    assert hayro.width == width
+    # Outside glyph area must stay white in both renderers.
+    assert poppler[0] == 255
+    assert bytes(hayro)[0] == 255
+    poppler_box = _ink_box(poppler, width)
+    hayro_box = _ink_box(bytes(hayro), width)
+    assert all(abs(a - b) <= 3 for a, b in zip(poppler_box, hayro_box, strict=True)), (poppler_box, hayro_box)
+    assert pyropdf.open(data).pages[0].text().strip() == "日本"
+
+
+def test_clip_text_refuses_bitmap_only_face() -> None:
+    bitmap_only = pyropdf.Font.from_file(FONTS / "colour-bitmaps-sbix-only.ttf")
+    _document, page = _new_page(200, 120)
+    with page.draw() as canvas, pytest.raises(pyropdf.PdfError, match="no outlines"):
+        canvas.clip_text("D", (20, 80), font=bitmap_only, size=48)
+
+
+def test_vertical_japanese_text_embeds_identity_v_and_w2_and_roundtrips(japanese: pyropdf.Font) -> None:
+    document, page = _new_page(200, 260)
+    with page.draw() as canvas:
+        canvas.text("日本語、かな。", (140, 20), font=japanese, size=24, direction="vertical")
+    data = document.to_bytes()
+    reopened = pyropdf.open(data)
+    saved_page = reopened.pages[0]
+
+    (font_info,) = saved_page.fonts()
+    assert font_info.subtype == "Type0"
+    assert font_info.encoding == "Identity-V"
+    assert font_info.subset
+    descendant = font_info._font["DescendantFonts"][0]  # noqa: SLF001
+    assert "DW2" in descendant
+    assert "W2" in descendant
+    assert len(descendant["W2"]) > 0
+
+    # Rendered ink runs vertically (significantly taller than wide).
+    hayro = saved_page.pixmap(dpi=72).to_gray()
+    x0, y0, x1, y1 = _ink_box(bytes(hayro), hayro.width)
+    assert (y1 - y0) > 3 * (x1 - x0)
+
+    if shutil.which("pdftoppm") is not None:
+        poppler, width = _poppler_gray(data)
+        poppler_box = _ink_box(poppler, width)
+        assert all(abs(a - b) <= 3 for a, b in zip(poppler_box, (x0, y0, x1, y1), strict=True)), (
+            poppler_box,
+            (x0, y0, x1, y1),
+        )
+
+    # Vertical glyphs appear in top-to-bottom order in both pyropdf and pdftotext.
+    assert _text_without_warning(saved_page).replace("\n", "").strip() == "日本語、かな。"
+    layout = saved_page.layout()
+    assert any(line.is_vertical for block in layout.blocks for line in block.lines)
+    if shutil.which("pdftotext") is not None:
+        assert "".join(_pdftotext(data).split()) == "日本語、かな。"
+
+
+def test_vertical_multicolumn_and_textbox_stack_right_to_left(japanese: pyropdf.Font) -> None:
+    _document, page = _new_page(220, 220)
+    with page.draw() as canvas:
+        canvas.text("日本語\nかな。", (160, 20), font=japanese, size=20, direction="vertical")
+    glyphs = _glyphs(page)
+    by_text = {g.text: g for g in glyphs}
+    # Within column 1, 本 is below 日, 語 is below 本.
+    assert by_text["日"].origin.y < by_text["本"].origin.y < by_text["語"].origin.y
+    # Column 2 ("かな。") sits to the left of column 1 ("日本語").
+    assert by_text["か"].origin.x < by_text["日"].origin.x
+    assert by_text["か"].origin.y < by_text["な"].origin.y < by_text["。"].origin.y
+
+    doc_box, page_box = _new_page(200, 140)
+    with page_box.draw() as canvas:
+        fit = canvas.textbox((20, 20, 180, 120), "日本語かなのテキスト", font=japanese, size=20, direction="vertical")
+        overflow = canvas.textbox(
+            (20, 20, 35, 60), "日本語かなのテキスト", font=japanese, size=20, direction="vertical"
+        )
+    assert fit.fits
+    assert not overflow.fits
+    box_glyphs = _glyphs(page_box)
+    assert all(18 <= g.origin.x <= 182 and 18 <= g.origin.y <= 125 for g in box_glyphs)
+    # First five glyphs sit in the right column top-to-bottom; next five in the left column top-to-bottom.
+    col1, col2 = box_glyphs[:5], box_glyphs[5:]
+    assert [g.text for g in col1] == list("日本語かな")
+    assert [g.text for g in col2] == list("のテキスト")
+    assert col2[0].origin.x < col1[0].origin.x
+    assert all(col1[i].origin.y < col1[i + 1].origin.y for i in range(4))
+    assert all(col2[i].origin.y < col2[i + 1].origin.y for i in range(4))
+    box_data = doc_box.to_bytes()
+    if shutil.which("pdftotext") is not None:
+        assert _pdftotext(box_data).splitlines()[:2] == ["日本語かな", "のテキスト"]
+
+    # Single-column vertical textbox also extracts cleanly in pyropdf.
+    doc_single, page_single = _new_page(100, 200)
+    with page_single.draw() as canvas:
+        assert canvas.textbox((20, 10, 80, 180), "日本語かな", font=japanese, size=20, direction="vertical").fits
+    assert pyropdf.open(doc_single.to_bytes()).pages[0].text().replace("\n", "").strip() == "日本語かな"
+
+
+def test_horizontal_and_vertical_same_face_embed_one_subsetted_program(japanese: pyropdf.Font) -> None:
+    document, page = _new_page(300, 240)
+    with page.draw() as canvas:
+        canvas.text("AVA 日本", (20, 40), font=japanese, size=18)
+        canvas.text("かな。", (240, 20), font=japanese, size=18, direction="vertical")
+    data = document.to_bytes()
+    reopened = pyropdf.open(data)
+    assert len(_descriptor_programs(reopened)) == 1
+    fonts = reopened.pages[0].fonts()
+    assert {font.encoding for font in fonts} == {"Identity-H", "Identity-V"}
+    assert all(font.subset for font in fonts)
+    assert len({font.base_font for font in fonts}) == 1
+    extracted = _text_without_warning(reopened.pages[0])
+    assert "AVA 日本" in extracted
+    assert "かな。" in extracted.replace("\n", "")
+
+
+def test_vertical_truetype_without_vmtx_subsets_and_renders(hebrew: pyropdf.Font) -> None:
+    document, page = _new_page(160, 220)
+    with page.draw() as canvas:
+        canvas.text("שלום", (80, 20), font=hebrew, size=24, direction="vertical")
+    data = document.to_bytes()
+    reopened = pyropdf.open(data)
+    (font_info,) = reopened.pages[0].fonts()
+    assert font_info.encoding == "Identity-V"
+    assert font_info.subset
+    hayro = reopened.pages[0].pixmap(dpi=72).to_gray()
+    x0, y0, x1, y1 = _ink_box(bytes(hayro), hayro.width)
+    assert (y1 - y0) > (x1 - x0)
+    if shutil.which("pdftoppm") is not None:
+        poppler, width = _poppler_gray(data)
+        poppler_box = _ink_box(poppler, width)
+        assert all(abs(a - b) <= 3 for a, b in zip(poppler_box, (x0, y0, x1, y1), strict=True)), (
+            poppler_box,
+            (x0, y0, x1, y1),
+        )
+
+
+def test_fallback_fonts_switch_per_cluster_and_embed_only_used_faces(
+    japanese: pyropdf.Font, hebrew: pyropdf.Font, arabic: pyropdf.Font
+) -> None:
+    latin = pyropdf.Font.standard("Helvetica")
+    document, page = _new_page(400, 220)
+    with page.draw() as canvas:
+        # Mixed Latin (Helvetica) + Japanese + Hebrew (with combining marks); Arabic is unused and must not be embedded.
+        canvas.text("Hello 日本語\nשָׁלוֹם", (20, 40), font=latin, fallback_fonts=(japanese, hebrew, arabic), size=16)
+        fit = canvas.textbox(
+            (20, 100, 360, 200),
+            "Hello 日本語!\nשלום עולם",
+            font=latin,
+            fallback_fonts=(japanese, hebrew, arabic),
+            size=14,
+        )
+    assert fit.fits
+    data = document.to_bytes()
+    reopened = pyropdf.open(data)
+    # Only the two used embedded faces (japanese and hebrew) have embedded programs; arabic is omitted.
+    assert len(_descriptor_programs(reopened)) == 2
+    assert all(font.subset for font in reopened.pages[0].fonts() if font.subtype == "Type0")
+    extracted = _text_without_warning(reopened.pages[0])
+    assert extracted.splitlines() == ["Hello 日本語", "שָׁלוֹם", "Hello 日本語!", "שלום עולם"]
+    if shutil.which("pdftotext") is not None:
+        pdftotext_out = _pdftotext(data).translate(dict.fromkeys(map(ord, "\u202a\u202b\u202c")))
+        assert "Hello 日本語" in pdftotext_out
+        assert "שלום" in pdftotext_out
+    if shutil.which("pdftoppm") is not None:
+        poppler, width = _poppler_gray(data)
+        hayro = reopened.pages[0].pixmap(dpi=72).to_gray()
+        assert all(
+            abs(a - b) <= 3 for a, b in zip(_ink_box(poppler, width), _ink_box(bytes(hayro), hayro.width), strict=True)
+        )
+
+
+def test_fallback_fonts_switch_multiple_faces_on_one_line(japanese: pyropdf.Font, hebrew: pyropdf.Font) -> None:
+    latin = pyropdf.Font.standard("Helvetica")
+    document, page = _new_page(400, 100)
+    with page.draw() as canvas:
+        canvas.text("Hello 日本語 שלום", (20, 50), font=latin, fallback_fonts=(japanese, hebrew), size=16)
+    data = document.to_bytes()
+    reopened = pyropdf.open(data)
+    assert len(_descriptor_programs(reopened)) == 2
+    # Three distinct faces (Helvetica, Japanese, Hebrew) were emitted on one line in visual order.
+    runs = reopened.pages[0].content(paths=False, images=False).text_runs
+    assert len(runs) >= 3
+    if shutil.which("pdftotext") is not None:
+        pdftotext_out = _pdftotext(data).translate(dict.fromkeys(map(ord, "\u202a\u202b\u202c")))
+        assert "Hello" in pdftotext_out
+        assert "日本語" in pdftotext_out
+        assert "שלום" in pdftotext_out
+
+
+def test_fallback_fonts_document_config_is_isolated_per_document(japanese: pyropdf.Font, hebrew: pyropdf.Font) -> None:
+    latin = pyropdf.Font.standard("Helvetica")
+    doc_a = pyropdf.Document()
+    doc_a.fallback_fonts = {"ja": pyropdf.FallbackFont(sans=japanese)}
+    doc_b = pyropdf.Document()
+    doc_b.fallback_fonts = {"ja": pyropdf.FallbackFont(sans=hebrew)}
+
+    page_a = doc_a.pages.new((300, 100))
+    with page_a.draw() as canvas:
+        canvas.text("Hi 日本", (20, 50), font=latin, fallback_fonts=doc_a.fallback_fonts, size=14)
+    assert page_a.text().strip() == "Hi 日本"
+
+    page_b = doc_b.pages.new((300, 100))
+    # doc_b does not have Japanese glyphs in its fallback_fonts and must not inherit doc_a's config.
+    with page_b.draw() as canvas, pytest.raises(pyropdf.PdfError, match=r"U\+65E5"):
+        canvas.text("Hi 日本", (20, 50), font=latin, fallback_fonts=doc_b.fallback_fonts, size=14)
+    assert page_b.text().strip() == ""
+
+
+def test_fallback_fonts_undo_and_missing_glyph_atomicity(japanese: pyropdf.Font, hebrew: pyropdf.Font) -> None:
+    document, page = _new_page(300, 120)
+    steps = document.history.steps
+    with page.draw() as canvas, pytest.raises(pyropdf.PdfError, match=r"U\+1F980"):
+        canvas.text("日本🦀שלום", (20, 50), font=japanese, fallback_fonts=(hebrew,), size=14)
+    assert document.history.steps == steps
+    assert _descriptor_programs(document) == set()
+    assert page.text().strip() == ""
+
+    with page.draw() as canvas:
+        canvas.text("日本\nשלום", (20, 50), font=japanese, fallback_fonts=(hebrew,), size=14)
+    assert page.text().splitlines() == ["日本", "שלום"]
+    assert len(_descriptor_programs(document)) == 2
+    document.history.undo()
+    assert document.pages[0].text().strip() == ""
+    assert _descriptor_programs(document) == set()

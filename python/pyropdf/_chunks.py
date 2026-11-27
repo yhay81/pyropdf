@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
@@ -31,15 +30,17 @@ from pyropdf._errors import LimitError
 from pyropdf._geometry import Rect
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    import os
+    from collections.abc import Callable, Sequence
 
-    from pyropdf._markdown import TextLine, TextPageDict
+    from pyropdf._markdown import ExportedImage, TextLine, TextPageDict, _ExportConfig
     from pyropdf._page import Page
+    from pyropdf._structure_reading import StructureBlock
     from pyropdf._tables import Table
     from pyropdf._text import Word
 
 #: The kind of a structured page :class:`Element`.
-ElementKind: TypeAlias = Literal["heading", "paragraph", "list_item", "table", "image"]
+ElementKind: TypeAlias = Literal["heading", "paragraph", "list_item", "table", "image", "blockquote", "code"]
 ElementKind.__doc__ = "The kind of a structured page :class:`Element`."
 
 #: The characters of one chunk by default.
@@ -49,7 +50,7 @@ _DEFAULT_MAX_CHARS = 2000
 _DEFAULT_MAX_EXPORT_SIZE = 64 * 1024 * 1024
 
 #: The elements that a chunk never splits.
-_INDIVISIBLE = frozenset({"heading", "table", "image"})
+_INDIVISIBLE = frozenset({"heading", "table", "image", "code"})
 
 _WORDS = re.compile(r"\S+\s*")
 
@@ -58,12 +59,16 @@ _WORDS = re.compile(r"\S+\s*")
 class Element:
     """One piece of a page's structure, with where it is.
 
-    ``text`` is a heading's or paragraph's plain text, a list item with its
-    bullet as ``- `` or its number as ``1. ``, a table's Markdown, or empty
-    for an image. ``page`` is the page's index and ``bbox`` the box in
-    display space; a paragraph's box spans its lines. ``level`` is a
-    heading's level, 1 through 4, and ``rows`` a table's cells as
-    :attr:`Table.rows` holds them.
+    ``text`` is a heading's, paragraph's, block quote's, or code block's text,
+    a list item with its bullet as ``- `` or its number as ``1. ``, a table's
+    Markdown, or an image's alternate description when tagged (empty
+    otherwise). ``page`` is the page's index and ``bbox`` the box in display
+    space; a paragraph's box spans its lines. ``level`` is a heading's level,
+    1 through 6 (1 through 4 when inferred geometrically), ``rows`` a table's
+    cells as :attr:`Table.rows` holds them, ``alt_text`` an element's ``/Alt``
+    description when present, ``language`` its inherited BCP 47 ``/Lang``
+    tag when reading from the structure tree, and ``image`` its exported
+    image filename or callback reference when ``images=...`` is configured.
     """
 
     kind: ElementKind
@@ -72,9 +77,12 @@ class Element:
     text: str
     level: int | None = None
     rows: tuple[tuple[str | None, ...], ...] | None = None
+    alt_text: str | None = None
+    language: str | None = None
+    image: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the element as JSON-safe values: ``kind``, ``page``, ``bbox``, ``text``, and ``level`` or ``rows``."""
+        """Return the element as JSON-safe values: ``kind``, ``page``, ``bbox``, ``text``, and optional metadata."""
         record: dict[str, Any] = {
             "kind": self.kind,
             "page": self.page,
@@ -85,10 +93,33 @@ class Element:
             record["level"] = self.level
         if self.rows is not None:
             record["rows"] = [list(row) for row in self.rows]
+        if self.alt_text is not None:
+            record["alt_text"] = self.alt_text
+        if self.language is not None:
+            record["language"] = self.language
+        if self.image is not None:
+            record["image"] = self.image
         return record
 
     def _markdown(self) -> str:
-        return f"{'#' * self.level} {self.text}" if self.kind == "heading" and self.level else self.text
+        if self.kind == "heading" and self.level:
+            return f"{'#' * self.level} {self.text}"
+        if self.kind == "blockquote":
+            from pyropdf._structure_reading import format_blockquote  # noqa: PLC0415
+
+            return format_blockquote(self.text)
+        if self.kind == "code":
+            from pyropdf._structure_reading import format_code_block  # noqa: PLC0415
+
+            return format_code_block(self.text)
+        if self.kind == "image":
+            alt = self.alt_text if self.alt_text is not None else self.text
+            if self.image is not None or alt:
+                from pyropdf._structure_reading import format_markdown_image  # noqa: PLC0415
+
+                return format_markdown_image(alt, self.image or "")
+            return ""
+        return self.text
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -96,8 +127,9 @@ class Chunk:
     """Consecutive elements within one section, joined as Markdown in :attr:`text`.
 
     ``index`` is the chunk's position in the export, ``section`` the
-    headings above it from the outermost, and ``oversized`` whether its one
-    indivisible element passes the budget.
+    headings above it from the outermost, ``oversized`` whether its one
+    indivisible element passes the budget, and ``language`` the dominant
+    BCP 47 ``/Lang`` tag of its elements when reading from the structure tree.
     """
 
     index: int
@@ -105,6 +137,7 @@ class Chunk:
     elements: tuple[Element, ...]
     section: tuple[str, ...]
     oversized: bool
+    language: str | None = None
 
     @property
     def pages(self) -> tuple[int, ...]:
@@ -113,7 +146,7 @@ class Chunk:
 
     def to_dict(self) -> dict[str, Any]:
         """Return the chunk as JSON-safe values, its elements as :meth:`Element.to_dict` gives them."""
-        return {
+        record: dict[str, Any] = {
             "index": self.index,
             "text": self.text,
             "pages": list(self.pages),
@@ -121,65 +154,242 @@ class Chunk:
             "oversized": self.oversized,
             "elements": [element.to_dict() for element in self.elements],
         }
+        if self.language is not None:
+            record["language"] = self.language
+        return record
 
 
-def validate_options(table_strategy: object, max_size: object) -> None:
-    """Refuse a table strategy or an output bound that an export does not take."""
-    _markdown.validate_options(table_strategy, max_size)
+def validate_options(  # noqa: PLR0913 - validates all shared retrieval export options.
+    table_strategy: object,
+    max_size: object,
+    *,
+    use_structure: object = "auto",
+    expand_abbreviations: object = False,
+    margins: object = None,
+    ignore_headers_footers: object = False,
+    images: object = None,
+    max_graphics: object = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
+) -> None:
+    """Refuse options that a structured export does not take."""
+    _markdown.validate_options(
+        table_strategy,
+        max_size,
+        use_structure=use_structure,
+        expand_abbreviations=expand_abbreviations,
+        margins=margins,
+        ignore_headers_footers=ignore_headers_footers,
+        images=images,
+        max_graphics=max_graphics,
+    )
 
 
-def export_json(pages: Sequence[Page], *, table_strategy: Literal["lines", "text"] | None, max_size: int | None) -> str:
+def export_json(  # noqa: PLR0913 - keyword-only retrieval export options.
+    pages: Sequence[Page],
+    *,
+    table_strategy: Literal["lines", "text"] | None,
+    max_size: int | None,
+    use_structure: Literal["auto", "always", "never"] = "auto",
+    expand_abbreviations: bool = False,
+    margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
+    ignore_headers_footers: bool = False,
+    images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
+    max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
+) -> str:
     """Return ``pages`` as a JSON document of their sizes and elements."""
-    records = []
-    for page, (width, height), elements in _pages_elements(pages, table_strategy=table_strategy, max_size=max_size):
-        records.append(
-            {
-                "index": page.index,
-                "width": width,
-                "height": height,
-                "elements": [element.to_dict() for element in elements],
-            }
-        )
-    return json.dumps({"pages": records}, ensure_ascii=False)
+    config = _markdown._make_config(  # noqa: SLF001
+        table_strategy=table_strategy,
+        max_size=max_size,
+        use_structure=use_structure,
+        expand_abbreviations=expand_abbreviations,
+        margins=margins,
+        ignore_headers_footers=ignore_headers_footers,
+        images=images,
+        max_graphics=max_graphics,
+    )
+    page_records, exporter = _pages_elements(pages, config)
+    records = [
+        {
+            "index": page.index,
+            "width": width,
+            "height": height,
+            "elements": [element.to_dict() for element in elements],
+        }
+        for page, (width, height), elements in page_records
+    ]
+    payload = json.dumps({"pages": records}, ensure_ascii=False)
+    exporter.commit()
+    return payload
 
 
-def export_chunks(
+def export_chunks(  # noqa: PLR0913 - keyword-only retrieval export options.
     pages: Sequence[Page],
     *,
     max_chars: int,
     table_strategy: Literal["lines", "text"] | None,
     max_size: int | None,
+    use_structure: Literal["auto", "always", "never"] = "auto",
+    expand_abbreviations: bool = False,
+    margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
+    ignore_headers_footers: bool = False,
+    images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
+    max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
 ) -> list[Chunk]:
     """Return the chunks of ``pages``' elements within ``max_chars`` characters each."""
-    elements = [
-        element
-        for _, _, page_elements in _pages_elements(pages, table_strategy=table_strategy, max_size=max_size)
-        for element in page_elements
-    ]
-    return _assemble(elements, max_chars)
+    config = _markdown._make_config(  # noqa: SLF001
+        table_strategy=table_strategy,
+        max_size=max_size,
+        use_structure=use_structure,
+        expand_abbreviations=expand_abbreviations,
+        margins=margins,
+        ignore_headers_footers=ignore_headers_footers,
+        images=images,
+        max_graphics=max_graphics,
+    )
+    page_records, exporter = _pages_elements(pages, config)
+    elements = [element for _, _, page_elements in page_records for element in page_elements]
+    chunks = _assemble(elements, max_chars)
+    exporter.commit()
+    return chunks
+
+
+def _structure_elements(blocks: Sequence[StructureBlock], budget: _Budget) -> list[Element]:
+    """Convert structure blocks for one page into :class:`Element` records within ``budget``."""
+    elements: list[Element] = []
+    for block in blocks:
+        if block.kind == "table":
+            if not block.rows:
+                continue
+            remaining = None if budget.max_size is None else max(0, budget.max_size - budget.used)
+            try:
+                table_md = _markdown.table_to_markdown(
+                    [list(row) for row in block.rows],
+                    cell_anchors=block.cell_anchors,
+                    max_size=remaining,
+                )
+            except _markdown.MarkdownOutputLimitError:
+                budget.fail()
+            budget.charge(table_md)
+            elements.append(
+                Element(
+                    kind="table",
+                    page=block.page,
+                    bbox=block.bbox,
+                    text=table_md,
+                    rows=block.rows,
+                    language=block.language,
+                )
+            )
+            continue
+        budget.charge(block.text)
+        if block.image is not None:
+            budget.charge(block.image)
+        elements.append(
+            Element(
+                kind=block.kind,
+                page=block.page,
+                bbox=block.bbox,
+                text=block.text,
+                level=block.level,
+                alt_text=block.alt_text,
+                language=block.language,
+                image=block.image,
+            )
+        )
+    return elements
+
+
+def _geometric_page_elements(  # noqa: PLR0913 - extracts one geometric page's elements with controls.
+    page: Page,
+    *,
+    config: _ExportConfig,
+    graphics: _markdown._GraphicsCache,
+    hf_rule: _markdown._HeaderFooterRule,
+    exporter: _markdown._ImageExporter,
+    levels: dict[float, int],
+    budget: _Budget,
+    data: Any,  # noqa: ANN401 - optional PageStructureData from _structure_reading.
+) -> tuple[tuple[float, float], list[Element]]:
+    body_clip, body_empty = _markdown._page_body_clip(page, config.margins)  # noqa: SLF001
+    page_gfx = graphics.inspect(page)
+    if body_empty:
+        _, width, height = page._geometry()  # noqa: SLF001
+        return (width, height), []
+    layout, words = _markdown._fallback_or_clipped_layout(page, data, body_clip, body_empty=False)  # noqa: SLF001
+    tables = _markdown._page_tables(  # noqa: SLF001
+        page, config.table_strategy, clip=body_clip, has_paths=page_gfx.has_paths
+    )
+    table_bboxes = [(t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1) for t in tables]
+    y_min, y_max = _markdown._band_bounds(layout["height"], body_clip)  # noqa: SLF001
+    layout, words = hf_rule.filter_layout(layout, words, y_min, y_max, table_bboxes)
+    elements = _PageReader(page.index, layout, levels, budget).read(tables, words if tables else None)
+    kept_images = _markdown._filter_images_by_margins(page_gfx.images, body_clip, body_empty=False)  # noqa: SLF001
+    for page_image in kept_images:
+        ref = exporter.export(page_image)
+        if ref is not None:
+            budget.charge(ref)
+        _place(elements, Element(kind="image", page=page.index, bbox=page_image.item.bbox, text="", image=ref))
+    return (layout["width"], layout["height"]), elements
 
 
 def _pages_elements(
-    pages: Sequence[Page], *, table_strategy: Literal["lines", "text"] | None, max_size: int | None
-) -> list[tuple[Page, tuple[float, float], list[Element]]]:
-    """Return each page with its size and elements, with heading sizes inferred from all of them."""
-    size_counts: Counter[float] = Counter()
+    pages: Sequence[Page],
+    config: _ExportConfig,
+) -> tuple[list[tuple[Page, tuple[float, float], list[Element]]], _markdown._ImageExporter]:
+    """Return each page with its size and elements plus the uncommitted image exporter."""
+    if not pages:
+        return [], _markdown._ImageExporter(None, memory_limit=None)  # noqa: SLF001
+    from pyropdf._structure_reading import extract_structure_pages  # noqa: PLC0415
+
+    structure_pages = extract_structure_pages(
+        pages,
+        table_strategy=config.table_strategy,
+        use_structure=config.use_structure,
+        expand_abbreviations=config.expand_abbreviations,
+        max_graphics=config.max_graphics,
+    )
+    exporter = _markdown._ImageExporter(  # noqa: SLF001
+        config.images, memory_limit=pages[0].document.limits.max_memory_size
+    )
+    graphics = _markdown._GraphicsCache(max_graphics=config.max_graphics, need_images=True)  # noqa: SLF001
+    hf_rule = _markdown._detect_headers_footers(pages, config, graphics, structure_pages)  # noqa: SLF001
+    levels = _markdown._collect_geometric_heading_levels(  # noqa: SLF001
+        pages, config, graphics, hf_rule, structure_pages
+    )
+
+    budget = _Budget(config.max_size)
+    result: list[tuple[Page, tuple[float, float], list[Element]]] = []
     for page in pages:
-        layout, _ = _markdown._page_layout(page)  # noqa: SLF001
-        tables = _markdown._page_tables(page, table_strategy)  # noqa: SLF001
-        bboxes = [(table.bbox.x0, table.bbox.y0, table.bbox.x1, table.bbox.y1) for table in tables]
-        size_counts.update(_markdown.collect_sizes([layout], [bboxes]))
-    levels = _markdown.heading_levels(size_counts)
-    budget = _Budget(max_size)
-    result = []
-    for page in pages:
-        layout, words = _markdown._page_layout(page)  # noqa: SLF001
-        tables = _markdown._page_tables(page, table_strategy)  # noqa: SLF001
-        elements = _PageReader(page.index, layout, levels, budget).read(tables, words if tables else None)
-        for image in page.images():
-            _place(elements, Element(kind="image", page=page.index, bbox=image.item.bbox, text=""))
-        result.append((page, (layout["width"], layout["height"]), elements))
-    return result
+        data = structure_pages[page.index] if structure_pages is not None else None
+        if data is not None and data.blocks is not None:
+            body_clip, body_empty = _markdown._page_body_clip(page, config.margins)  # noqa: SLF001
+            page_gfx = graphics.inspect(page)
+            if body_empty:
+                result.append((page, (data.width, data.height), []))
+                continue
+            blocks = _markdown._filter_structure_blocks_by_margins(  # noqa: SLF001
+                data.blocks, body_clip, body_empty=False
+            )
+            y_min, y_max = _markdown._band_bounds(data.height, body_clip)  # noqa: SLF001
+            blocks = hf_rule.filter_structure_blocks(blocks, y_min, y_max)
+            kept_images = _markdown._filter_images_by_margins(  # noqa: SLF001
+                page_gfx.images, body_clip, body_empty=False
+            )
+            blocks = _markdown._attach_structure_images(blocks, kept_images, exporter)  # noqa: SLF001
+            elements = _structure_elements(blocks, budget)
+            result.append((page, (data.width, data.height), elements))
+        else:
+            size, elements = _geometric_page_elements(
+                page,
+                config=config,
+                graphics=graphics,
+                hf_rule=hf_rule,
+                exporter=exporter,
+                levels=levels,
+                budget=budget,
+                data=data,
+            )
+            result.append((page, size, elements))
+    return result, exporter
 
 
 class _Budget:
@@ -189,14 +399,17 @@ class _Budget:
         self.max_size = max_size
         self.used = 0
 
+    def fail(self) -> None:
+        code = "export_output_size"
+        msg = f"the exported text exceeds the {self.max_size}-byte UTF-8 limit"
+        raise LimitError(code, msg)
+
     def charge(self, text: str) -> None:
         if self.max_size is None:
             return
         self.used += _markdown.utf8_size(text)
         if self.used > self.max_size:
-            code = "export_output_size"
-            msg = f"the exported text exceeds the {self.max_size}-byte UTF-8 limit"
-            raise LimitError(code, msg)
+            self.fail()
 
 
 class _PageReader:
@@ -303,6 +516,17 @@ def _separator(previous: Element, element: Element) -> str:
     return "\n" if previous.kind == element.kind == "list_item" else "\n\n"
 
 
+def _dominant_language(elements: Sequence[Element]) -> str | None:
+    """Return the character-weighted dominant BCP 47 language across ``elements``, or ``None``."""
+    weights: dict[str, int] = {}
+    for element in elements:
+        if element.language is not None:
+            weights[element.language] = weights.get(element.language, 0) + max(1, len(element.text))
+    if not weights:
+        return None
+    return max(weights, key=lambda lang: weights[lang])
+
+
 def _assemble(elements: list[Element], max_chars: int) -> list[Chunk]:
     """Group ``elements`` into chunks of at most ``max_chars`` characters, each heading starting one."""
     assembler = _Assembler(max_chars)
@@ -313,10 +537,12 @@ def _assemble(elements: list[Element], max_chars: int) -> list[Chunk]:
             level = element.level or 1
             headings = [heading for heading in headings if heading[0] < level]
             headings.append((level, element.text))
-        if element.kind in _INDIVISIBLE or len(element.text) <= max_chars:
+        rendered = element._markdown()  # noqa: SLF001
+        if element.kind in _INDIVISIBLE or len(rendered) <= max_chars:
             pieces = [element]
         else:
-            pieces = [replace(element, text=piece) for piece in _pieces(element.text, max_chars)]
+            piece_limit = max(1, max_chars - 2) if element.kind == "blockquote" else max_chars
+            pieces = [replace(element, text=piece) for piece in _pieces(element.text, piece_limit)]
         for piece in pieces:
             assembler.add(piece, tuple(text for _, text in headings))
     assembler.flush()
@@ -361,6 +587,7 @@ class _Assembler:
                 elements=tuple(self.elements),
                 section=self.section,
                 oversized=oversized,
+                language=_dominant_language(self.elements),
             )
         )
         self.elements, self.parts, self.size, self.last = [], [], 0, None

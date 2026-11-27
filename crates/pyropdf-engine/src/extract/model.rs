@@ -1536,15 +1536,32 @@ pub struct GlyphStyle {
 
 /// The font key of the runs that hayro shows with its fallback font, which
 /// no font dictionary describes.
-const FALLBACK_FONT_KEY: u128 = 1;
+pub(super) const FALLBACK_FONT_KEY: u128 = 1;
 /// The font key of a Type 3 run when hayro reports no font dictionary.
 const FALLBACK_TYPE3_FONT_KEY: u128 = 2;
 
 /// The [`GlyphStyle::font`] of a run. Fonts over one program have different
 /// keys, although their glyphs' identifiers agree.
-fn run_font_key(run: &GlyphRun<'_, '_>) -> u128 {
-    run.font_dict()
-        .map_or(FALLBACK_FONT_KEY, |dict| dict.cache_key())
+fn run_font_key(
+    run: &GlyphRun<'_, '_>,
+    recent: &mut [(usize, usize, u128); 8],
+    next: &mut usize,
+) -> u128 {
+    let Some(dict) = run.font_dict() else {
+        return FALLBACK_FONT_KEY;
+    };
+    let data = dict.data();
+    let ptr = data.as_ptr() as usize;
+    let len = data.len();
+    for &(cached_ptr, cached_len, cached_key) in recent.iter() {
+        if cached_ptr == ptr && cached_len == len && cached_key != 0 {
+            return cached_key;
+        }
+    }
+    let key = dict.cache_key();
+    recent[*next & 7] = (ptr, len, key);
+    *next = next.wrapping_add(1);
+    key
 }
 
 /// What a reader built on the content model receives besides the items.
@@ -1770,7 +1787,7 @@ impl ItemKinds {
     }
 }
 
-pub(crate) struct ContentCollector<'a, 'b, S> {
+pub(crate) struct ContentCollector<'a, 'b, 'c, S> {
     sink: S,
     /// The items to record; with none, the collector only feeds the sink.
     kinds: ItemKinds,
@@ -1813,7 +1830,11 @@ pub(crate) struct ContentCollector<'a, 'b, S> {
     first_shown: usize,
     outlines: HashMap<u128, Option<GlyphInk>>,
     type3_boxes: HashMap<u128, Option<Rect>>,
-    stretches: Stretches<'a>,
+    stretches: &'c Stretches<'a>,
+    /// Recent `(dict_data_ptr, dict_data_len, cache_key)` lookups to avoid
+    /// rehashing the same font dictionary on every text run.
+    recent_font_keys: [(usize, usize, u128); 8],
+    recent_font_next: usize,
     /// The images recorded so far, the ordinal of the next one.
     images: usize,
     xref: &'a XRef,
@@ -1821,13 +1842,13 @@ pub(crate) struct ContentCollector<'a, 'b, S> {
     error: Option<Error>,
 }
 
-impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
+impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
     /// A collector that feeds `sink` and records the items of `kinds` within
     /// `budget`. `stretches` loads fonts as the interpretation does.
     pub(crate) fn new(
         sink: S,
         kinds: ItemKinds,
-        stretches: Stretches<'a>,
+        stretches: &'c Stretches<'a>,
         xref: &'a XRef,
         budget: &'b Budget,
     ) -> Self {
@@ -1860,6 +1881,8 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
             outlines: HashMap::new(),
             type3_boxes: HashMap::new(),
             stretches,
+            recent_font_keys: [(0, 0, 0); 8],
+            recent_font_next: 0,
             images: 0,
             xref,
             budget,
@@ -2204,7 +2227,7 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
         if glyphs.is_empty() {
             return Ok(());
         }
-        let font_key = run_font_key(run);
+        let font_key = run_font_key(run, &mut self.recent_font_keys, &mut self.recent_font_next);
         let wants_advances = self.sink.wants_advances();
         let stretching = if wants_advances || self.kinds.text_runs {
             self.stretches.font_of(run)
@@ -2431,7 +2454,7 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
             replay: super::redraw::capture(
                 run,
                 props.transform,
-                &self.stretches,
+                self.stretches,
                 self.actual_text_level.is_some(),
                 self.budget,
             )?,
@@ -2854,7 +2877,7 @@ fn glyph_text(glyph: &Glyph<'_>) -> Result<Option<String>, Error> {
     })
 }
 
-impl<'a, S: ContentSink> Device<'a> for ContentCollector<'a, '_, S> {
+impl<'a, S: ContentSink> Device<'a> for ContentCollector<'a, '_, '_, S> {
     fn draw_path(&mut self, path: &BezPath, props: DrawProps<'a>, mode: &DrawMode) {
         let pending = self.pending.take();
         self.sink.path(path, props.transform, mode);
@@ -2970,6 +2993,27 @@ pub(crate) fn collect_page_content<'a, S: ContentSink>(
     budget: &Budget,
 ) -> Result<(PageContent, S), Error> {
     let stretches = Stretches::new(&settings);
+    collect_page_content_with_stretches(
+        page, display, settings, cache, &stretches, sink, kinds, clip, budget,
+    )
+}
+
+/// Interprets one page, feeding `sink`, reusing both `cache` and `stretches`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one interpretation and what it collects"
+)]
+pub(crate) fn collect_page_content_with_stretches<'a, S: ContentSink>(
+    page: &Page<'a>,
+    display: Display,
+    settings: InterpreterSettings,
+    cache: &InterpreterCache<'a>,
+    stretches: &Stretches<'a>,
+    sink: S,
+    kinds: ItemKinds,
+    clip: Option<BBox>,
+    budget: &Budget,
+) -> Result<(PageContent, S), Error> {
     let mut context = extraction_context(page, display, cache, settings);
     let mut collector = ContentCollector::new(sink, kinds, stretches, page.xref(), budget);
     interpret_page(page, &mut context, &mut collector);
@@ -3011,7 +3055,7 @@ pub(crate) fn collect_page_content_on_faces<'a, S: ContentSink>(
     let cache = InterpreterCache::new();
     let stretches = Stretches::new(&settings);
     let mut context = extraction_context(page, display, &cache, settings);
-    let mut collector = ContentCollector::new(sink, kinds, stretches, page.xref(), budget);
+    let mut collector = ContentCollector::new(sink, kinds, &stretches, page.xref(), budget);
     interpret_page(page, &mut context, &mut collector);
     if collector.error.is_none() && asked.load(Ordering::Relaxed) {
         let settings = InterpreterSettings {

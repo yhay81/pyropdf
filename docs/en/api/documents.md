@@ -1183,6 +1183,12 @@ Document.markdown(
     pages: Iterable[int] | None = None,
     *,
     table_strategy: Literal['lines', 'text'] | None = 'lines',
+    use_structure: Literal['auto', 'always', 'never'] = 'auto',
+    expand_abbreviations: bool = False,
+    margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
+    ignore_headers_footers: bool = False,
+    images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
+    max_graphics: int | None = 65536,
     max_size: int | None = 67108864,
 ) -> str
 ```
@@ -1191,21 +1197,57 @@ Return the given pages of the current version as Markdown, joined in their order
 
 Page selection and extraction use one version even while another thread edits the document.
 
-Headings come from font sizes: the size that holds the most text is
-the body's, and larger sizes map in descending order to `#`
-through `####`. Wrapped CJK lines join without spaces, leading
-bullets and `1.` or `1)` become Markdown lists, and the bold and
-italic of embedded fonts become emphasis. Multicolumn text follows
-its gutters, and vertical CJK columns read top to bottom and right to
-left; ruby and mixed orientations are not interpreted.
+With `use_structure="auto"` (the default), a tagged document whose
+structure tree passes trustworthiness checks (`/MarkInfo /Marked true`,
+no `/Suspects`, well-formed tree, and sufficient coverage of
+non-artifact page text) drives headings (`H1`–`H6`, `H`,
+`Title`), lists (`L`/`LI`/`Lbl`/`LBody`), tables
+(`Table`/`THead`/`TBody`/`TFoot`/`TR`/`TH`/`TD`),
+block quotes, code, figures with `/Alt` descriptions, `/ActualText`
+replacements, and logical reading order while omitting `Artifact`
+content. Custom roles resolve through `/RoleMap` and PDF 2.0
+namespaces. Pass `expand_abbreviations=True` to prefer `/E`
+abbreviation expansions. Pages that are untagged, fail coverage checks,
+or contain unresolved Form XObject marked content fall back
+deterministically to geometric layout extraction. `use_structure="always"`
+reads from the structure tree whenever present without trustworthiness
+checks (raising `MalformedPdfError` on broken trees);
+`use_structure="never"` always uses geometric layout extraction.
+
+In geometric extraction, headings come from font sizes: the size that
+holds the most text is the body's, and larger sizes map in descending
+order to `#` through `####`. Wrapped CJK lines join without spaces,
+leading bullets and `1.` or `1)` become Markdown lists, and the
+bold and italic of embedded fonts become emphasis. Multicolumn text
+follows its gutters, and vertical CJK columns read top to bottom and
+right to left; ruby and mixed orientations are not interpreted.
+
+`margins` excludes content outside the display-space body region
+(inset from the page's top, bottom, left, and right edges after
+rotation): a single non-negative number applies to all four sides, a
+2-tuple gives `(horizontal, vertical)`, and a 4-tuple gives
+`(left, top, right, bottom)`. `ignore_headers_footers=True`
+suppresses repeated running headers and footers (including sequential
+Arabic and Roman page numbers) in the top and bottom bands across
+multi-page selections while keeping unique first-page titles and body
+text. `images` controls image export: `None` (the default) performs
+no filesystem writes and skips image decoding; a directory path stages
+and writes bounded PNG or JPEG files named
+`page-{page}-image-{index}.{ext}` after the export succeeds and emits
+Markdown image links; a callable receives each `ExportedImage`
+and returns a Markdown link destination (or `None` to omit the link)
+without writing to disk. `max_graphics` bounds the graphic elements
+(paths, segments, clips, and images) inspected per page, raising
+`LimitError` with code `content_element_count` when exceeded;
+`None` removes the bound for trusted input.
 
 Complete bordered tables of `Page.tables` become Markdown
 tables in reading order; `table_strategy="text"` adds the
 borderless tables that overlap none of them, and `None` converts no
-table. `pages` is as for `text`. More than `max_size` bytes
-of UTF-8 in all raise `LimitError` with code
-`markdown_output_size` without a partial result;
-`max_size=None` lifts the limit.
+table (also emitting structure tables as plain paragraphs). `pages`
+is as for `text`. More than `max_size` bytes of UTF-8 in all
+raise `LimitError` with code `markdown_output_size` without a
+partial result; `max_size=None` lifts the limit.
 
 ### `to_json`
 
@@ -1214,6 +1256,12 @@ Document.to_json(
     pages: Iterable[int] | None = None,
     *,
     table_strategy: Literal['lines', 'text'] | None = 'lines',
+    use_structure: Literal['auto', 'always', 'never'] = 'auto',
+    expand_abbreviations: bool = False,
+    margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
+    ignore_headers_footers: bool = False,
+    images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
+    max_graphics: int | None = 65536,
     max_size: int | None = 67108864,
 ) -> str
 ```
@@ -1225,12 +1273,14 @@ Page selection and extraction use one version even while another thread edits th
 The document is `{"pages": [...]}`, each page `{"index",
 "width", "height", "elements"}`, and each element as
 `Element.to_dict` gives it: a heading, paragraph, list item,
-table, or image in reading order with its page index and its box in
-display space. Headings, lists, and tables are found as
-`markdown` finds them, and `pages` and `table_strategy`
-are as for it. More than `max_size` bytes of UTF-8 element text
-raise `LimitError` with code `export_output_size` without a
-partial result; `max_size=None` lifts the limit.
+table, image, block quote, or code block in reading order with its
+page index and its box in display space. Structure-tree extraction,
+`use_structure`, `expand_abbreviations`, `margins`,
+`ignore_headers_footers`, `images`, `max_graphics`, `pages`,
+and `table_strategy` are as for `markdown`. More than
+`max_size` bytes of UTF-8 element text raise `LimitError`
+with code `export_output_size` without a partial result;
+`max_size=None` lifts the limit.
 
 ### `to_chunks`
 
@@ -1240,6 +1290,12 @@ Document.to_chunks(
     *,
     max_chars: int = 2000,
     table_strategy: Literal['lines', 'text'] | None = 'lines',
+    use_structure: Literal['auto', 'always', 'never'] = 'auto',
+    expand_abbreviations: bool = False,
+    margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
+    ignore_headers_footers: bool = False,
+    images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
+    max_graphics: int | None = 65536,
     max_size: int | None = 67108864,
 ) -> list[Chunk]
 ```
@@ -1250,13 +1306,16 @@ Page selection and extraction use one version even while another thread edits th
 
 A chunk is a run of consecutive elements joined as Markdown, headings
 marked with `#`; each heading starts a chunk, and
-`Chunk.section` names the headings above it. A paragraph or
-list item longer than `max_chars` is split at white space, its
-pieces keeping its page and box; a table, image, or heading is never
-split, and a chunk of one that is longer is
-`Chunk.oversized`. Every element keeps its page index and box,
-and `Chunk.to_dict` gives JSON-safe values. `pages`,
-`table_strategy`, and `max_size` are as for `to_json`.
+`Chunk.section` names the headings above it. A paragraph,
+list item, or block quote longer than `max_chars` is split at white
+space, its pieces keeping its page and box; a table, image, heading,
+or code block is never split, and a chunk of one that is longer is
+`Chunk.oversized`. Every element keeps its page index, box, and
+any structure `alt_text`, `language`, or exported `image`
+metadata, and `Chunk.to_dict` gives JSON-safe values. `pages`,
+`table_strategy`, `use_structure`, `expand_abbreviations`,
+`margins`, `ignore_headers_footers`, `images`, `max_graphics`,
+and `max_size` are as for `to_json`.
 
 ### `flatten`
 
