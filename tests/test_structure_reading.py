@@ -232,3 +232,20 @@ def test_published_correct_and_incorrect_marked_content_order(*, invalid: bool) 
     words = [(r.text or "").strip().split()[0] for r in doc.structure.reading_order()]
     expected = ["This", "Second", "Third", "Fourth", "Fifth"]
     assert words == (["FAIL", *reversed(expected), *reversed(expected)] if invalid else expected * 2)
+    md = doc.markdown()
+    if invalid:
+        assert md.index("Fifth line") < md.index("This is the first paragraph")
+    else:
+        assert md.index("This is the first paragraph") < md.index("Fifth line")
+
+
+@pytest.mark.spec("tagged-pdf", "interpret")
+def test_profile_source_ua1_pass_excludes_artifact_headers_and_footers() -> None:
+    with pyropdf.open(_ASSETS.parent / "profile-sources" / "ua1-pass.pdf") as doc:
+        assert doc.markdown() == "Artifact"
+        assert "Header" not in doc.markdown()
+        assert "Footer" not in doc.markdown()
+        chunks = doc.to_chunks()
+        assert len(chunks) == 1
+        assert chunks[0].text == "Artifact"
+        assert chunks[0].language == "en-US"

@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 from test_content import build_raw_pdf
+from test_markdown import _rich_tagged_pdf
 
 import pyropdf
-from pyropdf import _markdown
+from pyropdf import _markdown, _structure_reading
+
+_PDFUA_ASSETS = Path(__file__).parent / "assets" / "pdfua"
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
@@ -263,3 +267,150 @@ def test_max_chars_must_be_a_positive_integer(value: object, error: type[Excepti
 def test_table_strategy_is_checked() -> None:
     with pytest.raises(ValueError, match="table_strategy"):
         _document().to_json(table_strategy="grid")  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected_alt"),
+    [
+        ("pdfua-1.pdf", "A blue rectangle crossed by a red line"),
+        ("pdfua-2.pdf", "Water level rose at each of three readings; the final level was three times the first."),
+        (
+            "pdfua-2-pdfa-4.pdf",
+            "Water level rose at each of three readings; the final level was three times the first.",
+        ),
+    ],
+)
+@pytest.mark.spec("tagged-pdf", "interpret")
+def test_json_and_chunks_read_pdfua_figures_with_alt_bbox_and_language(filename: str, expected_alt: str) -> None:
+    with pyropdf.open(_PDFUA_ASSETS / filename) as doc:
+        data = json.loads(doc.to_json())
+        elements = data["pages"][0]["elements"]
+        assert len(elements) == 1
+        fig = elements[0]
+        assert fig["kind"] == "image"
+        assert fig["text"] == expected_alt
+        assert fig["alt_text"] == expected_alt
+        assert fig["language"] == "en-US"
+        assert fig["bbox"][2] > fig["bbox"][0]
+        assert fig["bbox"][3] > fig["bbox"][1]
+
+        chunks = doc.to_chunks()
+        assert len(chunks) == 1
+        assert chunks[0].text == f"![{expected_alt}]()"
+        assert chunks[0].language == "en-US"
+        assert chunks[0].elements[0].alt_text == expected_alt
+        assert chunks[0].to_dict()["language"] == "en-US"
+
+
+@pytest.mark.spec("tagged-pdf", "interpret")
+def test_json_and_chunks_preserve_structure_semantics_and_language_metadata() -> None:
+    with pyropdf.open(_rich_tagged_pdf()) as doc:
+        data = json.loads(doc.to_json(expand_abbreviations=True))
+        elements = data["pages"][0]["elements"]
+        kinds = [element["kind"] for element in elements]
+        assert kinds == [
+            "heading",
+            "paragraph",
+            "heading",
+            "paragraph",
+            "list_item",
+            "list_item",
+            "list_item",
+            "blockquote",
+            "code",
+            "table",
+            "paragraph",
+            "image",
+        ]
+        assert elements[0]["level"] == 1
+        assert elements[2]["level"] == 2
+        assert elements[0]["language"] == "en-US"
+        quote = next(e for e in elements if e["kind"] == "blockquote")
+        assert quote["language"] == "fr"
+        assert quote["text"] == "Quoted line"
+        table = next(e for e in elements if e["kind"] == "table")
+        assert table["rows"] == [["Metric", None], ["100", "OK"]]
+        assert "| Metric | Metric |" in table["text"]
+        assert elements[-2]["text"] == "Application Programming Interface"
+        assert elements[-1]["alt_text"] == "Blue bar chart"
+
+        chunks = doc.to_chunks(max_chars=2000)
+        assert len(chunks) == 2
+        assert chunks[0].section == ("Main Title",)
+        assert chunks[0].language == "en-US"
+        assert chunks[1].section == ("Main Title", "Nested Heading")
+        assert "> Quoted line" in chunks[1].text
+        assert "```\nprint(1)\n```" in chunks[1].text
+        assert "![Blue bar chart]()" in chunks[1].text
+
+        # Oversized code block stays whole and marks oversized=True.
+        tiny_chunks = doc.to_chunks(max_chars=12)
+        code_chunks = [c for c in tiny_chunks if any(e.kind == "code" for e in c.elements)]
+        assert len(code_chunks) == 1
+        assert code_chunks[0].oversized
+
+        # max_size enforces export_output_size on tagged documents too.
+        with pytest.raises(pyropdf.LimitError) as caught:
+            doc.to_json(max_size=10)
+        assert caught.value.code == "export_output_size"
+
+
+@pytest.mark.parametrize("export", _EXPORTS)
+def test_tagged_export_keeps_one_version_while_writer_mutates_structure_and_content(
+    export: Callable[[pyropdf.Document], object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = pyropdf.open(_rich_tagged_pdf())
+    before = export(document)
+    index_cls = _structure_reading._PageMcidIndex  # noqa: SLF001
+    orig_scan = index_cls._scan_operations  # noqa: SLF001
+    mutated = False
+
+    with ThreadPoolExecutor(max_workers=1) as writer:
+
+        def scan_during_commit(
+            self_idx: _structure_reading._PageMcidIndex,
+            page: pyropdf.Page,
+            budget: pyropdf._core._OperationBudget,
+            *,
+            expand: bool,
+        ) -> tuple[dict[int, int], set[int], dict[int, list[int]]]:
+            nonlocal mutated
+            result = orig_scan(self_idx, page, budget, expand=expand)
+            if not mutated:
+                mutated = True
+
+                def mutate_doc() -> None:
+                    with document.transaction("concurrent edit"):
+                        document.structure[0].children[0].actual_text = "Mutated Heading"
+                        stream = document.objects[5]
+                        assert isinstance(stream, pyropdf.Stream)
+                        stream.write(stream.read().replace(b"Second logically", b"Mutated body text"))
+
+                writer.submit(mutate_doc).result(timeout=10)
+            return result
+
+        with monkeypatch.context() as patch:
+            patch.setattr(index_cls, "_scan_operations", scan_during_commit)
+            during = export(document)
+
+    assert during == before
+    after = export(document)
+    assert after != before
+    document.close()
+
+
+def test_tagged_export_enforces_cancellation_and_memory_limits() -> None:
+    pdf = _rich_tagged_pdf()
+    token = pyropdf.CancellationToken()
+    with pyropdf.open(pdf, limits=pyropdf.DocumentLimits(cancellation=token)) as doc:
+        token.cancel()
+        for call in (doc.markdown, doc.to_json, doc.to_chunks):
+            with pytest.raises(pyropdf.LimitError) as caught:
+                call()
+            assert caught.value.code == "cancelled"
+
+    with pyropdf.open(pdf, limits=pyropdf.DocumentLimits(max_memory_size=8192)) as doc:
+        with pytest.raises(pyropdf.LimitError) as caught:
+            doc.to_chunks()
+        assert caught.value.code == "memory_size"
