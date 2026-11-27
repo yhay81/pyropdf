@@ -14,8 +14,8 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyList, PyString};
 use pyropdf_engine::content::PageContent;
 use pyropdf_engine::extract::{
-    self, BBox, BlockTuple, Error, PageLayout, QuadTuple, SearchHits, TableOptions, TableTuple,
-    TextOptions, TextPeak, Unmapped,
+    self, BBox, BlockTuple, Error, PageLayout, QuadTuple, RubyMode, SearchHits, TableOptions,
+    TableTuple, TextOptions, TextPeak, Unmapped,
 };
 use pyropdf_engine::render::Fallback;
 use pyropdf_store::ErrorKind;
@@ -31,10 +31,21 @@ use crate::pixmap::bridge_error;
 
 /// The text options as `python/pyropdf/_text.py` passes them: `(clip, keep
 /// clipped glyphs, unmapped code, expand ligatures, normalize whitespace,
-/// dehyphenate, exact boxes, styles, ignore actual text)`, with the unmapped
-/// codes 0 to skip, 1 for U+FFFD, 2 for the glyph ID, and 3 for Type 3 char
-/// code.
-pub(crate) type OptionsTuple = (Option<BBox>, bool, u8, bool, bool, bool, bool, bool, bool);
+/// dehyphenate, exact boxes, styles, ignore actual text, ruby mode)`, with the
+/// unmapped codes 0 to skip, 1 for U+FFFD, 2 for the glyph ID, and 3 for Type
+/// 3 char code, and ruby codes 0 to omit, 1 to parenthesize, and 2 to keep.
+pub(crate) type OptionsTuple = (
+    Option<BBox>,
+    bool,
+    u8,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    u8,
+);
 
 /// The text options as a memo key, with the clip's coordinates as bits, and
 /// the fallback faces when the options ask for exact boxes, the only text
@@ -49,6 +60,7 @@ pub(crate) type TextKey = (
     bool,
     bool,
     bool,
+    u8,
     Fallback,
 );
 
@@ -63,6 +75,7 @@ fn text_key(options: OptionsTuple, fallback: &Fallback) -> TextKey {
         exact,
         styles,
         ignore_actual_text,
+        ruby,
     ) = options;
     (
         clip.map(box_bits),
@@ -74,6 +87,7 @@ fn text_key(options: OptionsTuple, fallback: &Fallback) -> TextKey {
         exact,
         styles,
         ignore_actual_text,
+        ruby,
         if exact {
             fallback.clone()
         } else {
@@ -120,6 +134,7 @@ pub(crate) fn text_options(options: OptionsTuple) -> PyResult<TextOptions> {
         exact_bboxes,
         styles,
         ignore_actual_text,
+        ruby,
     ) = options;
     let unmapped = match unmapped {
         0 => Unmapped::Skip,
@@ -132,6 +147,14 @@ pub(crate) fn text_options(options: OptionsTuple) -> PyResult<TextOptions> {
             )));
         }
     };
+    let ruby = match ruby {
+        0 => RubyMode::Omit,
+        1 => RubyMode::Parenthesize,
+        2 => RubyMode::Keep,
+        other => {
+            return Err(PyValueError::new_err(format!("unknown ruby code {other}")));
+        }
+    };
     Ok(TextOptions {
         clip,
         keep_clipped,
@@ -142,6 +165,7 @@ pub(crate) fn text_options(options: OptionsTuple) -> PyResult<TextOptions> {
         exact_bboxes,
         styles,
         ignore_actual_text,
+        ruby,
     })
 }
 

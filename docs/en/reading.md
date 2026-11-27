@@ -31,6 +31,35 @@ replaces the text of its enclosed glyphs; pass `actual_text=False` to
 `page.search()`, or `annotation.text()` to inspect the underlying glyph
 Unicode values directly.
 
+### Mixed orientations and Japanese ruby (furigana)
+
+Pages that combine horizontal bands or sidebars (titles, captions, tables,
+footers) with vertical CJK columns (including multi-tier *dan-gumi* layouts)
+are segmented into coherent orientation regions before ordering: horizontal
+bands read top to bottom and left to right, while vertical CJK columns read top
+to bottom and right to left within their region.
+
+Japanese ruby (furigana) annotations—smaller kana runs aligned immediately
+above horizontal kanji or to the right of vertical kanji, as well as PDF
+structure `/Ruby` (`/RB`/`/RT`/`/RP`) elements in Markdown export—are controlled
+by `ruby`:
+
+- `"omit"` (default): omits furigana so base words stay intact for reading,
+  search, and Markdown export.
+- `"parenthesize"`: splices each furigana run inline in parentheses directly
+  after its base characters (for example, `東京(とうきょう)`).
+- `"keep"`: preserves ruby runs as ordinary text.
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    print(page.text())                       # omits furigana by default
+    print(page.text(ruby="parenthesize"))    # inline furigana, e.g. 東京(とうきょう)
+    print(page.markdown(ruby="parenthesize"))
+```
+
 ## Layout
 
 `page.layout()` groups the text into blocks, lines, and spans, with fonts,

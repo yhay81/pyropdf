@@ -16,8 +16,11 @@ Initial rules:
   heading markers with emphasis. Standard 14 Type 1 fonts are excluded because
   hayro does not expose their metadata.
 - Multicolumn text follows deterministic whitespace gutters.
-- Conservative vertical CJK columns follow extracted top-to-bottom,
-  right-to-left order. Ruby and mixed-orientation typography are not interpreted.
+- Vertical CJK columns follow top-to-bottom, right-to-left order, and mixed
+  horizontal/vertical pages segment into coherent orientation regions before
+  ordering blocks and lines. Geometric and tagged ``/Ruby`` (``/RB``/``/RT``)
+  furigana runs follow the ``ruby`` option (``"omit"``, ``"parenthesize"``, or
+  ``"keep"``).
 - Complete bordered tables become Markdown tables in page reading order.
   Conservative borderless detection remains opt-in.
 """
@@ -38,7 +41,15 @@ from pyropdf._errors import LimitError
 from pyropdf._images import PageImage
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Stream
-from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, build_layout, build_words, text_options
+from pyropdf._text import (
+    _DEFAULT_MAX_TEXT_GLYPHS,
+    _DEFAULT_MAX_TEXT_SIZE,
+    RubyMode,
+    _validate_ruby,
+    build_layout,
+    build_words,
+    text_options,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -243,6 +254,27 @@ def _escape_table_cell(value: str | None) -> str:
     return value.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>")
 
 
+_KANA_MIN = 0x3041
+_KANA_MAX = 0x30FE
+_HALFWIDTH_KANA_MIN = 0xFF66
+_HALFWIDTH_KANA_MAX = 0xFF9F
+_RUBY_MAX_SIZE_RATIO = 0.68
+
+
+def _is_parenthesized_ruby_span(span: TextSpan, line: TextLine) -> bool:
+    """Return whether ``span`` is a smaller parenthesized Japanese ruby span on a mixed-size line."""
+    text = span["text"].strip()
+    if len(text) < 3 or not (text.startswith("(") and text.endswith(")")):  # noqa: PLR2004
+        return False
+    max_size = max((other["size"] for other in line["spans"]), default=0.0)
+    if span["size"] > max_size * _RUBY_MAX_SIZE_RATIO:
+        return False
+    inner = text[1:-1]
+    return any(
+        _KANA_MIN <= ord(ch) <= _KANA_MAX or _HALFWIDTH_KANA_MIN <= ord(ch) <= _HALFWIDTH_KANA_MAX for ch in inner
+    )
+
+
 def collect_sizes(
     layouts: list[TextPageDict],
     excluded_bboxes: list[list[_BBox]] | None = None,
@@ -256,6 +288,8 @@ def collect_sizes(
                 if any(_line_inside_bbox(line, bbox) for bbox in bboxes):
                     continue
                 for span in line["spans"]:
+                    if _is_parenthesized_ruby_span(span, line):
+                        continue
                     counter[_round_size(span["size"])] += len(span["text"])
     return counter
 
@@ -297,12 +331,21 @@ def _joins_without_space(ch: str) -> bool:
     return any(low <= code <= high for low, high in _NO_SPACE_SCRIPT_RANGES)
 
 
+def _joins_pair_without_space(previous: str, following: str) -> bool:
+    """Return whether wrapped ``previous`` and ``following`` lines join without ASCII space."""
+    if not previous or not following or not _joins_without_space(following[0]):
+        return False
+    if _joins_without_space(previous[-1]):
+        return True
+    return len(previous) >= 2 and previous[-1] == ")" and _joins_without_space(previous[-2])  # noqa: PLR2004
+
+
 def _join_lines(lines: list[str]) -> str:
     """Join paragraph lines according to the boundary characters' scripts."""
     parts = [lines[0]]
     previous = lines[0]
     for line in lines[1:]:
-        if not (previous and line and _joins_without_space(previous[-1]) and _joins_without_space(line[0])):
+        if not _joins_pair_without_space(previous, line):
             parts.append(" ")
         parts.append(line)
         previous = line
@@ -351,10 +394,11 @@ def _join_spans(line: TextLine, render: Callable[[TextSpan], str]) -> str:
     parts: list[str] = []
     previous: TextSpan | None = None
     for span in line["spans"]:
-        if previous is not None and _needs_span_gap(previous, span, line):
+        is_ruby = _is_parenthesized_ruby_span(span, line)
+        if not is_ruby and previous is not None and _needs_span_gap(previous, span, line):
             parts.append(" ")
         parts.append(render(span))
-        if not all(unicodedata.bidirectional(ch) == "NSM" for ch in span["text"]):
+        if not is_ruby and not all(unicodedata.bidirectional(ch) == "NSM" for ch in span["text"]):
             previous = span
     return "".join(parts).strip()
 
@@ -384,10 +428,15 @@ def _line_markdown(line: TextLine) -> str:
 
 
 def _line_size(line: TextLine) -> float:
-    """Return the line's representative size by character count."""
+    """Return the line's representative size by character count, excluding parenthesized ruby spans."""
     sizes: Counter[float] = Counter()
     for span in line["spans"]:
+        if _is_parenthesized_ruby_span(span, line):
+            continue
         sizes[_round_size(span["size"])] += len(span["text"])
+    if not sizes:
+        for span in line["spans"]:
+            sizes[_round_size(span["size"])] += len(span["text"])
     return sizes.most_common(1)[0][0] if sizes else 0.0
 
 
@@ -466,12 +515,15 @@ def _geometric_event_position(
     orientation: _AxisOrientation,
 ) -> int:
     """Return the nearest reading-order insertion slot for a textless table."""
+    has_horiz = any(_line_orientation(line) in {"right", "left"} for line in lines)
+    has_vert = any(_line_orientation(line) in {"down", "up"} for line in lines)
+    effective = "right" if (has_horiz and has_vert) else orientation
     inline = {
         "right": (1.0, 0.0),
         "down": (0.0, 1.0),
         "left": (-1.0, 0.0),
         "up": (0.0, -1.0),
-    }[orientation]
+    }[effective]
     block = (-inline[1], inline[0])
     table_center = ((bbox[0] + bbox[2]) * 0.5, (bbox[1] + bbox[3]) * 0.5)
     table_projection = table_center[0] * block[0] + table_center[1] * block[1]
@@ -591,7 +643,7 @@ class _MarkdownBuilder:
         text_size = 0 if self.max_size is None else utf8_size(text)
         if self.paragraph:
             previous = self.paragraph[-1]
-            if not (previous and text and _joins_without_space(previous[-1]) and _joins_without_space(text[0])):
+            if not _joins_pair_without_space(previous, text):
                 text_size += 1
         pending_separator = 2 if self.entries else 0
         self._check_size(self.output_size + pending_separator + self.paragraph_size + text_size)
@@ -794,6 +846,7 @@ class _ExportConfig:
     table_strategy: Literal["lines", "text"] | None = "lines"
     use_structure: Literal["auto", "always", "never"] = "auto"
     expand_abbreviations: bool = False
+    ruby: RubyMode = "omit"
     max_size: int | None = _DEFAULT_MAX_MARKDOWN_SIZE
     margins: _Margins | None = None
     ignore_headers_footers: bool = False
@@ -1155,7 +1208,7 @@ def _detect_headers_footers(
             y_min, y_max = _band_bounds(data.height, body_clip)
             top, bottom = _collect_band_keys_from_blocks(blocks, y_min, y_max)
         else:
-            layout = _fallback_or_clipped_layout(page, data, body_clip, body_empty=False)[0]
+            layout = _fallback_or_clipped_layout(page, data, body_clip, body_empty=False, ruby=config.ruby)[0]
             page_gfx = graphics.inspect(page)
             tables = _page_tables(page, config.table_strategy, clip=body_clip, has_paths=page_gfx.has_paths)
             table_bboxes = [(t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1) for t in tables]
@@ -1418,7 +1471,7 @@ def _table_output(
     return rendered
 
 
-def _page_layout(page: Page) -> tuple[TextPageDict, list[Word]]:
+def _page_layout(page: Page, *, ruby: RubyMode = "omit") -> tuple[TextPageDict, list[Word]]:
     """Return the layout dictionary and the words of a page with the default text options."""
     options = text_options(
         clip=None,
@@ -1427,6 +1480,7 @@ def _page_layout(page: Page) -> tuple[TextPageDict, list[Word]]:
         whitespace=True,
         dehyphenate=False,
         unmapped="skip",
+        ruby=ruby,
         max_glyphs=_DEFAULT_MAX_TEXT_GLYPHS,
         max_size=_DEFAULT_MAX_TEXT_SIZE,
     )
@@ -1441,13 +1495,14 @@ def _page_layout_clipped(
     clip: _BBox | None,
     *,
     body_empty: bool = False,
+    ruby: RubyMode = "omit",
 ) -> tuple[TextPageDict, list[Word]]:
     """Return the layout dictionary and words for ``page`` clipped to ``clip``."""
     if body_empty:
         _, width, height = page._geometry()  # noqa: SLF001
         return {"width": width, "height": height, "blocks": []}, []
     if clip is None:
-        return _page_layout(page)
+        return _page_layout(page) if ruby == "omit" else _page_layout(page, ruby=ruby)
     options = text_options(
         clip=clip,
         clipped=False,
@@ -1455,6 +1510,7 @@ def _page_layout_clipped(
         whitespace=True,
         dehyphenate=False,
         unmapped="skip",
+        ruby=ruby,
         max_glyphs=_DEFAULT_MAX_TEXT_GLYPHS,
         max_size=_DEFAULT_MAX_TEXT_SIZE,
     )
@@ -1470,11 +1526,19 @@ def _fallback_or_clipped_layout(
     body_clip: _BBox | None,
     *,
     body_empty: bool,
+    ruby: RubyMode = "omit",
 ) -> tuple[TextPageDict, list[Word]]:
-    """Reuse cached structure fallback layout when unclipped, else extract clipped layout."""
-    if not body_empty and body_clip is None and data is not None and data.layout is not None and data.words is not None:
+    """Reuse cached structure fallback layout when unclipped and ruby matches, else extract layout."""
+    if (
+        not body_empty
+        and body_clip is None
+        and ruby == "keep"
+        and data is not None
+        and data.layout is not None
+        and data.words is not None
+    ):
         return data.layout, data.words
-    return _page_layout_clipped(page, body_clip, body_empty=body_empty)
+    return _page_layout_clipped(page, body_clip, body_empty=body_empty, ruby=ruby)
 
 
 def validate_options(  # noqa: PLR0913 - validates all shared retrieval export options.
@@ -1483,6 +1547,7 @@ def validate_options(  # noqa: PLR0913 - validates all shared retrieval export o
     *,
     use_structure: object = "auto",
     expand_abbreviations: object = False,
+    ruby: object = "omit",
     margins: object = None,
     ignore_headers_footers: object = False,
     images: object = None,
@@ -1498,6 +1563,7 @@ def validate_options(  # noqa: PLR0913 - validates all shared retrieval export o
     if not isinstance(expand_abbreviations, bool):
         msg = f"expand_abbreviations must be True or False: {expand_abbreviations!r}"
         raise TypeError(msg)
+    _validate_ruby(ruby)
     if not isinstance(ignore_headers_footers, bool):
         msg = f"ignore_headers_footers must be True or False: {ignore_headers_footers!r}"
         raise TypeError(msg)
@@ -1513,6 +1579,7 @@ def _make_config(  # noqa: PLR0913 - constructs internal normalized export confi
     max_size: int | None,
     use_structure: Literal["auto", "always", "never"],
     expand_abbreviations: bool,
+    ruby: RubyMode = "omit",
     margins: float | tuple[float, float] | tuple[float, float, float, float] | None,
     ignore_headers_footers: bool,
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None,
@@ -1522,6 +1589,7 @@ def _make_config(  # noqa: PLR0913 - constructs internal normalized export confi
         table_strategy=table_strategy,
         use_structure=use_structure,
         expand_abbreviations=expand_abbreviations,
+        ruby=ruby,
         max_size=max_size,
         margins=normalize_margins(margins),
         ignore_headers_footers=ignore_headers_footers,
@@ -1594,7 +1662,7 @@ def _render_geometric_page(  # noqa: PLR0913 - renders one geometric page with c
     page_gfx = graphics.inspect(page)
     if body_empty:
         return ""
-    layout, words = _fallback_or_clipped_layout(page, data, body_clip, body_empty=False)
+    layout, words = _fallback_or_clipped_layout(page, data, body_clip, body_empty=False, ruby=config.ruby)
     tables = _page_tables(page, config.table_strategy, clip=body_clip, has_paths=page_gfx.has_paths)
     table_bboxes = [(t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1) for t in tables]
     y_min, y_max = _band_bounds(layout["height"], body_clip)
@@ -1632,7 +1700,7 @@ def _collect_geometric_heading_levels(
         page_gfx = graphics.inspect(page)
         if body_empty:
             continue
-        layout, words = _fallback_or_clipped_layout(page, data, body_clip, body_empty=False)
+        layout, words = _fallback_or_clipped_layout(page, data, body_clip, body_empty=False, ruby=config.ruby)
         tables = _page_tables(page, config.table_strategy, clip=body_clip, has_paths=page_gfx.has_paths)
         table_bboxes = [(t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1) for t in tables]
         y_min, y_max = _band_bounds(layout["height"], body_clip)
@@ -1671,6 +1739,7 @@ def pages_markdown(  # noqa: PLR0913 - keyword-only retrieval export options.
     max_size: int | None,
     use_structure: Literal["auto", "always", "never"] = "auto",
     expand_abbreviations: bool = False,
+    ruby: RubyMode = "omit",
     margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
     ignore_headers_footers: bool = False,
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
@@ -1687,6 +1756,7 @@ def pages_markdown(  # noqa: PLR0913 - keyword-only retrieval export options.
         max_size=max_size,
         use_structure=use_structure,
         expand_abbreviations=expand_abbreviations,
+        ruby=ruby,
         margins=margins,
         ignore_headers_footers=ignore_headers_footers,
         images=images,
@@ -1699,6 +1769,7 @@ def pages_markdown(  # noqa: PLR0913 - keyword-only retrieval export options.
         table_strategy=config.table_strategy,
         use_structure=config.use_structure,
         expand_abbreviations=config.expand_abbreviations,
+        ruby=config.ruby,
         max_graphics=config.max_graphics,
     )
     exporter = _ImageExporter(config.images, memory_limit=pages[0].document.limits.max_memory_size)

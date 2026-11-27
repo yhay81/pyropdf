@@ -999,6 +999,17 @@ The line runs from the circle at `start` to the circle at `end`,
 through the circles between them, in the space of what it paints. The
 stops and `extend` are those of a `LinearGradient`.
 
+## `RubyMode`
+
+```python
+RubyMode: TypeAlias = Literal['omit', 'parenthesize', 'keep']
+```
+
+How Japanese ruby (furigana) annotations are handled during text and Markdown
+extraction: `"omit"` drops ruby annotations so base words remain intact for
+prose and search, `"parenthesize"` attaches ruby inline after its base text
+as `base(ruby)`, and `"keep"` leaves ruby runs untouched as ordinary text.
+
 ## `Segment`
 
 ```python

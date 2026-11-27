@@ -141,6 +141,7 @@ method and property of its classes with its full description.
 - [`Paths`](text-and-content.md#paths_1): The paths of a page as columns, from `Page.paths`.
 - [`PatternPaint`](text-and-content.md#patternpaint): Paint with an indirect tiling or shading pattern in the canvas document.
 - [`RadialGradient`](text-and-content.md#radialgradient): A paint for a `Canvas` that changes color between two circles.
+- [`RubyMode`](text-and-content.md#rubymode): How Japanese ruby (furigana) annotations are handled during text and Markdown extraction: `"omit"` drops ruby annotations so base words remain intact for prose and search, `"parenthesize"` attaches ruby inline after its base text as `base(ruby)`, and `"keep"` leaves ruby runs untouched as ordinary text.
 - [`Segment`](text-and-content.md#segment): One path construction segment of a `Path` or `PathBuilder`.
 - [`ShadingPattern`](text-and-content.md#shadingpattern): A paint that a shading fills, from a shading pattern or `sh`.
 - [`ShadingType`](text-and-content.md#shadingtype): A shading type of ISO 32000-2 §8.7.4.5.

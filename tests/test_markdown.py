@@ -1410,3 +1410,157 @@ def test_markdown_retrieval_control_option_validation(tmp_path: Path) -> None:
         for bad_gfx_val in (0, -5):
             with pytest.raises(ValueError, match="max_graphics"):
                 doc.markdown(max_graphics=bad_gfx_val)
+        for bad_ruby_type in (True, 123, None):
+            with pytest.raises(TypeError, match="ruby"):
+                doc.markdown(ruby=bad_ruby_type)  # ty: ignore[invalid-argument-type]
+        with pytest.raises(ValueError, match="ruby"):
+            doc.markdown(ruby="inline")  # ty: ignore[invalid-argument-type]
+
+
+def _japanese_md_pdf(
+    stream: str,
+    *,
+    extra_objects: dict[int, str | bytes] | None = None,
+    catalog_extra: str = "",
+    page_extra: str = "",
+) -> bytes:
+    objects: dict[int, str | bytes] = {
+        1: f"<< /Type /Catalog /Pages 2 0 R {catalog_extra}>>",
+        2: (
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 500 600] "
+            "/Resources << /Font << /F1 5 0 R /FH 6 0 R /FV 7 0 R >> >> >>"
+        ),
+        3: f"<< /Type /Page /Parent 2 0 R /Contents 4 0 R {page_extra}>>",
+        4: _stream_obj(stream),
+        5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        6: "<< /Type /Font /Subtype /Type0 /BaseFont /MS-Mincho /Encoding /90ms-RKSJ-H /DescendantFonts [8 0 R] >>",
+        7: "<< /Type /Font /Subtype /Type0 /BaseFont /MS-Mincho /Encoding /90ms-RKSJ-V /DescendantFonts [8 0 R] >>",
+        8: (
+            "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /MS-Mincho "
+            "/CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 6 >> "
+            "/FontDescriptor 9 0 R /DW 1000 >>"
+        ),
+        9: (
+            "<< /Type /FontDescriptor /FontName /MS-Mincho /Flags 6 /FontBBox [0 -137 1000 859] "
+            "/ItalicAngle 0 /Ascent 859 /Descent -140 /CapHeight 769 /StemV 78 >>"
+        ),
+    }
+    if extra_objects:
+        objects.update(extra_objects)
+    return build_raw_pdf(objects)
+
+
+def _sjis(text: str) -> str:
+    return "".join(f"\\{byte:03o}" for byte in text.encode("cp932"))
+
+
+def test_markdown_mixed_orientation_dan_gumi_and_embedded_vertical_columns() -> None:
+    stream = "\n".join(
+        [
+            "BT /F1 20 Tf 40 550 Td (Chapter Title) Tj ET",
+            f"BT /FV 12 Tf 320 490 Td ({_sjis('上段左側')}) Tj ET",
+            f"BT /FV 12 Tf 340 490 Td ({_sjis('上段右側')}) Tj ET",
+            "BT /F1 16 Tf 40 370 Td (Subheading) Tj ET",
+            f"BT /FV 12 Tf 320 310 Td ({_sjis('下段左側')}) Tj ET",
+            f"BT /FV 12 Tf 340 310 Td ({_sjis('下段右側')}) Tj ET",
+            "BT /F1 12 Tf 40 80 Td (Footer note.) Tj ET",
+        ]
+    )
+    with pyropdf.open(_japanese_md_pdf(stream)) as doc:
+        md = doc.pages[0].markdown()
+        assert md == "# Chapter Title\n\n上段右側上段左側\n\n## Subheading\n\n下段右側下段左側\n\nFooter note."
+        assert doc.markdown() == md
+
+    font_path = (
+        Path(__file__).resolve().parent.parent / "crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf"
+    )
+    font = pyropdf.Font.from_file(font_path)
+    with pyropdf.Document() as doc:
+        page = doc.pages.new((400, 360))
+        with page.draw() as canvas:
+            canvas.text("Title Heading", (40, 40), size=20)
+            canvas.textbox((120, 80, 300, 145), "日本語かなのテキスト。", font=font, size=12, direction="vertical")
+            canvas.text("Footer Note", (40, 310), size=12)
+        assert page.markdown() == "# Title Heading\n\n日本語かなのテキスト。\n\nFooter Note"
+
+
+def test_markdown_geometric_japanese_ruby_preserves_body_size_and_spacing() -> None:
+    stream = "\n".join(
+        [
+            "BT /F1 20 Tf 60 520 Td (Travel Guide) Tj ET",
+            f"BT /FH 12 Tf 60 460 Td ({_sjis('東京から大阪への旅を楽しみましょう。')}) Tj ET",
+            f"BT /FH 6 Tf 58 473 Td ({_sjis('とうきょう')}) Tj ET",
+            f"BT /FH 6 Tf 106 473 Td ({_sjis('おおさか')}) Tj ET",
+        ]
+    )
+    with pyropdf.open(_japanese_md_pdf(stream)) as doc:
+        page = doc.pages[0]
+        assert page.markdown() == "# Travel Guide\n\n東京から大阪への旅を楽しみましょう。"
+        assert (
+            page.markdown(ruby="parenthesize")
+            == "# Travel Guide\n\n東京(とうきょう)から大阪(おおさか)への旅を楽しみましょう。"
+        )
+        assert (
+            doc.markdown(ruby="parenthesize")
+            == "# Travel Guide\n\n東京(とうきょう)から大阪(おおさか)への旅を楽しみましょう。"
+        )
+        kept = page.markdown(ruby="keep")
+        assert "とうきょう" in kept
+        assert "東京から大阪への旅を楽しみましょう。" in kept
+
+    # Embedded horizontal ruby: no spurious space after parenthesized ruby span.
+    font_path = (
+        Path(__file__).resolve().parent.parent / "crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf"
+    )
+    font = pyropdf.Font.from_file(font_path)
+    with pyropdf.Document() as doc:
+        page = doc.pages.new((400, 300))
+        with page.draw() as canvas:
+            canvas.text("日本語テキスト", (60, 100), font=font, size=14)
+            canvas.text("かな", (64, 86), font=font, size=6)
+        assert page.markdown() == "日本語テキスト"
+        assert page.markdown(ruby="parenthesize") == "日本(かな)語テキスト"
+
+
+def test_markdown_structure_ruby_honors_rb_rt_and_rp_tags() -> None:
+    # Tagged PDF containing two /Ruby annotations inside one /P:
+    #   1. /RB (東京) + /RT (とうきょう) without /RP
+    #   2. /RB (大阪) + /RP (（) + /RT (おおさか) + /RP (）)
+    stream = "\n".join(
+        [
+            f"BT /FH 12 Tf 60 460 Td /RB << /MCID 0 >> BDC ({_sjis('東京')}) Tj EMC ET",
+            f"BT /FH 6 Tf 58 473 Td /RT << /MCID 1 >> BDC ({_sjis('とうきょう')}) Tj EMC ET",
+            f"BT /FH 12 Tf 84 460 Td /Span << /MCID 2 >> BDC ({_sjis('から')}) Tj EMC ET",
+            f"BT /FH 12 Tf 108 460 Td /RB << /MCID 3 >> BDC ({_sjis('大阪')}) Tj EMC ET",
+            f"BT /FH 6 Tf 104 473 Td /RP << /MCID 4 >> BDC ({_sjis('（')}) Tj EMC ET",
+            f"BT /FH 6 Tf 110 473 Td /RT << /MCID 5 >> BDC ({_sjis('おおさか')}) Tj EMC ET",
+            f"BT /FH 6 Tf 134 473 Td /RP << /MCID 6 >> BDC ({_sjis('）')}) Tj EMC ET",
+            f"BT /FH 12 Tf 132 460 Td /Span << /MCID 7 >> BDC ({_sjis('へ')}) Tj EMC ET",
+        ]
+    )
+    extra: dict[int, str | bytes] = {
+        10: "<< /Type /StructTreeRoot /K 11 0 R >>",
+        11: "<< /Type /StructElem /S /Document /P 10 0 R /Pg 3 0 R /K 12 0 R >>",
+        12: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K [13 0 R 16 0 R 17 0 R 22 0 R] >>",
+        13: "<< /Type /StructElem /S /Ruby /P 12 0 R /Pg 3 0 R /K [14 0 R 15 0 R] >>",
+        14: "<< /Type /StructElem /S /RB /P 13 0 R /Pg 3 0 R /K 0 >>",
+        15: "<< /Type /StructElem /S /RT /P 13 0 R /Pg 3 0 R /K 1 >>",
+        16: "<< /Type /StructElem /S /Span /P 12 0 R /Pg 3 0 R /K 2 >>",
+        17: "<< /Type /StructElem /S /Ruby /P 12 0 R /Pg 3 0 R /K [18 0 R 19 0 R 20 0 R 21 0 R] >>",
+        18: "<< /Type /StructElem /S /RB /P 17 0 R /Pg 3 0 R /K 3 >>",
+        19: "<< /Type /StructElem /S /RP /P 17 0 R /Pg 3 0 R /K 4 >>",
+        20: "<< /Type /StructElem /S /RT /P 17 0 R /Pg 3 0 R /K 5 >>",
+        21: "<< /Type /StructElem /S /RP /P 17 0 R /Pg 3 0 R /K 6 >>",
+        22: "<< /Type /StructElem /S /Span /P 12 0 R /Pg 3 0 R /K 7 >>",
+    }
+    pdf = _japanese_md_pdf(
+        stream,
+        extra_objects=extra,
+        catalog_extra="/MarkInfo << /Marked true >> /StructTreeRoot 10 0 R ",
+        page_extra="/StructParents 0 ",
+    )
+    with pyropdf.open(pdf) as doc:
+        for mode in ("auto", "always"):
+            assert doc.markdown(use_structure=mode) == "東京から大阪へ"
+            assert doc.markdown(use_structure=mode, ruby="parenthesize") == "東京(とうきょう)から大阪（おおさか）へ"
+            assert doc.markdown(use_structure=mode, ruby="keep") == "東京とうきょうから大阪（おおさか）へ"

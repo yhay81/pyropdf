@@ -936,7 +936,9 @@ _CoreTable: TypeAlias = tuple[
     int,
 ]
 _TableOptions: TypeAlias = tuple[bool, _Box | None, list[float], list[float], float, float, float, int, int]
-_TextOptions: TypeAlias = tuple[tuple[float, float, float, float] | None, bool, int, bool, bool, bool, bool, bool, bool]
+_TextOptions: TypeAlias = tuple[
+    tuple[float, float, float, float] | None, bool, int, bool, bool, bool, bool, bool, bool, int
+]
 
 def page_text(
     document: _Document,

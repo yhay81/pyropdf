@@ -276,7 +276,7 @@ from pyropdf._structure import (
 )
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
-from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
+from pyropdf._text import Block, Char, Chars, Layout, Line, RubyMode, Span, Unmapped, Word
 from pyropdf._threads import Bead, Beads, BeadSpecification, Thread, ThreadAction, Threads
 from pyropdf._viewer_actions import StructureDestination, UriAction, WindowsLaunch
 from pyropdf._web_capture import WebCapture
@@ -625,6 +625,7 @@ __all__ = [
     "RichMediaExecute",
     "RichMediaModel",
     "RoleMap",
+    "RubyMode",
     "SanitizeReport",
     "Screen",
     "ScriptTrigger",
