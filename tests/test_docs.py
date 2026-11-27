@@ -18,7 +18,13 @@ import pyropdf
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
-LANGUAGES = ("en", "ja")
+LANGUAGES = ("en", "ja", "zh-cn", "ko")
+CONFIGS = {
+    "en": "mkdocs.yml",
+    "ja": "mkdocs.ja.yml",
+    "zh-cn": "mkdocs.zh-cn.yml",
+    "ko": "mkdocs.ko.yml",
+}
 PAGES = {language: sorted((DOCS / language).glob("*.md")) for language in LANGUAGES}
 API_PAGES = sorted((DOCS / "en" / "api").glob("*.md"))
 # A fence may carry options after the language, such as title="edit.py".
@@ -79,7 +85,8 @@ def test_review_comments_recipe_lists_page_author_and_comment(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     recipes = _review_comments_recipes()
-    assert recipes["en"] == recipes["ja"]
+    for language in LANGUAGES[1:]:
+        assert recipes[language] == recipes["en"], language
     code = recipes["en"]
     assert "page.annotations" in code
 
@@ -116,7 +123,8 @@ def _matching_recipes(*needles: str) -> dict[str, str]:
         ]
         assert len(matches) == 1, (language, needles)
         recipes[language] = matches[0]
-    assert recipes["en"] == recipes["ja"], needles
+    for language in LANGUAGES[1:]:
+        assert recipes[language] == recipes["en"], (language, needles)
     return recipes
 
 
@@ -170,16 +178,17 @@ def test_api_reference_examples_are_collected() -> None:
 
 def test_every_page_has_a_translation() -> None:
     names = {language: [page.name for page in pages] for language, pages in PAGES.items()}
-    assert names["ja"] == names["en"]
-    for en_page, ja_page in zip(PAGES["en"], PAGES["ja"], strict=True):
-        en_no_code = FENCE.sub("", en_page.read_text(encoding="utf-8"))
-        ja_no_code = FENCE.sub("", ja_page.read_text(encoding="utf-8"))
-        en_h2 = len(re.findall(r"^## ", en_no_code, re.MULTILINE))
-        ja_h2 = len(re.findall(r"^## ", ja_no_code, re.MULTILINE))
-        assert ja_h2 == en_h2, f"{en_page.name}: H2 count en={en_h2} != ja={ja_h2}"
-        en_tables = len(re.findall(r"^\| ---", en_no_code, re.MULTILINE))
-        ja_tables = len(re.findall(r"^\| ---", ja_no_code, re.MULTILINE))
-        assert ja_tables == en_tables, f"{en_page.name}: table count en={en_tables} != ja={ja_tables}"
+    for language in LANGUAGES[1:]:
+        assert names[language] == names["en"], language
+        for en_page, loc_page in zip(PAGES["en"], PAGES[language], strict=True):
+            en_no_code = FENCE.sub("", en_page.read_text(encoding="utf-8"))
+            loc_no_code = FENCE.sub("", loc_page.read_text(encoding="utf-8"))
+            en_h2 = len(re.findall(r"^## ", en_no_code, re.MULTILINE))
+            loc_h2 = len(re.findall(r"^## ", loc_no_code, re.MULTILINE))
+            assert loc_h2 == en_h2, f"{en_page.name}: H2 count en={en_h2} != {language}={loc_h2}"
+            en_tables = len(re.findall(r"^\| ---", en_no_code, re.MULTILINE))
+            loc_tables = len(re.findall(r"^\| ---", loc_no_code, re.MULTILINE))
+            assert loc_tables == en_tables, f"{en_page.name}: table count en={en_tables} != {language}={loc_tables}"
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="the worker example uses GNU timeout and util-linux prlimit")
@@ -252,8 +261,9 @@ def _anchors_for(page: Path, language: str, cache: dict[tuple[Path, str], set[st
 def _resolve_doc_target(page: Path, language: str, path_part: str) -> Path | None:
     if not path_part:
         return page
-    if path_part.startswith("/ja/"):
-        base_target = DOCS / "ja" / path_part.removeprefix("/ja/").strip("/")
+    locale_prefix = next((lang for lang in LANGUAGES if lang != "en" and path_part.startswith(f"/{lang}/")), None)
+    if locale_prefix is not None:
+        base_target = DOCS / locale_prefix / path_part.removeprefix(f"/{locale_prefix}/").strip("/")
     elif path_part.startswith("/"):
         # Files such as the hero's renders and `/api/` live in the English site, at the root.
         base_target = DOCS / "en" / path_part.lstrip("/").rstrip("/")
@@ -267,8 +277,8 @@ def _resolve_doc_target(page: Path, language: str, path_part: str) -> Path | Non
         resolved.with_suffix(".md") if not resolved.suffix else resolved,
         resolved / "index.md",
     ]
-    if language == "ja" and not path_part.startswith("/") and resolved.suffix not in {"", ".md"}:
-        shared = (DOCS / "en" / page.relative_to(DOCS / "ja").parent / path_part).resolve()
+    if language != "en" and not path_part.startswith("/") and resolved.suffix not in {"", ".md"}:
+        shared = (DOCS / "en" / page.relative_to(DOCS / language).parent / path_part).resolve()
         if shared.is_relative_to((DOCS / "en").resolve()):
             candidates.append(shared)
     return next((candidate for candidate in candidates if candidate.is_file()), None)
@@ -294,7 +304,10 @@ def test_internal_links_resolve() -> None:
                     broken.append(f"{page.relative_to(ROOT)} -> missing target {link!r}")
                     continue
                 if fragment and target.suffix == ".md":
-                    target_lang = "ja" if target.is_relative_to((DOCS / "ja").resolve()) else "en"
+                    target_lang = next(
+                        (lang for lang in LANGUAGES if target.is_relative_to((DOCS / lang).resolve())),
+                        "en",
+                    )
                     if fragment not in _anchors_for(target, target_lang, anchor_cache):
                         broken.append(
                             f"{page.relative_to(ROOT)} -> missing anchor {link!r} in {target.relative_to(ROOT)}"
@@ -342,7 +355,7 @@ def test_stability_policy_matches_package_metadata_and_limits() -> None:
     assert "https://pyropdf.haya.works/stability/" in (ROOT / "README.md").read_text(encoding="utf-8")
 
     anchor_ids: dict[str, list[str]] = {}
-    for language, config_name in (("en", "mkdocs.yml"), ("ja", "mkdocs.ja.yml")):
+    for language, config_name in CONFIGS.items():
         policy_path = DOCS / language / "stability.md"
         assert policy_path.is_file(), policy_path
         text = policy_path.read_text(encoding="utf-8")
@@ -371,13 +384,14 @@ def test_stability_policy_matches_package_metadata_and_limits() -> None:
         anchor_ids[language] = re.findall(r"\{#([A-Za-z0-9_:-]+)\}", text)
 
     assert anchor_ids["en"]
-    assert anchor_ids["ja"] == anchor_ids["en"]
+    for language in LANGUAGES[1:]:
+        assert anchor_ids[language] == anchor_ids["en"], language
 
 
 def test_migration_guides_are_wired_synchronized_and_syntax_valid() -> None:
     before_fence = re.compile(r"^```py(?: [^\n]*)?\n(.*?)^```", re.MULTILINE | re.DOTALL)
     anchor_ids: dict[str, list[str]] = {}
-    for language, config_name in (("en", "mkdocs.yml"), ("ja", "mkdocs.ja.yml")):
+    for language, config_name in CONFIGS.items():
         guide = DOCS / language / "migrating.md"
         assert guide.is_file(), guide
         text = guide.read_text(encoding="utf-8")
@@ -395,4 +409,26 @@ def test_migration_guides_are_wired_synchronized_and_syntax_valid() -> None:
         anchor_ids[language] = re.findall(r"\{#([A-Za-z0-9_:-]+)\}", text)
 
     assert anchor_ids["en"]
-    assert anchor_ids["ja"] == anchor_ids["en"]
+    for language in LANGUAGES[1:]:
+        assert anchor_ids[language] == anchor_ids["en"], language
+
+
+def test_language_switchers_and_workflow_cover_all_locales() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "docs.yml").read_text(encoding="utf-8")
+    alternate_partial = (DOCS / "overrides" / "partials" / "alternate.html").read_text(encoding="utf-8")
+    not_found_page = (DOCS / "overrides" / "404.html").read_text(encoding="utf-8")
+
+    assert 'alt.lang != "en"' in alternate_partial
+    for language, config_name in CONFIGS.items():
+        config_text = (ROOT / config_name).read_text(encoding="utf-8")
+        assert f"docs_dir: docs/{language}" in config_text, config_name
+        assert f"current_language: {language}" in config_text, config_name
+        for other_lang in LANGUAGES:
+            expected_link = "/" if other_lang == "en" else f"/{other_lang}/"
+            assert f"link: {expected_link}" in config_text, (config_name, other_lang)
+            assert f"lang: {other_lang}" in config_text, (config_name, other_lang)
+        assert f"zensical build -f {config_name} -c -s" in workflow, config_name
+        assert f'"{config_name}"' in workflow, config_name
+        if language != "en":
+            assert f'current_language == "{language}"' in not_found_page, language
+            assert f'href="/{language}/"' in not_found_page, language
