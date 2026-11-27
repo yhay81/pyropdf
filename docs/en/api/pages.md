@@ -600,6 +600,7 @@ Page.ocr(
     dpi: float = 300,
     clip: Sequence[float] | None = None,
     rotation: OcrRotation = 0,
+    mode: OcrMode = 'full',
     tile_size: int = 1408,
     overlap: int = 192,
     min_confidence: float = 0.5,
@@ -614,6 +615,14 @@ lifetime. `clip` recognizes one display-space region and returns
 boxes in full-page display space. `rotation` corrects sideways input
 clockwise without editing the page.
 
+`mode` selects what to recognize: `"full"` (the default) recognizes
+the whole page or `clip` regardless of existing text;
+`"skip_existing"` returns an empty list when extractable text already
+exists on the page or in `clip`; and `"hybrid"` locates placed
+raster-image regions not already covered by legible native text,
+recognizes only those regions under the document's limits, and drops
+any recognized words that overlap existing native text.
+
 ### `apply_ocr`
 
 ```python
@@ -624,7 +633,7 @@ Page.apply_ocr(
     dpi: float = 300,
     clip: Sequence[float] | None = None,
     rotation: OcrRotation = 0,
-    skip_existing: bool = True,
+    mode: OcrMode = 'skip_existing',
     tile_size: int = 1408,
     overlap: int = 192,
     min_confidence: float = 0.5,
@@ -643,10 +652,12 @@ any language, including CJK, adds almost no file size. One call takes
 at most 4,096 words with text and 1 MiB of UTF-8 text, and adds the
 layer in one transaction.
 
-By default, a page with extractable text is skipped, which makes
-repeated calls idempotent and avoids duplicate text layers; with
-`clip`, only text that meets the region counts. Use
-`skip_existing=False` to add the layer anyway; existing text is kept.
+`mode` selects how existing text is handled: `"skip_existing"`
+(the default) skips a page or `clip` that already holds extractable
+text; `"hybrid"` recognizes only raster-image regions not covered by
+legible native text (or filters supplied `words` against existing
+native text) so mixed pages gain OCR text without duplicating native
+words; and `"full"` adds the layer regardless of existing text.
 `rotation` is the clockwise correction that reads sideways input and
 orients the invisible baselines. An empty result changes nothing.
 

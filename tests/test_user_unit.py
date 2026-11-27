@@ -206,7 +206,7 @@ def test_an_ocr_layer_in_points_scales_with_the_unit() -> None:
     for unit in (1, 2):
         page = open_page(unit)
         box = Rect(250 * unit, 20 * unit, 330 * unit, 40 * unit)
-        page.apply_ocr(words=[pyropdf.OcrWord(text="Scaled", bbox=box, confidence=1.0)], skip_existing=False)
+        page.apply_ocr(words=[pyropdf.OcrWord(text="Scaled", bbox=box, confidence=1.0)], mode="full")
         (hit,) = page.search("Scaled")
         assert hit.intersects(box)
         found.append(tuple(hit))

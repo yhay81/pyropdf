@@ -260,6 +260,22 @@ def insert_ocr_layer(
     rotation: int,
     /,
 ) -> bool: ...
+def plan_hybrid_ocr_regions(
+    document: _Document,
+    images: list[tuple[float, float, float, float]],
+    coverage_text: list[tuple[float, float, float, float]],
+    bounds: tuple[float, float, float, float],
+    /,
+) -> list[tuple[float, float, float, float]]: ...
+def filter_hybrid_ocr_words(
+    document: _Document,
+    words: list[tuple[float, float, float, float, str, float]],
+    native_boxes: list[tuple[float, float, float, float]],
+    rotation: int,
+    page_size: tuple[float, float],
+    deduplicate_words: bool,
+    sort_reading_order: bool,
+) -> list[tuple[float, float, float, float, str, float]]: ...
 
 class _Signer:
     @staticmethod

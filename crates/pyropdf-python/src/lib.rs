@@ -117,7 +117,9 @@ mod _core {
         schema_entry, schema_leaf, stream_read, stream_write,
     };
     #[pymodule_export]
-    use super::ocr::{_OcrEngine, insert_ocr_layer};
+    use super::ocr::{
+        _OcrEngine, filter_hybrid_ocr_words, insert_ocr_layer, plan_hybrid_ocr_regions,
+    };
     #[pymodule_export]
     use super::outline::{
         outline_children, outline_entries, outline_item, outline_set_open, outline_set_style,

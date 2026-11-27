@@ -4,7 +4,10 @@ use std::path::PathBuf;
 
 use pyo3::exceptions::{PyFileNotFoundError, PyValueError};
 use pyo3::prelude::*;
-use pyropdf_engine::ocr::{Engine, Error, LayerWord, OcrTuple, Options, layer};
+use pyropdf_engine::ocr::{
+    DisplayOcrWord, DisplayRect, Engine, Error, LayerWord, OcrTuple, Options, filter_hybrid_words,
+    layer, plan_hybrid_regions,
+};
 use pyropdf_store::budget::{Budget, BudgetVec, DocumentLimits, LimitCode};
 use pyropdf_store::pages::PageIndex;
 use pyropdf_store::value::{
@@ -115,6 +118,49 @@ impl _OcrEngine {
     fn __repr__(&self) -> PyResult<&'static str> {
         crate::errors::boundary(|| "<pyropdf.OcrEngine native models>")
     }
+}
+
+/// Plans candidate hybrid OCR regions from placed raster image boxes and
+/// legible non-artifact native text boxes under the document's active budget.
+#[pyfunction]
+pub fn plan_hybrid_ocr_regions(
+    document: &_Document,
+    images: Vec<DisplayRect>,
+    coverage_text: Vec<DisplayRect>,
+    bounds: DisplayRect,
+) -> PyResult<Vec<DisplayRect>> {
+    crate::errors::boundary(|| {
+        let budget = document.budget();
+        plan_hybrid_regions(&images, &coverage_text, bounds, &budget).map_err(ocr_error)
+    })?
+}
+
+/// Filters recognized OCR words against existing native text boxes under the
+/// document's active budget, optionally deduplicating across regions and
+/// ordering in column-aware reading order.
+#[pyfunction]
+pub fn filter_hybrid_ocr_words(
+    document: &_Document,
+    words: Vec<DisplayOcrWord>,
+    native_boxes: Vec<DisplayRect>,
+    rotation: usize,
+    page_size: (f64, f64),
+    deduplicate_words: bool,
+    sort_reading_order: bool,
+) -> PyResult<Vec<DisplayOcrWord>> {
+    crate::errors::boundary(|| {
+        let budget = document.budget();
+        filter_hybrid_words(
+            &words,
+            &native_boxes,
+            rotation,
+            page_size,
+            deduplicate_words,
+            sort_reading_order,
+            &budget,
+        )
+        .map_err(ocr_error)
+    })?
 }
 
 /// Adds the invisible text layer of `words`, boxes in display space, to the
