@@ -291,13 +291,27 @@ With the `ocr` extra installed, `OcrEngine()` loads the PP-OCR models, and
 `page.ocr` returns the words it recognizes. `page.apply_ocr` adds them as an
 invisible text layer, so `text()` and `search()` find them.
 
+Both methods accept `mode`:
+
+- `"full"` recognizes the whole page (or `clip`), regardless of existing text
+  (default for `page.ocr`).
+- `"skip_existing"` skips a page (or `clip`) that already holds extractable
+  text (default for `page.apply_ocr`).
+- `"hybrid"` locates placed raster-image regions not already covered by legible
+  native text (ignoring invisible text, `/Artifact` marks, and tiny edge
+  overlaps), coalesces adjacent strips or dense decorative images under
+  `DocumentLimits`, recognizes only those regions, and filters out any words
+  that duplicate existing native text.
+
 ```python
 import pyropdf
 
 engine = pyropdf.OcrEngine()
 with pyropdf.open("input.pdf") as doc:
-    words = doc.pages[0].ocr(engine=engine, dpi=150)
+    words = doc.pages[0].ocr(engine=engine, dpi=150, mode="hybrid")
     print([word.text for word in words])
+    # Or write only the missing raster text into a mixed page:
+    doc.pages[0].apply_ocr(engine=engine, dpi=150, mode="hybrid")
 ```
 
 Create an engine once and reuse it: loading the models is the slow part.

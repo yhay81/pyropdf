@@ -57,6 +57,17 @@ of recognized UTF-8 text, with `LimitError`. Page recognition
 also observes its document's cancellation token and recognition
 deadline between model calls; an individual model call runs to completion.
 
+## `OcrMode`
+
+```python
+OcrMode: TypeAlias = Literal['full', 'skip_existing', 'hybrid']
+```
+
+Which parts of a page OCR recognizes or inserts: `"full"` for the whole
+page or `clip`, `"skip_existing"` to skip when extractable text is already
+present, or `"hybrid"` to recognize only uncovered raster-image regions and
+drop words that duplicate existing native text.
+
 ## `OcrRotation`
 
 ```python

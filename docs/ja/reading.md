@@ -266,13 +266,21 @@ with pyropdf.open("input.pdf") as doc:
 認識した単語を返します。`page.apply_ocr` はそれを見えないテキスト層として加えるので、
 `text()` や `search()` で見つかるようになります。
 
+両方のメソッドは `mode` オプションを受け取ります。
+
+- `"full"` は既存テキストの有無にかかわらずページ全体（または `clip`）を認識します（`page.ocr` の既定値）。
+- `"skip_existing"` は抽出可能なテキストがすでにあるページ（または `clip`）をスキップします（`page.apply_ocr` の既定値）。
+- `"hybrid"` は可視なネイティブテキストで覆われていないラスタ画像領域（不可視テキスト・`/Artifact`・微小な重なりは無視）だけを抽出し、`DocumentLimits` の範囲内で隣接する帯状画像や多数の装飾画像を結合して認識し、既存のネイティブ単語と重複する結果を除外します。
+
 ```python
 import pyropdf
 
 engine = pyropdf.OcrEngine()
 with pyropdf.open("input.pdf") as doc:
-    words = doc.pages[0].ocr(engine=engine, dpi=150)
+    words = doc.pages[0].ocr(engine=engine, dpi=150, mode="hybrid")
     print([word.text for word in words])
+    # 混在ページで画像領域のテキストだけを補う場合:
+    doc.pages[0].apply_ocr(engine=engine, dpi=150, mode="hybrid")
 ```
 
 エンジンは一度作って使い回してください。時間がかかるのはモデルの読み込みです。

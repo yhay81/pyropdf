@@ -30,6 +30,7 @@ import pyropdf
 from pyropdf._core import _OcrEngine
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 
@@ -369,8 +370,15 @@ def test_apply_ocr_skips_existing_text_by_default() -> None:
     page = _text_page((200, 100), ("Already searchable", 20, 50, 12))
 
     assert page.apply_ocr() == []
-    with pytest.raises(TypeError, match="skip_existing"):
-        page.apply_ocr(skip_existing=1)  # ty: ignore[invalid-argument-type]
+    assert page.ocr(mode="skip_existing") == []
+    with pytest.raises(TypeError, match="mode"):
+        page.apply_ocr(mode=1)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="mode"):
+        page.apply_ocr(mode="invalid")  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="mode"):
+        page.ocr(mode=True)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="mode"):
+        page.ocr(mode="invalid")  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize("dpi", [0, -1, float("inf"), float("nan"), "bad"])
@@ -551,3 +559,274 @@ def test_page_ocr_observes_cancellation_after_rendering(
     with pytest.raises(pyropdf.LimitError) as caught:
         document.pages[0].ocr(engine=ocr_engine, dpi=72, tile_size=256, overlap=32)
     assert caught.value.code == "cancelled"
+
+
+def _mixed_page(  # noqa: PLR0913 - test helper parameters mirror page properties.
+    size: tuple[int, int],
+    images: Sequence[tuple[pyropdf.Pixmap, tuple[float, float, float, float]]],
+    *,
+    texts: Sequence[tuple[str, float, float, float]] = (),
+    extra_ops: str = "",
+    crop_box: tuple[float, float, float, float] | None = None,
+    user_unit: float | None = None,
+    limits: pyropdf.DocumentLimits | None = None,
+) -> pyropdf.Page:
+    """Build a page combining multiple RGB image placements, native texts, and optional raw operators."""
+    width, height = size
+    objects: dict[int, str | bytes] = {
+        1: "<< /Type /Catalog /Pages 2 0 R >>",
+        3: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    }
+    xobj_entries: list[str] = []
+    draw_ops: list[str] = []
+    for index, (raster, box) in enumerate(images):
+        obj_id = 6 + index
+        assert (raster.channels, raster.stride) == (3, raster.width * 3)
+        samples = zlib.compress(bytes(raster))
+        objects[obj_id] = (
+            (
+                f"<< /Type /XObject /Subtype /Image /Width {raster.width} /Height {raster.height}"
+                f" /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length {len(samples)} >>\nstream\n"
+            ).encode()
+            + samples
+            + b"\nendstream"
+        )
+        xobj_entries.append(f"/Im{index} {obj_id} 0 R")
+        x0, y0, x1, y1 = box
+        draw_ops.append(f"q {x1 - x0} 0 0 {y1 - y0} {x0} {height - y1} cm /Im{index} Do Q")
+    shows = " ".join(f"BT /F1 {font} Tf {x} {height - y} Td ({text}) Tj ET" for text, x, y, font in texts)
+    content = " ".join([*draw_ops, shows, extra_ops]).strip()
+    xobj_dict = f" /XObject << {' '.join(xobj_entries)} >>" if xobj_entries else ""
+    crop_entry = f" /CropBox [{' '.join(str(v) for v in crop_box)}]" if crop_box is not None else ""
+    unit_entry = f" /UserUnit {user_unit}" if user_unit is not None else ""
+    objects[2] = (
+        f"<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 {width} {height}]"
+        f" /Resources << /Font << /F1 3 0 R >>{xobj_dict} >> >>"
+    )
+    objects[4] = f"<< /Type /Page /Parent 2 0 R /Contents 5 0 R{crop_entry}{unit_entry} >>"
+    objects[5] = f"<< /Length {len(content)} >>\nstream\n{content}\nendstream"
+    return pyropdf.open(build_raw_pdf(objects), limits=limits).pages[0]
+
+
+def test_hybrid_ocr_recognizes_only_raster_region_without_duplicating_native_text(
+    ocr_engine: pyropdf.OcrEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raster = _text_page((360, 110), ("Region 789", 20, 70, 34)).pixmap(dpi=150)
+    page = _mixed_page(
+        (360, 240),
+        [(raster, (0, 80, 360, 190))],
+        texts=[("Digital header", 20, 30, 14), ("Native footer", 20, 222, 14)],
+    )
+    before = _white(page)
+    clips: list[object] = []
+    real_pixmap = pyropdf.Page.pixmap
+
+    def spy_pixmap(self: pyropdf.Page, **kwargs: Any) -> pyropdf.Pixmap:  # noqa: ANN401
+        clips.append(kwargs.get("clip"))
+        return real_pixmap(self, **kwargs)
+
+    monkeypatch.setattr(pyropdf.Page, "pixmap", spy_pixmap)
+    words = page.ocr(engine=ocr_engine, dpi=150, tile_size=512, overlap=64, mode="hybrid")
+
+    assert len(clips) == 1
+    assert clips[0] == pytest.approx((0, 80, 360, 190), abs=0.5)
+    assert [word.text for word in words] == ["Region 789"]
+    assert 80 <= words[0].bbox.y0 < words[0].bbox.y1 <= 190
+
+    clips.clear()
+    inserted = page.apply_ocr(engine=ocr_engine, dpi=150, tile_size=512, overlap=64, mode="hybrid")
+    assert len(clips) == 1
+    assert [word.text for word in inserted] == ["Region 789"]
+
+    # Re-extraction keeps native text once and adds raster text once with zero duplicates.
+    extracted = [word.text for word in page.words()]
+    assert extracted.count("Digital") == 1
+    assert extracted.count("header") == 1
+    assert extracted.count("Region") == 1
+    assert extracted.count("789") == 1
+    assert extracted.count("Native") == 1
+    assert extracted.count("footer") == 1
+    assert _white(page) == before
+
+    # Calling apply_ocr(mode="hybrid") a second time is idempotent and does not edit the document.
+    after_first = page.document.to_bytes()
+    assert page.apply_ocr(engine=ocr_engine, dpi=150, tile_size=512, overlap=64, mode="hybrid") == []
+    assert page.document.to_bytes() == after_first
+
+
+def test_hybrid_ocr_deduplicates_overlaid_native_text_and_ignores_invisible_and_artifacts(
+    ocr_engine: pyropdf.OcrEngine,
+) -> None:
+    # Full-page scan image with a visible native header stamped near the top,
+    # an /Artifact page marker, and invisible 3 Tr placeholder noise over the scan text.
+    raster = _text_page((360, 220), ("Scanned 456", 20, 155, 34)).pixmap(dpi=150)
+    extra_ops = (
+        "/Artifact << /Type /Pagination >> BDC BT /F1 12 Tf 290 190 Td (Page 1) Tj ET EMC "
+        "BT /F1 34 Tf 3 Tr 20 65 Td (Noise) Tj ET"
+    )
+    page = _mixed_page(
+        (360, 220),
+        [(raster, (0, 0, 360, 220))],
+        texts=[("Digital header", 20, 30, 14)],
+        extra_ops=extra_ops,
+    )
+
+    inserted = page.apply_ocr(engine=ocr_engine, dpi=150, tile_size=512, overlap=64, mode="hybrid")
+
+    assert [word.text for word in inserted] == ["Scanned 456"]
+    extracted = [word.text for word in page.words()]
+    assert extracted.count("Digital") == 1
+    assert extracted.count("header") == 1
+    assert extracted.count("Scanned") == 1
+    assert extracted.count("456") == 1
+
+
+def test_hybrid_ocr_skips_pure_text_and_text_covered_banner_without_rendering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    real_pixmap = pyropdf.Page.pixmap
+
+    def spy_pixmap(self: pyropdf.Page, **kwargs: Any) -> pyropdf.Pixmap:  # noqa: ANN401
+        nonlocal calls
+        calls += 1
+        return real_pixmap(self, **kwargs)
+
+    # 1. Pure text page: no raster images -> 0 renders, does not even need an OCR engine.
+    text_only = _text_page((300, 120), ("Pure digital text", 20, 60, 18))
+    banner = _blank_page((200, 30)).pixmap(dpi=72)
+    covered = _mixed_page((300, 120), [(banner, (20, 20, 220, 50))], texts=[("Banner Title", 25, 42, 22)])
+    monkeypatch.setattr(pyropdf.Page, "pixmap", spy_pixmap)
+    assert text_only.ocr(mode="hybrid") == []
+    assert text_only.apply_ocr(mode="hybrid") == []
+    assert calls == 0
+
+    # 2. Banner image covered by legible native text -> 0 renders.
+    assert covered.ocr(mode="hybrid") == []
+    assert calls == 0
+
+
+def test_hybrid_ocr_aligns_on_rotated_cropped_and_user_unit_pages(ocr_engine: pyropdf.OcrEngine) -> None:
+    # 1. Rotated page (90 degrees) with mixed native text and an embedded raster image.
+    raster = _text_page((360, 110), ("Rotated 321", 20, 70, 34)).pixmap(dpi=150)
+    rotated = _mixed_page(
+        (360, 220),
+        [(raster, (0, 90, 360, 200))],
+        texts=[("Native title", 20, 30, 14)],
+    )
+    rotated.rotation = 90
+    before_rot = _white(rotated)
+
+    words = rotated.apply_ocr(engine=ocr_engine, dpi=150, tile_size=512, overlap=64, mode="hybrid", rotation=270)
+
+    assert [word.text for word in words] == ["Rotated 321"]
+    (image_item,) = rotated.images()
+    assert image_item.item.bbox.intersects(words[0].bbox)
+    (hit,) = rotated.search("Rotated 321")
+    assert tuple(hit) == pytest.approx(tuple(words[0].bbox), abs=0.2)
+    assert [word.text for word in rotated.words()].count("Native") == 1
+    assert _white(rotated) == before_rot
+
+    # 2. Cropped page (/CropBox offset from MediaBox origin) with native header and raster image.
+    cropped_raster = _text_page((320, 100), ("Cropped 654", 20, 65, 30)).pixmap(dpi=150)
+    cropped = _mixed_page(
+        (460, 300),
+        [(cropped_raster, (60, 120, 380, 220))],
+        texts=[("Crop header", 70, 80, 14)],
+        crop_box=(40, 40, 420, 260),
+    )
+    crop_words = cropped.apply_ocr(engine=ocr_engine, dpi=150, tile_size=512, overlap=64, mode="hybrid")
+    assert [word.text for word in crop_words] == ["Cropped 654"]
+    (crop_image,) = cropped.images()
+    assert crop_image.item.bbox.intersects(crop_words[0].bbox)
+    assert cropped.search("Cropped 654")
+    assert [word.text for word in cropped.words()].count("Crop") == 1
+
+    # 3. /UserUnit 2 scaled page with native header and raster image.
+    unit_raster = _text_page((180, 60), ("Unit 987", 10, 42, 22)).pixmap(dpi=150)
+    scaled = _mixed_page(
+        (200, 120),
+        [(unit_raster, (10, 45, 190, 105))],
+        texts=[("Scaled header", 10, 20, 10)],
+        user_unit=2.0,
+    )
+    unit_words = scaled.apply_ocr(engine=ocr_engine, dpi=150, tile_size=512, overlap=64, mode="hybrid")
+    assert [word.text for word in unit_words] == ["Unit 987"]
+    (unit_image,) = scaled.images()
+    assert unit_image.item.bbox.intersects(unit_words[0].bbox)
+    assert scaled.search("Unit 987")
+    assert [word.text for word in scaled.words()].count("Scaled") == 1
+
+
+def test_hybrid_ocr_coalesces_many_images_and_enforces_document_limits(
+    model_paths: Any,  # noqa: ANN401
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ProbeCore:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def recognize_pixmap(self, *_args: object, **_kwargs: object) -> list[object]:
+            self.calls += 1
+            return []
+
+    engine = pyropdf.OcrEngine(model_paths.detector, model_paths.recognizer, model_paths.dictionary, threads=1)
+    probe = ProbeCore()
+    monkeypatch.setattr(engine, "_engine", probe)
+
+    tiny = _blank_page((8, 8)).pixmap(dpi=72)
+    # 1. Many tiny isolated decorative icons (< 8pt) -> 0 renders.
+    decorative = _mixed_page(
+        (400, 400),
+        [(tiny, (10 + (i % 10) * 35, 10 + (i // 10) * 35, 15 + (i % 10) * 35, 15 + (i // 10) * 35)) for i in range(60)],
+    )
+    assert decorative.ocr(engine=engine, dpi=72, tile_size=256, overlap=32, mode="hybrid") == []
+    assert probe.calls == 0
+
+    # 2. Strip-sliced scan (50 touching 3pt horizontal strips) -> coalesced to 1 render call.
+    strip_page = _mixed_page(
+        (300, 200),
+        [(tiny, (10, 10 + i * 3, 290, 13 + i * 3)) for i in range(50)],
+    )
+    assert strip_page.ocr(engine=engine, dpi=72, tile_size=256, overlap=32, mode="hybrid") == []
+    assert probe.calls == 1
+
+    # 3. Many scattered 20x20 images (> 32) -> coalesced within bounded region cap (<= 32 renders).
+    probe.calls = 0
+    scattered = _mixed_page(
+        (500, 500),
+        [(tiny, (10 + (i % 8) * 45, 10 + (i // 8) * 45, 30 + (i % 8) * 45, 30 + (i // 8) * 45)) for i in range(64)],
+    )
+    assert scattered.ocr(engine=engine, dpi=72, tile_size=256, overlap=32, mode="hybrid") == []
+    assert 1 <= probe.calls <= 32
+
+    # 4. Cancellation between multi-region renders stops immediately with LimitError("cancelled").
+    token = pyropdf.CancellationToken()
+    two_regions = _mixed_page(
+        (300, 300),
+        [(tiny, (10, 10, 200, 100)), (tiny, (10, 180, 200, 280))],
+        limits=pyropdf.DocumentLimits(cancellation=token),
+    )
+
+    class CancellingCore:
+        def recognize_pixmap(self, *_args: object, **_kwargs: object) -> list[object]:
+            token.cancel()
+            return []
+
+    monkeypatch.setattr(engine, "_engine", CancellingCore())
+    with pytest.raises(pyropdf.LimitError) as caught:
+        two_regions.ocr(engine=engine, dpi=72, tile_size=256, overlap=32, mode="hybrid")
+    assert caught.value.code == "cancelled"
+
+    # 5. Cumulative raster size across regions is checked against ocr_raster_size before rendering.
+    fresh_two_regions = _mixed_page(
+        (300, 300),
+        [(tiny, (10, 10, 200, 100)), (tiny, (10, 180, 200, 280))],
+    )
+    monkeypatch.setattr(engine, "_engine", probe)
+    probe.calls = 0
+    with pytest.raises(pyropdf.LimitError) as caught_raster:
+        fresh_two_regions.ocr(engine=engine, dpi=7200, tile_size=256, overlap=32, mode="hybrid")
+    assert caught_raster.value.code == "ocr_raster_size"
+    assert probe.calls == 0

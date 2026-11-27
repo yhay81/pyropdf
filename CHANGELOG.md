@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `Page.apply_ocr(mode=...)` replaces `skip_existing=` with `OcrMode`
+  (`"full"`, `"skip_existing"`, `"hybrid"`), keeping `"skip_existing"` as its
+  default; pass `mode="full"` where `skip_existing=False` was used and
+  `mode="hybrid"` for region-selective OCR on mixed text-and-image pages.
+  `Page.ocr(mode=...)` accepts the same `OcrMode` option, defaulting to
+  `"full"` (#1185).
+
 ## 0.4.1 (2026-11-25)
 
 A patch release hardening FFI and concurrency soundness, binary font and

@@ -225,7 +225,7 @@ from pyropdf._metadata import (
 )
 from pyropdf._name_resources import NamedResources
 from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, String
-from pyropdf._ocr import OcrEngine, OcrRotation, OcrWord
+from pyropdf._ocr import OcrEngine, OcrMode, OcrRotation, OcrWord
 from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._outline import Outline, OutlineEntry, OutlineItem
 from pyropdf._page import Page
@@ -555,6 +555,7 @@ __all__ = [
     "Objects",
     "OcrEngine",
     "OcrError",
+    "OcrMode",
     "OcrRotation",
     "OcrWord",
     "Operation",

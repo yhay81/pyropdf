@@ -6,6 +6,7 @@
 //! versioned `pylopdf-ocr-models` package and loads an [`Engine`] with
 //! explicit detector, recognizer, and dictionary paths.
 
+mod hybrid;
 mod layer;
 
 use std::borrow::Cow;
@@ -21,6 +22,9 @@ use rten::{Model, RunOptions, ThreadPool};
 use rten_tensor::Layout as _;
 use rten_tensor::NdTensor;
 
+pub use self::hybrid::{
+    DisplayOcrWord, DisplayRect, MAX_HYBRID_REGIONS, filter_hybrid_words, plan_hybrid_regions,
+};
 pub use self::layer::{Layer, LayerWord, layer};
 
 const DETECTOR_THRESHOLD: f32 = 0.3;
@@ -220,12 +224,13 @@ fn restore_result_coordinates(
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Candidate {
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
-    score: f32,
+pub(super) struct Candidate {
+    pub(super) x0: f32,
+    pub(super) y0: f32,
+    pub(super) x1: f32,
+    pub(super) y1: f32,
+    pub(super) score: f32,
+    pub(super) index: usize,
 }
 
 impl Candidate {
@@ -254,6 +259,7 @@ impl Candidate {
             x1: self.x1.max(other.x1),
             y1: self.y1.max(other.y1),
             score: self.score.max(other.score),
+            index: self.index,
         }
     }
 }
@@ -902,6 +908,7 @@ fn connected_candidates(
                     x1: (x1 as f32 + 1.0 + padding).min(width as f32),
                     y1: (y1 as f32 + 1.0 + padding).min(height as f32),
                     score,
+                    index: 0,
                 },
                 "OCR detector candidates",
             )?;
@@ -1210,7 +1217,7 @@ fn order_candidate_columns(
     Ok(top)
 }
 
-fn sort_candidates(candidates: &mut Vec<Candidate>) -> Result<(), Error> {
+pub(super) fn sort_candidates(candidates: &mut Vec<Candidate>) -> Result<(), Error> {
     sort_top_to_bottom(candidates)?;
     *candidates = order_candidate_columns(std::mem::take(candidates), 0)?;
     Ok(())

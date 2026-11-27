@@ -160,6 +160,7 @@ method and property of its classes with its full description.
 ## [OCR](ocr.md)
 
 - [`OcrEngine`](ocr.md#ocrengine): Reusable, pure-Rust PP-OCR engine.
+- [`OcrMode`](ocr.md#ocrmode): Which parts of a page OCR recognizes or inserts: `"full"` for the whole page or `clip`, `"skip_existing"` to skip when extractable text is already present, or `"hybrid"` to recognize only uncovered raster-image regions and drop words that duplicate existing native text.
 - [`OcrRotation`](ocr.md#ocrrotation): A clockwise correction of sideways OCR input, in degrees.
 - [`OcrWord`](ocr.md#ocrword): One recognized word: its text, its box, and the engine's confidence from 0 to 1.
 

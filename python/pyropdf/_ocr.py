@@ -12,15 +12,28 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from pyropdf._core import OcrError, Pixmap, _OcrEngine
+from pyropdf import _core
+from pyropdf._content import Color, Image, TextRenderMode, TextRun
+from pyropdf._core import OcrError, PdfError, Pixmap, _OcrEngine
 from pyropdf._geometry import Rect
 from pyropdf._limits import _validate_optional_positive_int
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyropdf._page import Page
+
+OcrMode: TypeAlias = Literal["full", "skip_existing", "hybrid"]
+OcrMode.__doc__ = """Which parts of a page OCR recognizes or inserts: ``"full"`` for the whole
+page or ``clip``, ``"skip_existing"`` to skip when extractable text is already
+present, or ``"hybrid"`` to recognize only uncovered raster-image regions and
+drop words that duplicate existing native text."""
 
 OcrRotation: TypeAlias = Literal[0, 90, 180, 270]
 OcrRotation.__doc__ = """A clockwise correction of sideways OCR input, in degrees."""
+
+
+_OCR_LAYER_FONT = "PyroOCR-Gothic"
 
 
 _DEFAULT_MAX_OCR_MODEL_SIZE = 64 * 1024 * 1024
@@ -137,6 +150,17 @@ def _validate_ocr_concurrency(max_concurrent: int) -> int:
     return max_concurrent
 
 
+def _validate_ocr_mode(mode: object) -> OcrMode:
+    """Validate one OCR selection mode."""
+    if not isinstance(mode, str):
+        msg = f"mode must be 'full', 'skip_existing', or 'hybrid': {mode!r}"
+        raise TypeError(msg)
+    if mode in ("full", "skip_existing", "hybrid"):
+        return mode
+    msg = f"mode must be 'full', 'skip_existing', or 'hybrid': {mode!r}"
+    raise ValueError(msg)
+
+
 def _validate_ocr_rotation(rotation: int) -> OcrRotation:
     """Validate one clockwise OCR input correction."""
     if isinstance(rotation, bool) or not isinstance(rotation, int):
@@ -146,6 +170,153 @@ def _validate_ocr_rotation(rotation: int) -> OcrRotation:
         msg = f"rotation must be 0, 90, 180, or 270: {rotation}"
         raise OcrError(msg)
     return rotation
+
+
+def _paint_visible(paint: object) -> bool:
+    """Return whether a fill or stroke paint has nonzero opacity."""
+    if paint is None:
+        return False
+    if isinstance(paint, Color):
+        return paint.alpha > 0.0
+    opacity = getattr(paint, "opacity", 1.0)
+    return isinstance(opacity, (int, float)) and opacity > 0.0
+
+
+def _text_run_visible(run: TextRun) -> bool:
+    """Return whether ``run`` paints visible ink on the page."""
+    if run.render_mode == TextRenderMode.INVISIBLE or run.context.opacity <= 0.0:
+        return False
+    if run.render_mode == TextRenderMode.FILL:
+        return _paint_visible(run.fill)
+    if run.render_mode == TextRenderMode.STROKE:
+        return run.stroke is not None and _paint_visible(run.stroke.paint)
+    return _paint_visible(run.fill) or (run.stroke is not None and _paint_visible(run.stroke.paint))
+
+
+_Box: TypeAlias = tuple[float, float, float, float]
+
+
+def _text_run_bbox(run: TextRun) -> Rect | None:
+    """Return a positive-area display box for ``run``, falling back to glyph metrics without outlines."""
+    box = run.bbox
+    if box.width > 0.0 and box.height > 0.0:
+        return box
+    if not run.glyphs:
+        return None
+    size = run.size
+    if not (math.isfinite(size) and size > 0.0):
+        return None
+    xs: list[float] = []
+    ys: list[float] = []
+    for glyph in run.glyphs:
+        matrix = glyph.matrix
+        advance = glyph.advance or 0.0
+        baseline_len = math.hypot(matrix.a, matrix.b)
+        if baseline_len > 0:
+            bx, by = (matrix.a / baseline_len) * advance, (matrix.b / baseline_len) * advance
+        else:
+            bx, by = advance, 0.0
+        for dx, dy in ((0.0, 0.0), (bx, by)):
+            for scale in (0.8, -0.2):
+                xs.append(matrix.e + dx + matrix.c * scale)
+                ys.append(matrix.f + dy + matrix.d * scale)
+    if not xs:
+        return None
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    return Rect(x0, y0, x1, y1) if x1 > x0 and y1 > y0 else None
+
+
+def _clip_item_box(box: Rect, clip_bbox: Rect | None, bounds: Rect) -> _Box | None:
+    """Intersect ``box`` with optional graphics-state clip and ``bounds``, returning ``None`` if empty."""
+    clipped = box & bounds if clip_bbox is None else box & clip_bbox & bounds
+    if clipped.is_empty:
+        return None
+    return (clipped.x0, clipped.y0, clipped.x1, clipped.y1)
+
+
+def _active_ocr_bounds(page: Page, clip_rect: _Box | None) -> Rect:
+    """Return the non-empty intersection of ``page.rect`` and optional ``clip_rect``."""
+    page_rect = page.rect
+    if clip_rect is None:
+        return page_rect
+    active = page_rect & Rect(*clip_rect)
+    if active.is_empty:
+        msg = f"clip does not intersect the page: {clip_rect!r}"
+        raise PdfError(msg)
+    return active
+
+
+def _record_text_run(run: TextRun, bounds: Rect, coverage_text: list[_Box], dedup_text: list[_Box]) -> None:
+    """Classify one text run into coverage and deduplication box lists."""
+    if not run.text.strip():
+        return
+    run_box = _text_run_bbox(run)
+    if run_box is None:
+        return
+    clipped = _clip_item_box(run_box, run.context.clip_bbox, bounds)
+    if clipped is None:
+        return
+    if _text_run_visible(run):
+        dedup_text.append(clipped)
+        if not any(mark.tag == "Artifact" for mark in run.context.marked_content):
+            coverage_text.append(clipped)
+    elif run.render_mode == TextRenderMode.INVISIBLE and run.font.name == _OCR_LAYER_FONT:
+        # Keep prior pyropdf OCR layers in dedup so repeated apply_ocr(mode="hybrid") is idempotent.
+        dedup_text.append(clipped)
+
+
+def _hybrid_page_analysis(page: Page, bounds: Rect) -> tuple[list[_Box], list[_Box], list[_Box]]:
+    """Collect image boxes, legible non-artifact text boxes, and deduplication text boxes in ``bounds``."""
+    content = page.content(text_runs=True, paths=False, images=True, clip=bounds, annotations=True)
+    image_boxes: list[_Box] = []
+    coverage_text: list[_Box] = []
+    dedup_text: list[_Box] = []
+    for item in content:
+        if isinstance(item, Image):
+            if item.context.opacity > 0.0:
+                clipped = _clip_item_box(item.bbox, item.context.clip_bbox, bounds)
+                if clipped is not None:
+                    image_boxes.append(clipped)
+        elif isinstance(item, TextRun):
+            _record_text_run(item, bounds, coverage_text, dedup_text)
+    return image_boxes, coverage_text, dedup_text
+
+
+def _filter_external_hybrid_words(
+    page: Page,
+    words: Sequence[OcrWord],
+    clip_rect: _Box | None,
+    rotation: OcrRotation,
+) -> list[OcrWord]:
+    """Filter caller-supplied ``words`` against ``clip_rect`` and existing native text boxes."""
+    bounds = _active_ocr_bounds(page, clip_rect)
+    if not words:
+        return []
+    page_rect = page.rect
+    candidates = [word for word in words if not (word.bbox & bounds).is_empty]
+    if not candidates:
+        return []
+
+    def run(_budget: _core._OperationBudget) -> list[OcrWord]:
+        _, _, dedup_text = _hybrid_page_analysis(page, bounds)
+        if not dedup_text:
+            return candidates
+        filtered = _core.filter_hybrid_ocr_words(
+            page.document._core(),  # noqa: SLF001
+            [(w.bbox.x0, w.bbox.y0, w.bbox.x1, w.bbox.y1, w.text, w.confidence) for w in candidates],
+            dedup_text,
+            rotation,
+            (page_rect.width, page_rect.height),
+            deduplicate_words=False,
+            sort_reading_order=False,
+        )
+        return [
+            OcrWord(text=text, bbox=Rect(x0, y0, x1, y1), confidence=confidence)
+            for x0, y0, x1, y1, text, confidence in filtered
+        ]
+
+    return _core.read_operation(page.document._core(), run)  # noqa: SLF001
 
 
 class OcrEngine:
@@ -317,6 +488,126 @@ class OcrEngine:
             )
             for x0, y0, x1, y1, text, confidence in raster_results
         ]
+
+    def _recognize_page_regions(  # noqa: PLR0913 - OCR resource controls are keyword-only.
+        self,
+        page: Page,
+        *,
+        regions: Sequence[_Box],
+        dedup_text: list[_Box],
+        dpi: float,
+        tile_size: int,
+        overlap: int,
+        min_confidence: float,
+        rotation: OcrRotation,
+        budget: _core._OperationBudget,
+    ) -> list[OcrWord]:
+        """Render and recognize only ``regions``, enforcing limits and deduplicating against ``dedup_text``."""
+        pixel_to_page = 72.0 / dpi
+        page_rect = page.rect
+        estimated_rgba = 0
+        for region in regions:
+            budget.poll()
+            est_w = max(1, math.ceil((region[2] - region[0]) / pixel_to_page))
+            est_h = max(1, math.ceil((region[3] - region[1]) / pixel_to_page))
+            estimated_rgba += est_w * est_h * 4
+            budget.check("ocr_raster_size", estimated_rgba)
+
+        doc_core = page.document._core()  # noqa: SLF001 - share document operation limits.
+        raw_words: list[tuple[float, float, float, float, str, float]] = []
+        actual_rgba = 0
+        with self._recognition_slots:
+            for region in regions:
+                budget.poll()
+                pixmap = page.pixmap(dpi=dpi, clip=region, alpha=True, background=(255, 255, 255))
+                actual_rgba += pixmap.width * pixmap.height * 4
+                budget.check("ocr_raster_size", actual_rgba)
+                raster_results = self._engine.recognize_pixmap(
+                    pixmap,
+                    document=doc_core,
+                    tile_size=tile_size,
+                    overlap=overlap,
+                    min_confidence=min_confidence,
+                    rotation=rotation,
+                )
+                offset_x = math.floor(max(region[0], page_rect.x0) / pixel_to_page) * pixel_to_page
+                offset_y = math.floor(max(region[1], page_rect.y0) / pixel_to_page) * pixel_to_page
+                raw_words.extend(
+                    (
+                        offset_x + x0 * pixel_to_page,
+                        offset_y + y0 * pixel_to_page,
+                        offset_x + x1 * pixel_to_page,
+                        offset_y + y1 * pixel_to_page,
+                        text,
+                        confidence,
+                    )
+                    for x0, y0, x1, y1, text, confidence in raster_results
+                )
+        if not raw_words:
+            return []
+        filtered = _core.filter_hybrid_ocr_words(
+            doc_core,
+            raw_words,
+            dedup_text,
+            rotation,
+            (page_rect.width, page_rect.height),
+            deduplicate_words=True,
+            sort_reading_order=True,
+        )
+        return [
+            OcrWord(text=text, bbox=Rect(x0, y0, x1, y1), confidence=confidence)
+            for x0, y0, x1, y1, text, confidence in filtered
+        ]
+
+
+def _recognize_page_hybrid(  # noqa: PLR0913 - OCR resource controls are keyword-only.
+    page: Page,
+    *,
+    engine: OcrEngine | None,
+    dpi: float,
+    tile_size: int,
+    overlap: int,
+    min_confidence: float,
+    rotation: OcrRotation,
+    clip: tuple[float, float, float, float] | None,
+) -> list[OcrWord]:
+    """Run hybrid region-selective OCR inside one shared operation budget."""
+    resolved_dpi = _validate_ocr_dpi(dpi)
+    _validate_ocr_tiles(tile_size, overlap)
+    resolved_confidence = _validate_ocr_confidence(min_confidence)
+    resolved_rotation = _validate_ocr_rotation(rotation)
+    if engine is not None and not isinstance(engine, OcrEngine):
+        msg = f"engine must be an OcrEngine or None: {engine!r}"
+        raise TypeError(msg)
+    bounds = _active_ocr_bounds(page, clip)
+    doc_core = page.document._core()  # noqa: SLF001
+
+    def run(budget: _core._OperationBudget) -> list[OcrWord]:
+        image_boxes, coverage_text, dedup_text = _hybrid_page_analysis(page, bounds)
+        if not image_boxes:
+            return []
+        regions = _core.plan_hybrid_ocr_regions(
+            doc_core,
+            image_boxes,
+            coverage_text,
+            (bounds.x0, bounds.y0, bounds.x1, bounds.y1),
+        )
+        if not regions:
+            return []
+        resolved_engine = _default_ocr_engine() if engine is None else engine
+        return resolved_engine._recognize_page_regions(  # noqa: SLF001
+            page,
+            regions=regions,
+            dedup_text=dedup_text,
+            dpi=resolved_dpi,
+            tile_size=tile_size,
+            overlap=overlap,
+            min_confidence=resolved_confidence,
+            rotation=resolved_rotation,
+            budget=budget,
+        )
+
+    return _core.read_operation(doc_core, run)
 
 
 @functools.cache

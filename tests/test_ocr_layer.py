@@ -67,7 +67,7 @@ def test_ocr_layer_is_extractable_and_searchable() -> None:
 
     page.apply_ocr(
         words=ocr_words([(50, 50, 150, 70, "Hello"), (50, 80, 170, 100, "日本語テキスト")]),
-        skip_existing=False,
+        mode="full",
     )
 
     text = page.text()
@@ -86,7 +86,7 @@ def test_ocr_layer_is_extractable_and_searchable() -> None:
 def test_ocr_layer_is_invisible() -> None:
     page = _blank_page_doc().pages[0]
 
-    page.apply_ocr(words=ocr_words([(50, 50, 150, 70, "Invisible")]), skip_existing=False)
+    page.apply_ocr(words=ocr_words([(50, 50, 150, 70, "Invisible")]), mode="full")
 
     samples = bytes(page.pixmap(background=(255, 255, 255), alpha=True))
     assert all(samples[i] == 255 for i in range(0, len(samples), 4))
@@ -95,7 +95,7 @@ def test_ocr_layer_is_invisible() -> None:
 def test_ocr_layer_embeds_no_font_program() -> None:
     page = _blank_page_doc().pages[0]
 
-    page.apply_ocr(words=ocr_words([(50, 50, 200, 75, "帳票スキャン")]), skip_existing=False)
+    page.apply_ocr(words=ocr_words([(50, 50, 200, 75, "帳票スキャン")]), mode="full")
 
     font = page.obj["Resources"]["Font"]["PyroOCR"]
     assert (font["Subtype"], font["Encoding"]) == ("Type0", "Identity-H")
@@ -107,7 +107,7 @@ def test_ocr_layer_embeds_no_font_program() -> None:
 def test_ocr_layer_survives_save_roundtrip() -> None:
     document = _blank_page_doc()
     document.pages[0].apply_ocr(
-        words=ocr_words([(50, 50, 150, 70, "Persistent"), (50, 80, 150, 100, "残存")]), skip_existing=False
+        words=ocr_words([(50, 50, 150, 70, "Persistent"), (50, 80, 150, 100, "残存")]), mode="full"
     )
 
     reopened = pyropdf.open(document.to_bytes())
@@ -123,7 +123,7 @@ def test_ocr_layer_round_trips_extracted_words() -> None:
     assert words
     document = _blank_page_doc()
 
-    document.pages[0].apply_ocr(words=ocr_words([(*word.bbox, word.text) for word in words]), skip_existing=False)
+    document.pages[0].apply_ocr(words=ocr_words([(*word.bbox, word.text) for word in words]), mode="full")
 
     assert {word.text for word in document.pages[0].words()} == {"Roundtrip", "works"}
 
@@ -133,7 +133,7 @@ def test_ocr_layer_on_rotated_page_uses_display_coordinates() -> None:
     page = document.pages.new((100, 200))
     page.rotation = 90  # The display is 200 by 100.
 
-    page.apply_ocr(words=ocr_words([(120, 30, 180, 50, "回転ページ")]), skip_existing=False)
+    page.apply_ocr(words=ocr_words([(120, 30, 180, 50, "回転ページ")]), mode="full")
 
     hits = page.search("回転ページ")
     assert hits
@@ -144,7 +144,7 @@ def test_ocr_layer_on_rotated_page_uses_display_coordinates() -> None:
 def test_ocr_layer_orients_sideways_baselines(rotation: pyropdf.OcrRotation) -> None:
     page = _blank_page_doc().pages[0]
 
-    page.apply_ocr(words=ocr_words([(80, 30, 105, 150, "Vertical box")]), rotation=rotation, skip_existing=False)
+    page.apply_ocr(words=ocr_words([(80, 30, 105, 150, "Vertical box")]), rotation=rotation, mode="full")
 
     hits = page.search("Vertical box")
     assert hits
@@ -176,7 +176,7 @@ def test_ocr_layer_orders_rotated_columns_logically(rotation: pyropdf.OcrRotatio
     # Geometry, not the order of the words, decides the reading order.
     scrambled = physical_words[4:] + physical_words[:4]
 
-    page.apply_ocr(words=ocr_words([(*box, text) for box, text in scrambled]), rotation=rotation, skip_existing=False)
+    page.apply_ocr(words=ocr_words([(*box, text) for box, text in scrambled]), rotation=rotation, mode="full")
 
     assert page.text().splitlines() == [text for _, text in logical_words]
     for box, text in physical_words:
@@ -189,8 +189,8 @@ def test_ocr_layer_without_words_changes_nothing() -> None:
     document = _blank_page_doc()
     before = document.to_bytes()
 
-    assert document.pages[0].apply_ocr(words=[], skip_existing=False) == []
-    assert document.pages[0].apply_ocr(words=ocr_words([(10, 10, 50, 20, "")]), skip_existing=False) == []
+    assert document.pages[0].apply_ocr(words=[], mode="full") == []
+    assert document.pages[0].apply_ocr(words=ocr_words([(10, 10, 50, 20, "")]), mode="full") == []
     assert document.to_bytes() == before
 
 
@@ -198,7 +198,7 @@ def test_ocr_layer_returns_the_words_with_text() -> None:
     document = _blank_page_doc()
     words = list(ocr_words([(10, 10, 50, 20, ""), (50, 50, 150, 70, "Kept")]))
 
-    assert document.pages[0].apply_ocr(words=words, skip_existing=False) == words[1:]
+    assert document.pages[0].apply_ocr(words=words, mode="full") == words[1:]
 
 
 def test_ocr_layer_validates_words_and_options() -> None:
@@ -215,8 +215,10 @@ def test_ocr_layer_validates_words_and_options() -> None:
         page.apply_ocr(words=[pyropdf.OcrWord(text="Text", bbox=(10, 10, 50), confidence=1.0)])  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError, match="word text"):
         page.apply_ocr(words=[pyropdf.OcrWord(text=b"Text", bbox=(10, 10, 50, 20), confidence=1.0)])  # ty: ignore[invalid-argument-type]
-    with pytest.raises(TypeError, match="skip_existing"):
-        page.apply_ocr(words=[word], skip_existing=1)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="mode"):
+        page.apply_ocr(words=[word], mode=1)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="mode"):
+        page.apply_ocr(words=[word], mode="unknown")  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError, match="clip"):
         page.apply_ocr(words=[word], clip=(10, 10, 5, 20))
     for options in ({"engine": object()}, {"dpi": 150}, {"tile_size": 1024}, {"overlap": 64}, {"min_confidence": 0.9}):
@@ -249,7 +251,7 @@ def test_ocr_layer_bounds_generator_words_before_full_materialization() -> None:
             yield (10, 10, 50, 20, f"word-{index}")
 
     with pytest.raises(ValueError, match="4096 entries with text"):
-        document.pages[0].apply_ocr(words=ocr_words(words()), skip_existing=False)
+        document.pages[0].apply_ocr(words=ocr_words(words()), mode="full")
     assert consumed == 4097
     assert document.to_bytes() == before
 
@@ -259,7 +261,7 @@ def test_ocr_layer_bounds_utf8_text_before_mutation() -> None:
     before = document.to_bytes()
 
     with pytest.raises(ValueError, match="1048576 UTF-8 bytes"):
-        document.pages[0].apply_ocr(words=ocr_words([(10, 10, 50, 20, "é" * (512 * 1024 + 1))]), skip_existing=False)
+        document.pages[0].apply_ocr(words=ocr_words([(10, 10, 50, 20, "é" * (512 * 1024 + 1))]), mode="full")
     assert document.to_bytes() == before
 
 
@@ -270,7 +272,7 @@ def test_ocr_layer_bounds_distinct_cids_before_mutation() -> None:
     text = text[:65_535]
 
     with pytest.raises(pyropdf.LimitError) as caught:
-        document.pages[0].apply_ocr(words=ocr_words([(10, 10, 290, 20, text)]), skip_existing=False)
+        document.pages[0].apply_ocr(words=ocr_words([(10, 10, 290, 20, text)]), mode="full")
     assert caught.value.code == "ocr_layer_character_count"
     assert document.to_bytes() == before
 
@@ -279,7 +281,7 @@ def test_one_undo_removes_the_layer() -> None:
     document = _blank_page_doc()
     before = document.to_bytes()
 
-    document.pages[0].apply_ocr(words=ocr_words([(50, 50, 150, 70, "Undone")]), skip_existing=False)
+    document.pages[0].apply_ocr(words=ocr_words([(50, 50, 150, 70, "Undone")]), mode="full")
     assert "Undone" in document.pages[0].text()
     document.history.undo()
 
@@ -293,7 +295,7 @@ def test_a_deleted_page_refuses_a_layer() -> None:
     del document.pages[0]
 
     with pytest.raises(pyropdf.StalePageError):
-        page.apply_ocr(words=ocr_words([(50, 50, 150, 70, "Stale")]), skip_existing=False)
+        page.apply_ocr(words=ocr_words([(50, 50, 150, 70, "Stale")]), mode="full")
 
 
 @pytest.mark.parametrize("indirect_contents", [False, True])
@@ -314,7 +316,7 @@ def test_the_layer_keeps_existing_content_and_its_graphics_state(*, indirect_con
     page = document.pages[0]
     before_pixels = bytes(page.pixmap())
 
-    page.apply_ocr(words=ocr_words([(300, 300, 400, 320, "Layer")]), skip_existing=False)
+    page.apply_ocr(words=ocr_words([(300, 300, 400, 320, "Layer")]), mode="full")
 
     assert bytes(page.pixmap()) == before_pixels
     # The inherited font keeps its name, and the layer's font takes a free one.
@@ -331,7 +333,7 @@ def test_the_layer_keeps_existing_content_and_its_graphics_state(*, indirect_con
 def test_condensed_layer_preserves_a_nonzero_text_matrix() -> None:
     page = _blank_page_doc().pages[0]
     text = "A" * 1000
-    page.apply_ocr(words=ocr_words([(50, 50, 50.5, 70, text)]), skip_existing=False)
+    page.apply_ocr(words=ocr_words([(50, 50, 50.5, 70, text)]), mode="full")
     assert page.text().strip() == text
     span = page.layout().blocks[0].lines[0].spans[0]
     assert span.bbox.width == pytest.approx(0.5, abs=0.01)
@@ -344,7 +346,7 @@ def test_concurrent_layers_keep_each_committed_edit() -> None:
     def insert(index: int) -> None:
         words = list(ocr_words([(10, 10 + index * 30, 290, 30 + index * 30, chr(65 + index) * 20000)]))
         barrier.wait(timeout=10)
-        page.apply_ocr(words=words, skip_existing=False)
+        page.apply_ocr(words=words, mode="full")
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(insert, range(4)))
@@ -356,8 +358,8 @@ def test_layers_inside_a_transaction_read_its_prior_writes() -> None:
     before = document.to_bytes()
     page = document.pages[0]
     with document.transaction("OCR batch"):
-        page.apply_ocr(words=ocr_words([(10, 10, 100, 30, "First")]), skip_existing=False)
-        page.apply_ocr(words=ocr_words([(10, 50, 100, 70, "Second")]), skip_existing=False)
+        page.apply_ocr(words=ocr_words([(10, 10, 100, 30, "First")]), mode="full")
+        page.apply_ocr(words=ocr_words([(10, 50, 100, 70, "Second")]), mode="full")
         assert page.text().splitlines() == ["First", "Second"]
     document.history.undo()
     assert document.to_bytes() == before
@@ -369,11 +371,39 @@ def test_ocr_layer_rejects_extreme_aspect_and_overflowing_user_unit_boxes() -> N
     before = document.to_bytes()
 
     with pytest.raises(pyropdf.OcrError, match="non-finite"):
-        page.apply_ocr(words=ocr_words([(0.0, 0.0, 1e38, 1e-320, "a")]), skip_existing=False)
+        page.apply_ocr(words=ocr_words([(0.0, 0.0, 1e38, 1e-320, "a")]), mode="full")
     assert document.to_bytes() == before
 
     page.obj["UserUnit"] = 1e-311
     with_tiny_unit = document.to_bytes()
     with pytest.raises(pyropdf.OcrError, match="non-finite"):
-        page.apply_ocr(words=ocr_words([(10.0, 10.0, 50.0, 20.0, "Hello")]), skip_existing=False)
+        page.apply_ocr(words=ocr_words([(10.0, 10.0, 50.0, 20.0, "Hello")]), mode="full")
     assert document.to_bytes() == with_tiny_unit
+
+
+def test_ocr_layer_hybrid_words_deduplicates_native_text_and_is_idempotent() -> None:
+    document = _hello_doc()
+    page = document.pages[0]
+    (native_word,) = page.words()
+    duplicate = pyropdf.OcrWord(text="Hello", bbox=native_word.bbox, confidence=0.99)
+    scanned = pyropdf.OcrWord(text="Scanned", bbox=pyropdf.Rect(300, 300, 400, 320), confidence=0.95)
+
+    inserted = page.apply_ocr(words=[duplicate, scanned], mode="hybrid")
+
+    assert inserted == [scanned]
+    assert [word.text for word in page.words()] == ["Hello", "Scanned"]
+
+    # Repeating hybrid apply_ocr with the same words is idempotent against the prior OCR layer.
+    after_first = document.to_bytes()
+    assert page.apply_ocr(words=[duplicate, scanned], mode="hybrid") == []
+    assert document.to_bytes() == after_first
+
+
+def test_ocr_layer_hybrid_words_ignores_invisible_non_ocr_text() -> None:
+    stream = "BT /F1 12 Tf 3 Tr 50 140 Td (Placeholder) Tj ET"
+    document = pyropdf.open(build_text_pdf(stream))
+    page = document.pages[0]
+    word = pyropdf.OcrWord(text="Recognized", bbox=pyropdf.Rect(45, 640, 160, 660), confidence=0.95)
+
+    assert page.apply_ocr(words=[word], mode="hybrid") == [word]
+    assert "Recognized" in page.text()
