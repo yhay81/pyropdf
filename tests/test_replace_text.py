@@ -312,7 +312,7 @@ def test_replace_text_copies_nested_forms() -> None:
     assert "/Inner Do" in doc.objects[6].read().decode()
 
 
-def test_replace_text_refuses_a_composite_font() -> None:
+def test_replace_text_edits_a_predefined_cmap_composite_font_and_refuses_unencodable() -> None:
     text = "".join(f"\\{byte:03o}" for byte in "日本語".encode("cp932"))
     doc = pyropdf.open(
         build_raw_pdf(
@@ -337,12 +337,15 @@ def test_replace_text_refuses_a_composite_font() -> None:
     assert "日本語" in page.text()
     before = doc.to_bytes()
 
-    with pytest.raises(ValueError, match="composite font"):
-        page.replace_text("本", "x")
+    # Characters outside 90ms-RKSJ-H refuse atomically without fallback.
+    with pytest.raises(ValueError, match="no code for"):
+        page.replace_text("本", "🦀")
     assert doc.to_bytes() == before
-    # Text that only simple fonts draw is still replaced.
+
+    # Characters inside 90ms-RKSJ-H (both 1-byte ASCII and 2-byte Shift-JIS) succeed.
+    assert page.replace_text("本", "x") == 1
+    assert "日x語" in page.text()
     assert page.replace_text("Hello", "Howdy") == 1
-    assert "日本語" in page.text()
     assert "Howdy" in page.text()
 
 

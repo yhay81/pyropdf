@@ -518,6 +518,47 @@ def type3_draw(
     shadings: _Shadings | None = None,
     painted: list[tuple[str, float, int]] = ...,
 ) -> list[tuple[int, int, str | None]]: ...
+def type0_inspect(
+    document: _Document,
+    root: tuple[int, int] | None,
+    path: Sequence[int | bytes],
+    /,
+    *,
+    operation: _OperationBudget | None = None,
+) -> tuple[bool, bool, str | None] | None: ...
+def type0_decode(
+    document: _Document,
+    root: tuple[int, int] | None,
+    path: Sequence[int | bytes],
+    strings: Sequence[bytes],
+    /,
+    *,
+    operation: _OperationBudget | None = None,
+) -> tuple[bool, list[list[tuple[bytes, str, float]]]] | None: ...
+def type0_encode(
+    document: _Document,
+    root: tuple[int, int] | None,
+    path: Sequence[int | bytes],
+    text: str,
+    /,
+    *,
+    operation: _OperationBudget | None = None,
+) -> (
+    tuple[
+        bool,
+        list[tuple[bool, bytes, str, float, float]],
+        list[tuple[int, float, tuple[float, float, float] | None, str]],
+    ]
+    | None
+): ...
+def type3_inspect(
+    document: _Document,
+    root: tuple[int, int] | None,
+    path: Sequence[int | bytes],
+    /,
+    *,
+    operation: _OperationBudget | None = None,
+) -> tuple[list[float], list[bool], list[tuple[int, str]]] | None: ...
 def subset_font_program(
     data: bytes,
     format: str,  # noqa: A002

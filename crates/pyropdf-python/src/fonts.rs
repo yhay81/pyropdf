@@ -11,6 +11,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyFloat, PyList, PyString, PyTuple};
 use pyropdf_engine::extract::{self, Error};
 use pyropdf_engine::fonts::bitmap::{self, Bitmaps, DRAWING_PPI};
+use pyropdf_engine::fonts::codec::{self, EncodedSegment, Type0Codec};
 use pyropdf_engine::fonts::colour::{Painted, Refused, refused_canvas_glyph};
 use pyropdf_engine::fonts::colr::{Colr, ColrError, Verdict};
 use pyropdf_engine::fonts::embed::{Face, FaceError, GlyphId, Measure};
@@ -30,6 +31,7 @@ use pyropdf_store::value::{Name, Reference, Value};
 use crate::document::_Document;
 use crate::errors::{LimitError, PdfError, limit_error, store_error};
 use crate::history::OperationBudget;
+use crate::objects::{Root, Step, resolve_dict};
 use crate::pixmap::bridge_error;
 use crate::shadings::CanvasShadings;
 
@@ -1796,6 +1798,200 @@ impl Deref for TextBudget {
     fn deref(&self) -> &Budget {
         &self.budget
     }
+}
+
+fn codec_budget(
+    document: &_Document,
+    operation: Option<&OperationBudget>,
+) -> PyResult<SharedBudget> {
+    if let Some(op) = operation {
+        op.ensure_active()?;
+        Ok(op.operation.clone())
+    } else {
+        Ok(document.budget())
+    }
+}
+
+/// Returns `(vertical, can_extend, base_font)` for a Type 0 font handle
+/// `(root, path)`, or `None` when it is not a valid Type 0 composite font.
+#[pyfunction(signature = (document, root, path, *, operation=None))]
+pub fn type0_inspect(
+    py: Python<'_>,
+    document: &_Document,
+    root: Root,
+    path: Vec<Step>,
+    operation: Option<PyRef<'_, OperationBudget>>,
+) -> PyResult<Option<(bool, bool, Option<String>)>> {
+    crate::errors::boundary(|| {
+        let budget = codec_budget(document, operation.as_deref())?;
+        let version = document.reading()?;
+        let Some(dict) = resolve_dict(&version, root, &path, &budget)? else {
+            return Ok(None);
+        };
+        let summary = py
+            .detach(|| Type0Codec::load(&version, &dict, &budget))
+            .map_err(|error| store_error(&error))?
+            .map(|codec| codec.summary());
+        Ok(summary.map(|s| (s.vertical, s.can_extend, s.base_font)))
+    })?
+}
+
+/// Decodes a batch of raw PDF strings through a Type 0 font handle, returning
+/// `(vertical, decoded_per_string)` where each decoded item is
+/// `(code_bytes, unicode_text, advance)`.
+type DecodedType0Batch<'py> = (bool, Vec<Vec<(Bound<'py, PyBytes>, String, f64)>>);
+
+#[pyfunction(signature = (document, root, path, strings, *, operation=None))]
+pub fn type0_decode<'py>(
+    py: Python<'py>,
+    document: &_Document,
+    root: Root,
+    path: Vec<Step>,
+    strings: Vec<Vec<u8>>,
+    operation: Option<PyRef<'_, OperationBudget>>,
+) -> PyResult<Option<DecodedType0Batch<'py>>> {
+    crate::errors::boundary(|| {
+        let budget = codec_budget(document, operation.as_deref())?;
+        let version = document.reading()?;
+        let Some(dict) = resolve_dict(&version, root, &path, &budget)? else {
+            return Ok(None);
+        };
+        let result = py
+            .detach(|| {
+                let Some(codec) = Type0Codec::load(&version, &dict, &budget)? else {
+                    return Ok(None);
+                };
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "slice views of the caller-provided strings vector"
+                )]
+                let refs: Vec<&[u8]> = strings.iter().map(Vec::as_slice).collect();
+                let decoded = codec.decode_strings(&refs, &budget)?;
+                Ok(Some((codec.is_vertical(), decoded)))
+            })
+            .map_err(|error| store_error(&error))?;
+        let Some((vertical, batches)) = result else {
+            return Ok(None);
+        };
+        let mut out_batches: BudgetVec<'_, Vec<(Bound<'py, PyBytes>, String, f64)>> =
+            BudgetVec::new(&budget);
+        for batch in batches {
+            let mut out_items: BudgetVec<'_, (Bound<'py, PyBytes>, String, f64)> =
+                BudgetVec::new(&budget);
+            for item in batch {
+                out_items
+                    .try_push((PyBytes::new(py, &item.bytes), item.text, item.advance))
+                    .map_err(|error| limit_error(&error))?;
+            }
+            out_batches
+                .try_push(out_items.into_vec())
+                .map_err(|error| limit_error(&error))?;
+        }
+        Ok(Some((vertical, out_batches.into_vec())))
+    })?
+}
+
+/// Encodes `text` through a Type 0 font handle, returning
+/// `(vertical, segments, extensions)` where each segment is
+/// `(is_glyph, code_bytes, text, advance, kern_after)` and each extension is
+/// `(gid, width, v_metrics, text)`.
+type GlyphExtensionTuple = (u16, f64, Option<(f64, f64, f64)>, String);
+
+type EncodedType0Plan<'py> = (
+    bool,
+    Vec<(bool, Bound<'py, PyBytes>, String, f64, f64)>,
+    Vec<GlyphExtensionTuple>,
+);
+
+#[pyfunction(signature = (document, root, path, text, *, operation=None))]
+pub fn type0_encode<'py>(
+    py: Python<'py>,
+    document: &_Document,
+    root: Root,
+    path: Vec<Step>,
+    text: &str,
+    operation: Option<PyRef<'_, OperationBudget>>,
+) -> PyResult<Option<EncodedType0Plan<'py>>> {
+    crate::errors::boundary(|| {
+        let budget = codec_budget(document, operation.as_deref())?;
+        let version = document.reading()?;
+        let Some(dict) = resolve_dict(&version, root, &path, &budget)? else {
+            return Ok(None);
+        };
+        let result = py
+            .detach(|| {
+                let Some(codec) = Type0Codec::load(&version, &dict, &budget)? else {
+                    return Ok(None);
+                };
+                let plan = codec.encode_text(text, &budget)?;
+                Ok(Some(plan))
+            })
+            .map_err(|error| store_error(&error))?;
+        let Some(plan) = result else {
+            return Ok(None);
+        };
+        let mut segs: BudgetVec<'_, (bool, Bound<'py, PyBytes>, String, f64, f64)> =
+            BudgetVec::new(&budget);
+        for seg in plan.segments {
+            match seg {
+                EncodedSegment::Glyph {
+                    bytes,
+                    text,
+                    advance,
+                    kern_after,
+                } => {
+                    segs.try_push((true, PyBytes::new(py, &bytes), text, advance, kern_after))
+                        .map_err(|error| limit_error(&error))?;
+                }
+                EncodedSegment::Missing { text } => {
+                    segs.try_push((false, PyBytes::new(py, b""), text, 0.0, 0.0))
+                        .map_err(|error| limit_error(&error))?;
+                }
+            }
+        }
+        let mut exts: BudgetVec<'_, GlyphExtensionTuple> = BudgetVec::new(&budget);
+        for ext in plan.extensions {
+            exts.try_push((ext.gid, ext.width, ext.v_metrics, ext.text))
+                .map_err(|error| limit_error(&error))?;
+        }
+        Ok(Some((plan.vertical, segs.into_vec(), exts.into_vec())))
+    })?
+}
+
+/// Inspects a Type 3 font handle, returning `(advances, drawable, to_unicode)`
+/// for byte codes `0..256`.
+type InspectedType3 = (Vec<f64>, Vec<bool>, Vec<(u8, String)>);
+
+#[pyfunction(signature = (document, root, path, *, operation=None))]
+pub fn type3_inspect(
+    py: Python<'_>,
+    document: &_Document,
+    root: Root,
+    path: Vec<Step>,
+    operation: Option<PyRef<'_, OperationBudget>>,
+) -> PyResult<Option<InspectedType3>> {
+    crate::errors::boundary(|| {
+        let budget = codec_budget(document, operation.as_deref())?;
+        let version = document.reading()?;
+        let Some(dict) = resolve_dict(&version, root, &path, &budget)? else {
+            return Ok(None);
+        };
+        let result = py
+            .detach(|| codec::inspect_type3(&version, &dict, &budget))
+            .map_err(|error| store_error(&error))?;
+        let Some(info) = result else {
+            return Ok(None);
+        };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fixed 256-entry Type 3 metric tables"
+        )]
+        Ok(Some((
+            info.advances.to_vec(),
+            info.drawable.to_vec(),
+            info.to_unicode,
+        )))
+    })?
 }
 
 impl Drop for TextBudget {

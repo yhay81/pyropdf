@@ -48,7 +48,7 @@ const MAX_VALUE_DEPTH: usize = 32;
 
 /// The object that a handle starts from: an indirect object, by number and
 /// generation, or the trailer.
-type Root = Option<(u32, u16)>;
+pub(crate) type Root = Option<(u32, u16)>;
 
 /// A step of a handle's path: a dictionary key or an array index.
 pub(crate) enum Step {
@@ -221,6 +221,28 @@ fn child_mut<'v>(value: &'v mut Value, step: &Step) -> Option<&'v mut Value> {
         (Value::Stream(stream), Step::Key(key)) => stream.dict_mut().get_mut(key),
         (Value::Array(array), Step::Index(index)) => array.get_mut(*index),
         _ => None,
+    }
+}
+
+/// Resolves a Python dictionary handle `(root, path)` in `version` to a cloned
+/// [`Dict`], returning `None` if it does not resolve to a dictionary.
+pub(crate) fn resolve_dict(
+    version: &Version,
+    root: Root,
+    path: &[Step],
+    budget: &Budget,
+) -> PyResult<Option<Dict>> {
+    let value = root_value(version, root, path, budget)?;
+    let target = walk(&value, root, path)?;
+    match target {
+        Value::Dict(dict) => Ok(Some(dict.clone())),
+        Value::Reference(reference) => Ok(resolve(version, *reference, budget)?.and_then(
+            |(_, resolved)| match &*resolved {
+                Value::Dict(dict) => Some(dict.clone()),
+                _ => None,
+            },
+        )),
+        _ => Ok(None),
     }
 }
 

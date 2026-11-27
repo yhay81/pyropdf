@@ -14,7 +14,7 @@ from pyropdf._canvas import Canvas
 from pyropdf._clean import clean_page
 from pyropdf._content import Content, Paths, _content_from_core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
-from pyropdf._fonts import FontInfo, page_fonts
+from pyropdf._fonts import Font, FontInfo, page_fonts
 from pyropdf._geometry import Quad, Rect
 from pyropdf._images import PageImage, page_images
 from pyropdf._interchange import (
@@ -701,31 +701,43 @@ class Page:
         """
         return Canvas(self, underlay=underlay)
 
-    def replace_text(self, old: str, new: str, *, count: int | None = None) -> int:
-        """Replace ``old`` with ``new`` where simple fonts draw it, and return the number of replacements.
+    def replace_text(
+        self,
+        old: str,
+        new: str,
+        *,
+        count: int | None = None,
+        fallback: Font | None = None,
+    ) -> int:
+        """Replace ``old`` with ``new`` in page and Form XObject text, and return the number of replacements.
 
-        ``old`` is found in the strings of each text-showing operation of
-        the page's content and of the Form XObjects that it draws, decoded
-        through the operation's Type 1, TrueType, or Type 3 font as text
-        extraction reads it, across the strings and kerning of a ``TJ``
-        array but not across operations. ``new`` is encoded through the
-        same font, and a kerning number after it makes up the difference in
-        advance, so the text that follows keeps its position. A Form
-        XObject's text is read with the text state where it is drawn.
-        ``count`` bounds the replacements, in drawing order; ``None``
-        replaces all.
+        ``old`` is found in the text-showing operations (``Tj``, ``TJ``, ``'``,
+        and ``"``) and ``/ActualText`` marked-content spans of the page's
+        content and of the Form XObjects that it draws, across Type 1,
+        TrueType, Type 3, and composite (Type 0 / CID) fonts in both
+        horizontal (``WMode = 0``) and vertical (``WMode = 1``) writing modes,
+        including ``Identity-H``, ``Identity-V``, predefined CMaps, and custom
+        embedded CMap streams. ``new`` is encoded through the same font, and a
+        compensating ``TJ`` adjustment along the active writing axis preserves
+        the display position of following text. Enclosing structure tags such
+        as ``/MCID`` are preserved, and matching ``/ActualText`` properties are
+        updated to stay consistent with extracted text. ``count`` bounds the
+        replacements in drawing order; ``None`` replaces all.
 
-        A character of ``new`` that the font has no code for, and ``old``
-        drawn in a composite (Type 0) font of the page's content, raise
-        :class:`ValueError` and leave the document unchanged. Form XObjects
-        nested deeper than 16, or more than 4,096 drawings of them, raise
-        :class:`LimitError`. A font subset is not extended, so a code
-        without a glyph in the program shows as the program's missing glyph.
-        A drawing of a Form XObject that changes draws a copy, so the other
-        drawings, pages, and Forms that share it keep the old text. The
-        replacement is one transaction.
+        If ``new`` contains a character that an un-subsetted embedded Type 0
+        font holds in its font program, its ``/W``, ``/W2``, and ``/ToUnicode``
+        entries are extended automatically. If a glyph is missing from a
+        subsetted font, a Type 3 font's ``/CharProcs``, or the font's encoding,
+        passing ``fallback`` (:class:`Font`) draws the missing text in the
+        fallback font (embedding it once and adding it to the scope's font
+        resources) while keeping following text aligned; when ``fallback`` is
+        ``None``, :class:`ValueError` is raised and the document is left
+        unchanged. Form XObjects nested deeper than 16, or more than 4,096
+        drawings of them, raise :class:`LimitError`. A drawing of a Form
+        XObject that changes draws a copy, so other drawings, pages, and Forms
+        that share it keep the old text. The replacement is one transaction.
         """
-        return replace_text(self, old, new, count=count)
+        return replace_text(self, old, new, count=count, fallback=fallback)
 
     def recolor(self, target: RecolorTarget) -> RecolorReport:
         """Convert the colors that the page paints to ``target``: ``"gray"``, ``"rgb"``, or ``"cmyk"``.
