@@ -816,6 +816,10 @@ Document.save(
     renumber: bool = False,
     dedupe: bool = False,
     linearize: bool = False,
+    clean: bool = False,
+    ascii: bool = False,
+    pretty: bool = False,
+    stream_filter: Literal['keep', 'none', 'FlateDecode', 'ASCII85Decode', 'ASCIIHexDecode', 'RunLengthDecode'] | Mapping[int, Literal['keep', 'none', 'FlateDecode', 'ASCII85Decode', 'ASCIIHexDecode', 'RunLengthDecode'] | None] | None = None,
 )
 ```
 
@@ -907,9 +911,33 @@ the pages, the trailer, and the catalog reach, numbered anew, so it
 prunes and renumbers whatever `prune` and `renumber` say, and
 moves the attributes that pages inherit from the page tree into the
 pages. It writes a cross-reference table, so it refuses
-`cross_reference="stream"` or `"hybrid"`, `object_streams`, and `dedupe`,
-and an incremental save refuses it. `is_linearized` reads
-whether an opened file is linearized.
+`cross_reference="stream"` or `"hybrid"`, `object_streams`,
+`dedupe`, `ascii`, and `pretty`, and an incremental save
+refuses it. `is_linearized` reads whether an opened file is
+linearized.
+
+`clean=True` normalizes every page content stream and annotation
+appearance stream and prunes unnamed resources in a private save
+view before writing; the caller's live document and its undo history
+remain unchanged even if cleaning or saving fails.
+
+`ascii=True` emits only printable ASCII bytes: it omits the binary
+header comment, escapes binary strings and names, defaults
+`cross_reference=None` to a classic table, and wraps any stream
+containing non-ASCII bytes in `ASCII85Decode` while preserving
+image filters losslessly. It is refused for encrypted and linearized
+saves. `pretty=True` formats dictionaries and nested or long arrays
+with deterministic multi-line indentation for inspection and diffing.
+
+`stream_filter` selects an explicit filter for eligible non-image
+streams: `"keep"`, `"none"` (uncompressed), `"FlateDecode"`
+(at `compression_level`), `"ASCII85Decode"`, `"ASCIIHexDecode"`,
+or `"RunLengthDecode"`, or a mapping `{xref: filter}` (where
+`None` means `"none"`) to override individual objects while
+leaving unlisted streams untouched. It excludes `compress=True`
+and `decompress=True`. `clean`, `ascii`, `pretty`, and
+`stream_filter` require a full save and are refused when
+`incremental=True`.
 
 ### `to_bytes`
 
@@ -929,6 +957,10 @@ Document.to_bytes(
     renumber: bool = False,
     dedupe: bool = False,
     linearize: bool = False,
+    clean: bool = False,
+    ascii: bool = False,
+    pretty: bool = False,
+    stream_filter: Literal['keep', 'none', 'FlateDecode', 'ASCII85Decode', 'ASCIIHexDecode', 'RunLengthDecode'] | Mapping[int, Literal['keep', 'none', 'FlateDecode', 'ASCII85Decode', 'ASCIIHexDecode', 'RunLengthDecode'] | None] | None = None,
 ) -> bytes
 ```
 

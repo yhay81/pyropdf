@@ -3,11 +3,12 @@
 //! objects, on request (DESIGN.md section 4.4).
 
 use super::merge::Plan;
-use super::{Result, Row, Streams, raw, recode};
+use super::recode::StreamPolicy;
+use super::{Format, Result, Row, raw, recode};
+use crate::Error as StoreError;
 use crate::budget::{Budget, BudgetVec};
 use crate::value::{Bytes, Reference, Value};
 use crate::version::{Slot, Version};
-use crate::{Error as StoreError, write};
 
 /// The references of a save that renumbers or merges objects: the
 /// version's numbers and generations of the objects that it writes, in
@@ -214,18 +215,19 @@ impl<'a> Renumbering<'a> {
     }
 
     /// Returns the plain bytes of the object `reference` of `version` with
-    /// its references renumbered, and its stream recoded as `streams` asks
-    /// where [`full_with`](super::full_with) would recode it. The value is
-    /// read from the object's bytes, so that it grows through `budget`.
+    /// its references renumbered, its stream recoded as `policy` and `format`
+    /// ask, and formatted per `format`. The value is read from the object's
+    /// bytes, so that it grows through `budget`.
     pub(super) fn bytes(
         &self,
         version: &Version,
         reference: Reference,
-        streams: Streams,
+        policy: &StreamPolicy<'_>,
+        format: Format,
         clear: bool,
         budget: &Budget,
     ) -> Result<Bytes> {
-        self.read(version, reference, streams, clear, budget)
+        self.read(version, reference, policy, format, clear, budget)
             .map_err(|error| {
                 error.context(format!(
                     "saving object {} {}",
@@ -239,7 +241,8 @@ impl<'a> Renumbering<'a> {
         &self,
         version: &Version,
         reference: Reference,
-        streams: Streams,
+        policy: &StreamPolicy<'_>,
+        format: Format,
         clear: bool,
         budget: &Budget,
     ) -> Result<Bytes> {
@@ -262,15 +265,23 @@ impl<'a> Renumbering<'a> {
         }
         self.rewrite(&mut value, budget)?;
         let mut plain = BudgetVec::new(budget);
-        write::value(&mut plain, &value)?;
-        if streams != Streams::Keep
-            && let Some(recoded) =
-                recode::recoded(&value, streams, &|r, b| self.lookup(version, r, b), budget)?
+        format.write_value(&mut plain, &value)?;
+        if (!policy.is_keep(reference.number()) || format.ascii)
+            && let Some(recoded) = recode::apply(
+                &value,
+                reference.number(),
+                policy,
+                format.ascii,
+                &|r, b| self.lookup(version, r, b),
+                budget,
+            )?
         {
             let mut bytes = BudgetVec::new(budget);
-            write::value(&mut bytes, &recoded)?;
-            // A compressed stream replaces the data only where it is shorter.
-            if streams == Streams::Decompress || bytes.len() < plain.len() {
+            format.write_value(&mut bytes, &recoded)?;
+            // `compress=True` replaces the data only where it is shorter
+            // (unless `ascii=True` required ASCII85 wrapping).
+            let must_keep = !policy.requires_shorter(reference.number()) || format.ascii;
+            if must_keep || bytes.len() < plain.len() {
                 plain = bytes;
             }
         }

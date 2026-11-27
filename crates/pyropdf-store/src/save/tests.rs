@@ -707,9 +707,9 @@ fn saves_renew_the_second_identifier_of_edits_and_incremental_saves_refuse_rewri
             full_with_plain
         };
         let mut bytes = Vec::new();
-        save(&edited, &mut bytes, &Budget::default(), options).unwrap();
+        save(&edited, &mut bytes, &Budget::default(), options.clone()).unwrap();
         let mut again = Vec::new();
-        save(&edited, &mut again, &Budget::default(), options).unwrap();
+        save(&edited, &mut again, &Budget::default(), options.clone()).unwrap();
         assert_eq!(bytes, again);
         let Some(Value::Array(id)) = open(bytes).current().trailer().get("ID").cloned() else {
             panic!("no /ID");
@@ -719,7 +719,7 @@ fn saves_renew_the_second_identifier_of_edits_and_incremental_saves_refuse_rewri
         assert_ne!(id.get(1), read.get(1));
         // An unedited save writes /ID as read.
         let mut bytes = Vec::new();
-        save(&unedited, &mut bytes, &Budget::default(), options).unwrap();
+        save(&unedited, &mut bytes, &Budget::default(), options.clone()).unwrap();
         let reread = open(bytes).current().trailer().get("ID").cloned();
         assert_eq!(reread, Some(Value::Array(read.clone())));
     }
@@ -801,19 +801,19 @@ fn corpus_files_round_trip_through_cross_reference_streams_and_object_streams() 
         eprintln!("{}", path.display());
         let doc = open(fs::read(&path).unwrap());
         let version = doc.current();
-        for options in [stream, packed, table] {
-            let (bytes, reread) = reopened(&version, options, None);
+        for options in [&stream, &packed, &table] {
+            let (bytes, reread) = reopened(&version, options.clone(), None);
             let section = &reread.index().revisions()[0].sections()[0];
             assert_eq!(
                 section.kind() == SectionKind::Stream,
-                options != table,
+                options != &table,
                 "{options:?}"
             );
-            if options != table {
+            if options != &table {
                 assert!(bytes[5..8] >= b"1.5"[..]);
             }
             let members = assert_members(&version, &reread);
-            assert_eq!(members > 0, options == packed, "{options:?}");
+            assert_eq!(members > 0, options == &packed, "{options:?}");
             assert_reread(&version, &reread);
         }
     }
@@ -832,7 +832,7 @@ fn object_streams_hold_no_stream_later_generation_or_encryption_dictionary() {
         object_streams: true,
         ..Options::default()
     };
-    let (_, reread) = reopened(&version, packed, None);
+    let (_, reread) = reopened(&version, packed.clone(), None);
     // The catalog and the page tree; object 3 has generation 7.
     assert_eq!(assert_members(&version, &reread), 2);
     assert_eq!(version.generation(3), Some(7));
@@ -861,7 +861,7 @@ fn an_incremental_save_keeps_the_cross_reference_form_and_refuses_another() {
         cross_reference: CrossReference::Stream,
         ..Options::default()
     };
-    let (bytes, _) = reopened(&memory().current(), stream, None);
+    let (bytes, _) = reopened(&memory().current(), stream.clone(), None);
     let doc = open(bytes.clone());
     let version = edited(&doc, 5);
     let mut update = Vec::new();
@@ -1007,19 +1007,20 @@ fn corpus_files_renumber_to_consecutive_numbers() {
         let doc = open(fs::read(&path).unwrap());
         let version = doc.current();
         for options in [
-            renumber,
+            renumber.clone(),
             Options {
                 object_streams: true,
-                ..renumber
+                ..renumber.clone()
             },
             Options {
                 cross_reference: CrossReference::Table,
                 streams: Streams::Decompress,
-                ..renumber
+                ..renumber.clone()
             },
         ] {
+            let decompressed = options.streams == Streams::Decompress;
             let (_, reread) = reopened(&version, options, None);
-            assert_renumbered(&version, &reread, options.streams == Streams::Decompress);
+            assert_renumbered(&version, &reread, decompressed);
         }
     }
 }
@@ -1052,7 +1053,7 @@ fn a_renumbering_save_nulls_dangling_references_and_reencrypts() {
         renumber: true,
         ..Options::default()
     };
-    let (_, reread) = reopened(&version, renumber, None);
+    let (_, reread) = reopened(&version, renumber.clone(), None);
     assert_renumbered(&version, &reread, false);
     let catalog = catalog_of(&reread);
     assert_eq!(catalog.get("Missing"), Some(&Value::Null));
@@ -1063,7 +1064,7 @@ fn a_renumbering_save_nulls_dangling_references_and_reencrypts() {
         &memory().current(),
         Options {
             prune: true,
-            ..renumber
+            ..renumber.clone()
         },
         None,
     );
@@ -1078,10 +1079,10 @@ fn a_renumbering_save_nulls_dangling_references_and_reencrypts() {
     let doc = Document::new(Arc::new(base), None);
     let version = doc.current();
     for options in [
-        renumber,
+        renumber.clone(),
         Options {
             object_streams: true,
-            ..renumber
+            ..renumber.clone()
         },
     ] {
         let (_, reread) = reopened(&version, options, Some(b"userpw"));
@@ -1204,17 +1205,17 @@ fn corpus_files_deduplicate_to_equivalent_objects() {
     for path in corpus() {
         let version = open(fs::read(&path).unwrap()).current();
         for options in [
-            dedupe,
+            dedupe.clone(),
             Options {
                 renumber: true,
-                ..dedupe
+                ..dedupe.clone()
             },
             Options {
                 object_streams: true,
-                ..dedupe
+                ..dedupe.clone()
             },
         ] {
-            let (bytes, reread) = reopened(&version, options, None);
+            let (bytes, reread) = reopened(&version, options.clone(), None);
             assert_equivalent(&version, &reread);
             // Merging writes no more than the same save without it.
             let (kept, unmerged) = reopened(
@@ -1272,7 +1273,7 @@ fn a_deduplicating_save_keeps_cycles_identities_and_its_version() {
         dedupe: true,
         ..Options::default()
     };
-    let (_, reread) = reopened(&version, dedupe, None);
+    let (_, reread) = reopened(&version, dedupe.clone(), None);
     assert_equivalent(&version, &reread);
     let items = |reread: &FileBase| match catalog_of(reread).get("Items") {
         Some(Value::Array(items)) => items.iter().cloned().collect::<Vec<_>>(),
@@ -1287,7 +1288,7 @@ fn a_deduplicating_save_keeps_cycles_identities_and_its_version() {
         &version,
         Options {
             renumber: true,
-            ..dedupe
+            ..dedupe.clone()
         },
         None,
     );
@@ -1342,7 +1343,7 @@ fn full_save_refuses_live_object_zero_before_output() {
                 &mut output,
                 &Budget::default(),
                 encryption,
-                options,
+                options.clone(),
             );
             assert!(
                 matches!(result, Err(Error::Store(ref error))
@@ -1655,4 +1656,446 @@ fn stale_generation_references_stay_null_and_cyclic_kids_linearize_cleanly() {
             .unwrap()
             .is_some()
     );
+}
+
+fn insert_value(base: &mut crate::version::MemoryBase, number: u32, value: &Value) {
+    let budget = Budget::default();
+    let mut bytes = BudgetVec::new(&budget);
+    write::value(&mut bytes, value).unwrap();
+    base.insert(Reference::new(number, 0), Bytes::new(bytes.into_vec()));
+}
+
+#[test]
+fn ascii_and_pretty_save_emit_printable_ascii_and_round_trip() {
+    let budget = Budget::default();
+    let flate_payload = b"BT /F1 12 Tf (Hello world) Tj ET\n".repeat(16);
+    let flate_bytes = recode::deflate(&flate_payload, 6, usize::MAX, &budget)
+        .unwrap()
+        .unwrap();
+    let jpeg_bytes = vec![
+        0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F', 0xFF, 0xD9,
+    ];
+    let binary_text = b"plain \x00\xFF binary".to_vec();
+
+    let mut base = crate::version::MemoryBase::new(
+        [
+            (Name::from("Root"), Value::Reference(Reference::new(1, 0))),
+            (
+                Name::from("ID"),
+                Value::Array(Array::from(vec![
+                    Value::String(PdfString::literal(b"\x01\xFE\x80\x99".as_slice())),
+                    Value::String(PdfString::literal(b"\x02\xFD\x81\x9A".as_slice())),
+                ])),
+            ),
+            (Name::from("Size"), Value::Integer(7)),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    insert_value(
+        &mut base,
+        1,
+        &Value::Dict(
+            [
+                (Name::from("Type"), Value::Name(Name::from("Catalog"))),
+                (Name::from("Pages"), Value::Reference(Reference::new(2, 0))),
+                (
+                    Name::from("Note"),
+                    Value::String(PdfString::literal(binary_text.as_slice())),
+                ),
+                (
+                    Name::from("Refs"),
+                    Value::Array(Array::from(vec![
+                        Value::Reference(Reference::new(4, 0)),
+                        Value::Reference(Reference::new(5, 0)),
+                        Value::Reference(Reference::new(6, 0)),
+                    ])),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    insert_value(
+        &mut base,
+        2,
+        &Value::Dict(
+            [
+                (Name::from("Type"), Value::Name(Name::from("Pages"))),
+                (
+                    Name::from("Kids"),
+                    Value::Array(Array::from(vec![Value::Reference(Reference::new(3, 0))])),
+                ),
+                (Name::from("Count"), Value::Integer(1)),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    insert_value(
+        &mut base,
+        3,
+        &Value::Dict(
+            [
+                (Name::from("Type"), Value::Name(Name::from("Page"))),
+                (Name::from("Parent"), Value::Reference(Reference::new(2, 0))),
+                (
+                    Name::from("MediaBox"),
+                    Value::Array(Array::from(vec![
+                        Value::Integer(0),
+                        Value::Integer(0),
+                        Value::Integer(612),
+                        Value::Integer(792),
+                    ])),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    // Flate-compressed content stream.
+    insert_value(
+        &mut base,
+        4,
+        &Value::Stream(Box::new(Stream::new(
+            [(Name::from("Filter"), Value::Name(Name::from("FlateDecode")))]
+                .into_iter()
+                .collect(),
+            Bytes::new(flate_bytes),
+        ))),
+    );
+    // JPEG image stream with DecodeParms dict.
+    insert_value(
+        &mut base,
+        5,
+        &Value::Stream(Box::new(Stream::new(
+            [
+                (Name::from("Type"), Value::Name(Name::from("XObject"))),
+                (Name::from("Subtype"), Value::Name(Name::from("Image"))),
+                (Name::from("Filter"), Value::Name(Name::from("DCTDecode"))),
+                (
+                    Name::from("DecodeParms"),
+                    Value::Dict(
+                        [(Name::from("ColorTransform"), Value::Integer(1))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            Bytes::new(jpeg_bytes.clone()),
+        ))),
+    );
+    // Already-ASCII unfiltered stream.
+    insert_value(
+        &mut base,
+        6,
+        &Value::Stream(Box::new(Stream::new(
+            Dict::new(),
+            Bytes::from(&b"BT /F1 12 Tf (ASCII) Tj ET\n"[..]),
+        ))),
+    );
+
+    let doc = Document::new(Arc::new(base), None);
+    let version = doc.current();
+
+    for options in [
+        Options {
+            ascii: true,
+            ..Options::default()
+        },
+        Options {
+            ascii: true,
+            pretty: true,
+            ..Options::default()
+        },
+        Options {
+            ascii: true,
+            pretty: true,
+            cross_reference: CrossReference::Stream,
+            object_streams: true,
+            ..Options::default()
+        },
+        Options {
+            ascii: true,
+            pretty: true,
+            cross_reference: CrossReference::Hybrid,
+            ..Options::default()
+        },
+    ] {
+        let mut first = Vec::new();
+        full_with(&version, &mut first, &budget, None, options.clone()).unwrap();
+        let mut second = Vec::new();
+        full_with(&version, &mut second, &budget, None, options.clone()).unwrap();
+        assert_eq!(first, second, "output must be deterministic");
+        assert!(
+            recode::is_printable_ascii(&first),
+            "non-ASCII byte in output for {options:?}"
+        );
+        if options.pretty {
+            assert!(first.windows(10).any(|w| w == b"\n  /Type /"));
+        }
+
+        let reopened = open(first);
+        let rv = reopened.current();
+        let cat_obj = rv.get(1, &budget).unwrap().unwrap();
+        let Value::Dict(cat) = cat_obj.value().as_ref() else {
+            panic!("catalog");
+        };
+        assert_eq!(
+            cat.get("Note"),
+            Some(&Value::String(PdfString::literal(binary_text.as_slice())))
+        );
+        let s4_obj = rv.get(4, &budget).unwrap().unwrap();
+        let Value::Stream(s4) = s4_obj.value().as_ref() else {
+            panic!("stream 4");
+        };
+        assert_eq!(s4.decoded(&budget).unwrap(), flate_payload);
+        // Image stream kept DCTDecode underneath ASCII85Decode with null prepended to DecodeParms.
+        let s5_obj = rv.get(5, &budget).unwrap().unwrap();
+        let Value::Stream(s5) = s5_obj.value().as_ref() else {
+            panic!("stream 5");
+        };
+        assert_eq!(
+            s5.dict().get("Filter"),
+            Some(&Value::Array(Array::from(vec![
+                Value::Name(Name::from("ASCII85Decode")),
+                Value::Name(Name::from("DCTDecode")),
+            ])))
+        );
+        assert!(matches!(
+            s5.dict().get("DecodeParms"),
+            Some(Value::Array(parms)) if parms.len() == 2 && parms.get(0) == Some(&Value::Null)
+        ));
+        // Unwrapping only the outer ASCII85Decode recovers exact original JPEG bytes.
+        let unwrapped = Stream::new(
+            [(
+                Name::from("Filter"),
+                Value::Name(Name::from("ASCII85Decode")),
+            )]
+            .into_iter()
+            .collect(),
+            s5.data().clone(),
+        )
+        .decoded(&budget)
+        .unwrap();
+        assert_eq!(unwrapped, jpeg_bytes);
+        // Plain ASCII stream stayed unfiltered.
+        let s6_obj = rv.get(6, &budget).unwrap().unwrap();
+        let Value::Stream(s6) = s6_obj.value().as_ref() else {
+            panic!("stream 6");
+        };
+        assert_eq!(s6.dict().get("Filter"), None);
+        assert_eq!(s6.data().as_slice(), b"BT /F1 12 Tf (ASCII) Tj ET\n");
+    }
+}
+
+#[test]
+fn stream_filters_reencode_and_respect_overrides_and_refusals() {
+    let budget = Budget::default();
+    let payload_a = b"AAAAAAABBBBBBBCCCCCCC 0123456789\n".repeat(4);
+    let payload_b = b"Second stream payload \x00\x01\x02\xFF".to_vec();
+    let jpeg = vec![0xFF, 0xD8, 0xFF, 0xDB, 0x00, 0x04, 0x11, 0x22, 0xFF, 0xD9];
+
+    let mut base = crate::version::MemoryBase::new(
+        [
+            (Name::from("Root"), Value::Reference(Reference::new(1, 0))),
+            (Name::from("Size"), Value::Integer(5)),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    insert_value(
+        &mut base,
+        1,
+        &Value::Dict(
+            [
+                (Name::from("Type"), Value::Name(Name::from("Catalog"))),
+                (
+                    Name::from("Streams"),
+                    Value::Array(Array::from(vec![
+                        Value::Reference(Reference::new(2, 0)),
+                        Value::Reference(Reference::new(3, 0)),
+                        Value::Reference(Reference::new(4, 0)),
+                    ])),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    insert_value(
+        &mut base,
+        2,
+        &Value::Stream(Box::new(Stream::new(
+            Dict::new(),
+            Bytes::new(payload_a.clone()),
+        ))),
+    );
+    insert_value(
+        &mut base,
+        3,
+        &Value::Stream(Box::new(Stream::new(
+            Dict::new(),
+            Bytes::new(payload_b.clone()),
+        ))),
+    );
+    insert_value(
+        &mut base,
+        4,
+        &Value::Stream(Box::new(Stream::new(
+            [
+                (Name::from("Subtype"), Value::Name(Name::from("Image"))),
+                (Name::from("Filter"), Value::Name(Name::from("DCTDecode"))),
+            ]
+            .into_iter()
+            .collect(),
+            Bytes::new(jpeg.clone()),
+        ))),
+    );
+    let doc = Document::new(Arc::new(base), None);
+    let version = doc.current();
+
+    for (filter, expected_name) in [
+        (StreamFilter::Flate(9), Some("FlateDecode")),
+        (StreamFilter::Ascii85, Some("ASCII85Decode")),
+        (StreamFilter::AsciiHex, Some("ASCIIHexDecode")),
+        (StreamFilter::RunLength, Some("RunLengthDecode")),
+        (StreamFilter::None, None),
+    ] {
+        let mut out = Vec::new();
+        full_with(
+            &version,
+            &mut out,
+            &budget,
+            None,
+            Options {
+                streams: Streams::Filter(filter),
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        let reopened = open(out);
+        let rv = reopened.current();
+        for (xref, expected) in [(2, &payload_a), (3, &payload_b)] {
+            let obj = rv.get(xref, &budget).unwrap().unwrap();
+            let Value::Stream(stream) = obj.value().as_ref() else {
+                panic!("stream {xref}");
+            };
+            assert_eq!(
+                stream.dict().get("Filter"),
+                expected_name.map(|n| Value::Name(Name::from(n))).as_ref()
+            );
+            assert_eq!(stream.decoded(&budget).unwrap(), *expected);
+        }
+        // Image stream stays untouched.
+        let img_obj = rv.get(4, &budget).unwrap().unwrap();
+        let Value::Stream(img) = img_obj.value().as_ref() else {
+            panic!("image stream");
+        };
+        assert_eq!(
+            img.dict().get("Filter"),
+            Some(&Value::Name(Name::from("DCTDecode")))
+        );
+        assert_eq!(img.data().as_slice(), jpeg.as_slice());
+    }
+
+    // Per-stream overrides affect only named streams.
+    let mut out = Vec::new();
+    full_with(
+        &version,
+        &mut out,
+        &budget,
+        None,
+        Options {
+            stream_filters: vec![(2, StreamFilter::AsciiHex), (3, StreamFilter::RunLength)],
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    let reopened = open(out);
+    let rv = reopened.current();
+    let s2_obj = rv.get(2, &budget).unwrap().unwrap();
+    let Value::Stream(s2) = s2_obj.value().as_ref() else {
+        panic!("s2");
+    };
+    let s3_obj = rv.get(3, &budget).unwrap().unwrap();
+    let Value::Stream(s3) = s3_obj.value().as_ref() else {
+        panic!("s3");
+    };
+    assert_eq!(
+        s2.dict().get("Filter"),
+        Some(&Value::Name(Name::from("ASCIIHexDecode")))
+    );
+    assert_eq!(
+        s3.dict().get("Filter"),
+        Some(&Value::Name(Name::from("RunLengthDecode")))
+    );
+    assert_eq!(s2.decoded(&budget).unwrap(), payload_a);
+    assert_eq!(s3.decoded(&budget).unwrap(), payload_b);
+
+    // Refusals: incremental, ascii+encryption, ascii/pretty+linearize.
+    let file_doc = open(saved(&version, false));
+    let file_version = file_doc.current();
+    for bad in [
+        Options {
+            ascii: true,
+            ..Options::default()
+        },
+        Options {
+            pretty: true,
+            ..Options::default()
+        },
+        Options {
+            streams: Streams::Filter(StreamFilter::Ascii85),
+            ..Options::default()
+        },
+        Options {
+            stream_filters: vec![(2, StreamFilter::AsciiHex)],
+            ..Options::default()
+        },
+    ] {
+        assert!(matches!(
+            incremental_with(&file_version, &mut Vec::new(), &budget, bad),
+            Err(Error::Refused(Refusal::FullSaveOption))
+        ));
+    }
+    let encryption = Encryption::Password(crate::security::PasswordEncryption {
+        user: b"user".to_vec(),
+        owner: b"owner".to_vec(),
+        permissions: u32::MAX,
+        method: crate::security::Method::Aes256,
+        random: [3; 64],
+    });
+    assert!(matches!(
+        full_with(
+            &file_version,
+            &mut Vec::new(),
+            &budget,
+            Some(&encryption),
+            Options {
+                ascii: true,
+                ..Options::default()
+            },
+        ),
+        Err(Error::Refused(Refusal::AsciiEncryption))
+    ));
+    for bad in [
+        Options {
+            linearize: true,
+            ascii: true,
+            ..Options::default()
+        },
+        Options {
+            linearize: true,
+            pretty: true,
+            ..Options::default()
+        },
+    ] {
+        assert!(matches!(
+            full_with(&file_version, &mut Vec::new(), &budget, None, bad),
+            Err(Error::Refused(Refusal::Linearization))
+        ));
+    }
 }

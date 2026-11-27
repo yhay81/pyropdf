@@ -57,7 +57,8 @@ with pyropdf.open("input.pdf") as doc:
   edits wrote, after the original bytes, which stay as they were. Digital
   signatures over the original bytes stay valid.
 - **Full** (the default) rewrites the whole file. `compress`,
-  `object_streams`, `prune`, `renumber`, and `dedupe` shape the result.
+  `object_streams`, `prune`, `renumber`, `dedupe`, `clean`, `ascii`,
+  `pretty`, and `stream_filter` shape the result.
 
 ```python
 import pyropdf
@@ -66,7 +67,27 @@ with pyropdf.open("input.pdf") as doc:
     doc.pages[0].rotation = 90
     doc.save("appended.pdf", incremental=True)
     doc.save("rewritten.pdf", compress=True, object_streams=True, prune=True)
+    doc.save("inspect.pdf", clean=True, ascii=True, pretty=True)
+    doc.save("filtered.pdf", stream_filter="ASCII85Decode")
 ```
+
+- `clean=True` normalizes every page content stream and annotation appearance
+  stream and prunes unnamed resources in a private save view without mutating
+  the live document or its undo history.
+- `ascii=True` emits only printable ASCII bytes (omitting the binary header
+  comment, escaping strings and names, defaulting `cross_reference` to a
+  classic table, and wrapping binary streams in `ASCII85Decode`), and
+  `pretty=True` formats dictionaries and arrays with deterministic multi-line
+  indentation for inspection and diffing.
+- `stream_filter` selects an explicit filter for eligible non-image streams
+  (`"keep"`, `"none"`, `"FlateDecode"`, `"ASCII85Decode"`,
+  `"ASCIIHexDecode"`, or `"RunLengthDecode"`), or accepts a mapping
+  `{xref: filter}` to override individual streams while leaving unlisted
+  streams untouched.
+
+`clean`, `ascii`, `pretty`, and `stream_filter` require a full save and are
+refused when `incremental=True`. `ascii=True` is refused for encrypted or
+linearized saves.
 
 A document saved without edits reproduces its input: an incremental save
 byte for byte, a full save in every value.

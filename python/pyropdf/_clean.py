@@ -29,6 +29,7 @@ from pyropdf._xobjects import _parse_stream_operations
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from pyropdf._document import Document
     from pyropdf._page import Page
 
 #: The operators that name a resource: its category and the operand that
@@ -86,6 +87,78 @@ def clean_page(page: Page, *, annotations: bool) -> None:
             if resources is not None:
                 page.obj["Resources"] = resources
             for stream, stream_bytes, stream_resources in cleaned:
+                budget.poll()
+                stream.write(stream_bytes)
+                if stream_resources is not None:
+                    stream["Resources"] = stream_resources
+
+    _core.read_operation(document._core(), run)  # noqa: SLF001
+
+
+def _collect_document_edits(
+    document: Document,
+    *,
+    annotations: bool,
+    budget: _core._OperationBudget,
+) -> tuple[
+    list[tuple[Page, Operations | None, dict[str, Any] | None]],
+    list[tuple[Stream, bytes, dict[str, Any] | None]],
+]:
+    """Read and clean every page and unique annotation appearance stream before writing."""
+    page_edits: list[tuple[Page, Operations | None, dict[str, Any] | None]] = []
+    seen_appearances: set[int] = set()
+    appearance_edits: list[tuple[Stream, bytes, dict[str, Any] | None]] = []
+    for page in list(document.pages):
+        budget.poll()
+        operations, used = clean(page.operations, budget)
+        resources = _pruned(_resources(page, budget), used, budget)
+        update_contents = operations if ("Contents" in page.obj or operations) else None
+        if update_contents is not None or resources is not None:
+            page_edits.append((page, update_contents, resources))
+        if annotations:
+            _collect_page_appearances(page, seen_appearances, appearance_edits, budget)
+    return page_edits, appearance_edits
+
+
+def _collect_page_appearances(
+    page: Page,
+    seen: set[int],
+    out: list[tuple[Stream, bytes, dict[str, Any] | None]],
+    budget: _core._OperationBudget,
+) -> None:
+    """Append cleaned appearance stream edits for ``page``, skipping streams already seen."""
+    for stream in _appearances(page, budget):
+        budget.poll()
+        xref = stream.xref
+        if xref is not None:
+            if xref in seen:
+                continue
+            seen.add(xref)
+        stream_operations, stream_used = clean(_parse_stream_operations(stream), budget)
+        out.append(
+            (
+                stream,
+                _bytes(stream_operations, budget),
+                _pruned(stream.get("Resources"), stream_used, budget),
+            )
+        )
+
+
+def clean_document(document: Document, *, annotations: bool = True) -> None:
+    """Clean every page's content and annotation appearance streams in one transaction."""
+
+    def run(budget: _core._OperationBudget) -> None:
+        page_edits, appearance_edits = _collect_document_edits(document, annotations=annotations, budget=budget)
+        if not page_edits and not appearance_edits:
+            return
+        with document.transaction("clean contents"):
+            for page, update_contents, resources in page_edits:
+                budget.poll()
+                if update_contents is not None:
+                    page.operations = update_contents
+                if resources is not None:
+                    page.obj["Resources"] = resources
+            for stream, stream_bytes, stream_resources in appearance_edits:
                 budget.poll()
                 stream.write(stream_bytes)
                 if stream_resources is not None:

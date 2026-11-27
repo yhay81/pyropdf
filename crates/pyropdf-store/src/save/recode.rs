@@ -1,12 +1,35 @@
-//! Recoding: the stream data that a save compresses or decompresses on
-//! request (DESIGN.md section 4.4).
+//! Recoding: the stream data that a save compresses, decompresses, re-encodes
+//! with an explicit filter, or wraps for ASCII-safe output on request
+//! (DESIGN.md section 4.4).
+
+use std::borrow::Cow;
 
 use flate2::{Compress, Compression, FlushCompress, Status};
 
 use super::Result;
-use crate::budget::{Budget, BudgetVec};
-use crate::value::{Array, Bytes, Name, Stream, Value};
+use crate::budget::{Budget, BudgetVec, LimitCode};
+use crate::value::{Array, Bytes, Dict, Name, Stream, Value, encode};
 use crate::{ErrorKind, LimitExceeded};
+
+/// Column width used to wrap ASCII85 and ASCIIHex streams produced by a save.
+pub(super) const ASCII_WRAP_COLUMNS: usize = 80;
+
+/// An explicit filter choice for eligible non-image streams on a full save.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamFilter {
+    /// Leave the stream bytes and filters untouched (F3).
+    Keep,
+    /// Decode leading general-purpose filters, preserving any image filters.
+    None,
+    /// Re-encode with `FlateDecode` at the zlib level `0..=9`.
+    Flate(u8),
+    /// Re-encode with `ASCII85Decode`.
+    Ascii85,
+    /// Re-encode with `ASCIIHexDecode`.
+    AsciiHex,
+    /// Re-encode with `RunLengthDecode`.
+    RunLength,
+}
 
 /// How a save writes the data of streams.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -25,6 +48,75 @@ pub enum Streams {
     /// so does one whose data decodes to nothing, as hayro-syntax decodes
     /// data that is not of its filter.
     Decompress,
+    /// Re-encodes eligible non-image streams with an explicit filter.
+    Filter(StreamFilter),
+}
+
+/// Resolved document-wide stream policy and budgeted per-object overrides.
+pub(super) struct StreamPolicy<'a> {
+    default: Streams,
+    /// Sorted by object number, deduplicated keeping the last entry per number.
+    overrides: BudgetVec<'a, (u32, StreamFilter)>,
+}
+
+impl<'a> StreamPolicy<'a> {
+    pub(super) fn new(
+        default: Streams,
+        raw_overrides: &[(u32, StreamFilter)],
+        budget: &'a Budget,
+    ) -> Result<Self> {
+        let mut overrides = BudgetVec::new(budget);
+        if !raw_overrides.is_empty() {
+            overrides.try_reserve(raw_overrides.len())?;
+            for &entry in raw_overrides {
+                budget.poll()?;
+                overrides.try_push(entry)?;
+            }
+            // Keep the last entry when duplicate object numbers are supplied.
+            overrides.as_mut_slice().sort_by_key(|&(number, _)| number);
+            let slice = overrides.as_mut_slice();
+            let mut write = 0;
+            for read in 0..slice.len() {
+                if read + 1 < slice.len() && slice[read].0 == slice[read + 1].0 {
+                    continue;
+                }
+                slice[write] = slice[read];
+                write += 1;
+            }
+            overrides.truncate(write);
+        }
+        Ok(Self { default, overrides })
+    }
+
+    pub(super) fn override_for(&self, number: u32) -> Option<StreamFilter> {
+        self.overrides
+            .as_slice()
+            .binary_search_by_key(&number, |&(object, _)| object)
+            .ok()
+            .map(|at| self.overrides[at].1)
+    }
+
+    /// Returns whether object `number` has no stream recoding when `ascii` is false.
+    pub(super) fn is_keep(&self, number: u32) -> bool {
+        match self.override_for(number) {
+            Some(StreamFilter::Keep) => true,
+            Some(_) => false,
+            None => matches!(
+                self.default,
+                Streams::Keep | Streams::Filter(StreamFilter::Keep)
+            ),
+        }
+    }
+
+    /// Returns whether recoding object `number` keeps the original bytes unless
+    /// the recoded object is strictly shorter (true only for `Streams::Compress`).
+    pub(super) fn requires_shorter(&self, number: u32) -> bool {
+        self.override_for(number).is_none() && matches!(self.default, Streams::Compress(_))
+    }
+
+    pub(super) const fn default_streams(&self) -> Streams {
+        self.default
+    }
 }
 
 /// The filters that hayro-syntax decodes without its image decoders.
@@ -36,11 +128,33 @@ const DECODED: [&[u8]; 5] = [
     b"RunLengthDecode",
 ];
 
+/// Returns whether every byte of `bytes` is printable ASCII or ASCII line/tab whitespace.
+pub(super) fn is_printable_ascii(bytes: &[u8]) -> bool {
+    bytes
+        .iter()
+        .all(|&byte| matches!(byte, b'\t' | b'\n' | b'\r' | 0x20..=0x7E))
+}
+
 /// Returns `value` with its stream recoded as `streams` asks, or `None`
 /// when it leaves `value` as it is.
+#[cfg_attr(not(test), expect(dead_code, reason = "used by save unit tests"))]
 pub(super) fn recoded(
     value: &Value,
     streams: Streams,
+    lookup: &crate::value::FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<Option<Value>> {
+    let policy = StreamPolicy::new(streams, &[], budget)?;
+    apply(value, 0, &policy, false, lookup, budget)
+}
+
+/// Returns `value` with its stream recoded according to `policy` and `ascii`,
+/// or `None` when it leaves `value` as it is.
+pub(super) fn apply(
+    value: &Value,
+    number: u32,
+    policy: &StreamPolicy<'_>,
+    ascii: bool,
     lookup: &crate::value::FilterLookup<'_>,
     budget: &Budget,
 ) -> Result<Option<Value>> {
@@ -51,19 +165,232 @@ pub(super) fn recoded(
     if stream.dict().get("F").is_some() {
         return Ok(None);
     }
-    let recoded = match streams {
-        Streams::Keep => None,
-        Streams::Compress(level) => compressed(stream, level, budget)?,
-        Streams::Decompress => {
-            match crate::value::filters::resolved(stream.dict(), lookup, budget)? {
-                std::borrow::Cow::Borrowed(_) => decompressed(stream, budget)?,
-                std::borrow::Cow::Owned(dict) => {
-                    decompressed(&Stream::new(dict, stream.data().clone()), budget)?
+    let stage1 = if let Some(filter) = policy.override_for(number) {
+        apply_filter(stream, filter, true, lookup, budget)?
+    } else {
+        match policy.default {
+            Streams::Keep => None,
+            Streams::Compress(level) => compressed(stream, level, budget)?,
+            Streams::Decompress => decompress_resolved(stream, lookup, budget)?,
+            Streams::Filter(filter) => apply_filter(stream, filter, false, lookup, budget)?,
+        }
+    };
+    let current = stage1.as_ref().unwrap_or(stream);
+    if ascii && !is_printable_ascii(current.data()) {
+        let wrapped = wrap_ascii85(current, lookup, budget)?;
+        return Ok(Some(Value::Stream(Box::new(wrapped))));
+    }
+    Ok(stage1.map(|stream| Value::Stream(Box::new(stream))))
+}
+
+fn decompress_resolved(
+    stream: &Stream,
+    lookup: &crate::value::FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<Option<Stream>> {
+    match crate::value::filters::resolved(stream.dict(), lookup, budget)? {
+        Cow::Borrowed(_) => decompressed(stream, budget),
+        Cow::Owned(dict) => decompressed(&Stream::new(dict, stream.data().clone()), budget),
+    }
+}
+
+fn apply_filter(
+    stream: &Stream,
+    filter: StreamFilter,
+    explicit_target: bool,
+    lookup: &crate::value::FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<Option<Stream>> {
+    match filter {
+        StreamFilter::Keep => Ok(None),
+        StreamFilter::None => decompress_resolved(stream, lookup, budget),
+        StreamFilter::Flate(_)
+        | StreamFilter::Ascii85
+        | StreamFilter::AsciiHex
+        | StreamFilter::RunLength => {
+            reencode_resolved(stream, filter, explicit_target, lookup, budget)
+        }
+    }
+}
+
+fn is_decoded_name(value: &Value) -> bool {
+    matches!(value, Value::Name(name) if DECODED.contains(&name.as_bytes()))
+}
+
+fn reencode_resolved(
+    stream: &Stream,
+    filter: StreamFilter,
+    explicit_target: bool,
+    lookup: &crate::value::FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<Option<Stream>> {
+    let resolved = crate::value::filters::resolved(stream.dict(), lookup, budget)?;
+    let dict = resolved.as_ref();
+    if !explicit_target {
+        let is_image =
+            matches!(dict.get("Subtype"), Some(Value::Name(name)) if name.as_bytes() == b"Image");
+        let is_metadata =
+            matches!(dict.get("Type"), Some(Value::Name(name)) if name.as_bytes() == b"Metadata");
+        if is_image || is_metadata {
+            return Ok(None);
+        }
+    }
+    let filters: &[Value] = match dict.get("Filter") {
+        None => &[],
+        Some(Value::Array(array)) => array.as_slice(),
+        Some(single) => std::slice::from_ref(single),
+    };
+    if !filters.iter().all(is_decoded_name) {
+        // Leave image codecs (DCT/JPX/JBIG2/CCITT), Crypt, or unknown filters untouched.
+        return Ok(None);
+    }
+    if filters.is_empty() && dict.get("DecodeParms").is_some() && !explicit_target {
+        return Ok(None);
+    }
+    let raw: Cow<'_, [u8]> = if filters.is_empty() {
+        Cow::Borrowed(stream.data().as_slice())
+    } else {
+        let source = match &resolved {
+            Cow::Borrowed(_) => stream.clone(),
+            Cow::Owned(resolved_dict) => Stream::new(resolved_dict.clone(), stream.data().clone()),
+        };
+        let data = match source.decoded(budget) {
+            Ok(data) => data,
+            Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        if data.is_empty() && !stream.data().is_empty() {
+            return Ok(None);
+        }
+        Cow::Owned(data)
+    };
+    let (encoded, filter_name) = match filter {
+        StreamFilter::Flate(level) => {
+            let out = deflate(&raw, level, usize::MAX, budget)?
+                .ok_or_else(|| crate::Error::malformed("could not encode Flate stream"))?;
+            (out, "FlateDecode")
+        }
+        StreamFilter::Ascii85 => (
+            encode::ascii85(&raw, Some(ASCII_WRAP_COLUMNS), budget)?,
+            "ASCII85Decode",
+        ),
+        StreamFilter::AsciiHex => (
+            encode::ascii_hex(&raw, Some(ASCII_WRAP_COLUMNS), budget)?,
+            "ASCIIHexDecode",
+        ),
+        StreamFilter::RunLength => (encode::run_length_bytes(&raw, budget)?, "RunLengthDecode"),
+        StreamFilter::Keep | StreamFilter::None => unreachable!(),
+    };
+    let mut new_dict: Dict = dict.clone();
+    new_dict.remove("DecodeParms");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the stream's dictionary replaces its single `/Filter` entry"
+    )]
+    new_dict.insert(Name::from("Filter"), Value::Name(Name::from(filter_name)));
+    Ok(Some(Stream::new(new_dict, Bytes::new(encoded))))
+}
+
+/// Wraps `stream`'s encoded bytes with an outer `ASCII85Decode` filter so every
+/// byte in the serialized stream is printable ASCII while preserving any
+/// underlying filters (including lossy image filters) losslessly.
+pub(super) fn wrap_ascii85(
+    stream: &Stream,
+    lookup: &crate::value::FilterLookup<'_>,
+    budget: &Budget,
+) -> Result<Stream> {
+    let resolved = crate::value::filters::resolved(stream.dict(), lookup, budget)?;
+    let dict = resolved.as_ref();
+    let encoded = encode::ascii85(stream.data().as_slice(), Some(ASCII_WRAP_COLUMNS), budget)?;
+    let mut new_dict = dict.clone();
+    match dict.get("Filter") {
+        None => {
+            new_dict.remove("DecodeParms");
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the stream's dictionary gains one `/Filter` entry"
+            )]
+            new_dict.insert(
+                Name::from("Filter"),
+                Value::Name(Name::from("ASCII85Decode")),
+            );
+        }
+        Some(Value::Name(existing)) => {
+            budget.check(LimitCode::StreamFilterCount, 2)?;
+            let mut filters = BudgetVec::new(budget);
+            filters.try_push(Value::Name(Name::from("ASCII85Decode")))?;
+            filters.try_push(Value::Name(existing.clone()))?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "updates the stream's `/Filter` and optional `/DecodeParms` entries"
+            )]
+            {
+                new_dict.insert(
+                    Name::from("Filter"),
+                    Value::Array(Array::from(filters.into_vec())),
+                );
+                if let Some(parms) = dict.get("DecodeParms") {
+                    if let Some(wrapped_parms) = prepend_null_parms(parms, budget)? {
+                        new_dict.insert(Name::from("DecodeParms"), wrapped_parms);
+                    } else {
+                        new_dict.remove("DecodeParms");
+                    }
                 }
             }
         }
-    };
-    Ok(recoded.map(|stream| Value::Stream(Box::new(stream))))
+        Some(Value::Array(existing)) => {
+            let new_len = existing.len().saturating_add(1);
+            budget.check(LimitCode::StreamFilterCount, new_len as u64)?;
+            let mut filters = BudgetVec::new(budget);
+            filters.try_reserve(new_len)?;
+            filters.try_push(Value::Name(Name::from("ASCII85Decode")))?;
+            filters.try_extend(existing.iter().cloned())?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "updates the stream's `/Filter` and optional `/DecodeParms` entries"
+            )]
+            {
+                new_dict.insert(
+                    Name::from("Filter"),
+                    Value::Array(Array::from(filters.into_vec())),
+                );
+                if let Some(parms) = dict.get("DecodeParms") {
+                    if let Some(wrapped_parms) = prepend_null_parms(parms, budget)? {
+                        new_dict.insert(Name::from("DecodeParms"), wrapped_parms);
+                    } else {
+                        new_dict.remove("DecodeParms");
+                    }
+                }
+            }
+        }
+        Some(_) => {
+            return Err(crate::Error::malformed(
+                "cannot wrap a stream with an invalid /Filter for ASCII output",
+            )
+            .into());
+        }
+    }
+    Ok(Stream::new(new_dict, Bytes::new(encoded)))
+}
+
+fn prepend_null_parms(parms: &Value, budget: &Budget) -> Result<Option<Value>> {
+    match parms {
+        Value::Null => Ok(None),
+        Value::Array(items) => {
+            let mut out = BudgetVec::new(budget);
+            out.try_reserve(items.len().saturating_add(1))?;
+            out.try_push(Value::Null)?;
+            out.try_extend(items.iter().cloned())?;
+            Ok(Some(Value::Array(Array::from(out.into_vec()))))
+        }
+        other => {
+            let mut out = BudgetVec::new(budget);
+            out.try_reserve(2)?;
+            out.try_push(Value::Null)?;
+            out.try_push(other.clone())?;
+            Ok(Some(Value::Array(Array::from(out.into_vec()))))
+        }
+    }
 }
 
 pub(super) fn compressed(stream: &Stream, level: u8, budget: &Budget) -> Result<Option<Stream>> {

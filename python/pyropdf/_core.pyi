@@ -77,6 +77,7 @@ class _Document:
     ) -> _Document: ...
     def is_repaired(self) -> bool: ...
     def is_linearized(self) -> bool: ...
+    def save_view(self) -> _Document: ...
     def save_path(
         self,
         path: str,
@@ -92,6 +93,11 @@ class _Document:
         dedupe: bool = False,
         linearize: bool = False,
         hybrid_reference: bool = False,
+        ascii: bool = False,  # noqa: A002
+        pretty: bool = False,
+        stream_filter: str | None = None,
+        stream_filters: list[tuple[int, str]] | None = None,
+        filter_level: int = 6,
         /,
     ) -> None: ...
     def to_bytes(
@@ -109,6 +115,11 @@ class _Document:
         dedupe: bool = False,
         linearize: bool = False,
         hybrid_reference: bool = False,
+        ascii: bool = False,  # noqa: A002
+        pretty: bool = False,
+        stream_filter: str | None = None,
+        stream_filters: list[tuple[int, str]] | None = None,
+        filter_level: int = 6,
         /,
     ) -> bytes: ...
     def _objects(self) -> list[tuple[int, int, bytes]]: ...

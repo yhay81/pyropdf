@@ -8,10 +8,12 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 import pikepdf
 import pytest
 from corpus import ASSETS, NAMES
+from PIL import Image
 from test_attachments import build_pdf, build_raw_pdf
 from test_consistency import QPDF, qpdf_findings
 
@@ -738,3 +740,378 @@ def test_full_save_refuses_live_object_zero(mode: str, tmp_path: Path) -> None:
         )
     assert path.read_bytes() == b"keep the existing destination"
     assert doc.trailer["Root"].xref == 0
+
+
+def _is_printable_ascii(data: bytes) -> bool:
+    return all(byte in (9, 10, 13) or 32 <= byte <= 126 for byte in data)
+
+
+def _dirty_content_pdf() -> bytes:
+    """Return a PDF with messy page content, unused resources, and a messy annotation appearance."""
+    doc = pyropdf.Document()
+    page = doc.pages.new(size=(300, 300))
+    f1 = doc.objects.add({"Type": Name("Font"), "Subtype": Name("Type1"), "BaseFont": Name("Helvetica")})
+    unused_font = doc.objects.add({"Type": Name("Font"), "Subtype": Name("Type1"), "BaseFont": Name("Courier")})
+    dirty_page_content = (
+        b"% comment to remove\n"
+        b"Q\n"  # unmatched Q
+        b"q Q\n"  # empty q Q pair
+        b"BT ET\n"  # empty BT ET pair
+        b"q\n"  # unclosed q
+        b"BT   /F1   12   Tf   20   200   Td   (CleanMe)   Tj   ET\n"
+    )
+    content_xref = doc.objects.add_stream(dirty_page_content, filter=None)
+    page.obj["Contents"] = doc.objects[content_xref]
+    page.obj["Resources"] = {
+        "Font": {"F1": doc.objects[f1], "FUnused": doc.objects[unused_font]},
+    }
+    ap_unused = doc.objects.add({"Type": Name("Font"), "Subtype": Name("Type1"), "BaseFont": Name("Times-Roman")})
+    ap_stream = doc.objects.add_stream(
+        b"% annot comment\nq Q\nq 1 0 0 rg 0 0 20 20 re f\n",
+        {
+            "Type": Name("XObject"),
+            "Subtype": Name("Form"),
+            "BBox": [0, 0, 20, 20],
+            "Resources": {"Font": {"FApUnused": doc.objects[ap_unused]}},
+        },
+        filter=None,
+    )
+    annot = doc.objects.add(
+        {
+            "Type": Name("Annot"),
+            "Subtype": Name("Square"),
+            "Rect": [10, 10, 30, 30],
+            "AP": {"N": doc.objects[ap_stream]},
+        }
+    )
+    page.obj["Annots"] = [doc.objects[annot]]
+    return doc.to_bytes()
+
+
+def test_clean_save_cleans_pages_and_annotations_without_mutating_live_document(tmp_path: Path) -> None:
+    doc = pyropdf.open(_dirty_content_pdf())
+    before_bytes = doc.to_bytes()
+    before_history = (doc.history.steps, doc.history.position)
+    before_objects = sorted(doc.objects)
+    before_changes = doc.changes(incremental=False)
+    before_page_raw = doc.pages[0].obj["Contents"].read()
+    before_fonts = set(doc.pages[0].obj["Resources"]["Font"].keys())
+    before_ap_raw = doc.pages[0].obj["Annots"][0]["AP"]["N"].read()
+
+    cleaned_bytes = doc.to_bytes(clean=True)
+    saved_path = tmp_path / "cleaned.pdf"
+    doc.save(saved_path, clean=True)
+
+    # Caller's live document, history, changes, and objects are completely untouched.
+    assert (doc.history.steps, doc.history.position) == before_history
+    assert sorted(doc.objects) == before_objects
+    assert doc.changes(incremental=False) == before_changes
+    assert doc.pages[0].obj["Contents"].read() == before_page_raw
+    assert set(doc.pages[0].obj["Resources"]["Font"].keys()) == before_fonts
+    assert doc.pages[0].obj["Annots"][0]["AP"]["N"].read() == before_ap_raw
+    assert doc.to_bytes() == before_bytes
+
+    for payload in (cleaned_bytes, saved_path.read_bytes()):
+        reopened = pyropdf.open(payload)
+        assert not reopened.is_repaired
+        page = reopened.pages[0]
+        assert page.text().strip() == "CleanMe"
+        content = page.obj["Contents"].read()
+        assert b"% comment" not in content
+        assert content.startswith(b"q\n")
+        assert content.endswith(b"Q")
+        assert set(page.obj["Resources"]["Font"].keys()) == {"F1"}
+        ap = page.obj["Annots"][0]["AP"]["N"]
+        ap_data = ap.read()
+        assert b"% annot comment" not in ap_data
+        assert ap_data.endswith(b"Q")
+        assert "Font" not in ap["Resources"]
+        with pikepdf.open(io.BytesIO(payload)) as pike:
+            assert len(pike.pages) == 1
+
+    # Composing clean=True with prune=True drops the unreferenced fonts from output only.
+    pruned = pyropdf.open(doc.to_bytes(clean=True, prune=True))
+    assert len(pruned.objects) < len(doc.objects)
+    assert sorted(doc.objects) == before_objects
+
+
+def test_clean_save_failure_leaves_destination_and_document_unchanged(tmp_path: Path) -> None:
+    broken = pyropdf.open(build_pdf(["Hello"]))
+    bad_stream = broken.objects.add_stream(b"BT /F1 12 Tf (Hi) Tj ET\n(unterminated", filter=None)
+    broken.pages[0].obj["Contents"] = broken.objects[bad_stream]
+    broken_history = (broken.history.steps, broken.history.position)
+    broken_objects = sorted(broken.objects)
+    target = tmp_path / "untouched.pdf"
+    target.write_bytes(b"keep me")
+    with pytest.raises(ValueError, match="hayro stops reading"):
+        broken.to_bytes(clean=True)
+    with pytest.raises(ValueError, match="hayro stops reading"):
+        broken.save(target, clean=True)
+    assert target.read_bytes() == b"keep me"
+    assert (broken.history.steps, broken.history.position) == broken_history
+    assert sorted(broken.objects) == broken_objects
+
+
+def test_clean_save_inside_transaction_sees_draft_without_mutating_it() -> None:
+    doc = pyropdf.open(_dirty_content_pdf())
+    with doc.transaction("rotate"):
+        doc.pages[0].rotation = 90
+        cleaned = doc.to_bytes(clean=True)
+        # Live draft still has its uncleaned fonts and content inside the transaction.
+        assert "FUnused" in doc.pages[0].obj["Resources"]["Font"]
+    reopened = pyropdf.open(cleaned)
+    assert reopened.pages[0].rotation == 90
+    assert set(reopened.pages[0].obj["Resources"]["Font"].keys()) == {"F1"}
+    assert doc.history.steps == ("rotate",)
+
+
+def _valid_jpeg_bytes() -> bytes:
+    """Return a minimal valid 1x1 grayscale JPEG accepted cleanly by qpdf."""
+    buf = io.BytesIO()
+    Image.new("L", (1, 1), 128).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def test_ascii_and_pretty_save_output_is_printable_ascii_deterministic_and_valid(tmp_path: Path) -> None:
+    jpeg_bytes = _valid_jpeg_bytes()
+    raw = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /SampleImage 6 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 300] >>",
+            3: "<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            4: b"<< /Length 36 >>\nstream\nBT /F1 12 Tf 20 200 Td (Hello) Tj ET\nendstream",
+            5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            6: (
+                f"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray "
+                f"/BitsPerComponent 8 /Filter /DCTDecode /DecodeParms << /ColorTransform 0 >> "
+                f"/Length {len(jpeg_bytes)} >>\nstream\n".encode("ascii")
+                + jpeg_bytes
+                + b"\nendstream"
+            ),
+        }
+    )
+    doc = pyropdf.open(raw)
+    doc.catalog["BinaryNote"] = b"raw\x00\x01\xfe\xffbytes"
+    doc.objects.add_stream(b"BT /F1 12 Tf (Readable) Tj ET\n", filter=None)
+    flated_xref = doc.objects.add_stream(b"Flate stream payload " * 10, filter="FlateDecode")
+    doc.catalog["Flated"] = doc.objects[flated_xref]
+
+    modes: tuple[tuple[bool, Literal["table", "stream", "hybrid"] | None, bool], ...] = (
+        (False, None, False),
+        (True, None, False),
+        (True, "stream", False),
+        (True, None, True),
+        (True, "hybrid", False),
+    )
+    for index, (pretty, cross_reference, object_streams) in enumerate(modes):
+        first = doc.to_bytes(
+            ascii=True,
+            pretty=pretty,
+            cross_reference=cross_reference,
+            object_streams=object_streams,
+        )
+        second = doc.to_bytes(
+            ascii=True,
+            pretty=pretty,
+            cross_reference=cross_reference,
+            object_streams=object_streams,
+        )
+        assert first == second
+        assert _is_printable_ascii(first)
+        assert b"%\xe2\xe3\xcf\xd3" not in first
+        if pretty:
+            expected_key = b"\n  /Type /ObjStm" if object_streams else b"\n  /Type /Catalog"
+            assert expected_key in first
+            assert b"trailer\n<<" in first or b"\n  /Type /XRef" in first
+
+        reopened = pyropdf.open(first)
+        assert not reopened.is_repaired
+        assert reopened.pages[0].text().strip() == "Hello"
+        assert reopened.catalog["BinaryNote"] == b"raw\x00\x01\xfe\xffbytes"
+        assert reopened.objects[flated_xref].read() == b"Flate stream payload " * 10
+        # JPEG stream retains /DCTDecode under /ASCII85Decode without lossy re-encoding.
+        assert _filters(reopened.objects[6]) == ["ASCII85Decode", "DCTDecode"]
+        with pikepdf.open(io.BytesIO(first)) as pike:
+            assert len(pike.pages) == 1
+        path = tmp_path / f"ascii_{index}.pdf"
+        path.write_bytes(first)
+        _require_qpdf()
+        assert qpdf_findings(path) == set()
+
+    # pretty=True alone formats dicts deterministically while keeping binary header.
+    pretty_only = doc.to_bytes(pretty=True)
+    assert pretty_only == doc.to_bytes(pretty=True)
+    assert b"\n  /Type /Catalog" in pretty_only
+    assert b"%\xe2\xe3\xcf\xd3" in pretty_only
+    assert pyropdf.open(pretty_only).pages[0].text().strip() == "Hello"
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_ascii_and_pretty_corpus_round_trip(name: str, tmp_path: Path) -> None:
+    source = pyropdf.open(ASSETS / name)
+    data = source.to_bytes(ascii=True, pretty=True)
+    assert _is_printable_ascii(data)
+    assert data == source.to_bytes(ascii=True, pretty=True)
+    reopened = pyropdf.open(data)
+    assert not reopened.is_repaired
+    assert _content(reopened) == _content(source)
+    with pikepdf.open(io.BytesIO(data)) as pike:
+        assert len(pike.pages) == len(source.pages)
+    path = tmp_path / "ascii_pretty.pdf"
+    path.write_bytes(data)
+    _require_qpdf()
+    assert qpdf_findings(path) - qpdf_findings(ASSETS / name) == set()
+
+
+def _stream_filter_fixture() -> tuple[pyropdf.Document, bytes, bytes, bytes, bytes, bytes, int, int, int, int]:
+    jpeg_bytes = _valid_jpeg_bytes()
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /SampleImage 6 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 300] >>",
+                3: "<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                4: b"<< /Length 42 >>\nstream\nBT /F1 12 Tf 20 200 Td (Filter test) Tj ET\nendstream",
+                5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                6: (
+                    f"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray "
+                    f"/BitsPerComponent 8 /Filter /DCTDecode /Length {len(jpeg_bytes)} >>\nstream\n".encode("ascii")
+                    + jpeg_bytes
+                    + b"\nendstream"
+                ),
+            }
+        )
+    )
+    data_a = b"AAAAAAABBBBBBBCCCCCCC Hello filter A!\n" * 8
+    data_b = bytes(range(256)) * 2
+    data_c = b"Unlisted stream stays untouched!\n"
+    xmp = b"<?xpacket begin=''?><x:xmpmeta/>" * 4
+    s_a = doc.objects.add_stream(data_a, filter=None)
+    s_b = doc.objects.add_stream(data_b, filter="FlateDecode")
+    s_c = doc.objects.add_stream(data_c, filter=None)
+    s_xmp = doc.objects.add_stream(xmp, {"Type": Name("Metadata")}, filter=None)
+    doc.catalog["Extra"] = [doc.objects[s_a], doc.objects[s_b], doc.objects[s_c], doc.objects[s_xmp]]
+    return doc, jpeg_bytes, data_a, data_b, data_c, xmp, s_a, s_b, s_c, s_xmp
+
+
+def test_stream_filter_document_wide_round_trip(tmp_path: Path) -> None:
+    doc, jpeg_bytes, data_a, data_b, data_c, xmp, s_a, s_b, s_c, s_xmp = _stream_filter_fixture()
+    choices: tuple[
+        tuple[Literal["FlateDecode", "ASCII85Decode", "ASCIIHexDecode", "RunLengthDecode", "none"], list[str]], ...
+    ] = (
+        ("FlateDecode", ["FlateDecode"]),
+        ("ASCII85Decode", ["ASCII85Decode"]),
+        ("ASCIIHexDecode", ["ASCIIHexDecode"]),
+        ("RunLengthDecode", ["RunLengthDecode"]),
+        ("none", []),
+    )
+    for choice, expected in choices:
+        saved = doc.to_bytes(stream_filter=choice, compression_level=9)
+        reopened = pyropdf.open(saved)
+        assert not reopened.is_repaired
+        assert _filters(reopened.objects[s_a]) == expected
+        assert _filters(reopened.objects[s_b]) == expected
+        assert _filters(reopened.objects[s_c]) == expected
+        # Document-wide filter selection preserves unfiltered XMP metadata and JPEG images.
+        assert _filters(reopened.objects[s_xmp]) == []
+        assert _filters(reopened.objects[6]) == ["DCTDecode"]
+        assert reopened.objects[6].read(decode=False) == jpeg_bytes
+        assert reopened.objects[s_a].read() == data_a
+        assert reopened.objects[s_b].read() == data_b
+        assert reopened.objects[s_c].read() == data_c
+        assert reopened.objects[s_xmp].read() == xmp
+        assert reopened.pages[0].text().strip() == "Filter test"
+        with pikepdf.open(io.BytesIO(saved)) as pike:
+            assert len(pike.pages) == 1
+        path = tmp_path / f"filter_{choice}.pdf"
+        path.write_bytes(saved)
+        _require_qpdf()
+        assert qpdf_findings(path) == set()
+
+
+def test_stream_filter_per_stream_overrides_and_budget() -> None:
+    doc, _, data_a, data_b, data_c, xmp, s_a, s_b, s_c, s_xmp = _stream_filter_fixture()
+    # stream_filter="keep" preserves existing filters untouched.
+    kept = pyropdf.open(doc.to_bytes(stream_filter="keep"))
+    assert _filters(kept.objects[s_a]) == []
+    assert _filters(kept.objects[s_b]) == ["FlateDecode"]
+
+    # Per-stream mapping overrides only named objects and leaves others untouched (F3).
+    per_stream = doc.to_bytes(
+        stream_filter={
+            s_a: "ASCIIHexDecode",
+            s_b: None,
+            s_xmp: "ASCII85Decode",
+        }
+    )
+    reopened = pyropdf.open(per_stream)
+    assert _filters(reopened.objects[s_a]) == ["ASCIIHexDecode"]
+    assert _filters(reopened.objects[s_b]) == []
+    assert _filters(reopened.objects[s_c]) == []
+    assert _filters(reopened.objects[s_xmp]) == ["ASCII85Decode"]
+    assert reopened.objects[s_a].read() == data_a
+    assert reopened.objects[s_b].read() == data_b
+    assert reopened.objects[s_c].read() == data_c
+    assert reopened.objects[s_xmp].read() == xmp
+
+    # Budget is charged during filter re-encoding (F6).
+    big = pyropdf.open(build_pdf(["Budget"]))
+    big_stream = big.objects.add_stream(b"X" * 40_000, filter=None)
+    big.catalog["Big"] = big.objects[big_stream]
+    tight = pyropdf.open(big.to_bytes(), limits=pyropdf.DocumentLimits(max_memory_size=40_000))
+    with pytest.raises(LimitError) as exc_info:
+        tight.to_bytes(stream_filter="ASCIIHexDecode")
+    assert exc_info.value.code == "memory_size"
+
+
+def test_new_full_save_options_validation_and_refusals() -> None:
+    doc = pyropdf.open(build_pdf(["Validation"]))
+    # Refused on incremental saves.
+    for kwargs in (
+        {"clean": True},
+        {"ascii": True},
+        {"pretty": True},
+        {"stream_filter": "FlateDecode"},
+        {"stream_filter": {1: "ASCII85Decode"}},
+    ):
+        with pytest.raises(ValueError, match="full save"):
+            doc.to_bytes(incremental=True, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    # stream_filter excludes compress=True and decompress=True.
+    with pytest.raises(ValueError, match="stream_filter"):
+        doc.to_bytes(compress=True, stream_filter="FlateDecode")
+    with pytest.raises(ValueError, match="stream_filter"):
+        doc.to_bytes(decompress=True, stream_filter="none")
+
+    # linearize=True refuses ascii and pretty.
+    with pytest.raises(ValueError, match="linearize=True"):
+        doc.to_bytes(linearize=True, ascii=True)
+    with pytest.raises(ValueError, match="linearize=True"):
+        doc.to_bytes(linearize=True, pretty=True)
+
+    # ascii=True refuses active encryption, but allows decrypting an unlocked encrypted doc.
+    with pytest.raises(ValueError, match="encrypted"):
+        doc.to_bytes(ascii=True, encryption=Encryption(user_password="pw"))
+    enc = pyropdf.open(ENCRYPTED / "user-aes-256.pdf", password="userpw")
+    with pytest.raises(ValueError, match="encrypted"):
+        enc.to_bytes(ascii=True, encryption=Encryption.KEEP)
+    decrypted_ascii = enc.to_bytes(ascii=True)
+    assert _is_printable_ascii(decrypted_ascii)
+    assert len(pyropdf.open(decrypted_ascii).pages) == len(enc.pages)
+
+    # Type and value validation.
+    for flag in ("clean", "ascii", "pretty"):
+        with pytest.raises(TypeError, match=f"{flag} must be a bool"):
+            doc.to_bytes(**{flag: 1})  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="stream_filter"):
+        doc.to_bytes(stream_filter="UnknownFilter")  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="stream_filter"):
+        doc.to_bytes(stream_filter=123)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="keys"):
+        doc.to_bytes(stream_filter={True: "FlateDecode"})
+    with pytest.raises(ValueError, match="positive"):
+        doc.to_bytes(stream_filter={0: "FlateDecode"})
+    with pytest.raises(ValueError, match="unsupported stream_filter"):
+        doc.to_bytes(stream_filter={1: "DCTDecode"})  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="values"):
+        doc.to_bytes(stream_filter={1: 42})  # ty: ignore[invalid-argument-type]
