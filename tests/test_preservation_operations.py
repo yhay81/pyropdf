@@ -93,6 +93,37 @@ def canvas_text(doc: pyropdf.Document) -> set[int]:
     return {number(page.obj)}
 
 
+@cache
+def hebrew_face() -> Font:
+    root = Path(__file__).resolve().parent.parent
+    return Font.from_file(root / "crates/pyropdf-engine/src/fonts/testdata/NotoSansHebrew-subset.ttf")
+
+
+def canvas_text_modes(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[0]
+    with page.draw() as canvas:
+        canvas.text(DRAWN, (10, 40), font=face(), size=10, render_mode=pyropdf.TextRenderMode.INVISIBLE)
+        canvas.text("日本語", (120, 20), font=face(), size=10, direction="vertical")
+        canvas.text(
+            f"{DRAWN} 日本\nשלום",
+            (10, 60),
+            font=face(),
+            fallback_fonts=(hebrew_face(),),
+            size=10,
+        )
+        with canvas.clip_text("AV", (10, 100), font=face(), size=14):
+            canvas.rect((0, 80, 60, 110), fill=Color(0.25, 0.5, 0.75))
+    return {number(page.obj)}
+
+
+def check_text_modes(doc: pyropdf.Document) -> None:
+    extracted = doc.pages[0].text(unmapped="replacement")
+    assert DRAWN in extracted
+    assert f"{DRAWN} 日本" in extracted
+    # A corpus page may already have LTR text on the same baseline, keeping the RTL word in visual order.
+    assert "שלום" in extracted or "םולש" in extracted
+
+
 def color_png() -> bytes:
     def chunk(kind: bytes, data: bytes) -> bytes:
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
@@ -916,6 +947,7 @@ def check_related_files(doc: pyropdf.Document) -> None:
 NEW_EDITS = {
     "canvas_path": Edit(apply=canvas_path, check=check_path),
     "canvas_text": Edit(apply=canvas_text, check=check_text),
+    "canvas_text_modes": Edit(apply=canvas_text_modes, check=check_text_modes),
     "canvas_image": Edit(apply=canvas_image, check=check_image),
     "add_screen": Edit(apply=add_screen, check=check_screen),
     "rich_media_settings": Edit(prepare=prepare_rich_media, apply=edit_rich_media, check=check_rich_media),

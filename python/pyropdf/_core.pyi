@@ -428,6 +428,7 @@ class _Font:
     ) -> list[tuple[str, float, int | None] | None]: ...
     def bitmap(self, glyph: int, ppem: int, /) -> tuple[bytes, float, float, float, float]: ...
     def glyph_widths(self, glyphs: list[int], /) -> list[float]: ...
+    def glyph_v_metrics(self, glyphs: list[int], /) -> list[tuple[float, float, float]]: ...
     def chars(self) -> str: ...
     def has_glyph(self, codepoint: int, /) -> bool: ...
     def char_widths(self, text: str, size: float, max_text_size: int | None = 1048576, /) -> tuple[float, ...]: ...
@@ -454,6 +455,31 @@ class _Font:
     ) -> tuple[list[tuple[str, float, bool]], float, float, float, float]: ...
 
 def mark_font_subset(document: _Document, xref: int, /) -> None: ...
+def shape_text_fallback(
+    faces: list[_Font],
+    text: str,
+    /,
+    *,
+    vertical: bool = False,
+    check_colour: bool = True,
+    operation: _OperationBudget | None = None,
+) -> list[tuple[int, int, int, int, int, int, int, int, bool, int, int]]: ...
+def layout_text_fallback(
+    faces: list[_Font],
+    text: str,
+    width: float,
+    height: float,
+    size: float,
+    line_height: float | None,
+    justify: bool,
+    max_lines: int | None,
+    max_text_size: int | None = 1048576,
+    normalize: bool = False,
+    vertical: bool = False,
+    /,
+    *,
+    operation: _OperationBudget | None = None,
+) -> tuple[list[tuple[str, float, bool]], float, float, float, float]: ...
 def type3_codes(
     document: _Document, fonts: list[int], units_per_em: int, names: list[str], /
 ) -> list[tuple[int, int] | None]: ...

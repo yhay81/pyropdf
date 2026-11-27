@@ -6,8 +6,13 @@ use pyropdf_store::budget::{Budget, LimitCode};
 use skrifa::raw::types::Tag;
 use skrifa::{FontRef, MetadataProvider};
 
+use super::super::embed::Face;
 use super::super::sfnt;
-use super::{ShapeError, ShapedGlyph, ShapingFace};
+use super::{
+    FallbackShapeError, FallbackSource, ShapeError, ShapedGlyph, ShapingFace, WritingDirection,
+    shape_with_fallback,
+};
+use crate::standard;
 
 const JAPANESE: &[u8] = include_bytes!("../testdata/NotoSansJP-subset.otf");
 const HEBREW: &[u8] = include_bytes!("../testdata/NotoSansHebrew-subset.ttf");
@@ -247,4 +252,66 @@ proptest! {
             prop_assert!(glyph.text.end <= glyph.cluster.end);
         }
     }
+}
+
+#[test]
+fn vertical_shaping_produces_negative_y_advances_and_matching_metrics() {
+    let budget = Budget::default();
+    let shaping = face(JAPANESE);
+    let text = "日本語、かな。";
+    let glyphs = shaping
+        .shape_direction(text, WritingDirection::Vertical, &budget)
+        .unwrap()
+        .into_vec();
+    assert_eq!(glyphs.len(), text.chars().count());
+    assert!(glyphs.iter().all(|g| g.glyph != 0));
+    assert!(glyphs.iter().all(|g| g.x_advance == 0 && g.y_advance < 0));
+    let ids: Vec<u32> = glyphs.iter().map(|g| g.glyph).collect();
+    let metrics = shaping.vertical_metrics(&ids, &budget).unwrap().into_vec();
+    for (g, (v_adv, _v_x, v_y)) in glyphs.iter().zip(metrics) {
+        assert_eq!(g.y_advance, v_adv);
+        assert!(v_y > 0);
+    }
+    assert_eq!(logical(text, &glyphs), text);
+}
+
+#[test]
+fn fallback_shaping_switches_faces_per_cluster_and_handles_missing() {
+    let budget = Budget::default();
+    let jp = Face::read(JAPANESE, 0).unwrap();
+    let he = Face::read(HEBREW, 0).unwrap();
+    let helvetica = standard::font("Helvetica").unwrap();
+    let sources = [
+        FallbackSource::Standard(helvetica),
+        FallbackSource::Embedded(&jp),
+        FallbackSource::Embedded(&he),
+    ];
+    let text = "Hello 日本 שלום";
+    let glyphs = shape_with_fallback(&sources, text, WritingDirection::Horizontal, &budget)
+        .unwrap()
+        .into_vec();
+    // Face 0 (Helvetica) for "Hello ", Face 1 (JP) for "日本", Face 2 (Hebrew) for "שלום".
+    assert!(glyphs.iter().any(|g| g.face_index == 0));
+    assert!(glyphs.iter().any(|g| g.face_index == 1));
+    assert!(glyphs.iter().any(|g| g.face_index == 2));
+    assert!(glyphs.iter().all(|g| g.glyph != 0));
+
+    assert_eq!(
+        shape_with_fallback(&sources, "日本🦀", WritingDirection::Horizontal, &budget).unwrap_err(),
+        FallbackShapeError::MissingGlyph('🦀')
+    );
+    assert_eq!(
+        shape_with_fallback(&sources, "日本", WritingDirection::Vertical, &budget).unwrap_err(),
+        FallbackShapeError::VerticalStandard
+    );
+    assert_eq!(
+        shape_with_fallback(
+            &[FallbackSource::Standard(helvetica)],
+            "日本",
+            WritingDirection::Horizontal,
+            &budget,
+        )
+        .unwrap_err(),
+        FallbackShapeError::NotWinAnsi('日')
+    );
 }

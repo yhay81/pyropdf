@@ -12,7 +12,7 @@ use pyropdf_store::value::{Array, Bytes, Dict, Name, Stream, Value};
 use pyropdf_store::version::Document;
 
 use super::super::embed::Face;
-use super::{FontSubsetSettler, cid_set, widths_glyphs};
+use super::{FontSubsetSettler, cid_set, widths_glyphs, widths2_glyphs};
 
 fn array(values: Vec<Value>) -> Value {
     Value::Array(Array::from(values))
@@ -131,6 +131,135 @@ proptest! {
             prop_assert_eq!(present, wanted, "CID {}", cid);
         }
     }
+}
+
+#[test]
+fn widths2_glyphs_parses_both_forms_and_rejects_malformed() {
+    let valid = array(vec![
+        Value::Integer(10),
+        integers(&[-1000, 500, 880, -1000, 500, 880]),
+        Value::Integer(20),
+        Value::Integer(22),
+        Value::Integer(-1000),
+        Value::Integer(500),
+        Value::Integer(880),
+    ]);
+    assert_eq!(widths2_glyphs(&valid), Some(vec![10, 11, 20, 21, 22]));
+    // Non-multiple-of-3 array form is rejected.
+    let bad = array(vec![Value::Integer(10), integers(&[-1000, 500])]);
+    assert_eq!(widths2_glyphs(&bad), None);
+}
+
+#[test]
+fn shared_horizontal_and_vertical_type0_fonts_subset_once_with_same_tag() {
+    let budget = Budget::default();
+    let pdf = minimal_pdf("1.7", None, None);
+    let index = FileIndex::open(Bytes::new(pdf), &budget).unwrap();
+    let settlers = Settlers::default().with(Structure::FontSubset, Arc::new(FontSubsetSettler));
+    let doc = Document::new(Arc::new(FileBase::new(index, &budget).unwrap()), None);
+    doc.set_settlers(settlers);
+    let face = Face::read(include_bytes!("../testdata/NotoSansJP-subset.otf"), 0).unwrap();
+
+    let mut tx = doc.begin();
+    let mut file_dict = Dict::new();
+    file_dict.insert(Name::from("Subtype"), Value::Name(Name::from("OpenType")));
+    let prog_num = tx.allocate().unwrap().number();
+    let prog_ref = tx
+        .write(
+            prog_num,
+            &Value::from(Stream::new(
+                file_dict,
+                Bytes::from(face.program.as_ref().clone()),
+            )),
+            &budget,
+        )
+        .unwrap();
+    let mut desc = Dict::new();
+    desc.insert(
+        Name::from("Type"),
+        Value::Name(Name::from("FontDescriptor")),
+    );
+    desc.insert(
+        Name::from("FontName"),
+        Value::Name(Name::from(face.postscript_name.as_str())),
+    );
+    desc.insert(Name::from("FontFile3"), Value::Reference(prog_ref));
+    let desc_num = tx.allocate().unwrap().number();
+    let desc_ref = tx.write(desc_num, &Value::Dict(desc), &budget).unwrap();
+
+    let mut cid_font = Dict::new();
+    cid_font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
+    cid_font.insert(
+        Name::from("Subtype"),
+        Value::Name(Name::from("CIDFontType0")),
+    );
+    cid_font.insert(
+        Name::from("BaseFont"),
+        Value::Name(Name::from(face.postscript_name.as_str())),
+    );
+    cid_font.insert(Name::from("FontDescriptor"), Value::Reference(desc_ref));
+    cid_font.insert(Name::from("W"), integers(&[1, 1, 500]));
+    cid_font.insert(
+        Name::from("W2"),
+        array(vec![Value::Integer(6), integers(&[-1000, 500, 880])]),
+    );
+    let cid_num = tx.allocate().unwrap().number();
+    let cid_ref = tx.write(cid_num, &Value::Dict(cid_font), &budget).unwrap();
+
+    let mut type0_h = Dict::new();
+    type0_h.insert(Name::from("Type"), Value::Name(Name::from("Font")));
+    type0_h.insert(Name::from("Subtype"), Value::Name(Name::from("Type0")));
+    type0_h.insert(
+        Name::from("BaseFont"),
+        Value::Name(Name::from(face.postscript_name.as_str())),
+    );
+    type0_h.insert(
+        Name::from("Encoding"),
+        Value::Name(Name::from("Identity-H")),
+    );
+    type0_h.insert(
+        Name::from("DescendantFonts"),
+        array(vec![Value::Reference(cid_ref)]),
+    );
+    let h_num = tx.allocate().unwrap().number();
+    tx.write(h_num, &Value::Dict(type0_h), &budget).unwrap();
+
+    let mut type0_v = Dict::new();
+    type0_v.insert(Name::from("Type"), Value::Name(Name::from("Font")));
+    type0_v.insert(Name::from("Subtype"), Value::Name(Name::from("Type0")));
+    type0_v.insert(
+        Name::from("BaseFont"),
+        Value::Name(Name::from(face.postscript_name.as_str())),
+    );
+    type0_v.insert(
+        Name::from("Encoding"),
+        Value::Name(Name::from("Identity-V")),
+    );
+    type0_v.insert(
+        Name::from("DescendantFonts"),
+        array(vec![Value::Reference(cid_ref)]),
+    );
+    let v_num = tx.allocate().unwrap().number();
+    tx.write(v_num, &Value::Dict(type0_v), &budget).unwrap();
+
+    tx.mark(Structure::FontSubset, h_num, &budget).unwrap();
+    tx.mark(Structure::FontSubset, v_num, &budget).unwrap();
+    tx.commit(&budget).unwrap();
+
+    let mut save = doc.begin();
+    save.settle(Scope::Save, &budget).unwrap();
+    let settled = save.snapshot();
+    drop(save);
+
+    let h_dict = settled.get(h_num, &budget).unwrap().unwrap();
+    let v_dict = settled.get(v_num, &budget).unwrap().unwrap();
+    let (Value::Dict(h_dict), Value::Dict(v_dict)) = (&**h_dict.value(), &**v_dict.value()) else {
+        panic!("expected Type0 dicts");
+    };
+    let h_base = h_dict.get("BaseFont");
+    let v_base = v_dict.get("BaseFont");
+    assert_eq!(h_base, v_base);
+    assert!(matches!(h_base, Some(Value::Name(name)) if super::has_tag(name.as_bytes())));
 }
 
 #[test]

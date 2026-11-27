@@ -15,7 +15,10 @@ use pyropdf_engine::fonts::colour::{Painted, Refused, refused_canvas_glyph};
 use pyropdf_engine::fonts::colr::{Colr, ColrError, Verdict};
 use pyropdf_engine::fonts::embed::{Face, FaceError, GlyphId, Measure};
 use pyropdf_engine::fonts::instance::InstanceError;
-use pyropdf_engine::fonts::shape::{ShapeError, ShapedGlyph, ShapingFace};
+use pyropdf_engine::fonts::shape::{
+    FallbackShapeError, FallbackShapedGlyph, FallbackSource, ShapeError, ShapedGlyph, ShapingFace,
+    WritingDirection, shape_with_fallback,
+};
 use pyropdf_engine::fonts::type3::{Code, Fonts, Glyph};
 use pyropdf_engine::fonts::{self, Format};
 use pyropdf_engine::render::{Fallback, FontFile, Language, Source};
@@ -258,6 +261,7 @@ fn bitmap_glyph(
 }
 
 /// The face of a `_Font`.
+#[derive(Clone)]
 enum Kind {
     Standard(Base14Font),
     Embedded(Arc<Face>),
@@ -272,6 +276,22 @@ type ColourGlyph = (String, f64, Option<u16>);
 /// advance and offsets in font units, the range of the characters that it
 /// draws, whether its run is right to left, and the range of its cluster.
 type Placed = (u32, i32, i32, i32, i32, usize, usize, bool, usize, usize);
+
+/// A glyph shaped across a fallback chain: the face index, followed by the
+/// fields of [`Placed`].
+type FallbackPlaced = (
+    usize,
+    u32,
+    i32,
+    i32,
+    i32,
+    i32,
+    usize,
+    usize,
+    bool,
+    usize,
+    usize,
+);
 
 /// The face of `python/pyropdf/_fonts.py`'s `Font`: a Standard 14 font,
 /// measured with Adobe's metrics and drawn in WinAnsi, or an embedded
@@ -931,6 +951,36 @@ impl _Font {
         })?
     }
 
+    /// Returns `(w1_y, v_x, v_y)` in thousandths of the em for each glyph ID
+    /// in `glyphs`, as a CIDFont's `W2` array records them for `Identity-V`.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the internal callers deduplicate glyph IDs from budgeted shaping, at most the loaded face's glyph count"
+    )]
+    fn glyph_v_metrics(&self, glyphs: Vec<u32>) -> PyResult<Vec<(f64, f64, f64)>> {
+        crate::errors::boundary(|| {
+            let Kind::Embedded(face) = &self.kind else {
+                return Err(PyValueError::new_err("a Standard 14 font has no glyph IDs"));
+            };
+            let budget = Budget::default();
+            let shaper = ShapingFace::of(face).map_err(|error| shape_error(&error))?;
+            let metrics = shaper
+                .vertical_metrics(&glyphs, &budget)
+                .map_err(|error| shape_error(&error))?;
+            let scale = 1000.0 / self.em();
+            Ok(metrics
+                .iter()
+                .map(|&(v_adv, v_x, v_y)| {
+                    (
+                        f64::from(v_adv) * scale,
+                        f64::from(v_x) * scale,
+                        f64::from(v_y) * scale,
+                    )
+                })
+                .collect())
+        })?
+    }
+
     /// Returns the distance between baselines at `size`: `line_height` em,
     /// by default the font's own line height.
     #[pyo3(signature = (size, line_height=None))]
@@ -1163,6 +1213,380 @@ impl _Font {
             format!("_Font({name:?})")
         })
     }
+}
+
+/// Maps a fallback shaping failure to a Python exception matching the
+/// single-face contract when `faces` has one face.
+fn fallback_shape_error(faces: &[Kind], error: &FallbackShapeError) -> PyErr {
+    match error {
+        FallbackShapeError::Shape(error) => shape_error(error),
+        FallbackShapeError::VerticalStandard => PyValueError::new_err(
+            "vertical writing requires embedded OpenType fonts; Standard 14 fonts only support horizontal text",
+        ),
+        FallbackShapeError::NotWinAnsi(_) => PyValueError::new_err(
+            "Standard 14 fonts can only print WinAnsi (Latin-1-equivalent) characters; load an OpenType face with Font.from_file() for other text",
+        ),
+        FallbackShapeError::MissingGlyph(character) => {
+            if let [Kind::Embedded(face)] = faces {
+                embedded_missing(face, *character)
+            } else {
+                PdfError::new_err(format!(
+                    "none of the configured fonts contain a glyph for U+{:04X} ({character:?})",
+                    u32::from(*character)
+                ))
+            }
+        }
+    }
+}
+
+fn kind_em(kind: &Kind) -> f64 {
+    match kind {
+        Kind::Standard(_) => 1000.0,
+        Kind::Embedded(face) => f64::from(face.units_per_em),
+    }
+}
+
+fn kind_line_metrics(kind: &Kind) -> LineMetrics {
+    match kind {
+        Kind::Standard(font) => standard::line_metrics(*font),
+        Kind::Embedded(face) => LineMetrics {
+            ascender: face.ascender / f64::from(face.units_per_em),
+            descender: face.descender / f64::from(face.units_per_em),
+        },
+    }
+}
+
+fn fallback_sources<'a>(kinds: &'a [Kind], budget: &Budget) -> PyResult<Vec<FallbackSource<'a>>> {
+    let mut sources = BudgetVec::new(budget);
+    sources
+        .try_reserve_exact(kinds.len())
+        .map_err(|error| limit_error(&error))?;
+    for kind in kinds {
+        let source = match kind {
+            Kind::Standard(font) => FallbackSource::Standard(*font),
+            Kind::Embedded(face) => FallbackSource::Embedded(face),
+        };
+        sources
+            .try_push(source)
+            .map_err(|error| limit_error(&error))?;
+    }
+    Ok(sources.into_vec())
+}
+
+fn fallback_advance(
+    kinds: &[Kind],
+    glyphs: &[FallbackShapedGlyph],
+    size: f64,
+    vertical: bool,
+) -> f64 {
+    glyphs
+        .iter()
+        .map(|glyph| {
+            let adv = if vertical {
+                f64::from(-glyph.y_advance)
+            } else {
+                f64::from(glyph.x_advance)
+            };
+            adv * size / kind_em(&kinds[glyph.face_index])
+        })
+        .sum()
+}
+
+/// Shapes one line of `text` across an ordered fallback sequence of `faces`,
+/// horizontally or vertically, refusing colour glyphs that have no outline
+/// when `check_colour` is true.
+#[pyfunction]
+#[pyo3(signature = (faces, text, *, vertical=false, check_colour=true, operation=None))]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the character index is charged above; returned records map budgeted shaped glyphs one to one"
+)]
+pub fn shape_text_fallback(
+    py: Python<'_>,
+    faces: Vec<PyRef<'_, _Font>>,
+    text: &str,
+    vertical: bool,
+    check_colour: bool,
+    operation: Option<PyRef<'_, OperationBudget>>,
+) -> PyResult<Vec<FallbackPlaced>> {
+    crate::errors::boundary(|| {
+        if faces.is_empty() {
+            return Err(PyValueError::new_err("at least one font face is required"));
+        }
+        let budget = match operation.as_deref() {
+            Some(operation) => {
+                operation.ensure_active()?;
+                TextBudget::shared(operation.operation.clone())
+            }
+            None => TextBudget {
+                budget: Budget::default().share(),
+                start: None,
+            },
+        };
+        let mut kinds = BudgetVec::new(&budget);
+        kinds
+            .try_reserve_exact(faces.len())
+            .map_err(|error| limit_error(&error))?;
+        for face in &faces {
+            kinds
+                .try_push(face.kind.clone())
+                .map_err(|error| limit_error(&error))?;
+        }
+        let kinds = kinds.into_vec();
+        let index_size = u64::try_from(text.len().saturating_add(1))
+            .unwrap_or(u64::MAX)
+            .saturating_mul(u64::try_from(std::mem::size_of::<usize>()).unwrap_or(u64::MAX));
+        budget
+            .charge(LimitCode::MemorySize, index_size)
+            .map_err(|error| limit_error(&error))?;
+        let direction = if vertical {
+            WritingDirection::Vertical
+        } else {
+            WritingDirection::Horizontal
+        };
+        let budget = &budget;
+        py.detach(|| {
+            let mut characters = vec![0; text.len() + 1];
+            for (index, (at, character)) in text.char_indices().enumerate() {
+                characters[at..at + character.len_utf8()].fill(index);
+            }
+            characters[text.len()] = text.chars().count();
+            let sources = fallback_sources(&kinds, budget)?;
+            let glyphs = shape_with_fallback(&sources, text, direction, budget)
+                .map_err(|error| fallback_shape_error(&kinds, &error))?;
+            if check_colour {
+                for (face_index, kind) in kinds.iter().enumerate() {
+                    let Kind::Embedded(face) = kind else {
+                        continue;
+                    };
+                    let mut per_face = BudgetVec::new(budget);
+                    for glyph in glyphs.iter().filter(|g| g.face_index == face_index) {
+                        per_face
+                            .try_push(ShapedGlyph {
+                                glyph: glyph.glyph,
+                                x_advance: glyph.x_advance,
+                                y_advance: glyph.y_advance,
+                                x_offset: glyph.x_offset,
+                                y_offset: glyph.y_offset,
+                                cluster: glyph.cluster.clone(),
+                                text: glyph.text.clone(),
+                                rtl: glyph.rtl,
+                            })
+                            .map_err(|error| limit_error(&error))?;
+                    }
+                    if per_face.is_empty() {
+                        continue;
+                    }
+                    let font = face.font();
+                    let bitmaps = Bitmaps::read(&font).map_err(|error| shape_error(&error))?;
+                    let refused = Colr::of_face(face, |colr| {
+                        let painted = Painted {
+                            colr,
+                            bitmaps: &bitmaps,
+                        };
+                        refused_canvas_glyph(face, text, &per_face, painted, budget)
+                    })
+                    .map_err(|error| shape_error(&error))?;
+                    if let Some(refused) = refused {
+                        return Err(colour_refused(face, &refused));
+                    }
+                }
+            }
+            Ok(glyphs
+                .into_iter()
+                .map(|glyph| {
+                    (
+                        glyph.face_index,
+                        glyph.glyph,
+                        glyph.x_advance,
+                        glyph.y_advance,
+                        glyph.x_offset,
+                        glyph.y_offset,
+                        characters[glyph.text.start],
+                        characters[glyph.text.end],
+                        glyph.rtl,
+                        characters[glyph.cluster.start],
+                        characters[glyph.cluster.end],
+                    )
+                })
+                .collect())
+        })
+    })?
+}
+
+/// Lays out `text` in a box across an ordered fallback sequence of `faces`,
+/// horizontally or vertically.
+#[pyfunction]
+#[pyo3(signature = (faces, text, width, height, size, line_height, justify, max_lines, max_text_size=Some(1_048_576), normalize=false, vertical=false, *, operation=None))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the options of a text box with fallback and direction"
+)]
+pub fn layout_text_fallback(
+    py: Python<'_>,
+    faces: Vec<PyRef<'_, _Font>>,
+    text: &Bound<'_, PyString>,
+    width: f64,
+    height: f64,
+    size: f64,
+    line_height: Option<f64>,
+    justify: bool,
+    max_lines: Option<u64>,
+    max_text_size: Option<u64>,
+    normalize: bool,
+    vertical: bool,
+    operation: Option<PyRef<'_, OperationBudget>>,
+) -> PyResult<Py<PyTuple>> {
+    crate::errors::boundary(|| {
+        if faces.is_empty() {
+            return Err(PyValueError::new_err("at least one font face is required"));
+        }
+        let (budget, text) = text_budget(
+            text,
+            operation.as_deref(),
+            &[
+                (LimitCode::TextInputSize, max_text_size),
+                (LimitCode::TextLineCount, max_lines),
+            ],
+        )?;
+        let mut kinds = BudgetVec::new(&budget);
+        kinds
+            .try_reserve_exact(faces.len())
+            .map_err(|error| limit_error(&error))?;
+        for face in &faces {
+            kinds
+                .try_push(face.kind.clone())
+                .map_err(|error| limit_error(&error))?;
+        }
+        let kinds = kinds.into_vec();
+        let metrics = kind_line_metrics(&kinds[0]);
+        let placement = if vertical {
+            Placement {
+                ascent: 0.5,
+                descent: 0.5,
+                line_height: metrics.line_height(line_height),
+            }
+        } else {
+            Placement::lines(metrics, line_height)
+        };
+        let direction = if vertical {
+            WritingDirection::Vertical
+        } else {
+            WritingDirection::Horizontal
+        };
+        py.detach(|| {
+            let normalized = if normalize {
+                let mut bytes = BudgetVec::new(&budget);
+                let mut chars = text.chars().peekable();
+                while let Some(char) = chars.next() {
+                    let char = match char {
+                        '\r' => {
+                            if chars.peek() == Some(&'\n') {
+                                chars.next();
+                            }
+                            '\n'
+                        }
+                        '\t' => ' ',
+                        char => char,
+                    };
+                    let mut encoded = [0; 4];
+                    bytes
+                        .try_extend_from_slice(char.encode_utf8(&mut encoded).as_bytes())
+                        .map_err(|error| limit_error(&error))?;
+                }
+                Some(String::from_utf8(bytes.into_vec()).expect("normalized text is UTF-8"))
+            } else {
+                None
+            };
+            let text = normalized.as_deref().unwrap_or(text);
+            let sources = fallback_sources(&kinds, &budget)?;
+            for line in text.lines() {
+                shape_with_fallback(&sources, line, direction, &budget)
+                    .map_err(|error| fallback_shape_error(&kinds, &error))?;
+            }
+            let mut shape_failure: Option<PyErr> = None;
+            let layout = standard::layout(
+                text,
+                (width, height),
+                size,
+                placement,
+                justify,
+                &budget,
+                |line| {
+                    if shape_failure.is_some() {
+                        return f64::INFINITY;
+                    }
+                    match shape_with_fallback(&sources, line, direction, &budget) {
+                        Ok(glyphs) => fallback_advance(&kinds, &glyphs, size, vertical),
+                        Err(error) => {
+                            shape_failure = Some(fallback_shape_error(&kinds, &error));
+                            f64::INFINITY
+                        }
+                    }
+                },
+            );
+            if let Some(error) = shape_failure {
+                return Err(error);
+            }
+            let layout = layout.map_err(|error| layout_error(&error, max_lines))?;
+            let mut lines = BudgetVec::new(&budget);
+            for line in &layout.lines {
+                let mut bytes = BudgetVec::new(&budget);
+                bytes
+                    .try_extend_from_slice(line.text.as_bytes())
+                    .map_err(|error| limit_error(&error))?;
+                let line_text = String::from_utf8(bytes.into_vec())
+                    .expect("a layout line contains valid UTF-8");
+                lines
+                    .try_push((line_text, line.width, line.justify))
+                    .map_err(|error| limit_error(&error))?;
+            }
+            Python::attach(|py| {
+                let count = u64::try_from(lines.len()).unwrap_or(u64::MAX);
+                let tuple_size = py
+                    .get_type::<PyTuple>()
+                    .getattr("__basicsize__")?
+                    .extract::<u64>()?;
+                let list_size = py
+                    .get_type::<PyList>()
+                    .getattr("__basicsize__")?
+                    .extract::<u64>()?;
+                let string_size = py
+                    .get_type::<PyString>()
+                    .getattr("__basicsize__")?
+                    .extract::<u64>()?;
+                let float_size = py
+                    .get_type::<PyFloat>()
+                    .getattr("__basicsize__")?
+                    .extract::<u64>()?;
+                let slot = u64::try_from(std::mem::size_of::<usize>()).unwrap_or(u64::MAX);
+                let mut output_size = list_size
+                    .saturating_add(count.saturating_mul(slot))
+                    .saturating_add(tuple_size)
+                    .saturating_add(5u64.saturating_mul(slot))
+                    .saturating_add(count.saturating_add(4).saturating_mul(float_size));
+                for (text, _, _) in &lines {
+                    let len = u64::try_from(text.len()).unwrap_or(u64::MAX);
+                    output_size = output_size
+                        .saturating_add(tuple_size)
+                        .saturating_add(3u64.saturating_mul(slot))
+                        .saturating_add(string_size)
+                        .saturating_add(len.saturating_add(1).saturating_mul(4));
+                }
+                budget
+                    .charge(LimitCode::MemorySize, output_size)
+                    .map_err(|error| limit_error(&error))?;
+                let result = (
+                    lines.into_vec(),
+                    layout.height,
+                    layout.spare_height,
+                    layout.ascent,
+                    layout.leading,
+                );
+                Ok(result.into_pyobject(py)?.unbind())
+            })
+        })
+    })?
 }
 
 /// A font file of an installed font package, which rendering reads the
