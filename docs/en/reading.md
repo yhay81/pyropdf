@@ -64,8 +64,13 @@ with pyropdf.open("input.pdf") as doc:
 ## Tables and Markdown
 
 `page.tables()` finds tables from their ruling lines, or from text
-alignment with `strategy="text"`. `page.markdown()` and `doc.markdown()`
-turn pages into Markdown, tables included.
+alignment with `strategy="text"`. For borderless or partially ruled grids, pass
+explicit display-space `horizontal_lines` / `vertical_lines` guides or tune
+`snap_tolerance`, `join_tolerance`, `min_gutter`, `min_words_vertical`, and
+`min_words_horizontal`. Each `Table` exposes detected `header_rows` and
+`headers`, plus `to_dicts()`, optional `to_dataframe()` (requiring `pandas`),
+and `markdown()`. `page.markdown()` and `doc.markdown()` turn pages into
+Markdown, tables included.
 
 When a document is tagged and passes trustworthiness checks
 (`/MarkInfo << /Marked true >>`, no `/Suspects`, valid tree, and sufficient
@@ -86,6 +91,7 @@ import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
     for table in doc.pages[0].tables():
+        print(table.headers, table.to_dicts())
         print(table.markdown())
     print(doc.markdown())
     print(doc.markdown(use_structure="never"))  # force geometric layout

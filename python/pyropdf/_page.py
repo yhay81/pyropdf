@@ -62,7 +62,7 @@ from pyropdf._presentations import (
     _write_page_transition,
 )
 from pyropdf._recolor import RecolorReport, RecolorTarget, recolor
-from pyropdf._tables import Table, build_tables
+from pyropdf._tables import Table, build_tables, table_options
 from pyropdf._text import (
     _DEFAULT_MAX_TEXT_GLYPHS,
     _DEFAULT_MAX_TEXT_SIZE,
@@ -1525,11 +1525,18 @@ class Page:
                 max_graphics=max_graphics,
             )
 
-    def tables(
+    def tables(  # noqa: PLR0913 - table detection options are all keyword-only
         self,
         *,
         strategy: Literal["lines", "text"] = "lines",
         clip: Sequence[float] | None = None,
+        horizontal_lines: Sequence[float] | None = None,
+        vertical_lines: Sequence[float] | None = None,
+        snap_tolerance: float = 1.0,
+        join_tolerance: float = 1.0,
+        min_gutter: float = 2.0,
+        min_words_vertical: int = 3,
+        min_words_horizontal: int = 2,
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
         max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
     ) -> list[Table]:
@@ -1538,27 +1545,46 @@ class Page:
         The ``"lines"`` strategy reads the page's stroked rules and thin
         filled rectangles. It needs an outer grid of at least two rows and
         two columns, and rebuilds rectangular merged cells. It splits a
-        coarse span of the grid when at least three evenly led text records
-        occupy the same cells across it.
+        coarse span of the grid when at least ``min_words_vertical`` evenly led
+        text records occupy the same cells across it.
 
         The ``"text"`` strategy finds a borderless table only where at least
-        three consecutive rows have the same number of segments, aligned
-        column edges, compatible leading, and clear gaps between columns.
+        ``min_words_vertical`` consecutive rows have the same number of
+        segments (at least ``min_words_horizontal``), aligned column edges,
+        compatible leading, and column gaps wider than ``min_gutter`` ems.
         Aligned multicolumn prose can pass for a table, so use it where the
         page is known to hold tabular data.
 
+        ``horizontal_lines`` and ``vertical_lines`` supply explicit
+        display-space ``y`` and ``x`` coordinates (in points, after rotation
+        and crop box) to define or augment table grid boundaries on borderless
+        or partially ruled pages. ``snap_tolerance`` (points, 0 to 1,000) sets
+        the coordinate clustering and alignment tolerance, and
+        ``join_tolerance`` (points, 0 to 1,000) sets the gap across which
+        near-miss rule corners and collinear fragments join.
+
         ``clip`` is a display-space rectangle: only the tables whose whole
         box lies inside it are returned, and no part of a table is. Each
-        table carries :class:`TableDiagnostics`. The page's glyphs count
-        against ``max_glyphs`` and ``max_size`` as for :meth:`text`.
-        Exceeding 4,096 vector rules, 4,096 cells per candidate table,
-        65,536 merged-cell candidates per grid, or 32 text columns raises
-        :class:`LimitError`, with no partial table results.
+        table carries :class:`TableDiagnostics`, detected :attr:`Table.header_rows`
+        and :attr:`Table.headers`, and structured exports (:meth:`Table.to_dicts`,
+        :meth:`Table.to_dataframe`, :meth:`Table.markdown`). The page's glyphs
+        count against ``max_glyphs`` and ``max_size`` as for :meth:`text`.
+        Exceeding 4,096 vector rules (including explicit guides), 4,096 cells
+        per candidate table, 65,536 merged-cell candidates per grid, or 32 text
+        columns raises :class:`LimitError`, with no partial table results.
         """
-        if strategy not in {"lines", "text"}:
-            msg = f"strategy must be 'lines' or 'text': {strategy!r}"
-            raise ValueError(msg)
         clip_box = None if clip is None else _clip_box(clip)
+        options = table_options(
+            strategy=strategy,
+            clip=clip_box,
+            horizontal_lines=horizontal_lines,
+            vertical_lines=vertical_lines,
+            snap_tolerance=snap_tolerance,
+            join_tolerance=join_tolerance,
+            min_gutter=min_gutter,
+            min_words_vertical=min_words_vertical,
+            min_words_horizontal=min_words_horizontal,
+        )
         _validate_optional_positive_int("max_glyphs", max_glyphs)
         _validate_optional_positive_int("max_size", max_size)
         try:
@@ -1566,8 +1592,7 @@ class Page:
                 self._reader(),
                 self._number,
                 self._generation,
-                strategy == "text",
-                clip_box,
+                options,
                 max_glyphs,
                 max_size,
             )

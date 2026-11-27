@@ -14,8 +14,8 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyList, PyString};
 use pyropdf_engine::content::PageContent;
 use pyropdf_engine::extract::{
-    self, BBox, BlockTuple, Error, PageLayout, QuadTuple, SearchHits, TableTuple, TextOptions,
-    TextPeak, Unmapped,
+    self, BBox, BlockTuple, Error, PageLayout, QuadTuple, SearchHits, TableOptions, TableTuple,
+    TextOptions, TextPeak, Unmapped,
 };
 use pyropdf_engine::render::Fallback;
 use pyropdf_store::ErrorKind;
@@ -745,27 +745,96 @@ pub fn page_selection(
     })?
 }
 
+/// The table detection options as `python/pyropdf/_page.py` passes them:
+/// `(text_strategy, clip, horizontal_lines, vertical_lines, snap_tolerance,
+/// join_tolerance, min_gutter, min_words_vertical, min_words_horizontal)`.
+pub(crate) type TableOptionsTuple = (
+    bool,
+    Option<BBox>,
+    Vec<f64>,
+    Vec<f64>,
+    f64,
+    f64,
+    f64,
+    usize,
+    usize,
+);
+
+fn parse_table_options(options: TableOptionsTuple) -> PyResult<TableOptions> {
+    let (
+        text_strategy,
+        clip,
+        horizontal_lines,
+        vertical_lines,
+        snap_tolerance,
+        join_tolerance,
+        min_gutter,
+        min_words_vertical,
+        min_words_horizontal,
+    ) = options;
+    if !horizontal_lines.iter().all(|v| v.is_finite()) {
+        return Err(PyValueError::new_err(
+            "horizontal_lines coordinates must be finite",
+        ));
+    }
+    if !vertical_lines.iter().all(|v| v.is_finite()) {
+        return Err(PyValueError::new_err(
+            "vertical_lines coordinates must be finite",
+        ));
+    }
+    if !snap_tolerance.is_finite() || snap_tolerance < 0.0 {
+        return Err(PyValueError::new_err(
+            "snap_tolerance must be finite and non-negative",
+        ));
+    }
+    if !join_tolerance.is_finite() || join_tolerance < 0.0 {
+        return Err(PyValueError::new_err(
+            "join_tolerance must be finite and non-negative",
+        ));
+    }
+    if !min_gutter.is_finite() || min_gutter <= 0.0 {
+        return Err(PyValueError::new_err(
+            "min_gutter must be finite and positive",
+        ));
+    }
+    if min_words_vertical == 0 {
+        return Err(PyValueError::new_err(
+            "min_words_vertical must be at least 1",
+        ));
+    }
+    if min_words_horizontal == 0 {
+        return Err(PyValueError::new_err(
+            "min_words_horizontal must be at least 1",
+        ));
+    }
+    Ok(TableOptions {
+        text_strategy,
+        clip,
+        horizontal_lines,
+        vertical_lines,
+        snap_tolerance,
+        join_tolerance,
+        min_gutter,
+        min_words_vertical,
+        min_words_horizontal,
+    })
+}
+
 /// Returns the tables on the page whose object is `number` and
-/// `generation` whose whole box lies inside `clip`, from its vector rules or
-/// with `text_strategy` from its aligned rows, and the glyphs without
-/// Unicode that it left out, with the GIL released. The budgets are those of
-/// [`page_text`].
+/// `generation` according to `options`, and the glyphs without Unicode that it
+/// left out, with the GIL released. The budgets are those of [`page_text`].
 #[pyfunction]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the page, the strategy, the clip, and the two budgets of one call"
-)]
 pub fn page_tables(
     py: Python<'_>,
     document: PageSource<'_>,
     number: u32,
     generation: u16,
-    text_strategy: bool,
-    clip: Option<BBox>,
+    options: TableOptionsTuple,
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<(Vec<TableTuple>, usize)> {
     crate::errors::boundary(|| {
+        let options = parse_table_options(options)?;
         let owner = document.document();
         let budget = owner.call_budget(&[
             (LimitCode::TextGlyphCount, max_glyphs),
@@ -780,7 +849,7 @@ pub fn page_tables(
                 .bridge
                 .get(&version, &index, &budget)
                 .map_err(|e| bridge_error(&e))?;
-            extract::page_tables(&bridged, at, text_strategy, clip, &budget).map_err(text_error)
+            extract::page_tables(&bridged, at, &options, &budget).map_err(text_error)
         })
     })?
 }

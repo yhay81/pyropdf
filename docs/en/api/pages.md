@@ -988,6 +988,13 @@ Page.tables(
     *,
     strategy: Literal['lines', 'text'] = 'lines',
     clip: Sequence[float] | None = None,
+    horizontal_lines: Sequence[float] | None = None,
+    vertical_lines: Sequence[float] | None = None,
+    snap_tolerance: float = 1.0,
+    join_tolerance: float = 1.0,
+    min_gutter: float = 2.0,
+    min_words_vertical: int = 3,
+    min_words_horizontal: int = 2,
     max_glyphs: int | None = 262144,
     max_size: int | None = 67108864,
 ) -> list[Table]
@@ -998,22 +1005,33 @@ Find the tables of the current version of the page from vector rules or aligned 
 The `"lines"` strategy reads the page's stroked rules and thin
 filled rectangles. It needs an outer grid of at least two rows and
 two columns, and rebuilds rectangular merged cells. It splits a
-coarse span of the grid when at least three evenly led text records
-occupy the same cells across it.
+coarse span of the grid when at least `min_words_vertical` evenly led
+text records occupy the same cells across it.
 
 The `"text"` strategy finds a borderless table only where at least
-three consecutive rows have the same number of segments, aligned
-column edges, compatible leading, and clear gaps between columns.
+`min_words_vertical` consecutive rows have the same number of
+segments (at least `min_words_horizontal`), aligned column edges,
+compatible leading, and column gaps wider than `min_gutter` ems.
 Aligned multicolumn prose can pass for a table, so use it where the
 page is known to hold tabular data.
 
+`horizontal_lines` and `vertical_lines` supply explicit
+display-space `y` and `x` coordinates (in points, after rotation
+and crop box) to define or augment table grid boundaries on borderless
+or partially ruled pages. `snap_tolerance` (points, 0 to 1,000) sets
+the coordinate clustering and alignment tolerance, and
+`join_tolerance` (points, 0 to 1,000) sets the gap across which
+near-miss rule corners and collinear fragments join.
+
 `clip` is a display-space rectangle: only the tables whose whole
 box lies inside it are returned, and no part of a table is. Each
-table carries `TableDiagnostics`. The page's glyphs count
-against `max_glyphs` and `max_size` as for `text`.
-Exceeding 4,096 vector rules, 4,096 cells per candidate table,
-65,536 merged-cell candidates per grid, or 32 text columns raises
-`LimitError`, with no partial table results.
+table carries `TableDiagnostics`, detected `Table.header_rows`
+and `Table.headers`, and structured exports (`Table.to_dicts`,
+`Table.to_dataframe`, `Table.markdown`). The page's glyphs
+count against `max_glyphs` and `max_size` as for `text`.
+Exceeding 4,096 vector rules (including explicit guides), 4,096 cells
+per candidate table, 65,536 merged-cell candidates per grid, or 32 text
+columns raises `LimitError`, with no partial table results.
 
 ### `uses_transparency`
 

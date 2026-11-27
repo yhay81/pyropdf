@@ -1012,6 +1012,8 @@ Table(
     rows: tuple[tuple[str | None, ...], ...],
     cells: tuple[tuple[Rect | None, ...], ...],
     diagnostics: TableDiagnostics,
+    header_rows: int = 0,
+    headers: tuple[str, ...] = (),
 )
 ```
 
@@ -1020,6 +1022,43 @@ A table that `Page.tables` detected, in display space.
 `rows` holds the text of every cell and `cells` its box, both row by
 row. A merged cell keeps its text and its spanning box in its top-left
 slot; the slots it covers are `None`.
+
+`header_rows` gives the number of detected leading header rows (`0`
+when the table appears headerless, `1` for a single header row, or
+`>= 2` for multi-row grouped headers). `headers` holds one normalized
+column label per column built from `rows[:header_rows]`, or `()` when
+`header_rows == 0`.
+
+### `to_dicts`
+
+```python
+Table.to_dicts(
+    *,
+    header_rows: int | None = None,
+    fill_empty: bool = False,
+) -> list[dict[str, str | None]]
+```
+
+Return each body row as a dictionary keyed by column header names.
+
+By default `header_rows` uses the detected `header_rows` count.
+Pass an explicit `header_rows` integer to override it (`0` treats
+every row as data using `column_0`, `column_1`, ... keys). Empty
+or duplicate header names are disambiguated deterministically so no
+column is silently overwritten. With `fill_empty=True`, slots covered
+by a merged cell repeat the anchor cell's value instead of `None`.
+
+### `to_dataframe`
+
+```python
+Table.to_dataframe(*, header_rows: int | None = None, fill_empty: bool = False) -> Any
+```
+
+Return the table as a `pandas.DataFrame` using optional `pandas`.
+
+Uses the same `header_rows` and `fill_empty` rules as
+`to_dicts`. Raises `ImportError` if `pandas` is not
+installed.
 
 ### `markdown`
 
