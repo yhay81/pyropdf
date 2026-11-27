@@ -95,24 +95,65 @@ with pyropdf.open("input.pdf") as doc:
 
 `doc.to_json()` exports the same page elements—headings, paragraphs, list
 items, tables, images, block quotes, and code blocks—as JSON, each with its
-page index and bounding box in display space, plus optional `alt_text` and
-inherited BCP 47 `language` when extracted from a structure tree.
-`doc.to_chunks()` groups consecutive elements into Markdown retrieval chunks
-within a character budget (`max_chars`, 2000 by default), starting a new chunk
-at each heading so every `Chunk` keeps its enclosing `section`, `pages`,
-dominant `language`, and `elements` with provenance. Tables, images, headings,
-and code blocks are never split (`chunk.oversized` marks one that exceeds the
-budget), and both methods accept `pages=`, `table_strategy=`,
-`use_structure=`, and `expand_abbreviations=`.
+page index and bounding box in display space, plus optional `alt_text`,
+inherited BCP 47 `language` when extracted from a structure tree, and `image`
+when image export is enabled. `doc.to_chunks()` groups consecutive elements
+into Markdown retrieval chunks within a character budget (`max_chars`, 2000 by
+default), starting a new chunk at each heading so every `Chunk` keeps its
+enclosing `section`, `pages`, dominant `language`, and `elements` with
+provenance. Tables, images, headings, and code blocks are never split
+(`chunk.oversized` marks one that exceeds the budget).
+
+All three document exports—`doc.markdown()`, `doc.to_json()`, and
+`doc.to_chunks()`—share composable retrieval controls (and `page.markdown()`
+accepts the single-page controls `margins`, `images`, and `max_graphics`):
+
+- **`margins`**: excludes headers, footers, sidebars, tables, and images
+  outside the display-space body region on both upright and rotated pages. Pass
+  a single number for all four sides, `(horizontal, vertical)`, or
+  `(left, top, right, bottom)`.
+- **`ignore_headers_footers=True`**: deterministically suppresses repeated
+  running headers and footers in the top and bottom bands across multi-page
+  selections—normalizing sequential Arabic and Roman page numbers such as
+  `Page 1 of 10`, `1 / 10`, `- 1 -`, and `Page iv of xii`—while preserving
+  unique first-page titles and body lines.
+- **`images`**: defaults to `None` (pure in-memory, zero filesystem writes, no
+  image decoding). Pass a directory path to stage and write bounded PNG or JPEG
+  files (`page-{page}-image-{index}.{ext}`) atomically after the export
+  succeeds and emit Markdown image links, or pass a callback receiving each
+  `ExportedImage` (`page`, `index`, `bbox`, `filename`, `media_type`, `data`,
+  `width`, `height`, `alt_text`) and returning a link destination (or `None` to
+  omit the link) without writing to disk.
+- **`max_graphics`**: bounds graphic elements (paths, segments, clips, and
+  images) inspected per page (65,536 by default, raising `LimitError` with code
+  `content_element_count` on vector-heavy CAD or map pages without stalling;
+  pass `None` for trusted input).
 
 ```python
 import json
+from pathlib import Path
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
-    data = json.loads(doc.to_json())
+    md = doc.markdown(
+        margins=(36, 54, 36, 54),
+        ignore_headers_footers=True,
+        images=Path("exported_images"),
+        max_graphics=10_000,
+    )
+    data = json.loads(
+        doc.to_json(
+            ignore_headers_footers=True,
+            images=lambda img: f"https://cdn.example/{img.filename}",
+        )
+    )
     print(len(data["pages"]), [elem["kind"] for elem in data["pages"][0]["elements"]])
-    for chunk in doc.to_chunks(max_chars=500, expand_abbreviations=True):
+    for chunk in doc.to_chunks(
+        max_chars=500,
+        margins=(36, 54),
+        ignore_headers_footers=True,
+        expand_abbreviations=True,
+    ):
         print(chunk.index, chunk.pages, chunk.section, chunk.language, chunk.text)
 ```
 

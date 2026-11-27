@@ -528,6 +528,8 @@ class StructureBlock:
     cell_anchors: tuple[int, ...] | None = None
     alt_text: str | None = None
     language: str | None = None
+    image: str | None = None
+    mcids: tuple[int, ...] = ()
     raw_section_depth: int | None = None
 
 
@@ -546,6 +548,15 @@ def escape_markdown_alt(text: str) -> str:
     """Escape alternate text for Markdown ``![alt]()`` syntax."""
     collapsed = " ".join(text.split())
     return collapsed.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
+def format_markdown_image(alt: str, destination: str) -> str:
+    """Format a Markdown image link, enclosing destinations with spaces or parentheses."""
+    escaped_alt = escape_markdown_alt(alt) if alt else ""
+    if destination and any(ch.isspace() or ch in "()" for ch in destination):
+        safe_dest = destination.replace("\\", "\\\\").replace("<", "\\<").replace(">", "\\>")
+        return f"![{escaped_alt}](<{safe_dest}>)"
+    return f"![{escaped_alt}]({destination})"
 
 
 def format_code_block(text: str) -> str:
@@ -728,6 +739,7 @@ class _PageMcidIndex:
         "height",
         "incomplete_mcids",
         "layout",
+        "max_graphics",
         "mcid_bbox",
         "mcid_lang",
         "mcid_non_ws_counts",
@@ -740,8 +752,16 @@ class _PageMcidIndex:
         "words",
     )
 
-    def __init__(self, page: Page, budget: _core._OperationBudget, *, expand: bool) -> None:
+    def __init__(
+        self,
+        page: Page,
+        budget: _core._OperationBudget,
+        *,
+        expand: bool,
+        max_graphics: int | None = None,
+    ) -> None:
         self.page = page
+        self.max_graphics = max_graphics
         self.mcid_replacement: dict[int, str] = {}
         self.mcid_lang: dict[int, str] = {}
         self.incomplete_mcids: set[int] = set()
@@ -1018,7 +1038,7 @@ class _PageMcidIndex:
         """Return the display-space bounding box of painted graphics/images tagged with ``mcid``."""
         if self._graphic_bboxes is None:
             bboxes: dict[int, Rect] = {}
-            for item in self.page.content(text_runs=False):
+            for item in self.page.content(text_runs=False, max_elements=self.max_graphics):
                 budget.poll()
                 for mark in item.context.marked_content:
                     if mark.mcid is not None:
@@ -1458,7 +1478,7 @@ def _scan_subtree_mcids(
 class _StructureExportWalker:
     """Iterative structure-tree walker that builds per-page semantic blocks."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - structure extraction walker configuration.
         self,
         tree: StructureTree,
         page_map: dict[int, Page],
@@ -1466,12 +1486,14 @@ class _StructureExportWalker:
         *,
         expand: bool,
         table_strategy: Literal["lines", "text"] | None,
+        max_graphics: int | None = None,
     ) -> None:
         self.tree = tree
         self.page_map = page_map
         self.budget = budget
         self.expand = expand
         self.table_strategy = table_strategy
+        self.max_graphics = max_graphics
         self.page_indexes: dict[int, _PageMcidIndex] = {}
         self.blocks_by_page: dict[int, list[StructureBlock]] = {idx: [] for idx in page_map}
         self.referenced_mcids: dict[int, set[int]] = {idx: set() for idx in page_map}
@@ -1488,7 +1510,12 @@ class _StructureExportWalker:
         cached = self.page_indexes.get(page_num)
         if cached is None:
             self.budget.charge("memory_size", 256)
-            cached = _PageMcidIndex(self.page_map[page_num], self.budget, expand=self.expand)
+            cached = _PageMcidIndex(
+                self.page_map[page_num],
+                self.budget,
+                expand=self.expand,
+                max_graphics=self.max_graphics,
+            )
             self.page_indexes[page_num] = cached
         return cached
 
@@ -1657,6 +1684,7 @@ class _StructureExportWalker:
         self._flush_enclosing_text()
         final_text = desc or ""
         rendered_md = f"![{escape_markdown_alt(final_text)}]()" if final_text else ""
+        page_mcids = tuple(mcid for pg, mcid in mcids if pg == fig_page)
         self._emit_block(
             StructureBlock(
                 kind="image",
@@ -1666,6 +1694,7 @@ class _StructureExportWalker:
                 markdown=rendered_md,
                 alt_text=alt,
                 language=lang,
+                mcids=page_mcids,
             )
         )
 
@@ -2202,6 +2231,7 @@ def _collect_structure_pages(  # noqa: PLR0913 - bundles export options under re
     table_strategy: Literal["lines", "text"] | None,
     use_structure: Literal["auto", "always", "never"],
     expand_abbreviations: bool,
+    max_graphics: int | None = None,
 ) -> dict[int, PageStructureData] | None:
     walker = _StructureExportWalker(
         tree,
@@ -2209,6 +2239,7 @@ def _collect_structure_pages(  # noqa: PLR0913 - bundles export options under re
         budget,
         expand=expand_abbreviations,
         table_strategy=table_strategy,
+        max_graphics=max_graphics,
     )
     blocks_by_page = walker.run()
     if use_structure == "auto" and walker.element_count == 0:
@@ -2239,6 +2270,7 @@ def extract_structure_pages(
     table_strategy: Literal["lines", "text"] | None,
     use_structure: Literal["auto", "always", "never"],
     expand_abbreviations: bool,
+    max_graphics: int | None = None,
 ) -> dict[int, PageStructureData] | None:
     """Extract per-page structure blocks when enabled and trustworthy, or return ``None`` for pure geometric mode."""
     if not pages or use_structure == "never":
@@ -2266,6 +2298,7 @@ def extract_structure_pages(
                 table_strategy=table_strategy,
                 use_structure=use_structure,
                 expand_abbreviations=expand_abbreviations,
+                max_graphics=max_graphics,
             ),
         )
     except MalformedPdfError:
