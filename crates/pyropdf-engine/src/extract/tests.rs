@@ -272,7 +272,10 @@ fn paths_are_rows_of_columns_in_paint_order() {
         [10.0, 80.0, 30.0, 60.0, 50.0, 40.0, 70.0, 20.0, 90.0, 10.0]
     );
     assert_eq!(bbox.0, 10.0);
-    assert_eq!(fill, Some((0, vec![1.0, 0.0, 0.0, 1.0])));
+    assert_eq!(
+        fill,
+        Some((0, vec![1.0, 0.0, 0.0, 1.0], Some((2, vec![1.0, 0.0, 0.0]))))
+    );
     assert!(!even_odd);
     assert_eq!(stroke, None);
     assert_eq!(context, (0, 0, None));
@@ -281,7 +284,15 @@ fn paths_are_rows_of_columns_in_paint_order() {
     assert_eq!(fill, None);
     assert_eq!(
         stroke,
-        Some(((0, vec![0.0, 0.0, 1.0, 1.0]), 2.0, 0, 0, 10.0, vec![], 0.0))
+        Some((
+            (0, vec![0.0, 0.0, 1.0, 1.0], Some((2, vec![0.0, 0.0, 1.0]))),
+            2.0,
+            0,
+            0,
+            10.0,
+            vec![],
+            0.0
+        ))
     );
 }
 
@@ -325,9 +336,18 @@ fn a_stroke_of_the_same_segments_completes_the_fill_row() {
     assert_eq!(paths.stroke_dashes_offsets, [0, 2]);
     assert_eq!(paths.stroke_dashes, [3.0, 1.0]);
     let (_, _, _, fill, _, stroke, _) = paths.tuple(0);
-    assert_eq!(fill, Some((0, vec![1.0, 0.0, 0.0, 1.0])));
+    assert_eq!(
+        fill,
+        Some((0, vec![1.0, 0.0, 0.0, 1.0], Some((2, vec![1.0, 0.0, 0.0]))))
+    );
     let (paint, width, ..) = stroke.unwrap();
-    assert_eq!((paint, width), ((0, vec![0.0, 1.0, 0.0, 1.0]), 1.0));
+    assert_eq!(
+        (paint, width),
+        (
+            (0, vec![0.0, 1.0, 0.0, 1.0], Some((2, vec![0.0, 1.0, 0.0]))),
+            1.0
+        )
+    );
 
     // A stroke of other segments is a path of its own.
     let (apart, apart_elements) = elements("10 10 20 20 re f 30 30 20 20 re S");

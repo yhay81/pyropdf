@@ -135,7 +135,14 @@ with pyropdf.Document() as doc:
 ## Content items
 
 `page.content()` returns what the page paints, glyph runs, paths, images,
-and clips, with the marked content that encloses them. `page.operations`
+and clips, with the marked content that encloses them. Each extracted `Color`
+carries its stored PDF `colorspace` (such as `"DeviceGray"`, `"DeviceRGB"`,
+`"DeviceCMYK"`, `"ICCBased"`, `"CalGray"`, `"CalRGB"`, `"Lab"`, `"Indexed"`,
+`"Separation"`, or `"DeviceN"`) and original `components` alongside its sRGB
+`red`, `green`, `blue`, and `alpha` values (equality and hashing compare only
+sRGB and alpha). Each `TextRun` exposes its `writing_mode` (`WritingMode.HORIZONTAL`
+or `WritingMode.VERTICAL`), and its `FontRef` reports PDF object identity
+(`xref`, `subtype`, `name`, and `is_embedded`). `page.operations`
 reads and writes the content stream as operators.
 
 ```python

@@ -38,7 +38,8 @@ pub use model::{
     BBox, ClipTuple, ContentItem, ContentSink, Contexts, FontTuple, GlyphStyle, GlyphsTuple,
     GroupTuple, ImageFormatTuple, ImageTuple, ItemContextTuple, ItemKinds, MarkTuple, PageContent,
     PaintColumns, PaintTuple, PathTable, PathTuple, RENDER_FILL, RENDER_FILL_STROKE,
-    RENDER_INVISIBLE, RENDER_STROKE, StateTuple, StrokeTuple, TextRunTuple,
+    RENDER_INVISIBLE, RENDER_STROKE, StateTuple, StoredColorTuple, StrokeTuple, TextRunTuple,
+    WRITING_HORIZONTAL, WRITING_VERTICAL,
 };
 pub use reads::read_page;
 pub use text::{

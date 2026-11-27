@@ -125,7 +125,14 @@ with pyropdf.Document() as doc:
 ## 描画される要素
 
 `page.content()` はページが描くもの（グリフの並び、パス、画像、クリップ）を、
-それを囲む marked content とともに返します。`page.operations` は content stream を
+それを囲む marked content とともに返します。抽出された `Color` は sRGB の
+`red`・`green`・`blue`・`alpha` に加えて、PDF に格納された `colorspace`
+（`"DeviceGray"`・`"DeviceRGB"`・`"DeviceCMYK"`・`"ICCBased"`・`"CalGray"`・
+`"CalRGB"`・`"Lab"`・`"Indexed"`・`"Separation"`・`"DeviceN"` など）と元の
+`components` を保持します（等値比較とハッシュは sRGB と alpha のみで行います）。
+各 `TextRun` は `writing_mode`（`WritingMode.HORIZONTAL` または
+`WritingMode.VERTICAL`）を持ち、`FontRef` は PDF フォント辞書の識別情報
+（`xref`・`subtype`・`name`・`is_embedded`）を返します。`page.operations` は content stream を
 演算子として読み書きします。
 
 ```python

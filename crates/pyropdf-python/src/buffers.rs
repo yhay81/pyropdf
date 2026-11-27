@@ -18,7 +18,7 @@ use pyropdf_engine::extract::buffers::{
 };
 use pyropdf_engine::extract::{
     BBox, BlockTuple, ClipTuple, Contexts, GroupTuple, MarkTuple, PageContent, PaintColumns,
-    PaintTuple, PathTable, StateTuple,
+    PaintTuple, PathTable, StateTuple, StoredColorTuple,
 };
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
@@ -354,9 +354,10 @@ type PathRow<'a> = (
     Option<u8>,
 );
 
-/// A paint of a [`PathRow`]: its index in the patterns, or -1 for a color,
-/// and the color's sRGB components and alpha.
-type PaintRow = (i32, (f64, f64, f64, f64));
+/// A paint of a [`PathRow`]: its index in the patterns (or -1 for a color),
+/// the color's sRGB components and alpha, and its index in `stored_colors`
+/// (or -1 for a pattern or absent stored metadata).
+type PaintRow = (i32, (f64, f64, f64, f64), i32);
 
 /// A stroke of a [`PathRow`]: paint, width, cap, join, miter limit, dash
 /// lengths, and dash offset.
@@ -372,6 +373,7 @@ fn paint_row(paint: &PaintColumns, row: usize) -> PaintRow {
             f64::from(paint.blue[row]),
             f64::from(paint.alpha[row]),
         ),
+        paint.stored_color[row],
     )
 }
 
@@ -565,6 +567,12 @@ impl PathColumns {
     /// tuple form of `page_content`.
     fn patterns(&self) -> PyResult<&[PaintTuple]> {
         crate::errors::boundary(|| self.table.patterns.as_slice())
+    }
+
+    /// Returns the distinct stored PDF color spaces and original components
+    /// that path color paints index.
+    fn stored_colors(&self) -> PyResult<&[StoredColorTuple]> {
+        crate::errors::boundary(|| self.table.stored_colors.as_slice())
     }
 
     /// Samples a retained axial/radial shading only when a canvas repaints it.
