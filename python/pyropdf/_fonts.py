@@ -1041,13 +1041,41 @@ def _flags(font: _core._Font) -> int:
     return flags
 
 
-def _type0(document: Document, face: Font, *, editable: bool = False) -> int:
+def _type0(
+    document: Document,
+    face: Font,
+    *,
+    editable: bool = False,
+    vertical: bool = False,
+    shared: tuple[Dictionary, Stream] | None = None,
+) -> int:
     """Write the Type0 font of an embedded face, its program provisional with all its glyphs."""
     font = face._font  # noqa: SLF001 - the package's own face.
     if not font.outlines:
         msg = f"{font.postscript_name} has colour bitmaps and no outlines, so only canvas text can draw it"
         raise PdfError(msg)
     objects = document.objects
+    name = Name(font.postscript_name)
+    if shared is not None:
+        descendant_dict, to_unicode_stream = shared
+        if vertical:
+            if "DW2" not in descendant_dict:
+                descendant_dict["DW2"] = [round(font.ascender * 1000), -1000]
+            if "W2" not in descendant_dict:
+                descendant_dict["W2"] = []
+        xref = objects.add(
+            {
+                "Type": Name("Font"),
+                "Subtype": Name("Type0"),
+                "BaseFont": name,
+                "Encoding": Name("Identity-V" if vertical else "Identity-H"),
+                "DescendantFonts": [descendant_dict],
+                "ToUnicode": to_unicode_stream,
+            }
+        )
+        if not editable:
+            _core.mark_font_subset(document._core(), xref)  # noqa: SLF001 - the package's own core.
+        return xref
     program = cast("bytes", font.program())
     cff = font.cff
     file_key = "FontFile3" if cff else "FontFile2"
@@ -1055,7 +1083,6 @@ def _type0(document: Document, face: Font, *, editable: bool = False) -> int:
     program_xref = objects.add_stream(program, file_entries)
     x0, y0, x1, y1 = font.bbox
     cap_height, italic_angle = font.descriptor_metrics
-    name = Name(font.postscript_name)
     descriptor = objects.add(
         {
             "Type": Name("FontDescriptor"),
@@ -1078,6 +1105,9 @@ def _type0(document: Document, face: Font, *, editable: bool = False) -> int:
         "FontDescriptor": objects[descriptor],
         "W": [],
     }
+    if vertical:
+        cid_font["DW2"] = [round(font.ascender * 1000), -1000]
+        cid_font["W2"] = []
     if not cff:
         cid_font["CIDToGIDMap"] = Name("Identity")
     descendant = objects.add(cid_font)
@@ -1087,7 +1117,7 @@ def _type0(document: Document, face: Font, *, editable: bool = False) -> int:
             "Type": Name("Font"),
             "Subtype": Name("Type0"),
             "BaseFont": name,
-            "Encoding": Name("Identity-H"),
+            "Encoding": Name("Identity-V" if vertical else "Identity-H"),
             "DescendantFonts": [objects[descendant]],
             "ToUnicode": objects[to_unicode],
         }
@@ -1097,11 +1127,12 @@ def _type0(document: Document, face: Font, *, editable: bool = False) -> int:
     return xref
 
 
-def _type0_parts(document: Document, xref: int) -> tuple[Dictionary, Stream] | None:
+def _type0_parts(document: Document, xref: int, *, vertical: bool = False) -> tuple[Dictionary, Stream] | None:
     """Return the CIDFont and ToUnicode stream of the Type0 font ``xref``, if it still is one."""
     objects = document.objects
     font = objects.get(xref) if xref in objects else None
-    if not isinstance(font, Dictionary) or font.get("Subtype") != "Type0" or font.get("Encoding") != "Identity-H":
+    expected_encoding = "Identity-V" if vertical else "Identity-H"
+    if not isinstance(font, Dictionary) or font.get("Subtype") != "Type0" or font.get("Encoding") != expected_encoding:
         return None
     descendants = font.get("DescendantFonts")
     descendant = descendants[0] if isinstance(descendants, Array) and len(descendants) == 1 else None
@@ -1111,25 +1142,47 @@ def _type0_parts(document: Document, xref: int) -> tuple[Dictionary, Stream] | N
     return descendant, to_unicode
 
 
-def embedded_font(document: Document, face: Font, cache: dict[bytes, int], *, editable: bool = False) -> int:
+def _matches_base_font(document: Document, xref: int, face: Font) -> bool:
+    base = document.objects[xref].get("BaseFont")
+    name = face._font.postscript_name  # noqa: SLF001
+    text = str(base) if isinstance(base, Name) else ""
+    return text == name or (_TAG.match(text) is not None and text[7:] == name)
+
+
+def embedded_font(
+    document: Document,
+    face: Font,
+    cache: dict[bytes, int],
+    *,
+    editable: bool = False,
+    vertical: bool = False,
+) -> int:
     """Return the Type0 font of ``face`` in ``document``, written on first use.
 
     ``cache`` maps the digests of programs to the fonts written for them; an
     entry that an undo removed or another write replaced is written again.
+    When the same face is used in both horizontal and vertical writing modes,
+    both Type0 dictionaries share one descendant CIDFont, font descriptor,
+    embedded program, and ToUnicode stream.
     """
-    key = face._key()  # noqa: SLF001 - the package's own face.
-    if editable:
-        # Keep the full font for new caption text after reopening the document.
-        key = b"editable:" + key
+    base_key = face._key()  # noqa: SLF001 - the package's own face.
+    prefix = b"editable:" if editable else b""
+    key = prefix + (b"V:" if vertical else b"") + base_key
     xref = cache.get(key)
-    if xref is not None and _type0_parts(document, xref) is not None:
-        base = document.objects[xref].get("BaseFont")
-        name = face._font.postscript_name  # noqa: SLF001
-        text = str(base) if isinstance(base, Name) else ""
-        # A save renames the font with a subset tag.
-        if text == name or (_TAG.match(text) is not None and text[7:] == name):
-            return xref
-    xref = _type0(document, face, editable=editable)
+    if (
+        xref is not None
+        and _type0_parts(document, xref, vertical=vertical) is not None
+        and _matches_base_font(document, xref, face)
+    ):
+        return xref
+    companion_key = prefix + (b"" if vertical else b"V:") + base_key
+    companion_xref = cache.get(companion_key)
+    shared: tuple[Dictionary, Stream] | None = None
+    if companion_xref is not None:
+        parts = _type0_parts(document, companion_xref, vertical=not vertical)
+        if parts is not None and _matches_base_font(document, companion_xref, face):
+            shared = parts
+    xref = _type0(document, face, editable=editable, vertical=vertical, shared=shared)
     cache[key] = xref
     return xref
 
@@ -1151,6 +1204,30 @@ def _widths(descendant: Dictionary, glyph_count: int) -> dict[int, float]:
     return widths
 
 
+def _widths2(descendant: Dictionary, glyph_count: int) -> dict[int, tuple[float, float, float]]:
+    """Return the vertical metrics that a CIDFont's ``W2`` array records, in its ``c [w1y vx vy ...]`` form."""
+    metrics: dict[int, tuple[float, float, float]] = {}
+    entries = descendant.get("W2")
+    if not isinstance(entries, Array):
+        return metrics
+    items = list(entries)
+    for first, group in zip(items[::2], items[1::2], strict=False):
+        if not isinstance(first, int) or not isinstance(group, Array):
+            continue
+        values = list(group)
+        for offset in range(len(values) // 3):
+            glyph = first + offset
+            w1y, vx, vy = values[3 * offset : 3 * offset + 3]
+            if (
+                0 <= glyph < glyph_count
+                and isinstance(w1y, (int, float))
+                and isinstance(vx, (int, float))
+                and isinstance(vy, (int, float))
+            ):
+                metrics[glyph] = (float(w1y), float(vx), float(vy))
+    return metrics
+
+
 def _mapped(stream: Stream, glyph_count: int) -> dict[int, str]:
     """Return the texts that a ToUnicode stream's ``bfchar`` entries map glyphs to."""
     mapped: dict[int, str] = {}
@@ -1163,18 +1240,39 @@ def _mapped(stream: Stream, glyph_count: int) -> dict[int, str]:
     return mapped
 
 
+def _metric_num(value: float) -> int | float:
+    return int(value) if value == int(value) else round(value, 3)
+
+
 def _w_array(widths: dict[int, float]) -> list[object]:
     """Return ``W`` entries that give each run of consecutive glyphs one array."""
     entries: list[object] = []
-    run: list[float] = []
+    run: list[int | float] = []
     start = previous = -2
     for glyph in sorted(widths):
         if glyph != previous + 1:
             if run:
                 entries += [start, run]
             start, run = glyph, []
-        width = widths[glyph]
-        run.append(int(width) if width == int(width) else round(width, 3))
+        run.append(_metric_num(widths[glyph]))
+        previous = glyph
+    if run:
+        entries += [start, run]
+    return entries
+
+
+def _w2_array(metrics: dict[int, tuple[float, float, float]]) -> list[object]:
+    """Return ``W2`` entries that give each run of consecutive glyphs one ``[w1y vx vy ...]`` array."""
+    entries: list[object] = []
+    run: list[int | float] = []
+    start = previous = -2
+    for glyph in sorted(metrics):
+        if glyph != previous + 1:
+            if run:
+                entries += [start, run]
+            start, run = glyph, []
+        w1y, vx, vy = metrics[glyph]
+        run.extend((_metric_num(w1y), _metric_num(vx), _metric_num(vy)))
         previous = glyph
     if run:
         entries += [start, run]
@@ -1193,8 +1291,29 @@ def _cmap(mapped: dict[int, str]) -> bytes:
     return b"".join(lines)
 
 
-def add_glyphs(
-    document: Document, xref: int, face: Font, glyphs: Sequence[tuple[int, str]], *, editable: bool = False
+def _update_vertical_metrics(
+    descendant: Dictionary, font: _core._Font, count: int, glyphs: Sequence[tuple[int, str]]
+) -> bool:
+    """Record ``DW2`` and ``W2`` entries for new vertical glyphs; return whether any were added."""
+    if "DW2" not in descendant:
+        descendant["DW2"] = [round(font.ascender * 1000), -1000]
+    widths2 = _widths2(descendant, count)
+    new_v = sorted({glyph for glyph, _ in glyphs if glyph not in widths2})
+    if not new_v:
+        return False
+    widths2.update(zip(new_v, font.glyph_v_metrics(new_v), strict=True))
+    descendant["W2"] = _w2_array(widths2)
+    return True
+
+
+def add_glyphs(  # noqa: PLR0913 - keyword options mirror embedded_font.
+    document: Document,
+    xref: int,
+    face: Font,
+    glyphs: Sequence[tuple[int, str]],
+    *,
+    editable: bool = False,
+    vertical: bool = False,
 ) -> dict[int, str]:
     """Record the widths and texts of ``glyphs`` in the Type0 font ``xref`` and return the texts that the CMap maps.
 
@@ -1206,7 +1325,7 @@ def add_glyphs(
     that it maps; the content draws an occurrence with other text inside
     ``/ActualText``. Writes only what changed, in the caller's transaction.
     """
-    parts = _type0_parts(document, xref)
+    parts = _type0_parts(document, xref, vertical=vertical)
     if parts is None:
         msg = f"object {xref} is no longer the font that pyropdf wrote"
         raise PdfError(msg)
@@ -1217,6 +1336,7 @@ def add_glyphs(
     mapped = _mapped(stream, count)
     new = sorted({glyph for glyph, _ in glyphs if glyph not in widths})
     widths.update(zip(new, font.glyph_widths(new), strict=True))
+    added_v = _update_vertical_metrics(descendant, font, count, glyphs) if vertical else False
     added = False
     for glyph, text in glyphs:
         if mapped.get(glyph, _NO_TEXT) != _NO_TEXT or not text or mapped.get(glyph) == text:
@@ -1227,9 +1347,9 @@ def add_glyphs(
         added = True
     if new:
         descendant["W"] = _w_array(widths)
-        # A save subsets the program to the glyphs of ``W``.
-        if not editable:
-            _core.mark_font_subset(document._core(), xref)  # noqa: SLF001 - the package's own core.
+    if (new or added_v) and not editable:
+        # A save subsets the program to the glyphs of ``W`` and ``W2``.
+        _core.mark_font_subset(document._core(), xref)  # noqa: SLF001 - the package's own core.
     if added:
         stream.write(_cmap(mapped))
     return {glyph: mapped[glyph] for glyph, _ in glyphs if glyph in mapped}

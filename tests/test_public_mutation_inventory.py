@@ -130,6 +130,12 @@ MUTATIONS = (
         "move_to line_to curve_to quad_to close rect ellipse circle polygon sector zigzag wave",
     ),
     ("canvas_text", "Both lay out glyphs and maintain embedded fonts, widths and ToUnicode.", "Canvas", "text textbox"),
+    (
+        "canvas_text_modes",
+        "Clip subsequent drawings to glyph outlines while maintaining embedded fonts and render-mode scopes.",
+        "Canvas",
+        "clip_text",
+    ),
     ("canvas_image", "Register image resources and add a placement to page content.", "Canvas", "image"),
     ("add_attachment", "Insert a file specification in the embedded-files name tree.", "Attachments", "add"),
     ("delete_attachment", "Prune the name tree and release unreferenced streams.", "Attachments", "__delitem__"),

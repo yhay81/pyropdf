@@ -52,15 +52,20 @@ from pyropdf._canvas._resources import (
 )
 from pyropdf._canvas._tags import _Group, _Scope, _tag_scope, _write_structure
 from pyropdf._canvas._text import (
+    _TR_INVISIBLE,
     _canvas_font,
+    _direction,
     _GlyphRun,
     _layout_textbox,
     _line_count,
     _line_height,
     _lines_size,
+    _render_mode,
+    _resolve_fonts,
     _shown_winansi,
     _size,
     _text_paint,
+    _TextLayout,
 )
 from pyropdf._content import (
     BlendMode,
@@ -105,10 +110,11 @@ if TYPE_CHECKING:
 
     from pyropdf._canvas._path import PathInput
     from pyropdf._canvas._tags import ListNumbering, TableHeaderScope, TagRole, _Element
-    from pyropdf._canvas._text import TextFit
+    from pyropdf._canvas._text import TextFit, _TextPaint
     from pyropdf._content import Segment
     from pyropdf._core import Pixmap
     from pyropdf._document import Document
+    from pyropdf._fallback_fonts import FallbackFonts
     from pyropdf._fonts import Font
     from pyropdf._page import Page
 
@@ -848,9 +854,12 @@ class Canvas:
         at: Sequence[float],
         *,
         font: Font | None = None,
+        fallback_fonts: Sequence[Font] | FallbackFonts = (),
         size: float = 11,
         fill: Color | Gradient | PatternPaint | None = _BLACK,
         stroke: Stroke | Color | Gradient | PatternPaint | None = None,
+        render_mode: TextRenderMode | str | None = None,
+        direction: Literal["horizontal", "vertical"] = "horizontal",
         line_height: float | None = None,
         rotate: int = 0,
         max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
@@ -862,27 +871,41 @@ class Canvas:
         ``rotate`` turns the text clockwise about ``at`` by 0, 90, 180, or
         270 degrees, so that at 90 the lines run down the page and stack
         leftward; :meth:`transform` turns it by any other angle. ``font``
-        defaults to Helvetica. Text is filled, stroked, or both; at least one
-        is needed. Both accept a :class:`LinearGradient` or :class:`RadialGradient`,
-        in the canvas coordinate space. If a soft mask requires separate fill
-        and stroke objects, the second uses empty ``ActualText`` so extraction
-        reads the text once. Gradient tolerances are those of :class:`Canvas`.
-        The text is limited to 1 MiB of UTF-8 and 4,096 lines by
-        default (``max_text_size``, ``None`` for trusted input), refused with
-        :class:`LimitError` code ``text_input_size`` or ``text_line_count``.
-        A colour glyph that COLR paints or a PNG strike holds draws in its own
-        colours, which ``fill`` and ``stroke`` do not change, except for a COLR layer
-        in the text's colour, which takes the fill. Any other colour glyph with no
-        outline in an OpenType face raises :class:`PdfError`, naming the character,
-        the glyph, and the paint; see :class:`Font`.
+        defaults to Helvetica. Pass ``fallback_fonts``—an ordered sequence of
+        :class:`Font` faces or a document's :attr:`Document.fallback_fonts`—to
+        resolve missing grapheme clusters deterministically across faces without
+        any global font registry; only faces that draw at least one glyph are
+        embedded. Text is filled, stroked, both, or—with
+        ``render_mode=TextRenderMode.INVISIBLE``—emitted invisibly (``3 Tr``) so
+        it leaves no ink while remaining searchable and extractable. To clip
+        subsequent drawings to glyph outlines (``4 Tr``–``7 Tr``), use
+        :meth:`clip_text`. Pass ``direction="vertical"`` with embedded OpenType
+        faces to shape and embed vertical text (``Identity-V`` and ``/W2``),
+        where glyphs run downward from ``at`` and subsequent columns stack
+        right-to-left. Fill and stroke accept a :class:`LinearGradient` or
+        :class:`RadialGradient`, in the canvas coordinate space. If a soft mask
+        requires separate fill and stroke objects, the second uses empty
+        ``ActualText`` so extraction reads the text once. Gradient tolerances
+        are those of :class:`Canvas`. The text is limited to 1 MiB of UTF-8 and
+        4,096 lines by default (``max_text_size``, ``None`` for trusted input),
+        refused with :class:`LimitError` code ``text_input_size`` or
+        ``text_line_count``. A colour glyph that COLR paints or a PNG strike
+        holds draws in its own colours, which ``fill`` and ``stroke`` do not
+        change, except for a COLR layer in the text's colour, which takes the
+        fill. Any other colour glyph with no outline in an OpenType face raises
+        :class:`PdfError`, naming the character, the glyph, and the paint; see
+        :class:`Font`.
         """
         self._check_open()
         checked = _text_input(text, max_text_size)
         rotation = _quarter_turn(rotate)
         origin = _point(at, "at")
         font_size = _size(size)
-        filled, stroked = _text_paint(fill, stroke)
+        checked_mode = _render_mode(render_mode)
+        checked_direction = _direction(direction)
+        checked_paint = _text_paint(fill, stroke, render_mode=checked_mode)
         spacing = _line_height(line_height)
+        faces = _resolve_fonts(font, fallback_fonts, direction=checked_direction)
         # Count the lines, then charge them, before splitting.
         count = _line_count(checked)
         most = _max_lines(max_text_size)
@@ -894,15 +917,26 @@ class Canvas:
             lines = checked.splitlines()
             if not any(lines):
                 return
-            face = _canvas_font("\n".join(lines), font)
-            leading = face._font.leading(font_size, spacing)  # noqa: SLF001
+            if len(faces) == 1 and checked_direction == "horizontal":
+                _canvas_font("\n".join(lines), faces[0])
+            leading = faces[0]._font.leading(font_size, spacing)  # noqa: SLF001
             cos, sin = _TURNS[rotation]
-            placed = [
-                (line, origin.x - index * leading * sin, origin.y + index * leading * cos, 0.0)
-                for index, line in enumerate(lines)
-                if line
-            ]
-            self._emit_text(face, font_size, (filled, stroked), rotation, placed)
+            if checked_direction == "vertical":
+                placed = [
+                    (line, origin.x - index * leading * cos, origin.y - index * leading * sin, 0.0)
+                    for index, line in enumerate(lines)
+                    if line
+                ]
+            else:
+                placed = [
+                    (line, origin.x - index * leading * sin, origin.y + index * leading * cos, 0.0)
+                    for index, line in enumerate(lines)
+                    if line
+                ]
+            self._emit_text(
+                _TextLayout(faces, font_size, rotation, placed, checked_direction == "vertical"),
+                checked_paint,
+            )
 
     def textbox(  # noqa: PLR0913 - the text style options.
         self,
@@ -910,11 +944,14 @@ class Canvas:
         text: str,
         *,
         font: Font | None = None,
+        fallback_fonts: Sequence[Font] | FallbackFonts = (),
         size: float = 11,
         align: Literal["left", "center", "right", "justify"] = "left",
         line_height: float | None = None,
         fill: Color | Gradient | PatternPaint | None = _BLACK,
         stroke: Stroke | Color | Gradient | PatternPaint | None = None,
+        render_mode: TextRenderMode | str | None = None,
+        direction: Literal["horizontal", "vertical"] = "horizontal",
         rotate: int = 0,
         max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
     ) -> TextFit:
@@ -922,56 +959,213 @@ class Canvas:
 
         Lines break at Unicode line-break opportunities (UAX #14) and, for a
         word wider than the box, between grapheme clusters. They are placed
-        as :meth:`text` places them: the first baseline one
+        as :meth:`text` places them: in horizontal mode, the first baseline one
         :attr:`Font.ascender` below the top of ``rect`` and later ones
         ``line_height`` times ``size`` apart, by default at the font's own
         line height, and the text fits when the descender of the last line
-        does. When the text does not fit, nothing is drawn and
+        does; in vertical mode (``direction="vertical"``), columns run downward
+        along the box height and stack right-to-left from its right edge. When
+        the text does not fit, nothing is drawn and
         :attr:`TextFit.spare_height` is the negative shortfall;
         :meth:`Font.text_height` measures the height that the text needs
         without drawing it. Tabs become single spaces. ``rotate`` turns the
         text clockwise inside ``rect`` by 0, 90, 180, or 270 degrees: at 90
-        lines run down the box and stack from its right edge leftward, so
-        they wrap at the box's height and fill its width, and at 270 they run
-        up and stack from the left edge. The font, paint, and size options
-        follow :meth:`text`, and text that fits refuses as there: a colour
-        glyph with no outline raises :class:`PdfError`.
+        horizontal lines run down the box and stack from its right edge
+        leftward, so they wrap at the box's height and fill its width, and at
+        270 they run up and stack from the left edge. The ``font``,
+        ``fallback_fonts``, ``fill``, ``stroke``, ``render_mode``,
+        ``direction``, and ``size`` options follow :meth:`text`, and text that
+        fits refuses as there: a colour glyph with no outline raises
+        :class:`PdfError`.
         """
         self._check_open()
         box = _rect(rect, "rect")
         rotation = _quarter_turn(rotate)
+        checked_mode = _render_mode(render_mode)
+        checked_direction = _direction(direction)
         with self._scratch(2 * sys.getsizeof(_text_input(text, max_text_size))):
             fit, layout = _layout_textbox(
                 box,
                 text,
                 font=font,
+                fallback_fonts=fallback_fonts,
                 size=size,
                 align=align,
                 line_height=line_height,
                 paint=(fill, stroke),
+                render_mode=checked_mode,
+                direction=checked_direction,
                 rotation=rotation,
                 max_text_size=max_text_size,
                 operation=self._operation,
             )
             if layout is not None:
-                face, font_size, paint, placed = layout
-                self._emit_text(face, font_size, paint, rotation, placed)
+                faces, font_size, paint, placed = layout
+                self._emit_text(
+                    _TextLayout(faces, font_size, rotation, placed, checked_direction == "vertical"),
+                    paint,
+                )
             return fit
 
-    def _emit_text(
+    def clip_text(  # noqa: PLR0913 - the text style options.
         self,
-        font: Font,
-        size: float,
-        paint: tuple[Color | Gradient | PatternPaint | None, Stroke | None],
-        rotation: int,
-        lines: list[tuple[str, float, float, float]],
-    ) -> None:
-        """Draw lines of text, each at its origin in display space with its word spacing."""
-        if not lines:
-            return
-        fill, stroke = paint
+        text: str,
+        at: Sequence[float],
+        *,
+        font: Font | None = None,
+        fallback_fonts: Sequence[Font] | FallbackFonts = (),
+        size: float = 11,
+        fill: Color | Gradient | PatternPaint | None = None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None = None,
+        direction: Literal["horizontal", "vertical"] = "horizontal",
+        line_height: float | None = None,
+        rotate: int = 0,
+        max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
+    ) -> AbstractContextManager[None]:
+        """Clip what the block draws to the glyph outlines of ``text`` (``4 Tr``–``7 Tr``).
+
+        With neither ``fill`` nor ``stroke`` (the default), the text clips
+        without painting ink (``7 Tr``). Passing ``fill``, ``stroke``, or both
+        also paints the text while adding its outlines to the clipping path
+        (``4 Tr``, ``5 Tr``, or ``6 Tr``). Bitmap-only fonts without glyph
+        outlines cannot clip and raise :class:`PdfError`.
+        """
+        self._check_open()
+        checked = _text_input(text, max_text_size)
+        rotation = _quarter_turn(rotate)
+        origin = _point(at, "at")
+        font_size = _size(size)
+        checked_direction = _direction(direction)
+        fill_paint, stroke_paint, tr_mode = _text_paint(fill, stroke, clip=True)
+        spacing = _line_height(line_height)
+        faces = _resolve_fonts(font, fallback_fonts, direction=checked_direction)
+        count = _line_count(checked)
+        most = _max_lines(max_text_size)
+        if most is not None and count > most:
+            code = "text_line_count"
+            msg = f"the text has {count} lines, over the limit of {most}"
+            raise LimitError(code, msg)
+        with self._scratch(_lines_size(checked, count)):
+            lines = checked.splitlines()
+            if not any(lines):
+                return _Scope(self, b"q\n0 0 0 0 re W n", b"Q")
+            if len(faces) == 1 and checked_direction == "horizontal":
+                _canvas_font("\n".join(lines), faces[0])
+            leading = faces[0]._font.leading(font_size, spacing)  # noqa: SLF001
+            cos, sin = _TURNS[rotation]
+            if checked_direction == "vertical":
+                placed = [
+                    (line, origin.x - index * leading * cos, origin.y - index * leading * sin, 0.0)
+                    for index, line in enumerate(lines)
+                    if line
+                ]
+            else:
+                placed = [
+                    (line, origin.x - index * leading * sin, origin.y + index * leading * cos, 0.0)
+                    for index, line in enumerate(lines)
+                    if line
+                ]
+            opening = self._build_clip_text_opening(
+                _TextLayout(faces, font_size, rotation, placed, checked_direction == "vertical"),
+                (fill_paint, stroke_paint, tr_mode),
+            )
+            return _Scope(self, opening, b"Q")
+
+    def _build_text_object(self, layout: _TextLayout, *, allow_type3: bool) -> bytes:
+        """Assemble the ``BT ... ET`` text object for ``layout``."""
+        cos, sin = _TURNS[layout.rotation]
+        parts: list[bytes] = []
+        if len(layout.faces) == 1 and layout.faces[0]._font.standard_name is not None and not layout.vertical:  # noqa: SLF001
+            name = self._add_font(layout.faces[0])
+            shown = _shown_winansi(layout.faces[0], layout.lines, self._operation)
+            parts.append(b"BT\n/" + name.encode() + b" " + _fmt(layout.size) + b" Tf")
+        else:
+            shown = self._shown_glyphs(layout, turn=(cos, sin), allow_type3=allow_type3)
+            parts.append(b"BT")
+        for (_line, x, y, _spacing), operators in zip(layout.lines, shown, strict=True):
+            # Display space points down, so the text's own y axis is flipped up.
+            parts.append(_numbers(cos, sin, sin, -cos, _number(x, "at"), _number(y, "at")) + b" Tm")
+            parts.append(operators)
+        parts.append(b"ET")
+        return b"\n".join(parts)
+
+    def _build_clip_text_opening(self, layout: _TextLayout, paint: _TextPaint) -> bytes:
+        """Build the ``q ... BT ... ET`` opening operators for :meth:`clip_text`."""
+        fill, stroke, tr_mode = paint
         segments = (
-            self._text_bounds(font, size, rotation, lines)
+            self._text_bounds(layout)
+            if (
+                isinstance(fill, (LinearGradient, RadialGradient))
+                or (stroke is not None and isinstance(stroke.paint, (LinearGradient, RadialGradient)))
+            )
+            else []
+        )
+        filling = None if fill is None else self._setting(fill, segments, None)
+        stroking = (
+            None
+            if stroke is None
+            else self._setting(cast("Color | Gradient | PatternPaint", stroke.paint), segments, stroke)
+        )
+        shown_text = self._build_text_object(layout, allow_type3=False)
+        has_mask = (filling is not None and filling.mask is not None) or (
+            stroking is not None and stroking.mask is not None
+        )
+        if has_mask:
+            # Paint masked fills/strokes in isolated q..Q passes so SMask does not
+            # leak into the clipped scope, then establish the clip path with 7 Tr
+            # and empty ActualText so text extracts once.
+            split = filling is not None and stroking is not None
+            passes = ((filling, None), (None, stroking)) if split else ((filling, stroking),)
+            parts = [b"q"]
+            for index, (filled_pass, stroked_pass) in enumerate(passes):
+                pass_mode = 2 if filled_pass is not None and stroked_pass is not None else 1 if stroked_pass else 0
+                parts.append(
+                    self._paint_text(
+                        shown_text,
+                        (filled_pass, stroked_pass, stroke),
+                        tr_mode=pass_mode,
+                        duplicate=bool(index),
+                    )
+                )
+            parts.extend((b"7 Tr", b"/Span <</ActualText ()>> BDC", shown_text, b"EMC", b"0 Tr"))
+            return b"\n".join(parts)
+        parts = [b"q"]
+        fill_alpha = None if filling is None else filling.alpha
+        stroke_alpha = None if stroking is None else stroking.alpha
+        if fill_alpha is not None or stroke_alpha is not None:
+            parts.append(b"/" + self._gstate(fill_alpha=fill_alpha, stroke_alpha=stroke_alpha).encode() + b" gs")
+        for painting in (filling, stroking):
+            if painting is not None:
+                parts.extend(painting.operators)
+        if stroking is not None and stroke is not None:
+            parts.extend(_line_style(stroke))
+        parts.append(f"{tr_mode} Tr".encode("ascii"))
+        parts.append(shown_text)
+        # Restore text render mode and graphics-state alpha so drawings inside
+        # the clip scope do not inherit clip-text styling.
+        parts.append(b"0 Tr")
+        if fill_alpha is not None or stroke_alpha is not None:
+            reset_fill = 1.0 if fill_alpha is not None else None
+            reset_stroke = 1.0 if stroke_alpha is not None else None
+            parts.append(b"/" + self._gstate(fill_alpha=reset_fill, stroke_alpha=reset_stroke).encode() + b" gs")
+        if filling is not None:
+            parts.append(b"0 0 0 rg")
+        if stroking is not None:
+            parts.append(b"0 0 0 RG")
+        return b"\n".join(parts)
+
+    def _emit_text(self, layout: _TextLayout, paint: _TextPaint) -> None:
+        """Draw lines of text, each at its origin in display space with its word spacing."""
+        if not layout.lines:
+            return
+        fill, stroke, tr_mode = paint
+        if tr_mode == _TR_INVISIBLE:
+            shown_text = self._build_text_object(layout, allow_type3=True)
+            with self._scratch(2 * len(shown_text) + 256):
+                self._emit(b"q\n3 Tr\n" + shown_text + b"\nQ")
+            return
+        segments = (
+            self._text_bounds(layout)
             if (
                 isinstance(fill, (LinearGradient, RadialGradient))
                 or (stroke is not None and isinstance(stroke.paint, (LinearGradient, RadialGradient)))
@@ -985,40 +1179,25 @@ class Canvas:
             else self._setting(cast("Color | Gradient | PatternPaint", stroke.paint), segments, stroke)
         )
         split = filling is not None and stroking is not None and (filling.mask is not None or stroking.mask is not None)
-        parts: list[bytes] = []
-        if font._font.standard_name is None:  # noqa: SLF001
-            # An embedded face's lines select their fonts as their glyphs ask.
-            shown = self._shown_glyphs(font, size, lines)
-            parts.append(b"BT")
-        else:
-            name = self._add_font(font)
-            shown = _shown_winansi(font, lines, self._operation)
-            parts.append(b"BT\n/" + name.encode() + b" " + _fmt(size) + b" Tf")
-        cos, sin = _TURNS[rotation]
-        for (_line, x, y, _spacing), operators in zip(lines, shown, strict=True):
-            # Display space points down, so the text's own y axis is flipped up.
-            parts.append(_numbers(cos, sin, sin, -cos, _number(x, "at"), _number(y, "at")) + b" Tm")
-            parts.append(operators)
-        parts.append(b"ET")
-        shown_text = b"\n".join(parts)
-        passes = ((filling, None), (None, stroking)) if split else ((filling, stroking),)
+        shown_text = self._build_text_object(layout, allow_type3=True)
+        passes = ((filling, None, 0), (None, stroking, 1)) if split else ((filling, stroking, tr_mode),)
         with self._scratch(4 * len(shown_text) + 1024):
             painted = [
-                self._paint_text(shown_text, filled, stroked, stroke, duplicate=bool(index))
-                for index, (filled, stroked) in enumerate(passes)
+                self._paint_text(shown_text, (filled, stroked, stroke), tr_mode=mode, duplicate=bool(index))
+                for index, (filled, stroked, mode) in enumerate(passes)
             ]
             self._emit(b"\n".join(painted))
 
     def _paint_text(
         self,
         shown_text: bytes,
-        filled: _Painting | None,
-        stroked: _Painting | None,
-        stroke: Stroke | None,
+        painting: tuple[_Painting | None, _Painting | None, Stroke | None],
         *,
+        tr_mode: int | None = None,
         duplicate: bool,
     ) -> bytes:
         """Return one painted text object, suppressing duplicate extraction when needed."""
+        filled, stroked, stroke = painting
         parts = [b"q"]
         if duplicate:
             # The second painting contributes ink but no second copy of the text.
@@ -1027,90 +1206,217 @@ class Canvas:
         stroke_alpha = None if stroked is None else stroked.alpha
         if fill_alpha is not None or stroke_alpha is not None:
             parts.append(b"/" + self._gstate(fill_alpha=fill_alpha, stroke_alpha=stroke_alpha).encode() + b" gs")
-        for painting in (filled, stroked):
-            if painting is not None:
-                if painting.mask is not None:
-                    parts.append(b"/" + painting.mask.encode() + b" gs")
-                parts.extend(painting.operators)
+        for layer in (filled, stroked):
+            if layer is not None:
+                if layer.mask is not None:
+                    parts.append(b"/" + layer.mask.encode() + b" gs")
+                parts.extend(layer.operators)
         if stroked is not None:
             parts.extend(_line_style(cast("Stroke", stroke)))
-        parts.append(b"2 Tr" if filled is not None and stroked is not None else b"1 Tr" if stroked else b"0 Tr")
+        mode = (
+            tr_mode
+            if tr_mode is not None
+            else (2 if filled is not None and stroked is not None else 1 if stroked else 0)
+        )
+        parts.append(f"{mode} Tr".encode("ascii"))
         parts.append(shown_text)
         if duplicate:
             parts.append(b"EMC")
         parts.append(b"Q")
         return b"\n".join(parts)
 
-    def _text_bounds(
-        self,
-        font: Font,
-        size: float,
-        rotation: int,
-        lines: list[tuple[str, float, float, float]],
-    ) -> list[Segment]:
+    def _text_bounds(self, layout: _TextLayout) -> list[Segment]:
         """Bound rotated lines, including font side bearings and overhangs."""
-        cos, sin = _TURNS[rotation]
-        box = font.bbox
+        faces, size, lines, vertical = layout.faces, layout.size, layout.lines, layout.vertical
+        cos, sin = _TURNS[layout.rotation]
+        boxes = [face.bbox for face in faces]
+        x0_em = min(box.x0 for box in boxes)
+        y0_em = min(box.y0 for box in boxes)
+        x1_em = max(box.x1 for box in boxes)
+        y1_em = max(box.y1 for box in boxes)
+        ascender = max(face.ascender for face in faces)
+        descender = min(face.descender for face in faces)
         self._charge(len(lines) * 1024)  # Four points and their segments per line.
         segments: list[Segment] = []
+        core_faces = [face._font for face in faces]  # noqa: SLF001
+        ems = [face._font.units_per_em for face in faces]  # noqa: SLF001
         for line, x, y, spacing in lines:
-            if font._font.standard_name is not None:  # noqa: SLF001
+            if len(faces) == 1 and faces[0]._font.standard_name is not None and not vertical:  # noqa: SLF001
                 with self._scratch(len(line) * 16):
-                    advance = font._font.text_width(line, size, None)  # noqa: SLF001
+                    advance = faces[0]._font.text_width(line, size, None)  # noqa: SLF001
             else:
-                glyphs = font._font.shape(line, operation=self._operation)  # noqa: SLF001
-                advance = sum(glyph[1] for glyph in glyphs) * size / font._font.units_per_em  # noqa: SLF001
-            advance += line.count(" ") * spacing
-            for across in (min(0, box.x0 * size), advance + max(0, box.x1 * size)):
-                segments.extend(
-                    MoveTo(Point(x + across * cos - down * sin, y + across * sin + down * cos))
-                    for down in (-max(font.ascender, box.y1) * size, -min(font.descender, box.y0) * size)
+                glyphs = _core.shape_text_fallback(
+                    core_faces, line, vertical=vertical, check_colour=False, operation=self._operation
                 )
+                if vertical:
+                    advance = sum(-glyph[3] * size / ems[glyph[0]] for glyph in glyphs)
+                else:
+                    advance = sum(glyph[2] * size / ems[glyph[0]] for glyph in glyphs)
+            advance += line.count(" ") * spacing
+            if vertical:
+                half = max(0.6, abs(x0_em), abs(x1_em)) * size
+                for along in (min(0.0, -0.2 * size), advance + 0.2 * size):
+                    segments.extend(
+                        MoveTo(Point(x + across * cos - along * sin, y + across * sin + along * cos))
+                        for across in (-half, half)
+                    )
+            else:
+                for across in (min(0, x0_em * size), advance + max(0, x1_em * size)):
+                    segments.extend(
+                        MoveTo(Point(x + across * cos - down * sin, y + across * sin + down * cos))
+                        for down in (-max(ascender, y1_em) * size, -min(descender, y0_em) * size)
+                    )
         return segments
 
-    def _shown_glyphs(self, font: Font, size: float, lines: list[tuple[str, float, float, float]]) -> list[bytes]:
-        """Return the operators that show each line in an embedded face.
-
-        The glyphs are shaped in visual order. One that COLR or a strike
-        paints is shown as a one-byte code of a Type 3 font, and any other as
-        an Identity-H code, its glyph ID, after their widths and texts are added
-        to the fonts. Those writes are one nested transaction, so a refusal
-        that the canvas's block catches leaves nothing of them.
-        """
+    def _register_embedded_face(
+        self,
+        face_entry: tuple[int, Font],
+        glyphs: tuple[list[tuple[int, str]], dict[int, _ColourGlyph | None]],
+        tables: tuple[dict[tuple[int, int], tuple[bytes, bytes]], dict[tuple[int, int], str], set[tuple[int, int]]],
+        *,
+        vertical: bool,
+    ) -> None:
+        """Register one embedded face's outlined (Type0) and colour (Type 3) glyphs."""
+        face_idx, face = face_entry
+        drawn, colour = glyphs
+        codes, mapped, type3_keys = tables
         document = self._page.document
-        face = font._font  # noqa: SLF001 - the package's own face.
-        operation = self._operation
-        shaped = [face.shape(line, operation=operation) for line, _x, _y, _spacing in lines]
-        drawn = [
-            (glyph[0], line[glyph[5] : glyph[6]] or _NO_TEXT)
-            for (line, *_), glyphs in zip(lines, shaped, strict=True)
-            for glyph in glyphs
-            if glyph[0]
-        ]
-        ids = sorted({glyph for glyph, _ in drawn})
-        colour = dict(zip(ids, face.colour_glyphs(ids, size, operation=operation), strict=True))
         outlined = [entry for entry in drawn if colour[entry[0]] is None]
         painted = [(cast("_ColourGlyph", colour[glyph])[0], text) for glyph, text in drawn if colour[glyph] is not None]
-        xref = None
-        mapped: dict[int, str] = {}
-        with document.transaction():
-            if outlined:
-                xref = embedded_font(document, font, _cache(document).fonts)
-                mapped = add_glyphs(document, xref, font, outlined)
-            placed = self._colour_glyphs(font, colour, painted) if painted else {}
-        codes: dict[int, tuple[bytes, bytes]] = {}
-        if xref is not None:
-            name = self._font_name(xref).encode()
-            codes.update((glyph, (name, b"<%04X>" % glyph)) for glyph, _ in outlined)
-        for glyph, entry in colour.items():
-            if entry is not None:
-                number, code, text = placed[entry[0]]
-                codes[glyph] = (self._font_name(number).encode(), b"<%02X>" % code)
-                if text is not None:
-                    mapped[glyph] = text
-        widths = dict(zip(ids, face.glyph_widths(ids), strict=True))
-        run = _GlyphRun(size, face.units_per_em, widths, mapped, codes)
-        return [run.show(line, glyphs, spacing) for (line, _x, _y, spacing), glyphs in zip(lines, shaped, strict=True)]
+        if outlined:
+            xref = embedded_font(document, face, _cache(document).fonts, vertical=vertical)
+            face_mapped = add_glyphs(document, xref, face, outlined, vertical=vertical)
+            font_name = self._font_name(xref).encode()
+            for glyph, _ in outlined:
+                codes[face_idx, glyph] = (font_name, b"<%04X>" % glyph)
+            for glyph, text in face_mapped.items():
+                mapped[face_idx, glyph] = text
+        if painted:
+            placed = self._colour_glyphs(face, colour, painted)
+            for glyph, entry in colour.items():
+                if entry is not None:
+                    number, code, text = placed[entry[0]]
+                    key = (face_idx, glyph)
+                    codes[key] = (self._font_name(number).encode(), b"<%02X>" % code)
+                    type3_keys.add(key)
+                    if text is not None:
+                        mapped[key] = text
+
+    def _register_drawn_faces(
+        self,
+        faces: tuple[Font, ...],
+        per_face_drawn: dict[int, list[tuple[int, str]]],
+        per_face_colour: dict[int, dict[int, _ColourGlyph | None]],
+        *,
+        vertical: bool,
+    ) -> tuple[dict[tuple[int, int], tuple[bytes, bytes]], dict[tuple[int, int], str], frozenset[tuple[int, int]]]:
+        """Embed used faces and return per-glyph ``(font_name, hex_code)``, CMap text, and Type 3 keys."""
+        codes: dict[tuple[int, int], tuple[bytes, bytes]] = {}
+        mapped: dict[tuple[int, int], str] = {}
+        type3_keys: set[tuple[int, int]] = set()
+        tables = (codes, mapped, type3_keys)
+        with self._page.document.transaction():
+            for face_idx, drawn in per_face_drawn.items():
+                face = faces[face_idx]
+                if face._font.standard_name is not None:  # noqa: SLF001
+                    font_name = self._add_font(face).encode()
+                    for glyph, text in drawn:
+                        codes[face_idx, glyph] = (font_name, b"<%02X>" % glyph)
+                        mapped[face_idx, glyph] = text
+                    continue
+                self._register_embedded_face(
+                    (face_idx, face), (drawn, per_face_colour[face_idx]), tables, vertical=vertical
+                )
+        return codes, mapped, frozenset(type3_keys)
+
+    def _collect_glyph_metrics(
+        self,
+        faces: tuple[Font, ...],
+        per_face_drawn: dict[int, list[tuple[int, str]]],
+        per_face_ids: dict[int, list[int]],
+        *,
+        vertical: bool,
+    ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], tuple[float, float]]]:
+        """Collect per-glyph PDF advance widths and vertical origin vectors matching ``W`` / ``W2`` / AFM."""
+        widths: dict[tuple[int, int], float] = {}
+        v_origins: dict[tuple[int, int], tuple[float, float]] = {}
+        for face_idx, drawn in per_face_drawn.items():
+            face = faces[face_idx]
+            if face._font.standard_name is not None:  # noqa: SLF001
+                for glyph, text in drawn:
+                    if (face_idx, glyph) not in widths:
+                        widths[face_idx, glyph] = face._font.char_widths(text, 1000.0, None)[0]  # noqa: SLF001
+                continue
+            ids = per_face_ids[face_idx]
+            if vertical:
+                for glyph, (w1y, vx, vy) in zip(ids, face._font.glyph_v_metrics(ids), strict=True):  # noqa: SLF001
+                    widths[face_idx, glyph] = w1y
+                    v_origins[face_idx, glyph] = (vx, vy)
+            else:
+                for glyph, width in zip(ids, face._font.glyph_widths(ids), strict=True):  # noqa: SLF001
+                    widths[face_idx, glyph] = width
+        return widths, v_origins
+
+    def _shown_glyphs(self, layout: _TextLayout, *, turn: tuple[int, int], allow_type3: bool) -> list[bytes]:
+        """Return the operators that show each line across ``layout.faces``.
+
+        Glyphs are shaped in visual (horizontal) or top-to-bottom (vertical)
+        order. Only faces that actually produce at least one glyph are embedded
+        or added to page resources. When ``allow_type3`` is true, COLR and
+        bitmap-strike glyphs use Type 3 fonts; clip paths set
+        ``allow_type3=False`` so outline faces clip via Type0 outlines.
+        """
+        faces, size, lines, vertical = layout.faces, layout.size, layout.lines, layout.vertical
+        operation = self._operation
+        core_faces = [face._font for face in faces]  # noqa: SLF001 - the package's own faces.
+        shaped = [
+            _core.shape_text_fallback(
+                core_faces, line, vertical=vertical, check_colour=allow_type3, operation=operation
+            )
+            for line, _x, _y, _spacing in lines
+        ]
+        per_face_drawn: dict[int, list[tuple[int, str]]] = {}
+        for (line, *_), glyphs in zip(lines, shaped, strict=True):
+            for glyph in glyphs:
+                if glyph[1]:
+                    per_face_drawn.setdefault(glyph[0], []).append((glyph[1], line[glyph[6] : glyph[7]] or _NO_TEXT))
+
+        per_face_ids: dict[int, list[int]] = {}
+        per_face_colour: dict[int, dict[int, _ColourGlyph | None]] = {}
+        for face_idx, drawn in per_face_drawn.items():
+            face = faces[face_idx]
+            if face._font.standard_name is not None:  # noqa: SLF001
+                continue
+            if not allow_type3 and not face._font.outlines:  # noqa: SLF001
+                msg = f"{face.name} has colour bitmaps and no outlines, so it cannot clip text"
+                raise PdfError(msg)
+            ids = sorted({glyph for glyph, _ in drawn})
+            per_face_ids[face_idx] = ids
+            per_face_colour[face_idx] = (
+                dict(zip(ids, face._font.colour_glyphs(ids, size, operation=operation), strict=True))  # noqa: SLF001
+                if allow_type3
+                else dict.fromkeys(ids, None)
+            )
+
+        codes, mapped, type3_keys = self._register_drawn_faces(
+            faces, per_face_drawn, per_face_colour, vertical=vertical
+        )
+        widths, v_origins = self._collect_glyph_metrics(faces, per_face_drawn, per_face_ids, vertical=vertical)
+        scales = [1000.0 / face._font.units_per_em for face in faces]  # noqa: SLF001
+        run = _GlyphRun(
+            size,
+            scales,
+            widths,
+            mapped,
+            codes,
+            vertical=vertical,
+            v_origins=v_origins,
+            type3_keys=type3_keys,
+        )
+        return [
+            run.show(line, glyphs, spacing, origin=(x, y), turn=turn)
+            for (line, x, y, spacing), glyphs in zip(lines, shaped, strict=True)
+        ]
 
     def _colour_glyphs(
         self, font: Font, colour: dict[int, _ColourGlyph | None], painted: list[tuple[str, str]]
@@ -1479,7 +1785,7 @@ class Canvas:
                     if item.stroke is not None
                     else None
                 )
-                painted = self._paint_text(shown, fill, stroke, item.stroke, duplicate=False)
+                painted = self._paint_text(shown, (fill, stroke, item.stroke), duplicate=False)
             if replay.pen is not None:
                 basis = b" ".join(_real(value) for value in replay.pen)
                 painted = b"q " + basis + b" cm\n" + painted + b"\nQ"
