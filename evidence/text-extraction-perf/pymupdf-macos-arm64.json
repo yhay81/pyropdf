@@ -1,0 +1,134 @@
+{
+  "engine": "PyMuPDF 2.1 (MuPDF 1.28.6)",
+  "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "python": "3.13.18",
+  "runs": 5,
+  "totals_ms": {
+    "text": 404.314,
+    "words": 710.837,
+    "search": 546.52
+  },
+  "documents": {
+    "bill-hr815.pdf": {
+      "pages": 110,
+      "timings_ms": {
+        "text": 281.166,
+        "words": 523.464,
+        "search": 400.801
+      }
+    },
+    "bunka-kokugo-series-019-p4.pdf": {
+      "pages": 1,
+      "timings_ms": {
+        "text": 0.093,
+        "words": 0.069,
+        "search": 0.067
+      }
+    },
+    "f1040.pdf": {
+      "pages": 2,
+      "timings_ms": {
+        "text": 29.61,
+        "words": 36.584,
+        "search": 31.641
+      }
+    },
+    "mhlw-doc.pdf": {
+      "pages": 2,
+      "timings_ms": {
+        "text": 8.132,
+        "words": 9.011,
+        "search": 7.543
+      }
+    },
+    "nics-background-checks-2015-11.pdf": {
+      "pages": 1,
+      "timings_ms": {
+        "text": 6.866,
+        "words": 10.912,
+        "search": 7.692
+      }
+    },
+    "patent-us223898.pdf": {
+      "pages": 4,
+      "timings_ms": {
+        "text": 10.688,
+        "words": 18.81,
+        "search": 14.504
+      }
+    },
+    "pdf20-simple.pdf": {
+      "pages": 1,
+      "timings_ms": {
+        "text": 0.41,
+        "words": 0.387,
+        "search": 0.362
+      }
+    },
+    "pdfium-jpx-lzw.pdf": {
+      "pages": 1,
+      "timings_ms": {
+        "text": 0.075,
+        "words": 0.055,
+        "search": 0.055
+      }
+    },
+    "pdfium-links-highlights-annots.pdf": {
+      "pages": 1,
+      "timings_ms": {
+        "text": 0.514,
+        "words": 0.548,
+        "search": 0.455
+      }
+    },
+    "pdfium-ocg-invisible.pdf": {
+      "pages": 1,
+      "timings_ms": {
+        "text": 0.062,
+        "words": 0.045,
+        "search": 0.044
+      }
+    },
+    "pdfium-smask-blend.pdf": {
+      "pages": 1,
+      "timings_ms": {
+        "text": 0.085,
+        "words": 0.069,
+        "search": 0.068
+      }
+    },
+    "pdfium-type3.pdf": {
+      "pages": 1,
+      "timings_ms": {
+        "text": 0.078,
+        "words": 0.067,
+        "search": 0.058
+      }
+    },
+    "senate-expenditures.pdf": {
+      "pages": 1,
+      "timings_ms": {
+        "text": 6.159,
+        "words": 9.33,
+        "search": 5.199
+      }
+    },
+    "usrguide.pdf": {
+      "pages": 27,
+      "timings_ms": {
+        "text": 59.796,
+        "words": 100.944,
+        "search": 77.495
+      }
+    },
+    "wdl6812-manuscript.pdf": {
+      "pages": 2,
+      "timings_ms": {
+        "text": 0.58,
+        "words": 0.542,
+        "search": 0.536
+      }
+    }
+  }
+}

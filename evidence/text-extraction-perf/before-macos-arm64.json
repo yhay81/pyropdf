@@ -1,0 +1,286 @@
+{
+  "engine": "pyropdf 0.4.1",
+  "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "python": "3.13.18",
+  "runs": 5,
+  "totals_ms": {
+    "text": 242.568,
+    "doc_text": 236.761,
+    "words": 325.775,
+    "layout": 346.859,
+    "search": 222.797
+  },
+  "documents": {
+    "bill-hr815.pdf": {
+      "pages": 110,
+      "chars": 300560,
+      "words_count": 46071,
+      "timings_ms": {
+        "text": 142.126,
+        "doc_text": 141.537,
+        "words": 203.325,
+        "layout": 215.292,
+        "search": 126.527
+      },
+      "warm_words_ms": 199.708,
+      "digests": {
+        "text": "f7aad160b7bed255",
+        "words": "3dc5fe479e354731",
+        "search": "caa9d385d9d4de51"
+      }
+    },
+    "bunka-kokugo-series-019-p4.pdf": {
+      "pages": 1,
+      "chars": 0,
+      "words_count": 0,
+      "timings_ms": {
+        "text": 0.046,
+        "doc_text": 0.034,
+        "words": 0.04,
+        "layout": 0.041,
+        "search": 0.035
+      },
+      "warm_words_ms": 3.873,
+      "digests": {
+        "text": "e3b0c44298fc1c14",
+        "words": "cf1cbb66a638b486",
+        "search": "cf1cbb66a638b486"
+      }
+    },
+    "f1040.pdf": {
+      "pages": 2,
+      "chars": 10288,
+      "words_count": 2230,
+      "timings_ms": {
+        "text": 10.423,
+        "doc_text": 7.62,
+        "words": 13.652,
+        "layout": 13.477,
+        "search": 7.855
+      },
+      "warm_words_ms": 2.646,
+      "digests": {
+        "text": "5f8b0710d9a4e7b1",
+        "words": "0af6d86562130551",
+        "search": "027c27c5b4051962"
+      }
+    },
+    "mhlw-doc.pdf": {
+      "pages": 2,
+      "chars": 1274,
+      "words_count": 77,
+      "timings_ms": {
+        "text": 7.422,
+        "doc_text": 7.355,
+        "words": 7.595,
+        "layout": 8.046,
+        "search": 7.196
+      },
+      "warm_words_ms": 0.43,
+      "digests": {
+        "text": "2cc348b55a05dada",
+        "words": "0e6b98cf06eeb004",
+        "search": "643d5437104296e2"
+      }
+    },
+    "nics-background-checks-2015-11.pdf": {
+      "pages": 1,
+      "chars": 5653,
+      "words_count": 1504,
+      "timings_ms": {
+        "text": 3.315,
+        "doc_text": 3.213,
+        "words": 4.91,
+        "layout": 4.154,
+        "search": 3.155
+      },
+      "warm_words_ms": 1.436,
+      "digests": {
+        "text": "d6e4b2166f71d1be",
+        "words": "cba99371f4ca7fa5",
+        "search": "09d5fba5bf166e3c"
+      }
+    },
+    "patent-us223898.pdf": {
+      "pages": 4,
+      "chars": 11220,
+      "words_count": 1973,
+      "timings_ms": {
+        "text": 8.267,
+        "doc_text": 8.098,
+        "words": 10.926,
+        "layout": 11.059,
+        "search": 8.343
+      },
+      "warm_words_ms": 2.206,
+      "digests": {
+        "text": "1cd94951cd29fd0d",
+        "words": "a40642662df58b57",
+        "search": "6ebe016b9fb3bfa1"
+      }
+    },
+    "pdf20-simple.pdf": {
+      "pages": 1,
+      "chars": 12,
+      "words_count": 2,
+      "timings_ms": {
+        "text": 0.091,
+        "doc_text": 0.062,
+        "words": 0.083,
+        "layout": 0.089,
+        "search": 0.063
+      },
+      "warm_words_ms": 0.147,
+      "digests": {
+        "text": "d2a84f4b8b650937",
+        "words": "239b9c78196486a3",
+        "search": "cf1cbb66a638b486"
+      }
+    },
+    "pdfium-jpx-lzw.pdf": {
+      "pages": 1,
+      "chars": 0,
+      "words_count": 0,
+      "timings_ms": {
+        "text": 0.025,
+        "doc_text": 0.018,
+        "words": 0.025,
+        "layout": 0.026,
+        "search": 0.02
+      },
+      "warm_words_ms": 0.003,
+      "digests": {
+        "text": "e3b0c44298fc1c14",
+        "words": "cf1cbb66a638b486",
+        "search": "cf1cbb66a638b486"
+      }
+    },
+    "pdfium-links-highlights-annots.pdf": {
+      "pages": 1,
+      "chars": 93,
+      "words_count": 12,
+      "timings_ms": {
+        "text": 0.114,
+        "doc_text": 0.088,
+        "words": 0.127,
+        "layout": 0.137,
+        "search": 0.09
+      },
+      "warm_words_ms": 0.014,
+      "digests": {
+        "text": "321cc39693058415",
+        "words": "d8edbe5067e44a71",
+        "search": "cf1cbb66a638b486"
+      }
+    },
+    "pdfium-ocg-invisible.pdf": {
+      "pages": 1,
+      "chars": 0,
+      "words_count": 0,
+      "timings_ms": {
+        "text": 0.03,
+        "doc_text": 0.022,
+        "words": 0.033,
+        "layout": 0.032,
+        "search": 0.024
+      },
+      "warm_words_ms": 0.003,
+      "digests": {
+        "text": "e3b0c44298fc1c14",
+        "words": "cf1cbb66a638b486",
+        "search": "cf1cbb66a638b486"
+      }
+    },
+    "pdfium-smask-blend.pdf": {
+      "pages": 1,
+      "chars": 0,
+      "words_count": 0,
+      "timings_ms": {
+        "text": 0.041,
+        "doc_text": 0.026,
+        "words": 0.041,
+        "layout": 0.041,
+        "search": 0.028
+      },
+      "warm_words_ms": 0.002,
+      "digests": {
+        "text": "e3b0c44298fc1c14",
+        "words": "cf1cbb66a638b486",
+        "search": "cf1cbb66a638b486"
+      }
+    },
+    "pdfium-type3.pdf": {
+      "pages": 1,
+      "chars": 0,
+      "words_count": 0,
+      "timings_ms": {
+        "text": 0.037,
+        "doc_text": 0.023,
+        "words": 0.034,
+        "layout": 0.035,
+        "search": 0.025
+      },
+      "warm_words_ms": 0.003,
+      "digests": {
+        "text": "e3b0c44298fc1c14",
+        "words": "cf1cbb66a638b486",
+        "search": "cf1cbb66a638b486"
+      }
+    },
+    "senate-expenditures.pdf": {
+      "pages": 1,
+      "chars": 4517,
+      "words_count": 637,
+      "timings_ms": {
+        "text": 2.58,
+        "doc_text": 2.446,
+        "words": 3.282,
+        "layout": 3.199,
+        "search": 2.505
+      },
+      "warm_words_ms": 0.707,
+      "digests": {
+        "text": "fa48ebecf26c3bab",
+        "words": "877e8cc602222cbe",
+        "search": "732e8f346378dcfa"
+      }
+    },
+    "usrguide.pdf": {
+      "pages": 27,
+      "chars": 55621,
+      "words_count": 8878,
+      "timings_ms": {
+        "text": 67.979,
+        "doc_text": 66.174,
+        "words": 81.632,
+        "layout": 91.161,
+        "search": 66.882
+      },
+      "warm_words_ms": 79.541,
+      "digests": {
+        "text": "c99ad0c7def29b2f",
+        "words": "8d45e467e8acf00f",
+        "search": "a7213a32837de3eb"
+      }
+    },
+    "wdl6812-manuscript.pdf": {
+      "pages": 2,
+      "chars": 0,
+      "words_count": 0,
+      "timings_ms": {
+        "text": 0.072,
+        "doc_text": 0.045,
+        "words": 0.07,
+        "layout": 0.07,
+        "search": 0.049
+      },
+      "warm_words_ms": 0.884,
+      "digests": {
+        "text": "6e340b9cffb37a98",
+        "words": "643d5437104296e2",
+        "search": "643d5437104296e2"
+      }
+    }
+  }
+}

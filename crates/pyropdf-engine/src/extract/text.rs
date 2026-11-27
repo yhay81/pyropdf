@@ -14,7 +14,7 @@ mod search;
 mod selection;
 mod tables;
 
-use std::collections::HashMap;
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -36,7 +36,9 @@ pub use self::layout::{
 pub use self::search::{SearchHits, page_search};
 pub use self::selection::page_selection;
 pub use self::tables::{TableCell, TableDiagnosticsTuple, TableTuple, page_tables};
+use super::model::FALLBACK_FONT_KEY;
 use super::provenance::{RunCheck, Source, run_sources};
+use super::stretch::Stretches;
 use super::{BBox, ContentSink, Error, GlyphStyle, ItemKinds, RENDER_FILL, RENDER_FILL_STROKE};
 use crate::bridge::Bridged;
 use crate::content::PageContent;
@@ -45,7 +47,7 @@ use crate::render::Fallback;
 
 /// The name, style flags, and line metrics of a font.
 #[derive(Clone)]
-struct FontInfo {
+pub(super) struct FontInfo {
     /// PostScript name, or empty when unavailable.
     name: Arc<str>,
     /// pymupdf-compatible flags: italic=2, serif=4, monospace=8, bold=16.
@@ -54,6 +56,152 @@ struct FontInfo {
     /// program, or 0.8 and -0.2 without one.
     ascender: f64,
     descender: f64,
+}
+
+/// Normalized `(above_em, below_em)` vertical extent multipliers matching
+/// MuPDF's glyph box convention.
+fn normalized_vertical_extent(ascender: f64, descender: f64) -> (f64, f64) {
+    let (mut ascender, mut descender) = (ascender, descender);
+    if ascender < 1e-3 {
+        (ascender, descender) = (0.9, -0.1);
+    }
+    let height = ascender - descender;
+    if height < 1.0 {
+        ascender /= height;
+        descender /= height;
+    }
+    (ascender, -descender)
+}
+
+/// Maximum number of font caches retained per thread-local bridged document.
+const MAX_CACHED_EXTRACT_FONTS: usize = 256;
+
+/// Cached Unicode text for one character code in a font.
+#[derive(Clone)]
+enum CachedUnicode {
+    Char(char),
+    Heap(Arc<str>),
+}
+
+/// Cached per-character-code lookup result for one outline font.
+#[derive(Clone)]
+struct CachedCode {
+    /// `None` means `OutlineGlyph::as_unicode` returned `None`.
+    unicode: Option<CachedUnicode>,
+    bidi_flags: u8,
+    advance: Option<f32>,
+}
+
+/// Direct-mapped lookup table for multi-byte character codes `>= 256`.
+type HighCodeTable = [(u32, Option<CachedCode>); 256];
+
+/// Per-font metadata and character-code lookup tables cached across pages of
+/// one immutable [`Bridged`] document.
+pub(super) struct CachedFont {
+    info: FontInfo,
+    extent_asc: f64,
+    extent_desc: f64,
+    /// Direct-mapped cache for single-byte character codes `0..256`.
+    low: Box<[Option<CachedCode>; 256]>,
+    /// Lazily allocated direct-mapped cache for multi-byte codes `>= 256`.
+    high: Option<Box<HighCodeTable>>,
+}
+
+impl CachedFont {
+    fn new(info: FontInfo) -> Self {
+        let (extent_asc, extent_desc) = normalized_vertical_extent(info.ascender, info.descender);
+        Self {
+            info,
+            extent_asc,
+            extent_desc,
+            low: Box::new([const { None }; 256]),
+            high: None,
+        }
+    }
+
+    fn get_code(&self, code: u32) -> Option<&CachedCode> {
+        if code < 256 {
+            self.low[code as usize].as_ref()
+        } else {
+            let slot = ((code.wrapping_mul(0x9E37_79B1)) >> 24) as usize;
+            let table = self.high.as_deref()?;
+            let (stored_code, entry) = &table[slot];
+            (*stored_code == code).then_some(entry.as_ref()).flatten()
+        }
+    }
+
+    fn insert_code(&mut self, code: u32, entry: CachedCode) {
+        if code < 256 {
+            self.low[code as usize] = Some(entry);
+        } else {
+            let slot = ((code.wrapping_mul(0x9E37_79B1)) >> 24) as usize;
+            let table = self
+                .high
+                .get_or_insert_with(|| Box::new([const { (0, None) }; 256]));
+            table[slot] = (code, Some(entry));
+        }
+    }
+}
+
+/// Thread-local extraction cache for the last [`Bridged`] document read on
+/// this thread: hayro's `InterpreterCache`, `Stretches`, and per-font code
+/// tables, so multi-page documents parse each shared font and decode each
+/// character code once instead of once per page (mirroring `render::Cached`).
+struct ExtractCached {
+    // Declared before `bridged` so they drop before the `Pdf` they borrow.
+    interpreter: InterpreterCache<'static>,
+    stretches: Stretches<'static>,
+    fonts: Vec<(u128, CachedFont)>,
+    bridged: Arc<Bridged>,
+}
+
+thread_local! {
+    static EXTRACT_CACHE: RefCell<Option<ExtractCached>> = const { RefCell::new(None) };
+}
+
+/// Runs `read` with hayro's document of `bridged` and this thread's reusable
+/// extraction caches for it.
+pub(super) fn with_extract_cache<T>(
+    bridged: &Arc<Bridged>,
+    read: impl FnOnce(
+        &'static Bridged,
+        &InterpreterCache<'static>,
+        &Stretches<'static>,
+        &mut Vec<(u128, CachedFont)>,
+    ) -> T,
+) -> T {
+    EXTRACT_CACHE.with(|cell| {
+        let mut held = cell.borrow_mut();
+        if !held
+            .as_ref()
+            .is_some_and(|cached| Arc::ptr_eq(&cached.bridged, bridged))
+        {
+            // Drop the old caches before their bridge, then start fresh ones.
+            *held = None;
+            let settings = InterpreterSettings {
+                render_content: RenderContent::all(),
+                ..InterpreterSettings::default()
+            };
+            *held = Some(ExtractCached {
+                interpreter: InterpreterCache::new(),
+                stretches: Stretches::new(&settings),
+                fonts: Vec::new(),
+                bridged: Arc::clone(bridged),
+            });
+        }
+        let cached = held.as_mut().expect("the cache was just set");
+        // SAFETY: `interpreter` and `stretches` borrow the PDF inside this
+        // immutable bridge. The `Arc` holds it at a fixed heap address and
+        // both caches are declared before `bridged`, so they drop first.
+        // Neither reference outlives this call.
+        let bridged: &'static Bridged = unsafe { &*Arc::as_ptr(&cached.bridged) };
+        read(
+            bridged,
+            &cached.interpreter,
+            &cached.stretches,
+            &mut cached.fonts,
+        )
+    })
 }
 
 impl Default for FontInfo {
@@ -357,10 +505,13 @@ struct GlyphRecord {
     /// rotated horizontal text, and is set to 1 only for conservative CJK
     /// vertical-layout detections during line assembly.
     writing_mode: u8,
-    /// Font identity key for span splitting; Type 3 uses 0.
-    font_key: u128,
-    /// The name, flags, and line metrics of the glyph's font.
-    font: FontInfo,
+    /// Font table index on the current page (`0` is [`FontInfo::default`], used
+    /// for Type 3 fonts).
+    font_id: u32,
+    /// Precomputed normalized ascender/descender multipliers in em for
+    /// [`Self::vertical_extent`].
+    extent_asc: f64,
+    extent_desc: f64,
     /// The sRGB approximation and alpha of the glyph's paint; `None` for a
     /// pattern or invisible text.
     color: Option<[f32; 4]>,
@@ -441,20 +592,37 @@ fn try_push_glyph_text(value: &mut String, text: &GlyphText, label: &str) -> Res
     }
 }
 
+/// Chunk sizes for local budget reservation inside `TextCollector`, capping
+/// per-glyph atomic/poll overhead while honoring tight limits and deadlines.
+const GLYPH_BUDGET_CHUNK: u64 = 64;
+const TEXT_SIZE_BUDGET_CHUNK: u64 = 256;
+
+/// Cached page-local font resolution entry.
+type PageFontEntry = (u128, u32, f64, f64, Option<usize>);
+
 /// The content model's sink that collects the glyphs of a page.
-struct TextCollector<'b> {
+struct TextCollector<'b, 'c> {
     glyphs: Vec<GlyphRecord>,
     /// The rules that underline or strike out glyphs, with
     /// [`TextOptions::styles`].
     rules: Vec<RuleSegment>,
-    /// font_key → FontInfo cache, resolving font_data only once per font.
-    font_infos: HashMap<u128, FontInfo>,
-    /// Most recent font lookup; consecutive glyphs usually share one font, so
-    /// this skips two hash probes per glyph inside unbroken text runs.
-    last_font: Option<(u128, FontInfo)>,
+    /// Cross-page font metadata and per-code Unicode/advance cache, bounded
+    /// to [`MAX_CACHED_EXTRACT_FONTS`].
+    cache_fonts: &'c mut Vec<(u128, CachedFont)>,
+    /// Fonts referenced on this page, indexed by [`GlyphRecord::font_id`];
+    /// index `0` is [`FontInfo::default`].
+    page_fonts: Vec<FontInfo>,
+    /// Mapping from `font_key` to `(font_id, extent_asc, extent_desc, cache_idx)` on this page.
+    page_font_ids: Vec<PageFontEntry>,
+    /// Most recent font lookup.
+    last_font: Option<PageFontEntry>,
     /// Cumulative UTF-8 bytes in accepted glyph Unicode, charged to
     /// `text_size`.
     text_size: usize,
+    /// Pre-charged glyph slots held locally and released on drop/finish.
+    reserved_glyphs: u64,
+    /// Pre-charged UTF-8 byte slots held locally and released on drop/finish.
+    reserved_text_size: u64,
     budget: &'b Budget,
     /// The first refusal, which stops the collection.
     error: Option<Error>,
@@ -502,7 +670,7 @@ struct RunStyle {
     font: u128,
 }
 
-impl ContentSink for TextCollector<'_> {
+impl ContentSink for TextCollector<'_, '_> {
     fn glyph_run(&mut self, style: &GlyphStyle) {
         self.style = RunStyle {
             color: style.color,
@@ -682,7 +850,217 @@ fn measure_on_faces<'a>(
     Ok(())
 }
 
-impl TextCollector<'_> {
+impl Drop for TextCollector<'_, '_> {
+    fn drop(&mut self) {
+        self.release_reserved();
+    }
+}
+
+impl TextCollector<'_, '_> {
+    /// Returns any unused locally-reserved budget slots to `self.budget`.
+    fn release_reserved(&mut self) {
+        if self.reserved_glyphs > 0 {
+            self.budget
+                .release(LimitCode::TextGlyphCount, self.reserved_glyphs);
+            self.reserved_glyphs = 0;
+        }
+        if self.reserved_text_size > 0 {
+            self.budget
+                .release(LimitCode::TextSize, self.reserved_text_size);
+            self.reserved_text_size = 0;
+        }
+    }
+
+    /// Charges one glyph and `bytes` of UTF-8 text against `self.budget`,
+    /// amortizing `Budget::charge` / `Budget::poll` over small chunks while
+    /// enforcing tight limits at the exact offending glyph.
+    fn charge_glyph_and_text(&mut self, bytes: usize) -> Result<(), Error> {
+        let bytes = as_u64(bytes);
+        if self.reserved_glyphs == 0 {
+            let chunk = self.budget.remaining(LimitCode::TextGlyphCount).map_or(
+                GLYPH_BUDGET_CHUNK,
+                |remaining| {
+                    if remaining >= 1 {
+                        remaining.min(GLYPH_BUDGET_CHUNK)
+                    } else {
+                        1
+                    }
+                },
+            );
+            self.budget.charge(LimitCode::TextGlyphCount, chunk)?;
+            self.reserved_glyphs = chunk;
+        }
+        if self.reserved_text_size < bytes {
+            let need = bytes - self.reserved_text_size;
+            let target = TEXT_SIZE_BUDGET_CHUNK.max(need);
+            let chunk = self
+                .budget
+                .remaining(LimitCode::TextSize)
+                .map_or(target, |remaining| {
+                    if remaining >= need {
+                        remaining.min(target)
+                    } else {
+                        need
+                    }
+                });
+            self.budget.charge(LimitCode::TextSize, chunk)?;
+            self.reserved_text_size += chunk;
+        }
+        self.reserved_glyphs -= 1;
+        self.reserved_text_size -= bytes;
+        Ok(())
+    }
+
+    /// Returns `(font_id, extent_asc, extent_desc, cache_idx)` for an outline
+    /// glyph's font, populating `page_fonts` and `cache_fonts` on first sight.
+    fn resolve_outline_font(
+        &mut self,
+        key: u128,
+        outline: &hayro::hayro_interpret::font::OutlineGlyph,
+    ) -> Result<(u32, f64, f64, Option<usize>), Error> {
+        if let Some((last_key, id, asc, desc, cache_idx)) = self.last_font
+            && last_key == key
+        {
+            return Ok((id, asc, desc, cache_idx));
+        }
+        for &(seen_key, id, asc, desc, cache_idx) in &self.page_font_ids {
+            if seen_key == key {
+                self.last_font = Some((key, id, asc, desc, cache_idx));
+                return Ok((id, asc, desc, cache_idx));
+            }
+        }
+        let (info, asc, desc, cache_idx) = if key != FALLBACK_FONT_KEY
+            && let Some(idx) = self.cache_fonts.iter().position(|(k, _)| *k == key)
+        {
+            let cached = &self.cache_fonts[idx].1;
+            (
+                cached.info.clone(),
+                cached.extent_asc,
+                cached.extent_desc,
+                Some(idx),
+            )
+        } else {
+            let info = font_info_of(outline);
+            let (asc, desc) = normalized_vertical_extent(info.ascender, info.descender);
+            let mut cache_idx = None;
+            if key != FALLBACK_FONT_KEY && self.cache_fonts.len() < MAX_CACHED_EXTRACT_FONTS {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "bounded to MAX_CACHED_EXTRACT_FONTS fonts per bridged document"
+                )]
+                if self.cache_fonts.try_reserve(1).is_ok() {
+                    cache_idx = Some(self.cache_fonts.len());
+                    self.cache_fonts.push((key, CachedFont::new(info.clone())));
+                }
+            }
+            (info, asc, desc, cache_idx)
+        };
+        let id = u32::try_from(self.page_fonts.len())
+            .map_err(|_| Error::Allocation("page font table overflow".to_owned()))?;
+        try_push_text(&mut self.page_fonts, info, "page extraction font table")?;
+        try_push_text(
+            &mut self.page_font_ids,
+            (key, id, asc, desc, cache_idx),
+            "page extraction font index",
+        )?;
+        self.last_font = Some((key, id, asc, desc, cache_idx));
+        Ok((id, asc, desc, cache_idx))
+    }
+
+    /// Returns `(text, bidi_flags, advance_width)` for an outline glyph using
+    /// the per-font character-code cache indexed directly by `cache_idx`.
+    fn cached_outline_code(
+        &mut self,
+        cache_idx: Option<usize>,
+        outline: &hayro::hayro_interpret::font::OutlineGlyph,
+    ) -> Result<Option<(GlyphText, u8, Option<f64>)>, Error> {
+        let code = outline.char_code();
+        if let Some(idx) = cache_idx {
+            let cached_font = &mut self.cache_fonts[idx].1;
+            if let Some(entry) = cached_font.get_code(code) {
+                let advance = entry.advance.map(f64::from);
+                return match &entry.unicode {
+                    Some(CachedUnicode::Char(c)) => {
+                        Ok(Some((GlyphText::Char(*c), entry.bidi_flags, advance)))
+                    }
+                    Some(CachedUnicode::Heap(s)) => Ok(Some((
+                        GlyphText::try_from_str(s)?,
+                        entry.bidi_flags,
+                        advance,
+                    ))),
+                    None => self.unmapped_outline(outline, advance),
+                };
+            }
+            let advance_f32 = outline.advance_width();
+            let advance = advance_f32.map(f64::from);
+            match outline.as_unicode() {
+                Some(BfString::Char(c)) => {
+                    let bidi = char_bidi_flags(c);
+                    cached_font.insert_code(
+                        code,
+                        CachedCode {
+                            unicode: Some(CachedUnicode::Char(c)),
+                            bidi_flags: bidi,
+                            advance: advance_f32,
+                        },
+                    );
+                    return Ok(Some((GlyphText::Char(c), bidi, advance)));
+                }
+                Some(BfString::String(s)) => {
+                    let text = bf_string_to_glyph_text(BfString::String(s))?;
+                    let bidi = glyph_bidi_flags(&text);
+                    let cached_u = match &text {
+                        GlyphText::Char(c) => CachedUnicode::Char(*c),
+                        GlyphText::Heap(h) => CachedUnicode::Heap(Arc::from(&**h)),
+                    };
+                    cached_font.insert_code(
+                        code,
+                        CachedCode {
+                            unicode: Some(cached_u),
+                            bidi_flags: bidi,
+                            advance: advance_f32,
+                        },
+                    );
+                    return Ok(Some((text, bidi, advance)));
+                }
+                None => {
+                    cached_font.insert_code(
+                        code,
+                        CachedCode {
+                            unicode: None,
+                            bidi_flags: 0,
+                            advance: advance_f32,
+                        },
+                    );
+                    return self.unmapped_outline(outline, advance);
+                }
+            }
+        }
+        let Some(text) = self.glyph_unicode(&Glyph::Outline(outline.clone()))? else {
+            return Ok(None);
+        };
+        let bidi = glyph_bidi_flags(&text);
+        Ok(Some((text, bidi, outline.advance_width().map(f64::from))))
+    }
+
+    fn unmapped_outline(
+        &mut self,
+        outline: &hayro::hayro_interpret::font::OutlineGlyph,
+        advance: Option<f64>,
+    ) -> Result<Option<(GlyphText, u8, Option<f64>)>, Error> {
+        let ch = match self.options.unmapped {
+            Unmapped::Skip => {
+                self.skipped_no_unicode = self.skipped_no_unicode.saturating_add(1);
+                return Ok(None);
+            }
+            Unmapped::Replacement | Unmapped::Type3CharCode => char::REPLACEMENT_CHARACTER,
+            Unmapped::GlyphId => {
+                char::from_u32(outline.glyph_id().to_u32()).unwrap_or(char::REPLACEMENT_CHARACTER)
+            }
+        };
+        Ok(Some((GlyphText::Char(ch), char_bidi_flags(ch), advance)))
+    }
+
     /// Returns the text of the first glyph inside `/ActualText`.
     fn actual_glyph_text(&self) -> Result<Option<GlyphText>, Error> {
         let Some(actual_text) = &self.actual_text else {
@@ -748,96 +1126,106 @@ impl TextCollector<'_> {
             self.widen_holder(holder, glyph, combined, ink);
             return Ok(());
         }
-        let text = match self.actual_glyph_text()? {
-            Some(text) => text,
-            None => match self.glyph_unicode(glyph)? {
-                Some(text) => text,
-                None => return Ok(()),
-            },
+        let [a, b, c, d, tx, ty] = combined.as_coeffs();
+        let (text, bidi_flags, advance_width, font_id, extent_asc, extent_desc) = match glyph {
+            Glyph::Outline(outline) => {
+                let key = self.style.font;
+                let (font_id, extent_asc, extent_desc, cache_idx) =
+                    self.resolve_outline_font(key, outline)?;
+                if let Some(actual) = self.actual_glyph_text()? {
+                    if actual.is_empty() {
+                        return Ok(());
+                    }
+                    let bidi = glyph_bidi_flags(&actual);
+                    let adv = outline.advance_width().map(f64::from);
+                    (actual, bidi, adv, font_id, extent_asc, extent_desc)
+                } else {
+                    let Some((text, bidi, adv)) = self.cached_outline_code(cache_idx, outline)?
+                    else {
+                        return Ok(());
+                    };
+                    if text.is_empty() {
+                        return Ok(());
+                    }
+                    (text, bidi, adv, font_id, extent_asc, extent_desc)
+                }
+            }
+            Glyph::Type3(type3) => {
+                let text = match self.actual_glyph_text()? {
+                    Some(text) => text,
+                    None => match self.glyph_unicode(glyph)? {
+                        Some(text) => text,
+                        None => return Ok(()),
+                    },
+                };
+                if text.is_empty() {
+                    return Ok(());
+                }
+                let bidi = glyph_bidi_flags(&text);
+                (
+                    text,
+                    bidi,
+                    type3.advance_width().map(f64::from),
+                    0,
+                    DEFAULT_ASCENDER,
+                    -DEFAULT_DESCENDER,
+                )
+            }
         };
-        if text.is_empty() {
-            return Ok(());
-        }
-        let origin = combined * Point::ZERO;
-        if !origin.x.is_finite() || !origin.y.is_finite() {
+        if !tx.is_finite() || !ty.is_finite() {
             return Ok(());
         }
         // Font size is the transformed y-basis length × 1000. Hayro normalizes
         // glyph space to 1000 upem, so the transform factor is actual size / 1000.
-        let [a, b, c, d, _, _] = combined.as_coeffs();
-        let mut size = (c * c + d * d).sqrt() * 1000.0;
-        if !size.is_finite() || size <= 0.0 {
-            size = 12.0;
-        }
-        let direction_length = (a * a + b * b).sqrt();
-        let direction = if direction_length.is_finite() && direction_length > f64::EPSILON {
-            normalize_direction((a / direction_length, b / direction_length))
-        } else {
-            (1.0, 0.0)
-        };
-        // Advance is the glyph-space advance transformed by the x basis.
-        // Approximate a font that gives none as half the font size.
-        let (advance_width, font_key, font) = match glyph {
-            Glyph::Outline(g) => {
-                let key = self.style.font;
-                let info = if let Some((last_key, last_info)) = &self.last_font
-                    && *last_key == key
-                {
-                    last_info.clone()
-                } else {
-                    if !self.font_infos.contains_key(&key) {
-                        #[expect(
-                            clippy::disallowed_methods,
-                            reason = "one entry per font that hayro has loaded for the page, \
-                                      which its cache holds"
-                        )]
-                        self.font_infos.try_reserve(1).map_err(|error| {
-                            Error::Allocation(format!(
-                                "failed to grow extraction font cache: {error}"
-                            ))
-                        })?;
-                    }
-                    #[expect(
-                        clippy::disallowed_methods,
-                        reason = "one entry per font that hayro has loaded for the page, which its \
-                                  cache holds"
-                    )]
-                    let info = self
-                        .font_infos
-                        .entry(key)
-                        .or_insert_with(|| font_info_of(g))
-                        .clone();
-                    self.last_font = Some((key, info.clone()));
-                    info
-                };
-                (g.advance_width().map(f64::from), key, info)
+        let (size, direction_length, direction) = if b == 0.0 && c == 0.0 {
+            let mut s = d.abs() * 1000.0;
+            if !s.is_finite() || s <= 0.0 {
+                s = 12.0;
             }
-            Glyph::Type3(g) => (g.advance_width().map(f64::from), 0, FontInfo::default()),
+            let dl = a.abs();
+            let dir = if dl.is_finite() && dl > f64::EPSILON {
+                if a >= 0.0 { (1.0, 0.0) } else { (-1.0, 0.0) }
+            } else {
+                (1.0, 0.0)
+            };
+            (s, dl, dir)
+        } else {
+            let mut s = (c * c + d * d).sqrt() * 1000.0;
+            if !s.is_finite() || s <= 0.0 {
+                s = 12.0;
+            }
+            let dl = (a * a + b * b).sqrt();
+            let dir = if dl.is_finite() && dl > f64::EPSILON {
+                normalize_direction((a / dl, b / dl))
+            } else {
+                (1.0, 0.0)
+            };
+            (s, dl, dir)
         };
         let zero_advance = advance_width == Some(0.0);
+        // Advance is the glyph-space advance transformed by the x basis:
+        // |(a * adv, b * adv)| = |adv| * direction_length.
+        // Approximate a font that gives none as half the font size.
         let advance = advance_width
-            .map(|adv| {
-                let moved = combined * Point::new(adv, 0.0);
-                ((moved.x - origin.x).powi(2) + (moved.y - origin.y).powi(2)).sqrt()
-            })
+            .map(|adv| adv.abs() * direction_length)
             .filter(|a| a.is_finite() && *a > 0.0)
             .unwrap_or(size * 0.5);
         // The context's display transform already flips y and applies rotation, so
         // transformed coordinates are directly in top-left-origin display space.
         let source_order = self.shown;
-        let bidi_flags = glyph_bidi_flags(&text);
         let mut record = GlyphRecord {
             text,
             bidi_flags,
-            x: origin.x,
-            y: origin.y,
+            x: tx,
+            y: ty,
             size,
             advance,
             zero_advance,
             direction,
             writing_mode: 0,
-            font_key,
-            font,
+            font_id,
+            extent_asc,
+            extent_desc,
             color: self.style.color,
             render_mode: self.style.render_mode,
             is_clipped: false,
@@ -864,11 +1252,7 @@ impl TextCollector<'_> {
         }
         record.ink = finite_ink(ink);
         let bytes = record.text.len();
-        self.budget.charge(LimitCode::TextGlyphCount, 1)?;
-        if let Err(refusal) = self.budget.charge(LimitCode::TextSize, as_u64(bytes)) {
-            self.budget.release(LimitCode::TextGlyphCount, 1);
-            return Err(refusal.into());
-        }
+        self.charge_glyph_and_text(bytes)?;
         self.text_size += bytes;
         if let Err(error) = try_push_text(&mut self.glyphs, record, "positioned-glyph collection") {
             self.release_glyph(bytes);
@@ -902,40 +1286,44 @@ impl TextCollector<'_> {
                 Glyph::Type3(_) => char::REPLACEMENT_CHARACTER,
             }),
         };
-        Ok(Some(match unicode {
-            BfString::Char(c) => GlyphText::Char(c),
-            // Keep hayro's owned string, but never shrink it with an
-            // infallible realloc: copy fallibly when capacity exceeds length.
-            BfString::String(s) => {
-                if s.capacity() == s.len() {
-                    GlyphText::Heap(s.into_boxed_str())
-                } else {
-                    let mut exact = String::new();
-                    #[expect(
-                        clippy::disallowed_methods,
-                        reason = "copies the text that hayro holds for the glyph, which \
-                                  text_size counts"
-                    )]
-                    exact.try_reserve_exact(s.len()).map_err(|error| {
-                        Error::Allocation(format!("failed to allocate glyph text: {error}"))
-                    })?;
-                    #[expect(
-                        clippy::disallowed_methods,
-                        reason = "fills the capacity reserved above"
-                    )]
-                    exact.push_str(&s);
-                    GlyphText::Heap(exact.into_boxed_str())
-                }
-            }
-        }))
+        bf_string_to_glyph_text(unicode).map(Some)
     }
 
-    /// Returns one glyph's charges to the budget.
+    /// Returns one glyph's charges to the local reservation (released on drop/finish).
     fn release_glyph(&mut self, bytes: usize) {
-        self.budget.release(LimitCode::TextGlyphCount, 1);
-        self.budget.release(LimitCode::TextSize, as_u64(bytes));
+        self.reserved_glyphs += 1;
+        self.reserved_text_size += as_u64(bytes);
         self.text_size -= bytes;
     }
+}
+
+fn bf_string_to_glyph_text(unicode: BfString) -> Result<GlyphText, Error> {
+    Ok(match unicode {
+        BfString::Char(c) => GlyphText::Char(c),
+        // Keep hayro's owned string, but never shrink it with an
+        // infallible realloc: copy fallibly when capacity exceeds length.
+        BfString::String(s) => {
+            if s.capacity() == s.len() {
+                GlyphText::Heap(s.into_boxed_str())
+            } else {
+                let mut exact = String::new();
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "copies the text that hayro holds for the glyph, which \
+                              text_size counts"
+                )]
+                exact.try_reserve_exact(s.len()).map_err(|error| {
+                    Error::Allocation(format!("failed to allocate glyph text: {error}"))
+                })?;
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "fills the capacity reserved above"
+                )]
+                exact.push_str(&s);
+                GlyphText::Heap(exact.into_boxed_str())
+            }
+        }
+    })
 }
 
 /// Returns an ink box whose coordinates are all finite.
@@ -1050,22 +1438,42 @@ const ASCENT: f64 = 0.8;
 const DESCENT: f64 = 0.2;
 
 impl GlyphRecord {
+    /// Zero-allocation placeholder left in the arena after moving a record
+    /// into its clustered line. `shown_until == 0` distinguishes it from every
+    /// real record (`shown_until = source_order + 1 >= 1`).
+    const fn placeholder() -> Self {
+        Self {
+            text: GlyphText::Char('\0'),
+            bidi_flags: 0,
+            x: 0.0,
+            y: 0.0,
+            size: 0.0,
+            advance: 0.0,
+            zero_advance: false,
+            direction: (1.0, 0.0),
+            writing_mode: 0,
+            font_id: 0,
+            extent_asc: DEFAULT_ASCENDER,
+            extent_desc: -DEFAULT_DESCENDER,
+            color: None,
+            render_mode: 0,
+            is_clipped: false,
+            ink: None,
+            is_underlined: false,
+            is_struck: false,
+            joins_previous: false,
+            source_order: 0,
+            shown_until: 0,
+            run: 0,
+            source: None,
+        }
+    }
+
     /// The distances of a glyph box's top above and bottom below the baseline.
     ///
-    /// Like pymupdf, the box spans the font's ascender and descender, scaled
-    /// to one em together when they span less, and 0.9 and -0.1 em when the
-    /// ascender is not positive, as in a glyphless OCR font.
+    /// Uses precomputed normalized multipliers from [`normalized_vertical_extent`].
     fn vertical_extent(&self) -> (f64, f64) {
-        let (mut ascender, mut descender) = (self.font.ascender, self.font.descender);
-        if ascender < 1e-3 {
-            (ascender, descender) = (0.9, -0.1);
-        }
-        let height = ascender - descender;
-        if height < 1.0 {
-            ascender /= height;
-            descender /= height;
-        }
-        (self.size * ascender, -self.size * descender)
+        (self.size * self.extent_asc, self.size * self.extent_desc)
     }
 }
 
@@ -1193,6 +1601,11 @@ fn uniform_axis_orientation(lines: &[Vec<GlyphRecord>]) -> Option<AxisOrientatio
 
 /// Return whether all visible characters are CJK or full-width punctuation.
 fn is_cjk_text(text: &GlyphText) -> bool {
+    if let GlyphText::Char(ch) = text
+        && ch.is_ascii()
+    {
+        return false;
+    }
     let mut saw_character = false;
     for ch in text.chars().filter(|ch| !ch.is_whitespace()) {
         saw_character = true;
@@ -1248,7 +1661,7 @@ fn inferred_vertical_cjk_indices(
                 continue;
             }
             let other = &arena[other_index];
-            if other.font_key != glyph.font_key {
+            if other.font_id != glyph.font_id {
                 continue;
             }
             let scale = glyph.size.max(other.size).max(1.0);
@@ -1318,20 +1731,20 @@ fn extract_inferred_vertical_cjk(
     candidates.sort_unstable_by(|&left, &right| {
         let (l, r) = (&arena[left], &arena[right]);
         l.x.total_cmp(&r.x)
-            .then(l.font_key.cmp(&r.font_key))
+            .then(l.font_id.cmp(&r.font_id))
             .then(l.y.total_cmp(&r.y))
             .then(left.cmp(&right))
     });
 
     let mut lines: Vec<Vec<usize>> = Vec::new();
     for index in candidates {
-        let (glyph_font_key, glyph_x, glyph_size) = {
+        let (glyph_font_id, glyph_x, glyph_size) = {
             let glyph = &arena[index];
-            (glyph.font_key, glyph.x, glyph.size)
+            (glyph.font_id, glyph.x, glyph.size)
         };
         let matching_line = lines.iter_mut().find(|line| {
             let first = &arena[line[0]];
-            first.font_key == glyph_font_key
+            first.font_id == glyph_font_id
                 && (first.x - glyph_x).abs()
                     <= first.size.max(glyph_size).max(1.0) * VERTICAL_LINE_TOLERANCE
         });
@@ -1421,15 +1834,32 @@ struct PaintLayer {
 }
 
 fn sort_line_inline(arena: &[GlyphRecord], line: &mut [usize]) -> Result<(), Error> {
-    line.sort_unstable_by(|&left, &right| {
-        glyph_progress(&arena[left])
-            .total_cmp(&glyph_progress(&arena[right]))
-            .then(left.cmp(&right))
-    });
-    if !line
-        .iter()
-        .any(|&index| is_zero_advance_mark(&arena[index]))
-    {
+    let mut sorted = true;
+    let mut has_zero_mark = false;
+    let mut prev: Option<(f64, usize)> = None;
+    for &index in line.iter() {
+        let glyph = &arena[index];
+        if is_zero_advance_mark(glyph) {
+            has_zero_mark = true;
+        }
+        let progress = glyph_progress(glyph);
+        if let Some((prev_progress, prev_index)) = prev {
+            match prev_progress.total_cmp(&progress) {
+                std::cmp::Ordering::Greater => sorted = false,
+                std::cmp::Ordering::Equal if prev_index > index => sorted = false,
+                _ => {}
+            }
+        }
+        prev = Some((progress, index));
+    }
+    if !sorted {
+        line.sort_unstable_by(|&left, &right| {
+            glyph_progress(&arena[left])
+                .total_cmp(&glyph_progress(&arena[right]))
+                .then(left.cmp(&right))
+        });
+    }
+    if !has_zero_mark {
         return Ok(());
     }
     let mut bases = Vec::new();
@@ -1535,7 +1965,47 @@ fn split_overlapping_paint_layers(
         return Ok(lines);
     }
     // Arena indexes equal collection source order.
-    line.sort_unstable();
+    if !line.is_sorted() {
+        line.sort_unstable();
+    }
+
+    // Fast path: check in one pass whether the whole line is a single paint
+    // run, avoiding any intermediate `runs` allocation for the common case.
+    let mut single_run = true;
+    let mut spacing: Option<&GlyphRecord> = None;
+    let mut previous_glyph: Option<&GlyphRecord> = None;
+    for &index in &line {
+        let glyph = &arena[index];
+        if let Some(previous) = previous_glyph {
+            let progress = glyph_progress(glyph);
+            let scale = glyph.size.max(1.0);
+            let direction_changed = previous.direction.0 * glyph.direction.0
+                + previous.direction.1 * glyph.direction.1
+                < 0.9;
+            let moved_backward = !is_zero_advance_mark(glyph)
+                && spacing.is_some_and(|prev_spacing: &GlyphRecord| {
+                    progress < glyph_progress(prev_spacing) - scale * PAINT_RUN_RESET_TOLERANCE
+                });
+            let repeated_at_same_origin = (glyph.x - previous.x).abs()
+                <= scale * PAINT_RUN_SAME_ORIGIN_TOLERANCE
+                && (glyph.y - previous.y).abs() <= scale * PAINT_RUN_SAME_ORIGIN_TOLERANCE
+                && glyph.text == previous.text;
+            if moved_backward || repeated_at_same_origin || direction_changed {
+                single_run = false;
+                break;
+            }
+        }
+        if !is_zero_advance_mark(glyph) {
+            spacing = Some(glyph);
+        }
+        previous_glyph = Some(glyph);
+    }
+    if single_run {
+        sort_line_inline(arena, &mut line)?;
+        let mut lines = Vec::new();
+        try_push_text(&mut lines, line, "text paint layers")?;
+        return Ok(lines);
+    }
 
     let mut runs: Vec<Vec<usize>> = Vec::new();
     let mut spacing: Option<&GlyphRecord> = None;
@@ -1627,40 +2097,80 @@ fn split_overlapping_paint_layers(
 /// roughly 128-byte records are not moved through every intermediate
 /// collection; `materialize_lines` then moves each record once into its final
 /// clustered line.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "pre-reserves exact partition counts from arena, which text_glyph_count bounds"
+)]
 fn cluster_lines(glyphs: Vec<GlyphRecord>) -> Result<Vec<Vec<GlyphRecord>>, Error> {
     let mut arena = glyphs;
+    let mut n_oblique = 0usize;
+    let mut n_vertical = 0usize;
+    for glyph in &arena {
+        if has_oblique_baseline(glyph) {
+            n_oblique += 1;
+        } else if has_vertical_baseline(glyph) {
+            n_vertical += 1;
+        }
+    }
+    let n_horizontal = arena.len() - n_oblique - n_vertical;
     let mut explicit_vertical: Vec<usize> = Vec::new();
     let mut horizontal: Vec<usize> = Vec::new();
     let mut oblique: Vec<usize> = Vec::new();
-    for (index, glyph) in arena.iter().enumerate() {
-        if has_oblique_baseline(glyph) {
-            try_push_text(&mut oblique, index, "oblique glyph partition")?;
-        } else if has_vertical_baseline(glyph) {
-            try_push_text(
-                &mut explicit_vertical,
-                index,
-                "explicit vertical glyph partition",
-            )?;
-        } else {
-            try_push_text(&mut horizontal, index, "horizontal glyph partition")?;
+    horizontal
+        .try_reserve_exact(n_horizontal)
+        .map_err(|error| {
+            Error::Allocation(format!(
+                "failed to grow horizontal glyph partition: {error}"
+            ))
+        })?;
+    explicit_vertical
+        .try_reserve_exact(n_vertical)
+        .map_err(|error| {
+            Error::Allocation(format!(
+                "failed to grow explicit vertical glyph partition: {error}"
+            ))
+        })?;
+    oblique.try_reserve_exact(n_oblique).map_err(|error| {
+        Error::Allocation(format!("failed to grow oblique glyph partition: {error}"))
+    })?;
+    if n_oblique == 0 && n_vertical == 0 {
+        horizontal.extend(0..arena.len());
+    } else {
+        for (index, glyph) in arena.iter().enumerate() {
+            if has_oblique_baseline(glyph) {
+                oblique.push(index);
+            } else if has_vertical_baseline(glyph) {
+                explicit_vertical.push(index);
+            } else {
+                horizontal.push(index);
+            }
         }
     }
-    let (mut horizontal, mut vertical_lines) =
-        extract_inferred_vertical_cjk(&mut arena, horizontal)?;
+    let (horizontal, mut vertical_lines) = extract_inferred_vertical_cjk(&mut arena, horizontal)?;
 
-    horizontal.sort_unstable_by(|&left, &right| {
-        let (l, r) = (&arena[left], &arena[right]);
-        l.y.total_cmp(&r.y)
-            .then(l.x.total_cmp(&r.x))
-            .then(left.cmp(&right))
+    // Sort compact `(y, x, index)` tuples so quicksort comparisons stay in
+    // L1 cache without random indirect indexing into the arena.
+    let mut keys: Vec<(f64, f64, usize)> = Vec::new();
+    keys.try_reserve_exact(horizontal.len()).map_err(|error| {
+        Error::Allocation(format!("failed to grow horizontal sort keys: {error}"))
+    })?;
+    for index in horizontal {
+        let glyph = &arena[index];
+        keys.push((glyph.y, glyph.x, index));
+    }
+    keys.sort_unstable_by(|left, right| {
+        left.0
+            .total_cmp(&right.0)
+            .then(left.1.total_cmp(&right.1))
+            .then(left.2.cmp(&right.2))
     });
     let mut lines: Vec<Vec<usize>> = Vec::new();
     let mut current_baseline = f64::NEG_INFINITY;
     let mut can_promote_baseline = false;
-    for index in horizontal {
+    for (glyph_y, _, index) in keys {
         let glyph = &arena[index];
         let tolerance = glyph.size.max(1.0) * LINE_TOLERANCE;
-        if (glyph.y - current_baseline).abs() <= tolerance {
+        if (glyph_y - current_baseline).abs() <= tolerance {
             let line = lines
                 .last_mut()
                 .expect("a line was created immediately before");
@@ -1673,17 +2183,17 @@ fn cluster_lines(glyphs: Vec<GlyphRecord>) -> Result<Vec<Vec<GlyphRecord>>, Erro
                 && line.iter().all(|&prior| {
                     let prior = &arena[prior];
                     prior.size <= glyph.size * LEADING_SUPERSCRIPT_SIZE
-                        && glyph.y - prior.y >= glyph.size * LEADING_SUPERSCRIPT_RISE
+                        && glyph_y - prior.y >= glyph.size * LEADING_SUPERSCRIPT_RISE
                 })
             {
-                current_baseline = glyph.y;
+                current_baseline = glyph_y;
                 can_promote_baseline = false;
             } else if line.len() >= MAX_LEADING_SUPERSCRIPTS {
                 can_promote_baseline = false;
             }
             try_push_text(line, index, "physical text-line glyphs")?;
         } else {
-            current_baseline = glyph.y;
+            current_baseline = glyph_y;
             can_promote_baseline = true;
             let mut line = Vec::new();
             try_push_text(&mut line, index, "physical text-line glyphs")?;
@@ -1708,22 +2218,16 @@ fn cluster_lines(glyphs: Vec<GlyphRecord>) -> Result<Vec<Vec<GlyphRecord>>, Erro
     materialize_lines(arena, all_lines)
 }
 
-/// Move each collected glyph once from the arena into its clustered line.
+/// Move each collected glyph once directly out of the arena into its clustered
+/// line without allocating an intermediate `Vec<Option<GlyphRecord>>`.
 #[expect(
     clippy::disallowed_methods,
     reason = "moves each glyph of the arena, which text_glyph_count counts, into one line"
 )]
 fn materialize_lines(
-    arena: Vec<GlyphRecord>,
+    mut arena: Vec<GlyphRecord>,
     lines: Vec<Vec<usize>>,
 ) -> Result<Vec<Vec<GlyphRecord>>, Error> {
-    let mut slots = Vec::new();
-    slots.try_reserve_exact(arena.len()).map_err(|error| {
-        Error::Allocation(format!(
-            "failed to allocate glyph materialization slots: {error}"
-        ))
-    })?;
-    slots.extend(arena.into_iter().map(Some));
     let mut output = Vec::new();
     output.try_reserve_exact(lines.len()).map_err(|error| {
         Error::Allocation(format!("failed to allocate clustered text lines: {error}"))
@@ -1738,11 +2242,14 @@ fn materialize_lines(
                 ))
             })?;
         for index in line {
-            materialized.push(
-                slots[index]
-                    .take()
-                    .expect("each glyph index is clustered into exactly one line"),
+            debug_assert!(
+                arena[index].shown_until != 0,
+                "each glyph index is clustered into exactly one line"
             );
+            materialized.push(std::mem::replace(
+                &mut arena[index],
+                GlyphRecord::placeholder(),
+            ));
         }
         output.push(materialized);
     }
@@ -2082,42 +2589,44 @@ fn append_segment_geometry(
     Ok(())
 }
 
+/// Returns `(split_index, start, end)` if `line` has exactly one narrow column
+/// gap (as `MAX_NARROW_COLUMN_GAPS_PER_LINE == 1`), in a single scan checking
+/// geometry before text content.
+fn single_narrow_gap(line: &[GlyphRecord]) -> Option<(usize, f64, f64)> {
+    if line.len() < MIN_NARROW_COLUMN_SIDE_GLYPHS * 2 {
+        return None;
+    }
+    let start_idx = MIN_NARROW_COLUMN_SIDE_GLYPHS - 1;
+    let end_idx = line.len() - MIN_NARROW_COLUMN_SIDE_GLYPHS;
+    let mut found: Option<(usize, f64, f64)> = None;
+    let mut found_count = 0usize;
+    for index in start_idx..end_idx {
+        let left = &line[index];
+        let right = &line[index + 1];
+        let start = glyph_end(left);
+        let end = glyph_progress(right);
+        let minimum = left.size.max(right.size).max(1.0) * NARROW_COLUMN_GAP;
+        if end - start < minimum {
+            continue;
+        }
+        let split_index = index + 1;
+        if !has_narrow_column_text(&line[..split_index])
+            || !has_narrow_column_text(&line[split_index..])
+        {
+            continue;
+        }
+        found_count += 1;
+        if found_count > MAX_NARROW_COLUMN_GAPS_PER_LINE {
+            return None;
+        }
+        found = Some((split_index, start, end));
+    }
+    found
+}
+
 fn narrow_gap_index(line: &[GlyphRecord], boundary: f64) -> Option<usize> {
-    let gap_count = narrow_gap_count(line);
-    if gap_count == 0 || gap_count > MAX_NARROW_COLUMN_GAPS_PER_LINE {
-        return None;
-    }
-    line.windows(2).enumerate().find_map(|(index, pair)| {
-        let (start, end) = narrow_gap_interval(line, index, pair)?;
-        (start <= boundary && boundary <= end).then_some(index + 1)
-    })
-}
-
-fn narrow_gap_count(line: &[GlyphRecord]) -> usize {
-    line.windows(2)
-        .enumerate()
-        .filter(|(index, pair)| narrow_gap_interval(line, *index, pair).is_some())
-        .take(MAX_NARROW_COLUMN_GAPS_PER_LINE + 1)
-        .count()
-}
-
-fn narrow_gap_interval(
-    line: &[GlyphRecord],
-    index: usize,
-    pair: &[GlyphRecord],
-) -> Option<(f64, f64)> {
-    let split_index = index + 1;
-    if split_index < MIN_NARROW_COLUMN_SIDE_GLYPHS
-        || line.len() - split_index < MIN_NARROW_COLUMN_SIDE_GLYPHS
-        || !has_narrow_column_text(&line[..split_index])
-        || !has_narrow_column_text(&line[split_index..])
-    {
-        return None;
-    }
-    let start = glyph_end(&pair[0]);
-    let end = glyph_progress(&pair[1]);
-    let minimum = pair[0].size.max(pair[1].size).max(1.0) * NARROW_COLUMN_GAP;
-    (end - start >= minimum).then_some((start, end))
+    let (split_index, start, end) = single_narrow_gap(line)?;
+    (start <= boundary && boundary <= end).then_some(split_index)
 }
 
 fn has_narrow_column_text(glyphs: &[GlyphRecord]) -> bool {
@@ -2178,31 +2687,25 @@ fn narrow_column_boundary(
 ) -> Result<Option<NarrowColumnBoundary>, Error> {
     let mut events = Vec::new();
     for line in lines {
-        let gap_count = narrow_gap_count(line);
-        if gap_count == 0 || gap_count > MAX_NARROW_COLUMN_GAPS_PER_LINE {
+        let Some((_, start, end)) = single_narrow_gap(line) else {
             continue;
-        }
-        for (index, pair) in line.windows(2).enumerate() {
-            let Some((start, end)) = narrow_gap_interval(line, index, pair) else {
-                continue;
-            };
-            try_push_text(
-                &mut events,
-                ColumnGapEvent {
-                    position: start,
-                    starts: true,
-                },
-                "narrow-column gap events",
-            )?;
-            try_push_text(
-                &mut events,
-                ColumnGapEvent {
-                    position: end,
-                    starts: false,
-                },
-                "narrow-column gap events",
-            )?;
-        }
+        };
+        try_push_text(
+            &mut events,
+            ColumnGapEvent {
+                position: start,
+                starts: true,
+            },
+            "narrow-column gap events",
+        )?;
+        try_push_text(
+            &mut events,
+            ColumnGapEvent {
+                position: end,
+                starts: false,
+            },
+            "narrow-column gap events",
+        )?;
     }
     if events.len() < MIN_NARROW_COLUMN_LINES * 2 {
         return Ok(None);
@@ -2746,7 +3249,7 @@ pub struct TextPeak {
 /// `out` keeps for the rest of the operation. A refusal leaves `out` as it
 /// was.
 pub fn page_text(
-    bridged: &Bridged,
+    bridged: &Arc<Bridged>,
     index: usize,
     options: &TextOptions,
     budget: &Budget,
@@ -2760,16 +3263,7 @@ pub fn page_text(
         Error::Allocation("the assembled text exceeds the address space".to_owned())
     })?;
     budget.charge(LimitCode::TextSize, as_u64(size))?;
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the assembled text, which text_size counts above"
-    )]
-    let appended = assemble_text(&lines, Some(size)).and_then(|text| {
-        out.try_reserve(text.len())
-            .map_err(|error| Error::Allocation(format!("failed to grow the text: {error}")))?;
-        out.push_str(&text);
-        Ok(())
-    });
+    let appended = assemble_text_into(&lines, Some(size), out);
     if let Err(error) = appended {
         budget.release(LimitCode::TextSize, as_u64(size));
         return Err(error);
@@ -2798,6 +3292,8 @@ impl GlyphCharge {
 /// A page's lines in reading order as the text options view them.
 struct ViewedLines {
     lines: Vec<Vec<GlyphRecord>>,
+    /// Fonts referenced on this page, indexed by [`GlyphRecord::font_id`].
+    fonts: Vec<FontInfo>,
     /// The glyphs without Unicode that [`Unmapped::Skip`] left out.
     skipped: usize,
     /// The visible page in display space.
@@ -2809,6 +3305,8 @@ struct ViewedLines {
 /// A page's glyphs in paint order and its rules.
 struct CollectedGlyphs {
     glyphs: Vec<GlyphRecord>,
+    /// Fonts referenced on this page, indexed by [`GlyphRecord::font_id`].
+    fonts: Vec<FontInfo>,
     /// The rules, collected with [`TextOptions::styles`].
     rules: Vec<RuleSegment>,
     /// The glyphs without Unicode that [`Unmapped::Skip`] left out.
@@ -2823,7 +3321,7 @@ struct CollectedGlyphs {
 /// [`TextOptions::styles`], and returns its lines in reading order as the
 /// text options view them. A refusal releases every charge.
 fn viewed_page_lines(
-    bridged: &Bridged,
+    bridged: &Arc<Bridged>,
     fallback: &Fallback,
     index: usize,
     options: &TextOptions,
@@ -2838,6 +3336,7 @@ fn viewed_page_lines(
     match page_lines(glyphs).and_then(|lines| view_lines(lines, options)) {
         Ok(lines) => Ok(ViewedLines {
             lines,
+            fonts: collected.fonts,
             skipped: collected.skipped,
             page_box: collected.page_box,
             charge: collected.charge,
@@ -2856,26 +3355,96 @@ fn viewed_page_lines(
 /// Only [`TextOptions::exact_bboxes`] reads the faces of `fallback`, to
 /// measure what a rendering draws, and only when one of them draws a font
 /// of the page. Other text is the same under any faces, so its memo key
-/// leaves them out (DESIGN.md section 5).
+/// leaves them out (DESIGN.md section 5) and it reuses the thread-local
+/// extraction cache across pages of the same [`Bridged`] document.
 fn collect_page_glyphs(
-    bridged: &Bridged,
+    bridged: &Arc<Bridged>,
     fallback: &Fallback,
     index: usize,
     options: &TextOptions,
     content: Option<&PageContent>,
     budget: &Budget,
 ) -> Result<CollectedGlyphs, Error> {
+    if !options.exact_bboxes {
+        let settings = InterpreterSettings {
+            render_content: RenderContent::all(),
+            ..InterpreterSettings::default()
+        };
+        return with_extract_cache(bridged, |bridged, cache, stretches, cache_fonts| {
+            collect_page_glyphs_with_cache(
+                bridged,
+                fallback,
+                index,
+                options,
+                content,
+                budget,
+                settings,
+                None,
+                cache,
+                stretches,
+                cache_fonts,
+            )
+        });
+    }
+    // `fallback.watching(&asked)` only fires on a hayro FontCache miss, so
+    // exact_bboxes runs with a fresh cache to observe every fallback font.
+    let asked = Arc::new(AtomicBool::new(false));
+    let settings = InterpreterSettings {
+        render_content: RenderContent::all(),
+        ..fallback.watching(&asked)
+    };
+    let cache = InterpreterCache::new();
+    let stretches = Stretches::new(&settings);
+    let mut cache_fonts = Vec::new();
+    collect_page_glyphs_with_cache(
+        bridged,
+        fallback,
+        index,
+        options,
+        content,
+        budget,
+        settings,
+        Some(asked),
+        &cache,
+        &stretches,
+        &mut cache_fonts,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "page selection, interpretation caches, and fallback watcher"
+)]
+fn collect_page_glyphs_with_cache<'a>(
+    bridged: &'a Bridged,
+    fallback: &Fallback,
+    index: usize,
+    options: &TextOptions,
+    content: Option<&PageContent>,
+    budget: &Budget,
+    settings: InterpreterSettings,
+    asked: Option<Arc<AtomicBool>>,
+    cache: &InterpreterCache<'a>,
+    stretches: &Stretches<'a>,
+    cache_fonts: &mut Vec<(u128, CachedFont)>,
+) -> Result<CollectedGlyphs, Error> {
     let (page, display) = bridged.page(index).ok_or(Error::NoPage(index))?;
     let page_box = {
         let (width, height) = display.size();
         Rect::new(0.0, 0.0, width, height)
     };
+    let mut page_fonts = Vec::new();
+    try_push_text(&mut page_fonts, FontInfo::default(), "page font table")?;
     let collector = TextCollector {
         glyphs: Vec::new(),
         rules: Vec::new(),
-        font_infos: HashMap::new(),
+        cache_fonts,
+        page_fonts,
+        page_font_ids: Vec::new(),
         last_font: None,
         text_size: 0,
+        reserved_glyphs: 0,
+        reserved_text_size: 0,
         budget,
         error: None,
         shown: 0,
@@ -2896,26 +3465,18 @@ fn collect_page_glyphs(
     };
     // Text includes the annotations' appearances. The sources of a layout
     // with chars interpret the page again with the fonts of the first time.
-    let asked = Arc::new(AtomicBool::new(false));
-    let settings = InterpreterSettings {
-        render_content: RenderContent::all(),
-        ..if options.exact_bboxes {
-            fallback.watching(&asked)
-        } else {
-            InterpreterSettings::default()
-        }
-    };
-    let cache = InterpreterCache::new();
-    let (_, mut collector) = super::model::collect_page_content(
+    let (_, mut collector) = super::model::collect_page_content_with_stretches(
         page,
         display,
         settings.clone(),
-        &cache,
+        cache,
+        stretches,
         collector,
         ItemKinds::NONE,
         None,
         budget,
     )?;
+    collector.release_reserved();
     let charge = GlyphCharge {
         glyphs: collector.glyphs.len(),
         text_size: collector.text_size,
@@ -2925,8 +3486,8 @@ fn collect_page_glyphs(
         return Err(error);
     }
     let shown = collector.shown;
-    let mut glyphs = collector.glyphs;
-    if asked.load(Ordering::Relaxed)
+    let mut glyphs = std::mem::take(&mut collector.glyphs);
+    if asked.is_some_and(|asked| asked.load(Ordering::Relaxed))
         && let Err(error) = measure_on_faces(page, display, fallback, &mut glyphs, shown, budget)
     {
         charge.release(budget);
@@ -2937,7 +3498,7 @@ fn collect_page_glyphs(
             page,
             display,
             settings,
-            &cache,
+            cache,
             content,
             checks,
             &mut glyphs,
@@ -2949,7 +3510,8 @@ fn collect_page_glyphs(
     }
     Ok(CollectedGlyphs {
         glyphs,
-        rules: collector.rules,
+        fonts: std::mem::take(&mut collector.page_fonts),
+        rules: std::mem::take(&mut collector.rules),
         skipped: collector.skipped_no_unicode,
         page_box,
         charge,
@@ -3084,8 +3646,9 @@ fn view_glyph(glyph: &GlyphRecord, view: &TextOptions) -> Result<GlyphRecord, Er
         zero_advance: glyph.zero_advance,
         direction: glyph.direction,
         writing_mode: glyph.writing_mode,
-        font_key: glyph.font_key,
-        font: glyph.font.clone(),
+        font_id: glyph.font_id,
+        extent_asc: glyph.extent_asc,
+        extent_desc: glyph.extent_desc,
         color: glyph.color,
         render_mode: glyph.render_mode,
         is_clipped: glyph.is_clipped,
@@ -3446,39 +4009,61 @@ fn assemble_text<L: AsRef<[GlyphRecord]>>(
     exact_size: Option<usize>,
 ) -> Result<String, Error> {
     let mut out = String::new();
+    assemble_text_into(lines, exact_size, &mut out)?;
+    Ok(out)
+}
+
+/// Append glyphs as top-to-bottom, left-to-right plain text directly into
+/// `out`, leaving `out` unchanged on allocation failure.
+fn assemble_text_into<L: AsRef<[GlyphRecord]>>(
+    lines: &[L],
+    exact_size: Option<usize>,
+    out: &mut String,
+) -> Result<(), Error> {
+    let page_start = out.len();
     if let Some(size) = exact_size {
         #[expect(
             clippy::disallowed_methods,
             reason = "the assembled size, which each caller charges to text_size first"
         )]
-        out.try_reserve_exact(size).map_err(|error| {
+        out.try_reserve(size).map_err(|error| {
             Error::Allocation(format!("failed to reserve plain text output: {error}"))
         })?;
     }
-    for (index, line) in lines.iter().enumerate() {
-        let mut previous: Option<&GlyphRecord> = None;
-        for glyph in line.as_ref() {
-            if needs_gap(previous, glyph) && !out.ends_with(' ') && !out.ends_with('\n') {
-                try_push_str_text(&mut out, " ", "plain text output")?;
+    let result = (|| -> Result<(), Error> {
+        for (index, line) in lines.iter().enumerate() {
+            let mut previous: Option<&GlyphRecord> = None;
+            for glyph in line.as_ref() {
+                if needs_gap(previous, glyph) {
+                    let tail = &out[page_start..];
+                    if !tail.ends_with(' ') && !tail.ends_with('\n') {
+                        try_push_str_text(out, " ", "plain text output")?;
+                    }
+                }
+                try_push_glyph_text(out, &glyph.text, "plain text output")?;
+                if !glyph_is_nonspacing_mark(glyph) {
+                    previous = Some(glyph);
+                }
             }
-            try_push_glyph_text(&mut out, &glyph.text, "plain text output")?;
-            if !glyph_is_nonspacing_mark(glyph) {
-                previous = Some(glyph);
+            // Drop extra whitespace glyphs at line ends.
+            while out.len() > page_start && out.ends_with(' ') {
+                out.pop();
+            }
+            // A line that dehyphenation joins to the next ends without a break.
+            if !joins_next(lines, index) {
+                try_push_str_text(out, "\n", "plain text output")?;
             }
         }
-        // Drop extra whitespace glyphs at line ends.
-        while out.ends_with(' ') {
-            out.pop();
-        }
-        // A line that dehyphenation joins to the next ends without a break.
-        if !joins_next(lines, index) {
-            try_push_str_text(&mut out, "\n", "plain text output")?;
-        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        out.truncate(page_start);
+        return Err(error);
     }
     if let Some(size) = exact_size {
-        debug_assert_eq!(out.len(), size);
+        debug_assert_eq!(out.len() - page_start, size);
     }
-    Ok(out)
+    Ok(())
 }
 
 /// One glyph's box: its exact ink box when collected, else [`font_bbox`].
@@ -3536,8 +4121,9 @@ mod tests {
             zero_advance: false,
             direction: (1.0, 0.0),
             writing_mode: 0,
-            font_key: 0,
-            font: FontInfo::default(),
+            font_id: 0,
+            extent_asc: DEFAULT_ASCENDER,
+            extent_desc: -DEFAULT_DESCENDER,
             color: None,
             render_mode: 0,
             is_clipped: false,

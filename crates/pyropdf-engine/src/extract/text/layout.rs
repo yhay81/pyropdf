@@ -10,14 +10,16 @@
 //! per glyph, which `text_glyph_count` bounds, and the rules of one page at
 //! most the budget's `text_rule_count` limit.
 
+use std::sync::Arc;
+
 use hayro::hayro_interpret::DrawMode;
 use hayro::kurbo::{Affine, BezPath, PathSeg};
 use pyropdf_store::budget::{Budget, LimitCode};
 
 use super::{
-    BBox, Error, GlyphRecord, TextOptions, TextPeak, as_u64, glyph_bbox, glyph_is_nonspacing_mark,
-    needs_gap, starts_block, try_push_glyph_text, try_push_str_text, try_push_text,
-    viewed_page_lines,
+    BBox, Error, FontInfo, GlyphRecord, TextOptions, TextPeak, as_u64, glyph_bbox,
+    glyph_is_nonspacing_mark, needs_gap, starts_block, try_push_glyph_text, try_push_str_text,
+    try_push_text, viewed_page_lines,
 };
 use crate::bridge::Bridged;
 use crate::content::PageContent;
@@ -93,7 +95,7 @@ pub struct PageLayout {
 /// `text_size` while the layout is built, and the layout's strings against
 /// `text_size` for the rest of the operation. A refusal keeps nothing.
 pub fn page_layout(
-    bridged: &Bridged,
+    bridged: &Arc<Bridged>,
     fallback: &Fallback,
     index: usize,
     options: &TextOptions,
@@ -104,10 +106,11 @@ pub fn page_layout(
     let content = content.filter(|_| chars);
     let viewed = viewed_page_lines(bridged, fallback, index, options, content, budget)?;
     let mut meter = Meter { budget, charged: 0 };
-    let blocks = assemble_layout(&viewed.lines, chars, &mut meter).and_then(|mut blocks| {
-        merge_joined_words(&viewed.lines, &mut blocks)?;
-        Ok(blocks)
-    });
+    let blocks =
+        assemble_layout(&viewed.lines, &viewed.fonts, chars, &mut meter).and_then(|mut blocks| {
+            merge_joined_words(&viewed.lines, &mut blocks)?;
+            Ok(blocks)
+        });
     // The glyphs give way to the layout built from them.
     viewed.charge.release(budget);
     let blocks = blocks.inspect_err(|_| meter.release())?;
@@ -373,7 +376,7 @@ fn span_glyph_slices(line: &[GlyphRecord]) -> impl Iterator<Item = &[GlyphRecord
         let mut end = start + 1;
         while end < line.len() {
             let (a, b) = (&line[end - 1], &line[end]);
-            if b.font_key != a.font_key
+            if b.font_id != a.font_id
                 || (b.size - a.size).abs() > 0.1
                 || b.color != a.color
                 || b.render_mode != a.render_mode
@@ -395,7 +398,8 @@ fn span_glyph_slices(line: &[GlyphRecord]) -> impl Iterator<Item = &[GlyphRecord
 /// Builds one span of `line`, with its characters when `chars` is set.
 fn span_tuple(
     glyphs: &[GlyphRecord],
-    line: &[GlyphRecord],
+    line_main: Option<(f64, f64)>,
+    fonts: &[FontInfo],
     chars: bool,
     meter: &mut Meter<'_>,
 ) -> Result<SpanTuple, Error> {
@@ -407,31 +411,33 @@ fn span_tuple(
         Vec::new()
     };
     let first = &glyphs[0];
+    let font = &fonts[first.font_id as usize];
     let mut font_name = String::new();
-    try_push_str_text(&mut font_name, &first.font.name, "layout span font name")?;
+    try_push_str_text(&mut font_name, &font.name, "layout span font name")?;
     meter.charge(&font_name)?;
+    let (bbox, quad) = glyphs_bbox_and_quad(glyphs);
     Ok((
-        glyphs_bbox(glyphs),
+        bbox,
         (text, chars),
         glyphs.iter().map(|g| g.size).fold(0.0, f64::max),
         (first.x, first.y),
         font_name,
-        first.font.flags,
+        font.flags,
         (
             first
                 .color
                 .map(|[red, green, blue, alpha]| (red, green, blue, alpha)),
             first.render_mode,
             first.is_clipped,
-            first.font.ascender,
-            first.font.descender,
+            font.ascender,
+            font.descender,
             (
                 first.is_underlined,
                 first.is_struck,
-                is_superscript(glyphs, line),
+                is_superscript(first, line_main),
             ),
         ),
-        glyphs_quad(glyphs),
+        quad,
     ))
 }
 
@@ -477,21 +483,25 @@ fn span_chars(glyphs: &[GlyphRecord], meter: &mut Meter<'_>) -> Result<Vec<CharT
     Ok(chars)
 }
 
+/// Precomputes `(size, y)` of the largest horizontal glyph on `line`,
+/// matching `Iterator::max_by` tie-breaking (last maximum wins).
+fn line_main_horizontal(line: &[GlyphRecord]) -> Option<(f64, f64)> {
+    line.iter()
+        .filter(|glyph| is_horizontal(glyph))
+        .max_by(|left, right| left.size.total_cmp(&right.size))
+        .map(|glyph| (glyph.size, glyph.y))
+}
+
 /// Whether a span of a horizontal line is set smaller than the line's
 /// largest glyphs and raised above their baseline by more than a sixth of
 /// their size, as a superscript or an exponent is.
-fn is_superscript(glyphs: &[GlyphRecord], line: &[GlyphRecord]) -> bool {
-    let Some(main) = line
-        .iter()
-        .filter(|glyph| is_horizontal(glyph))
-        .max_by(|left, right| left.size.total_cmp(&right.size))
-    else {
+fn is_superscript(span: &GlyphRecord, line_main: Option<(f64, f64)>) -> bool {
+    let Some((main_size, main_y)) = line_main else {
         return false;
     };
-    let span = &glyphs[0];
     is_horizontal(span)
-        && span.size < main.size * SUPERSCRIPT_SIZE
-        && main.y - span.y > main.size * SUPERSCRIPT_RISE
+        && span.size < main_size * SUPERSCRIPT_SIZE
+        && main_y - span.y > main_size * SUPERSCRIPT_RISE
 }
 
 /// Glyphs whose baselines differ by more than this share of their size, as
@@ -543,8 +553,15 @@ fn gap_geometry(before: &GlyphRecord, after: &GlyphRecord) -> ((f64, f64), BBox)
 }
 
 /// Assemble a span's text, with a space for each inferred gap.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "reserves the span's glyph bytes, which text_size already counts"
+)]
 fn span_text(glyphs: &[GlyphRecord]) -> Result<String, Error> {
+    let reserve: usize = glyphs.iter().map(|g| g.text.len()).sum();
     let mut text = String::new();
+    text.try_reserve(reserve)
+        .map_err(|error| Error::Allocation(format!("failed to grow layout span text: {error}")))?;
     let mut previous: Option<&GlyphRecord> = None;
     for glyph in glyphs {
         if needs_gap(previous, glyph) && !text.ends_with(' ') {
@@ -564,7 +581,10 @@ fn split_words(line: &[GlyphRecord], meter: &mut Meter<'_>) -> Result<Vec<WordTu
     let mut word_start = None;
     let mut previous = None;
     for (index, glyph) in line.iter().enumerate() {
-        let is_space = glyph.text.chars().all(char::is_whitespace);
+        let is_space = match &glyph.text {
+            super::GlyphText::Char(c) => c.is_whitespace(),
+            super::GlyphText::Heap(s) => s.chars().all(char::is_whitespace),
+        };
         if (is_space || needs_gap(previous, glyph))
             && let Some(start) = word_start.take()
         {
@@ -583,14 +603,24 @@ fn split_words(line: &[GlyphRecord], meter: &mut Meter<'_>) -> Result<Vec<WordTu
     Ok(words)
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "reserves the exact byte length of the word's glyphs, which text_size counts"
+)]
 fn push_word(
     words: &mut Vec<WordTuple>,
     glyphs: &[GlyphRecord],
     meter: &mut Meter<'_>,
 ) -> Result<(), Error> {
+    let byte_len: usize = glyphs.iter().map(|g| g.text.len()).sum();
     let mut text = String::new();
+    text.try_reserve_exact(byte_len)
+        .map_err(|error| Error::Allocation(format!("failed to grow layout word text: {error}")))?;
     for glyph in glyphs {
-        try_push_glyph_text(&mut text, &glyph.text, "layout word text")?;
+        match &glyph.text {
+            super::GlyphText::Char(c) => text.push(*c),
+            super::GlyphText::Heap(s) => text.push_str(s),
+        }
     }
     meter.charge(&text)?;
     try_push_text(words, (glyphs_bbox(glyphs), text), "layout words")
@@ -604,8 +634,13 @@ fn line_direction(line: &[GlyphRecord]) -> ((f64, f64), u8) {
 
 /// Groups the lines into blocks, as [`starts_block`] separates them, and
 /// builds every line's spans and words.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "reserves block and line counts bounded by the page's glyphs"
+)]
 fn assemble_layout(
     lines: &[Vec<GlyphRecord>],
+    fonts: &[FontInfo],
     chars: bool,
     meter: &mut Meter<'_>,
 ) -> Result<Vec<BlockTuple>, Error> {
@@ -622,43 +657,35 @@ fn assemble_layout(
     }
 
     let mut output = Vec::new();
+    output
+        .try_reserve_exact(blocks.len())
+        .map_err(|error| Error::Allocation(format!("failed to grow layout blocks: {error}")))?;
     for block_lines in blocks {
         let mut line_tuples = Vec::new();
+        line_tuples
+            .try_reserve_exact(block_lines.len())
+            .map_err(|error| Error::Allocation(format!("failed to grow layout lines: {error}")))?;
         let mut x0 = f64::INFINITY;
         let mut y0 = f64::INFINITY;
         let mut x1 = f64::NEG_INFINITY;
         let mut y1 = f64::NEG_INFINITY;
         for line in block_lines {
-            let bbox = glyphs_bbox(line);
+            let (bbox, quad) = glyphs_bbox_and_quad(line);
             let (direction, writing_mode) = line_direction(line);
+            let line_main = line_main_horizontal(line);
             let mut spans = Vec::new();
             for glyphs in span_glyph_slices(line) {
-                let span = span_tuple(glyphs, line, chars, meter)?;
+                let span = span_tuple(glyphs, line_main, fonts, chars, meter)?;
                 try_push_text(&mut spans, span, "layout spans")?;
             }
             let words = split_words(line, meter)?;
-            try_push_text(
-                &mut line_tuples,
-                (
-                    bbox,
-                    spans,
-                    words,
-                    direction,
-                    writing_mode,
-                    glyphs_quad(line),
-                ),
-                "layout lines",
-            )?;
+            line_tuples.push((bbox, spans, words, direction, writing_mode, quad));
             x0 = x0.min(bbox.0);
             y0 = y0.min(bbox.1);
             x1 = x1.max(bbox.2);
             y1 = y1.max(bbox.3);
         }
-        try_push_text(
-            &mut output,
-            ((x0, y0, x1, y1), line_tuples),
-            "layout blocks",
-        )?;
+        output.push(((x0, y0, x1, y1), line_tuples));
     }
     Ok(output)
 }
@@ -715,6 +742,41 @@ fn glyph_corners(glyph: &GlyphRecord) -> [(f64, f64); 4] {
         (start.0 + bx * below, start.1 + by * below),
         (end.0 + bx * below, end.1 + by * below),
     ]
+}
+
+/// Computes both the axis-aligned bbox and the baseline-aligned quad of
+/// `glyphs` in a single pass. For axis-aligned horizontal or inferred-vertical
+/// text (the common case), the quad equals the bbox corners directly.
+fn glyphs_bbox_and_quad(glyphs: &[GlyphRecord]) -> (BBox, QuadTuple) {
+    let first = &glyphs[0];
+    if first.writing_mode == 1
+        || (first.direction.0 >= 1.0 - 1e-6 && first.direction.1.abs() <= 1e-6)
+    {
+        let mut x0 = f64::INFINITY;
+        let mut y0 = f64::INFINITY;
+        let mut x1 = f64::NEG_INFINITY;
+        let mut y1 = f64::NEG_INFINITY;
+        let mut all_aligned = true;
+        for glyph in glyphs {
+            let (gx0, gy0, gx1, gy1) = glyph_bbox(glyph);
+            x0 = x0.min(gx0);
+            y0 = y0.min(gy0);
+            x1 = x1.max(gx1);
+            y1 = y1.max(gy1);
+            if glyph.writing_mode != 1
+                && glyph.ink.is_none()
+                && (glyph.direction.0 < 1.0 - 1e-6 || glyph.direction.1.abs() > 1e-6)
+            {
+                all_aligned = false;
+            }
+        }
+        let bbox = (x0, y0, x1, y1);
+        if all_aligned && first.direction.0 == 1.0 && first.direction.1 == 0.0 {
+            return (bbox, ((x0, y0), (x1, y0), (x0, y1), (x1, y1)));
+        }
+        return (bbox, glyphs_quad(glyphs));
+    }
+    (glyphs_bbox(glyphs), glyphs_quad(glyphs))
 }
 
 /// The quad of glyphs that share a baseline: the smallest rectangle along
