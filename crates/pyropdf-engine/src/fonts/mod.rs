@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 pub mod bitmap;
 mod cff;
+pub mod codec;
 pub mod colour;
 pub mod colr;
 pub mod compact;

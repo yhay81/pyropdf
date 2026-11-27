@@ -742,7 +742,25 @@ MUTATIONS = (
     ),
     (
         "replace_text",
-        "Re-encode a matching text operand with its source font and preserve adjacent operators.",
+        "Re-encode a matching simple-font text operand with its source font and preserve adjacent operators.",
+        "Page",
+        "replace_text",
+    ),
+    (
+        "replace_text_composite",
+        "Re-encode a matching composite Type 0 (Identity-H) operand with fallback embedding and subsetting.",
+        "Page",
+        "replace_text",
+    ),
+    (
+        "replace_text_vertical",
+        "Re-encode a matching vertical-writing (Identity-V / WMode=1) operand with vertical TJ compensation.",
+        "Page",
+        "replace_text",
+    ),
+    (
+        "replace_text_type3",
+        "Re-encode a matching Type 3 operand using FontMatrix-scaled widths and CharProcs drawability.",
         "Page",
         "replace_text",
     ),

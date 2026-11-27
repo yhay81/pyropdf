@@ -268,6 +268,37 @@ The 15-document round-trip corpus redraws 17,246 text runs. Eight runs in
 the remaining page pixels within 16 levels per RGB channel at 72 dpi, and
 checks that the number and reason for these exclusions stay the same.
 
+### Replacing text
+
+`page.replace_text(old, new, *, count=None, fallback=None)` replaces text in
+the page's content and in the Form XObjects that it draws, across Type 1,
+TrueType, Type 3, and composite (Type 0 / CID) fonts in both horizontal
+(`WMode = 0`) and vertical (`WMode = 1`) writing modes, including
+`Identity-H`, `Identity-V`, predefined CMaps, and custom embedded CMap
+streams. A compensating `TJ` adjustment along the active writing axis keeps
+following text in place, enclosing structure tags (`/MCID`) stay intact, and
+matching `/ActualText` marked-content spans are updated alongside their
+glyphs.
+
+If an un-subsetted embedded Type 0 face already holds the needed glyphs,
+`replace_text` extends its `/W`, `/W2`, and `/ToUnicode` entries
+automatically. When a glyph is absent from a subsetted font, a Type 3 font's
+`/CharProcs`, or the font's encoding, pass `fallback=Font(...)` to draw the
+missing characters in that face while keeping following text aligned; without
+`fallback`, `ValueError` is raised and the document is left unchanged.
+
+```python
+import pyropdf
+
+doc = pyropdf.Document()
+page = doc.pages.new((300, 120))
+with page.draw() as canvas:
+    canvas.text("Invoice #001 total", (20, 60), size=14)
+page.replace_text("#001", "#002")
+if "ja" in doc.fallback_fonts and (jp := doc.fallback_fonts["ja"].sans) is not None:
+    page.replace_text("total", "合計", fallback=jp)
+```
+
 ## Annotations
 
 `page.annotations.add` takes a specification and returns an `Annotation`

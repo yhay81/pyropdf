@@ -250,6 +250,33 @@ with pyropdf.open("input.pdf") as source, pyropdf.Document() as target:
 非標準フォントを使っており、コーパステストは残りのページ画素を 72 dpi で RGB 各チャネル 16 階調以内に収まるか検証し、
 除外件数と理由が変わらないことも確認します。
 
+### テキストの置換 {#replacing-text}
+
+`page.replace_text(old, new, *, count=None, fallback=None)` は、ページ本体と
+ページが描く Form XObject 内のテキストを置換します。Type 1・TrueType・Type 3 に加え、
+横書き（`WMode = 0`）と縦書き（`WMode = 1`）の複合フォント（Type 0 / CID：`Identity-H`・
+`Identity-V`・既定 CMap・埋め込みカスタム CMap ストリーム）に対応します。進行軸方向の
+`TJ` 補正により後続テキストの表示位置を保ち、外側の構造タグ（`/MCID`）を保持したまま
+一致する `/ActualText` スパンも同時に更新します。
+
+未サブセットの埋め込み Type 0 書体に置換先のグリフが含まれる場合は、`/W`・`/W2`・
+`/ToUnicode` を自動で拡張します。サブセット済みフォント、Type 3 フォントの `/CharProcs`、
+または符号化に欠落グリフがある場合は、`fallback=Font(...)` を渡すとフォールバック書体に
+切り替えて後続の配置を保ったまま置換できます。`fallback` を渡さない場合は `ValueError`
+を送出し、文書を一切変更しません。
+
+```python
+import pyropdf
+
+doc = pyropdf.Document()
+page = doc.pages.new((300, 120))
+with page.draw() as canvas:
+    canvas.text("Invoice #001 total", (20, 60), size=14)
+page.replace_text("#001", "#002")
+if "ja" in doc.fallback_fonts and (jp := doc.fallback_fonts["ja"].sans) is not None:
+    page.replace_text("total", "合計", fallback=jp)
+```
+
 ## 注釈
 
 `page.annotations.add` は仕様を受け取り、`Annotation` ハンドルを返します。注釈は

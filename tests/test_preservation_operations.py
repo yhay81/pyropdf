@@ -2217,6 +2217,129 @@ def check_page_text(doc: pyropdf.Document) -> None:
     assert source.obj["Contents"] != edited.obj["Contents"]
 
 
+def _wrap_artifact(page: pyropdf.Page) -> None:
+    page.operations = [
+        pyropdf.Operation("BMC", (pyropdf.Name("Artifact"),)),
+        *page.operations,
+        pyropdf.Operation("EMC"),
+    ]
+
+
+def prepare_composite_text_replacement(doc: pyropdf.Document) -> None:
+    page = doc.pages.new((240, 100))
+    with page.draw() as canvas:
+        canvas.text("日本語テキスト", (20, 50), font=face(), size=16)
+    _wrap_artifact(page)
+    other = doc.pages.new((240, 100))
+    other.obj["Resources"] = dict(page.obj["Resources"])
+    other.obj["Contents"] = page.obj["Contents"]
+
+
+def edit_composite_page_text(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    assert page.replace_text("日本語", "かな", fallback=face()) == 1
+    return {page.xref}
+
+
+def check_composite_page_text(doc: pyropdf.Document) -> None:
+    source, edited = doc.pages[-2:]
+    assert "".join(source.text().split()) == "日本語テキスト"
+    assert "".join(edited.text().split()) == "かなテキスト"
+    assert source.obj["Contents"] != edited.obj["Contents"]
+
+
+def prepare_vertical_text_replacement(doc: pyropdf.Document) -> None:
+    page = doc.pages.new((140, 260))
+    with page.draw() as canvas:
+        canvas.text("日本語テキスト", (70, 30), font=face(), size=16, direction="vertical")
+    _wrap_artifact(page)
+    other = doc.pages.new((140, 260))
+    other.obj["Resources"] = dict(page.obj["Resources"])
+    other.obj["Contents"] = page.obj["Contents"]
+
+
+def edit_vertical_page_text(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    assert page.replace_text("本語", "かな", fallback=face()) == 1
+    return {page.xref}
+
+
+def check_vertical_page_text(doc: pyropdf.Document) -> None:
+    source, edited = doc.pages[-2:]
+    assert "".join(source.text().split()) == "日本語テキスト"
+    ordered = "".join(
+        char.text for char in sorted(edited.chars(), key=lambda char: char.bbox.y0) if not char.is_synthetic
+    )
+    assert ordered == "日かなテキスト"
+    assert source.obj["Contents"] != edited.obj["Contents"]
+
+
+def prepare_type3_text_replacement(doc: pyropdf.Document) -> None:
+    procs = {}
+    for name, w in (("A", 25), ("B", 35), ("C", 40)):
+        procs[name] = doc.objects[doc.objects.add_stream(f"{w} 0 d0 2 0 {w - 5} 30 re f".encode())]
+    tu = doc.objects[
+        doc.objects.add_stream(
+            b"/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
+            b"1 begincodespacerange\n<00> <FF>\nendcodespacerange\n"
+            b"3 beginbfchar\n<41> <0041>\n<42> <0042>\n<43> <0043>\nendbfchar\n"
+            b"endcmap\nend\nend\n"
+        )
+    ]
+    fd = doc.objects[
+        doc.objects.add(
+            {
+                "Type": pyropdf.Name("FontDescriptor"),
+                "Flags": 32,
+                "FontBBox": [0, 0, 50, 40],
+                "ItalicAngle": 0,
+                "Ascent": 40,
+                "Descent": 0,
+                "CapHeight": 30,
+                "StemV": 10,
+            }
+        )
+    ]
+    t3 = doc.objects[
+        doc.objects.add(
+            {
+                "Type": pyropdf.Name("Font"),
+                "Subtype": pyropdf.Name("Type3"),
+                "FontBBox": [0, 0, 50, 40],
+                "FontMatrix": [0.02, 0, 0, 0.02, 0, 0],
+                "CharProcs": procs,
+                "Encoding": {
+                    "Type": pyropdf.Name("Encoding"),
+                    "Differences": [65, pyropdf.Name("A"), pyropdf.Name("B"), pyropdf.Name("C")],
+                },
+                "FirstChar": 65,
+                "LastChar": 67,
+                "Widths": [25, 35, 40],
+                "FontDescriptor": fd,
+                "ToUnicode": tu,
+            }
+        )
+    ]
+    page = doc.pages.new((200, 100))
+    page.obj["Resources"] = {"Font": {"T3": t3}}
+    page.obj["Contents"] = doc.objects[doc.objects.add_stream(b"/Artifact BMC BT /T3 16 Tf 20 50 Td (ABC) Tj ET EMC")]
+    other = doc.pages.new((200, 100))
+    other.obj["Resources"] = dict(page.obj["Resources"])
+    other.obj["Contents"] = page.obj["Contents"]
+
+
+def edit_type3_page_text(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    assert page.replace_text("AB", "CA") == 1
+    return {page.xref}
+
+
+def check_type3_page_text(doc: pyropdf.Document) -> None:
+    source, edited = doc.pages[-2:]
+    assert ("".join(source.text().split()), "".join(edited.text().split())) == ("ABC", "CAC")
+    assert source.obj["Contents"] != edited.obj["Contents"]
+
+
 def prepare_ocr(doc: pyropdf.Document) -> None:
     doc.pages.new((160, 100))
 
@@ -2581,6 +2704,24 @@ FAMILY_EDITS = {
     "remove_rotation": Edit(prepare=prepare_rotated_page, apply=remove_rotation, check=check_rotation_removed),
     "replace_text": Edit(
         prepare=prepare_text_replacement, apply=edit_page_text, check=check_page_text, affected_pages=last_page
+    ),
+    "replace_text_composite": Edit(
+        prepare=prepare_composite_text_replacement,
+        apply=edit_composite_page_text,
+        check=check_composite_page_text,
+        affected_pages=last_page,
+    ),
+    "replace_text_vertical": Edit(
+        prepare=prepare_vertical_text_replacement,
+        apply=edit_vertical_page_text,
+        check=check_vertical_page_text,
+        affected_pages=last_page,
+    ),
+    "replace_text_type3": Edit(
+        prepare=prepare_type3_text_replacement,
+        apply=edit_type3_page_text,
+        check=check_type3_page_text,
+        affected_pages=last_page,
     ),
     "rewrite_images": Edit(
         prepare=prepare_image_rewrite, apply=rewrite_image, check=check_rewritten_image, affected_pages=two_last_pages

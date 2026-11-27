@@ -100,7 +100,7 @@ trackers where appropriate. Text and layout accuracy are scored separately in
 | Font subsetting | `subset_fonts` | Available: `doc.subset_fonts` (TrueType and CFF) | |
 | Bulk image rewriting | `rewrite_images` | Available: `doc.rewrite_images` rewrites masked, alternate, CMYK, ICC-based, stencil mask, and inline images across Form XObjects and appearances (lossless, grayscale, and bitonal CCITT Group 4) and returns an unsupported-image report for images it leaves untouched | |
 | Recolor | `Page.recolor`, `Document.recolor` | Available: `page.recolor` and `doc.recolor` (gray, RGB, CMYK); filtered and nested CMYK function curves remain | #1007 |
-| Text replacement | — | Partial: `page.replace_text` edits simple-font text; composite (CID/Type 0), Type 3, and vertical fonts, plus item-level editing over provenance, remain | #250, #1180, #1201 |
+| Text replacement | — | Partial: `page.replace_text` edits simple, composite (CID/Type 0), Type 3, and vertical-writing fonts with fallback switching and `/ActualText`/`/MCID` preservation; item-level editing over provenance remains | #250, #1201 |
 
 ## Additional pyropdf capabilities and project goals
 
