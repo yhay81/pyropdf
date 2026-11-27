@@ -110,6 +110,7 @@ nav:
   - Project:
       - Choosing pyropdf: choosing.md
       - Status and safety: status.md
+      - API stability: stability.md
       - Specification coverage: specification.md
       - Design: https://github.com/yhay81/pyropdf/blob/main/DESIGN.md
       - Changelog: https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md
@@ -182,6 +183,7 @@ plugins:
         Project:
           - choosing.md
           - status.md
+          - stability.md
           - specification.md
   # A social card and Open Graph metadata for every page.
   - social:
