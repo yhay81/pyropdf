@@ -1,0 +1,33 @@
+# Standalone prototype and benchmark for issue #1197:
+# iterative, budget-charged pre-flight nesting & inline-image guard before hayro.
+# The empty [workspace] isolates this evidence crate from the root workspace.
+[workspace]
+
+[package]
+name = "preflight-guard"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+pyropdf-engine = { path = "../../crates/pyropdf-engine" }
+pyropdf-store = { path = "../../crates/pyropdf-store" }
+
+# Pin the same hayro commit as the root workspace's [patch.crates-io].
+[patch.crates-io]
+hayro = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-ccitt = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-cmap = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-font = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-interpret = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-jbig2 = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-jpeg2000 = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-postscript = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-svg = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-syntax = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
