@@ -58,6 +58,17 @@ with pyropdf.open("input.pdf") as doc:
 `page.tables()` は罫線から表を見つけます。`strategy="text"` ならテキストの揃いから
 見つけます。`page.markdown()` と `doc.markdown()` は表も含めてページを Markdown にします。
 
+文書がタグ付きで信頼性チェック（`/MarkInfo << /Marked true >>`、`/Suspects` なし、
+正常な構造ツリー、非アーティファクト本文の十分な網羅率）を満たす場合、既定の
+`use_structure="auto"` で構造ツリーから見出し（`H1`〜`H6`・`H`・`Title`）、箇条書き
+（`L`/`LI`/`Lbl`/`LBody`）、表（`Table`/`THead`/`TBody`/`TFoot`/`TR`/`TH`/`TD`）、
+引用、コード、`/Alt` つき図、`/ActualText`、論理読み上げ順を取り出し、`Artifact` の
+ヘッダ・フッタを自動で除外します。独自ロールは `/RoleMap` と PDF 2.0 名前空間で解決
+されます。`/E` による略語展開を使うときは `expand_abbreviations=True`、信頼性チェックを
+省いて構造ツリーを読むときは `use_structure="always"`、幾何レイアウトを強制するときは
+`use_structure="never"` を渡します。`"auto"` では、未タグページや未解決の Form XObject
+を含むページは自動的に幾何レイアウトへフォールバックします。
+
 ```python
 import pyropdf
 
@@ -65,17 +76,20 @@ with pyropdf.open("input.pdf") as doc:
     for table in doc.pages[0].tables():
         print(table.markdown())
     print(doc.markdown())
+    print(doc.markdown(use_structure="never"))  # 幾何レイアウトを強制
 ```
 
 ## JSON と検索チャンク {#json-and-retrieval-chunks}
 
-`doc.to_json()` は同じレイアウト要素（見出し、段落、箇条書き項目、表、画像）を
-ページ番号と表示座標の矩形つきで JSON として出力します。`doc.to_chunks()` は
+`doc.to_json()` は同じページ要素（見出し、段落、箇条書き項目、表、画像、引用、コードブロック）を
+ページ番号と表示座標の矩形つきで JSON として出力します。構造ツリーから抽出した場合は、
+要素の `alt_text` や継承された BCP 47 の `language` も含めます。`doc.to_chunks()` は
 連続する要素を文字数上限（`max_chars`、既定は 2000）以内の Markdown 検索チャンクに
 まとめます。見出しごとに新しいチャンクが始まり、各 `Chunk` は上位見出しの `section`、
-対象ページの `pages`、出典つきの `elements` を保持します。表・画像・見出しは分割されず
-（上限を超えると `chunk.oversized` が `True` になります）、どちらのメソッドも `pages=` と
-`table_strategy=` を受け取ります。
+対象ページの `pages`、主要言語 `language`、出典つきの `elements` を保持します。表・画像・
+見出し・コードブロックは分割されず（上限を超えると `chunk.oversized` が `True` になります）、
+どちらのメソッドも `pages=`、`table_strategy=`、`use_structure=`、`expand_abbreviations=`
+を受け取ります。
 
 ```python
 import json
@@ -84,8 +98,8 @@ import pyropdf
 with pyropdf.open("input.pdf") as doc:
     data = json.loads(doc.to_json())
     print(len(data["pages"]), [elem["kind"] for elem in data["pages"][0]["elements"]])
-    for chunk in doc.to_chunks(max_chars=500):
-        print(chunk.index, chunk.pages, chunk.section, chunk.text)
+    for chunk in doc.to_chunks(max_chars=500, expand_abbreviations=True):
+        print(chunk.index, chunk.pages, chunk.section, chunk.language, chunk.text)
 ```
 
 ## タグ付き読み上げ順 {#tagged-reading-order}

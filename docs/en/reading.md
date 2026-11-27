@@ -63,6 +63,20 @@ with pyropdf.open("input.pdf") as doc:
 alignment with `strategy="text"`. `page.markdown()` and `doc.markdown()`
 turn pages into Markdown, tables included.
 
+When a document is tagged and passes trustworthiness checks
+(`/MarkInfo << /Marked true >>`, no `/Suspects`, valid tree, and sufficient
+coverage of non-artifact page text), `markdown()` uses the PDF structure
+tree by default (`use_structure="auto"`): headings (`H1`–`H6`, `H`, `Title`),
+lists (`L`/`LI`/`Lbl`/`LBody`), tables (`Table`/`THead`/`TBody`/`TFoot`/`TR`/`TH`/`TD`),
+block quotes, code blocks, figures with `/Alt` descriptions, `/ActualText`
+replacements, and logical reading order come from the tree, while `Artifact`
+running headers and footers are skipped. Custom roles resolve through
+`/RoleMap` and PDF 2.0 namespaces. Pass `expand_abbreviations=True` to use
+`/E` expansions, `use_structure="always"` to read the structure tree without
+trustworthiness checks, or `use_structure="never"` to force geometric layout.
+Untagged pages and pages with unresolved Form XObject marked content fall back
+to geometric extraction automatically in `"auto"` mode.
+
 ```python
 import pyropdf
 
@@ -70,18 +84,22 @@ with pyropdf.open("input.pdf") as doc:
     for table in doc.pages[0].tables():
         print(table.markdown())
     print(doc.markdown())
+    print(doc.markdown(use_structure="never"))  # force geometric layout
 ```
 
 ## JSON and retrieval chunks
 
-`doc.to_json()` exports the same layout elements—headings, paragraphs, list
-items, tables, and images—as JSON, each with its page index and bounding box in
-display space. `doc.to_chunks()` groups consecutive elements into Markdown
-retrieval chunks within a character budget (`max_chars`, 2000 by default),
-starting a new chunk at each heading so every `Chunk` keeps its enclosing
-`section`, `pages`, and `elements` with provenance. Tables, images, and
-headings are never split (`chunk.oversized` marks one that exceeds the budget),
-and both methods accept `pages=` and `table_strategy=`.
+`doc.to_json()` exports the same page elements—headings, paragraphs, list
+items, tables, images, block quotes, and code blocks—as JSON, each with its
+page index and bounding box in display space, plus optional `alt_text` and
+inherited BCP 47 `language` when extracted from a structure tree.
+`doc.to_chunks()` groups consecutive elements into Markdown retrieval chunks
+within a character budget (`max_chars`, 2000 by default), starting a new chunk
+at each heading so every `Chunk` keeps its enclosing `section`, `pages`,
+dominant `language`, and `elements` with provenance. Tables, images, headings,
+and code blocks are never split (`chunk.oversized` marks one that exceeds the
+budget), and both methods accept `pages=`, `table_strategy=`,
+`use_structure=`, and `expand_abbreviations=`.
 
 ```python
 import json
@@ -90,8 +108,8 @@ import pyropdf
 with pyropdf.open("input.pdf") as doc:
     data = json.loads(doc.to_json())
     print(len(data["pages"]), [elem["kind"] for elem in data["pages"][0]["elements"]])
-    for chunk in doc.to_chunks(max_chars=500):
-        print(chunk.index, chunk.pages, chunk.section, chunk.text)
+    for chunk in doc.to_chunks(max_chars=500, expand_abbreviations=True):
+        print(chunk.index, chunk.pages, chunk.section, chunk.language, chunk.text)
 ```
 
 ## Tagged reading order

@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
     from pyropdf._geometry import Rect
     from pyropdf._page import Page
+    from pyropdf._structure_reading import PageStructureData, StructureBlock
     from pyropdf._tables import Table
     from pyropdf._text import Word
 
@@ -605,6 +606,13 @@ class _MarkdownBuilder:
             self.flush_paragraph()
             self._append_entry(kind, text)
 
+    def append_block(self, kind: str, text: str) -> None:
+        """Append one complete block without merging it into an earlier paragraph."""
+        if not text:
+            return
+        self.flush_paragraph()
+        self._append_entry(kind, text)
+
     def append_tables(
         self,
         table_data: list[_MarkdownTable],
@@ -744,24 +752,65 @@ def _page_layout(page: Page) -> tuple[TextPageDict, list[Word]]:
     return build_layout(width, height, blocks).to_dict(), build_words(blocks)
 
 
-def validate_options(table_strategy: object, max_size: object) -> None:
-    """Refuse a table strategy or an output bound that a Markdown conversion does not take."""
+def validate_options(
+    table_strategy: object,
+    max_size: object,
+    *,
+    use_structure: object = "auto",
+    expand_abbreviations: object = False,
+) -> None:
+    """Refuse options that a Markdown or structured export conversion does not take."""
     if table_strategy not in {"lines", "text", None}:
         msg = f"table_strategy must be 'lines', 'text', or None: {table_strategy!r}"
         raise ValueError(msg)
+    if use_structure not in {"auto", "always", "never"}:
+        msg = f"use_structure must be 'auto', 'always', or 'never': {use_structure!r}"
+        raise ValueError(msg)
+    if not isinstance(expand_abbreviations, bool):
+        msg = f"expand_abbreviations must be True or False: {expand_abbreviations!r}"
+        raise TypeError(msg)
     _validate_optional_positive_int("max_size", max_size)
 
 
-def pages_markdown(
+def _structure_page_markdown(
+    blocks: Sequence[StructureBlock],
+    *,
+    max_size: int | None,
+    page_budget: int | None,
+) -> str:
+    """Render one page's structure blocks to Markdown under ``page_budget`` UTF-8 bytes."""
+    builder = _MarkdownBuilder(None if page_budget is None else max(0, page_budget))
+    try:
+        for block in blocks:
+            if block.kind == "table":
+                if not block.rows:
+                    continue
+                sep = builder._entry_separator_size("table")  # noqa: SLF001
+                remaining = None if page_budget is None else max(0, page_budget - builder.output_size - sep)
+                rendered_table = table_to_markdown(
+                    [list(row) for row in block.rows],
+                    cell_anchors=block.cell_anchors,
+                    max_size=remaining,
+                )
+                if rendered_table:
+                    builder.append_block("table", rendered_table)
+                continue
+            if not block.markdown:
+                continue
+            entry_kind = "li" if block.kind == "list_item" else block.kind
+            builder.append_block(entry_kind, block.markdown)
+        return builder.render()
+    except MarkdownOutputLimitError:
+        raise markdown_output_limit_error(max_size or 0) from None
+
+
+def _geometric_pages_markdown(
     pages: Sequence[Page],
     *,
     table_strategy: Literal["lines", "text"] | None,
     max_size: int | None,
 ) -> str:
-    """Convert ``pages`` to Markdown, inferring heading sizes from all of them.
-
-    A page with no Markdown adds nothing; the others join with a blank line.
-    """
+    """Convert ``pages`` to Markdown purely from geometric layout and tables."""
     size_counts: Counter[float] = Counter()
     for page in pages:
         layout, _ = _page_layout(page)
@@ -788,6 +837,104 @@ def pages_markdown(
             )
         except MarkdownOutputLimitError:
             raise markdown_output_limit_error(max_size or 0) from None
+        if not page_markdown:
+            continue
+        if page_budget is not None:
+            page_bytes = utf8_size(page_markdown)
+            if page_bytes > page_budget:
+                raise markdown_output_limit_error(max_size or 0)
+            output_bytes += separator_bytes + page_bytes
+        rendered.append(page_markdown)
+    return "\n\n".join(rendered)
+
+
+def _fallback_heading_levels(
+    pages: Sequence[Page],
+    structure_pages: dict[int, PageStructureData],
+    table_strategy: Literal["lines", "text"] | None,
+) -> dict[float, int]:
+    """Infer geometric heading levels across pages that fell back from structure extraction."""
+    fallback_pages = [page for page in pages if structure_pages[page.index].blocks is None]
+    if not fallback_pages:
+        return {}
+    size_counts: Counter[float] = Counter()
+    for page in fallback_pages:
+        cached = structure_pages[page.index]
+        layout = cached.layout if cached.layout is not None else _page_layout(page)[0]
+        tables = _page_tables(page, table_strategy)
+        bboxes = [(table.bbox.x0, table.bbox.y0, table.bbox.x1, table.bbox.y1) for table in tables]
+        size_counts.update(collect_sizes([layout], [bboxes]))
+    return heading_levels(size_counts)
+
+
+def _render_mixed_page(  # noqa: PLR0913 - page rendering with budget and fallback state.
+    page: Page,
+    data: PageStructureData,
+    *,
+    table_strategy: Literal["lines", "text"] | None,
+    fallback_levels: dict[float, int],
+    max_size: int | None,
+    page_budget: int | None,
+) -> str:
+    """Render one page from structure blocks or cached geometric fallback."""
+    if data.blocks is not None:
+        return _structure_page_markdown(data.blocks, max_size=max_size, page_budget=page_budget)
+    layout, words = (
+        (data.layout, data.words) if data.layout is not None and data.words is not None else _page_layout(page)
+    )
+    tables = _page_tables(page, table_strategy)
+    markdown_tables = _table_output(layout, tables, max_size=max_size, remaining_size=page_budget)
+    try:
+        return page_to_markdown(
+            layout,
+            fallback_levels,
+            markdown_tables,
+            words if tables else None,
+            max_size=None if page_budget is None else max(0, page_budget),
+        )
+    except MarkdownOutputLimitError:
+        raise markdown_output_limit_error(max_size or 0) from None
+
+
+def pages_markdown(
+    pages: Sequence[Page],
+    *,
+    table_strategy: Literal["lines", "text"] | None,
+    max_size: int | None,
+    use_structure: Literal["auto", "always", "never"] = "auto",
+    expand_abbreviations: bool = False,
+) -> str:
+    """Convert ``pages`` to Markdown, using the PDF structure tree when enabled and trustworthy.
+
+    A page with no Markdown adds nothing; the others join with a blank line.
+    """
+    if not pages:
+        return ""
+    from pyropdf._structure_reading import extract_structure_pages  # noqa: PLC0415
+
+    structure_pages = extract_structure_pages(
+        pages,
+        table_strategy=table_strategy,
+        use_structure=use_structure,
+        expand_abbreviations=expand_abbreviations,
+    )
+    if structure_pages is None:
+        return _geometric_pages_markdown(pages, table_strategy=table_strategy, max_size=max_size)
+
+    fallback_levels = _fallback_heading_levels(pages, structure_pages, table_strategy)
+    rendered: list[str] = []
+    output_bytes = 0
+    for page in pages:
+        separator_bytes = 2 if rendered else 0
+        page_budget = None if max_size is None else max_size - output_bytes - separator_bytes
+        page_markdown = _render_mixed_page(
+            page,
+            structure_pages[page.index],
+            table_strategy=table_strategy,
+            fallback_levels=fallback_levels,
+            max_size=max_size,
+            page_budget=page_budget,
+        )
         if not page_markdown:
             continue
         if page_budget is not None:
