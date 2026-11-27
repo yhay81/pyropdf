@@ -44,12 +44,12 @@ Remove content outside a rectangle	clip_to_rect	Page cropping can hide content	-
 Clean streams and resources	clean_contents, save(clean=True)	page.clean_contents	clean_content	-
 Sanitize	scrub	doc.sanitize	sanitize	-
 Subset fonts	subset_fonts	doc.subset_fonts	font_subsetting	-
-Rewrite images	rewrite_images	doc.rewrite_images returns an unsupported-image report	rewrite_images	900: alternate images and mask cases need further coverage
+Rewrite images	rewrite_images	doc.rewrite_images returns an unsupported-image report	rewrite_images	-
 Recolor	Page.recolor, Document.recolor	page.recolor and doc.recolor	recolor	-
 Atomic transactions and changes	—	doc.transaction, doc.changes	changes,history	-
 Typed objects and structural checks	—	doc.objects and doc.check	typed_views,structural_check	-
 Sign	—	doc.sign	signing	-
 Verify signatures	—	doc.signatures and signature.verify	verify	-
 Bounded operations	—	Limits and typed refusals	limit_codes	15: full construction bounds await the upstream parser
-Conformance and structure-aware reading	—	Profile validation and structured reading are separate tasks	profiles,markdown	255: complete conformance-preserving editing
+Conformance and structure-aware reading	—	Profile validation and structured reading are separate tasks	profiles,markdown	1181: structure-driven Markdown, JSON and chunks remain open under #253
 Free-threaded Python and licensing	—	Free-threaded wheels and MIT license	threads,release	-
