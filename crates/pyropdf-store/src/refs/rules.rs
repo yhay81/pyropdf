@@ -671,6 +671,139 @@ fn at_mut<'v>(value: &'v mut Value, path: &[Step]) -> Option<&'v mut Value> {
         })
 }
 
+/// Execution context for [`nominated_unreferenced`] and [`unreferenced`]:
+/// [`Budget`] with [`Error`] in production, and a zero-overhead infallible
+/// context inside bounded Kani graph proofs.
+trait GraphContext {
+    type Error;
+    fn poll(&self) -> std::result::Result<(), Self::Error>;
+}
+
+impl GraphContext for Budget {
+    type Error = Error;
+
+    fn poll(&self) -> Result<()> {
+        Ok(Self::poll(self)?)
+    }
+}
+
+/// Graph view consumed by [`nominated_unreferenced`] and [`unreferenced`].
+trait RefGraph {
+    fn trailer_contains(&self, number: u32) -> bool;
+    fn for_each_target<E>(
+        &self,
+        number: u32,
+        f: impl FnMut(u32) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E>;
+    fn for_each_referrer<E>(
+        &self,
+        number: u32,
+        f: impl FnMut(u32) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E>;
+}
+
+impl RefGraph for References {
+    fn trailer_contains(&self, number: u32) -> bool {
+        Self::trailer(self).binary_search(&number).is_ok()
+    }
+
+    fn for_each_target<E>(
+        &self,
+        number: u32,
+        mut f: impl FnMut(u32) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E> {
+        for &target in Self::targets(self, number) {
+            f(target)?;
+        }
+        Ok(())
+    }
+
+    fn for_each_referrer<E>(
+        &self,
+        number: u32,
+        mut f: impl FnMut(u32) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E> {
+        for &referrer in Self::referrers(self, number) {
+            f(referrer)?;
+        }
+        Ok(())
+    }
+}
+
+/// Worklist / output storage used by [`nominated_unreferenced`] and
+/// [`unreferenced`]: backed by `BudgetVec` in production and by a fixed
+/// stack bitset in bounded Kani graph proofs.
+trait NodeQueue<'c, C: GraphContext> {
+    fn new_queue(ctx: &'c C) -> Self;
+    fn push_node(&mut self, number: u32) -> std::result::Result<(), C::Error>;
+    fn pop_node(&mut self) -> Option<u32>;
+}
+
+impl<'b> NodeQueue<'b, Budget> for BudgetVec<'b, u32> {
+    fn new_queue(budget: &'b Budget) -> Self {
+        Self::new(budget)
+    }
+
+    fn push_node(&mut self, number: u32) -> Result<()> {
+        Ok(self.try_push(number)?)
+    }
+
+    fn pop_node(&mut self) -> Option<u32> {
+        self.pop()
+    }
+}
+
+/// Ascending integer set used by [`nominated_unreferenced`] and
+/// [`unreferenced`]: backed by `Table<()>` in production and by a tiny
+/// stack bitset inside bounded Kani graph proofs.
+trait NodeSet<C: GraphContext>: Default {
+    fn contains(&self, number: u32) -> bool;
+    fn insert_node(&mut self, number: u32, ctx: &C) -> std::result::Result<(), C::Error>;
+    fn for_each_ascending(
+        &self,
+        f: impl FnMut(u32) -> std::result::Result<(), C::Error>,
+    ) -> std::result::Result<(), C::Error>;
+}
+
+impl NodeSet<Budget> for Table<()> {
+    fn contains(&self, number: u32) -> bool {
+        self.get(number).is_some()
+    }
+
+    fn insert_node(&mut self, number: u32, budget: &Budget) -> Result<()> {
+        self.insert(number, (), budget)?;
+        Ok(())
+    }
+
+    fn for_each_ascending(&self, mut f: impl FnMut(u32) -> Result<()>) -> Result<()> {
+        for (number, ()) in self.iter() {
+            f(number)?;
+        }
+        Ok(())
+    }
+}
+
+/// Input list of object numbers consumed by [`nominated_unreferenced`] and
+/// [`unreferenced`]: `&[u32]` in production and a stack mask in Kani.
+trait NodeList {
+    fn for_each_node<E>(
+        &self,
+        f: impl FnMut(u32) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E>;
+}
+
+impl NodeList for [u32] {
+    fn for_each_node<E>(
+        &self,
+        mut f: impl FnMut(u32) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E> {
+        for &number in self {
+            f(number)?;
+        }
+        Ok(())
+    }
+}
+
 /// Lists only nominated objects for which the trailer and every outside
 /// object, including an otherwise unreachable owner, hold no reference.
 /// References among nominees may form cycles. A retained nominee keeps
@@ -680,45 +813,67 @@ pub fn nominated_unreferenced<'b>(
     candidates: &[u32],
     budget: &'b Budget,
 ) -> Result<BudgetVec<'b, u32>> {
-    budget.poll()?;
-    let mut nominated = Table::new();
-    for &number in candidates {
-        budget.poll()?;
-        nominated.insert(number, (), budget)?;
-    }
-    let mut kept = Table::new();
-    let mut pending = BudgetVec::new(budget);
-    for (number, _) in nominated.iter() {
-        budget.poll()?;
-        let mut outside = index.trailer().binary_search(&number).is_ok();
-        for &referrer in index.referrers(number) {
-            budget.poll()?;
-            if nominated.get(referrer).is_none() {
-                outside = true;
-                break;
-            }
+    nominated_unreferenced_in::<References, [u32], Budget, Table<()>, BudgetVec<'b, u32>>(
+        index, candidates, budget,
+    )
+}
+
+fn nominated_unreferenced_in<
+    'c,
+    G: RefGraph,
+    L: NodeList + ?Sized,
+    C: GraphContext,
+    S: NodeSet<C>,
+    Q: NodeQueue<'c, C>,
+>(
+    index: &G,
+    candidates: &L,
+    ctx: &'c C,
+) -> std::result::Result<Q, C::Error> {
+    ctx.poll()?;
+    let mut nominated = S::default();
+    candidates.for_each_node(|number| {
+        ctx.poll()?;
+        nominated.insert_node(number, ctx)
+    })?;
+    let mut kept = S::default();
+    let mut pending = Q::new_queue(ctx);
+    nominated.for_each_ascending(|number| {
+        ctx.poll()?;
+        let mut outside = index.trailer_contains(number);
+        if !outside {
+            index.for_each_referrer(number, |referrer| {
+                ctx.poll()?;
+                if !nominated.contains(referrer) {
+                    outside = true;
+                }
+                Ok(())
+            })?;
         }
         if outside {
-            kept.insert(number, (), budget)?;
-            pending.try_push(number)?;
+            kept.insert_node(number, ctx)?;
+            pending.push_node(number)?;
         }
-    }
-    while let Some(number) = pending.pop() {
-        for &target in index.targets(number) {
-            budget.poll()?;
-            if nominated.get(target).is_some() && kept.get(target).is_none() {
-                kept.insert(target, (), budget)?;
-                pending.try_push(target)?;
+        Ok(())
+    })?;
+    while let Some(number) = pending.pop_node() {
+        index.for_each_target(number, |target| {
+            ctx.poll()?;
+            if nominated.contains(target) && !kept.contains(target) {
+                kept.insert_node(target, ctx)?;
+                pending.push_node(target)?;
             }
-        }
+            Ok(())
+        })?;
     }
-    let mut unused = BudgetVec::new(budget);
-    for (number, _) in nominated.iter() {
-        budget.poll()?;
-        if kept.get(number).is_none() {
-            unused.try_push(number)?;
+    let mut unused = Q::new_queue(ctx);
+    nominated.for_each_ascending(|number| {
+        ctx.poll()?;
+        if !kept.contains(number) {
+            unused.push_node(number)?;
         }
-    }
+        Ok(())
+    })?;
     Ok(unused)
 }
 
@@ -735,29 +890,47 @@ pub fn unreferenced<'b>(
     candidates: &[u32],
     budget: &'b Budget,
 ) -> Result<BudgetVec<'b, u32>> {
-    budget.poll()?;
-    let mut forced: Table<()> = Table::new();
-    let mut reachable: Table<()> = Table::new();
-    let mut kept: Table<()> = Table::new();
-    let mut out = BudgetVec::new(budget);
-    let mut pending = BudgetVec::new(budget);
-    for &seed in seeds {
-        if index.trailer().binary_search(&seed).is_err() {
-            forced.insert(seed, (), budget)?;
+    unreferenced_in::<References, [u32], Budget, Table<()>, BudgetVec<'b, u32>>(
+        index, seeds, candidates, budget,
+    )
+}
+
+fn unreferenced_in<
+    'c,
+    G: RefGraph,
+    L: NodeList + ?Sized,
+    C: GraphContext,
+    S: NodeSet<C>,
+    Q: NodeQueue<'c, C>,
+>(
+    index: &G,
+    seeds: &L,
+    candidates: &L,
+    ctx: &'c C,
+) -> std::result::Result<Q, C::Error> {
+    ctx.poll()?;
+    let mut forced = S::default();
+    let mut reachable = S::default();
+    let mut kept = S::default();
+    let mut out = Q::new_queue(ctx);
+    let mut pending = Q::new_queue(ctx);
+    seeds.for_each_node(|seed| {
+        if !index.trailer_contains(seed) {
+            forced.insert_node(seed, ctx)?;
         }
-        pending.try_push(seed)?;
-    }
-    pending.try_extend_from_slice(candidates)?;
-    // One level of referrers may leave with an orphaned structure element
-    // or annotation (for example, its otherwise unreferenced parent).
-    for &candidate in candidates {
-        pending.try_extend_from_slice(index.referrers(candidate))?;
-    }
+        pending.push_node(seed)
+    })?;
+    candidates.for_each_node(|candidate| {
+        pending.push_node(candidate)?;
+        // One level of referrers may leave with an orphaned structure element
+        // or annotation (for example, its otherwise unreferenced parent).
+        index.for_each_referrer(candidate, |referrer| pending.push_node(referrer))
+    })?;
     // First collect the possible garbage, including strongly connected
     // components. Reference counting alone cannot collect an orphan cycle.
-    while let Some(number) = pending.pop() {
-        budget.poll()?;
-        if reachable.get(number).is_some() {
+    while let Some(number) = pending.pop_node() {
+        ctx.poll()?;
+        if reachable.contains(number) {
             continue;
         }
         // Trailer roots and their directly referenced objects are proven
@@ -765,48 +938,61 @@ pub fn unreferenced<'b>(
         // and later liveness propagation must avoid their retained subtrees.
         // Explicit removals still override a root's edge, except for the
         // trailer roots themselves.
-        let root = |number| index.trailer().binary_search(&number).is_ok();
-        if root(number)
-            || (forced.get(number).is_none() && retained_by_root(index, number, budget)?)
+        if index.trailer_contains(number)
+            || (!forced.contains(number) && retained_by_root(index, number, ctx)?)
         {
             continue;
         }
-        reachable.insert(number, (), budget)?;
-        pending.try_extend_from_slice(index.targets(number))?;
+        reachable.insert_node(number, ctx)?;
+        index.for_each_target(number, |target| {
+            if !reachable.contains(target) {
+                pending.push_node(target)?;
+            }
+            Ok(())
+        })?;
     }
     // Incoming edges from outside the candidate closure keep an object,
     // and everything it reaches, alive. Explicitly removed seeds leave.
-    for (number, ()) in reachable.iter() {
-        budget.poll()?;
-        if forced.get(number).is_none()
-            && (index.trailer().binary_search(&number).is_ok()
-                || index
-                    .referrers(number)
-                    .iter()
-                    .any(|referrer| reachable.get(*referrer).is_none()))
-        {
-            pending.try_push(number)?;
+    reachable.for_each_ascending(|number| {
+        ctx.poll()?;
+        if !forced.contains(number) {
+            let mut keep = index.trailer_contains(number);
+            if !keep {
+                index.for_each_referrer(number, |referrer| {
+                    if !reachable.contains(referrer) {
+                        keep = true;
+                    }
+                    Ok(())
+                })?;
+            }
+            if keep {
+                pending.push_node(number)?;
+            }
         }
-    }
-    while let Some(number) = pending.pop() {
-        budget.poll()?;
-        if forced.get(number).is_some()
-            || kept.get(number).is_some()
-            || reachable.get(number).is_none()
-        {
+        Ok(())
+    })?;
+    while let Some(number) = pending.pop_node() {
+        ctx.poll()?;
+        if forced.contains(number) || kept.contains(number) || !reachable.contains(number) {
             continue;
         }
-        kept.insert(number, (), budget)?;
-        pending.try_extend_from_slice(index.targets(number))?;
+        kept.insert_node(number, ctx)?;
+        index.for_each_target(number, |target| {
+            if reachable.contains(target) && !kept.contains(target) && !forced.contains(target) {
+                pending.push_node(target)?;
+            }
+            Ok(())
+        })?;
     }
-    for (number, ()) in reachable.iter() {
-        budget.poll()?;
-        if kept.get(number).is_none() && index.trailer().binary_search(&number).is_err() {
-            out.try_push(number)?;
+    // `for_each_ascending` yields numbers in ascending order.
+    reachable.for_each_ascending(|number| {
+        ctx.poll()?;
+        if !kept.contains(number) && !index.trailer_contains(number) {
+            out.push_node(number)?;
         }
-    }
-    out.sort_unstable();
-    budget.poll()?;
+        Ok(())
+    })?;
+    ctx.poll()?;
     Ok(out)
 }
 
@@ -840,12 +1026,285 @@ pub(super) fn aliasing() -> Error {
 }
 
 /// Whether a trailer root still refers to this object after the edit.
-fn retained_by_root(index: &References, number: u32, budget: &Budget) -> Result<bool> {
-    for &owner in index.referrers(number) {
-        budget.poll()?;
-        if index.trailer().binary_search(&owner).is_ok() {
-            return Ok(true);
+fn retained_by_root<G: RefGraph, C: GraphContext>(
+    index: &G,
+    number: u32,
+    ctx: &C,
+) -> std::result::Result<bool, C::Error> {
+    let mut retained = false;
+    index.for_each_referrer(number, |owner| {
+        ctx.poll()?;
+        if index.trailer_contains(owner) {
+            retained = true;
+        }
+        Ok(())
+    })?;
+    Ok(retained)
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use std::convert::Infallible;
+
+    use super::*;
+
+    const N: usize = 3;
+
+    struct NoBudget;
+
+    impl GraphContext for NoBudget {
+        type Error = Infallible;
+
+        fn poll(&self) -> std::result::Result<(), Infallible> {
+            Ok(())
         }
     }
-    Ok(false)
+
+    /// Stack-allocated 3-node directed graph (nodes 1..=3) implementing
+    /// `RefGraph` directly over its adjacency matrix so Kani verifies
+    /// `nominated_unreferenced_in` and `unreferenced_in` across all 2^9 = 512
+    /// directed graphs (self-loops, 2-cycles, 3-cycles, transitive chains,
+    /// diamonds) and all trailer/seed/candidate subsets with zero heap or
+    /// symbolic slice-pointer overhead.
+    struct TinyGraph {
+        edges: [[bool; N]; N],
+        trailer_mask: [bool; N],
+    }
+
+    impl TinyGraph {
+        fn symbolic() -> Self {
+            Self {
+                edges: kani::any(),
+                trailer_mask: kani::any(),
+            }
+        }
+    }
+
+    impl RefGraph for TinyGraph {
+        fn trailer_contains(&self, number: u32) -> bool {
+            number >= 1 && (number as usize) <= N && self.trailer_mask[(number - 1) as usize]
+        }
+
+        fn for_each_target<E>(
+            &self,
+            number: u32,
+            mut f: impl FnMut(u32) -> std::result::Result<(), E>,
+        ) -> std::result::Result<(), E> {
+            if number >= 1 && (number as usize) <= N {
+                let u = (number - 1) as usize;
+                for v in 0..N {
+                    if self.edges[u][v] {
+                        f((v + 1) as u32)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        fn for_each_referrer<E>(
+            &self,
+            number: u32,
+            mut f: impl FnMut(u32) -> std::result::Result<(), E>,
+        ) -> std::result::Result<(), E> {
+            if number >= 1 && (number as usize) <= N {
+                let v = (number - 1) as usize;
+                for u in 0..N {
+                    if self.edges[u][v] {
+                        f((u + 1) as u32)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+
+    struct TinyMask([bool; N]);
+
+    impl NodeList for TinyMask {
+        fn for_each_node<E>(
+            &self,
+            mut f: impl FnMut(u32) -> std::result::Result<(), E>,
+        ) -> std::result::Result<(), E> {
+            for i in 0..N {
+                if self.0[i] {
+                    f((i + 1) as u32)?;
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// Deduplicating per-phase stack worklist / node collector (zero heap
+    /// allocation). Both `nominated_unreferenced_in` and `unreferenced_in`
+    /// compute monotone reachability fixpoints whose per-phase predicates
+    /// (`forced`, `trailer`, `retained_by_root`, `reachable`) are static, so
+    /// popping any node a second time in the same phase is a no-op; `seen`
+    /// resets when the phase drains (`pop_node()` returns `None`).
+    struct TinyWorklist {
+        pending: [bool; N],
+        seen: [bool; N],
+    }
+
+    impl<'c> NodeQueue<'c, NoBudget> for TinyWorklist {
+        fn new_queue(_ctx: &'c NoBudget) -> Self {
+            Self {
+                pending: [false; N],
+                seen: [false; N],
+            }
+        }
+
+        fn push_node(&mut self, number: u32) -> std::result::Result<(), Infallible> {
+            assert!((1..=N as u32).contains(&number));
+            let idx = (number - 1) as usize;
+            if !self.seen[idx] {
+                self.pending[idx] = true;
+                self.seen[idx] = true;
+            }
+            Ok(())
+        }
+
+        fn pop_node(&mut self) -> Option<u32> {
+            for i in 0..N {
+                if self.pending[i] {
+                    self.pending[i] = false;
+                    return Some((i + 1) as u32);
+                }
+            }
+            self.seen = [false; N];
+            None
+        }
+    }
+
+    #[derive(Default)]
+    struct TinySet([bool; N]);
+
+    impl NodeSet<NoBudget> for TinySet {
+        fn contains(&self, number: u32) -> bool {
+            number >= 1 && (number as usize) <= N && self.0[(number - 1) as usize]
+        }
+
+        fn insert_node(
+            &mut self,
+            number: u32,
+            _ctx: &NoBudget,
+        ) -> std::result::Result<(), Infallible> {
+            if number >= 1 && (number as usize) <= N {
+                self.0[(number - 1) as usize] = true;
+            }
+            Ok(())
+        }
+
+        fn for_each_ascending(
+            &self,
+            mut f: impl FnMut(u32) -> std::result::Result<(), Infallible>,
+        ) -> std::result::Result<(), Infallible> {
+            for i in 0..N {
+                if self.0[i] {
+                    f((i + 1) as u32)?;
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// Computes exact transitive reachability from `roots` over `edges`,
+    /// stopping at any node in `blocked`.
+    fn reachable(edges: &[[bool; N]; N], roots: [bool; N], blocked: [bool; N]) -> [bool; N] {
+        let mut vis = [false; N];
+        for i in 0..N {
+            if roots[i] && !blocked[i] {
+                vis[i] = true;
+            }
+        }
+        for _ in 0..N {
+            for u in 0..N {
+                if vis[u] {
+                    for v in 0..N {
+                        if edges[u][v] && !blocked[v] {
+                            vis[v] = true;
+                        }
+                    }
+                }
+            }
+        }
+        vis
+    }
+
+    /// Proves `nominated_unreferenced` across all 3-node directed graphs and
+    /// all trailer/candidate subsets:
+    /// - Only nominated nodes are returned.
+    /// - A nominated node is returned iff it is NOT reachable from the trailer
+    ///   or from any non-nominated outside node (even across arbitrary cycles).
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn kani_nominated_unreferenced_exact_on_all_3_node_graphs() {
+        let graph = TinyGraph::symbolic();
+        let cand_mask: [bool; N] = kani::any();
+        let cands = TinyMask(cand_mask);
+        let ctx = NoBudget;
+        let Ok(unused) =
+            nominated_unreferenced_in::<TinyGraph, TinyMask, NoBudget, TinySet, TinyWorklist>(
+                &graph, &cands, &ctx,
+            );
+
+        let mut roots = [false; N];
+        for i in 0..N {
+            if graph.trailer_mask[i] || !cand_mask[i] {
+                roots[i] = true;
+            }
+        }
+        let live = reachable(&graph.edges, roots, [false; N]);
+
+        for i in 0..N {
+            assert_eq!(unused.pending[i], cand_mask[i] && !live[i]);
+        }
+    }
+
+    /// Proves `unreferenced` safety across all 3-node directed graphs and all
+    /// trailer/seed/candidate subsets:
+    /// - No trailer root is ever freed.
+    /// - No non-seed node reachable from the trailer without passing through a
+    ///   forced seed is ever freed.
+    /// - No freed node has a non-freed referrer (unless it is a forced seed).
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn kani_unreferenced_never_frees_live_objects_on_all_3_node_graphs() {
+        let graph = TinyGraph::symbolic();
+        let seed_mask: [bool; N] = kani::any();
+        let cand_mask: [bool; N] = kani::any();
+
+        let mut forced_mask = [false; N];
+        for i in 0..N {
+            if seed_mask[i] && !graph.trailer_mask[i] {
+                forced_mask[i] = true;
+            }
+        }
+
+        let seeds = TinyMask(seed_mask);
+        let cands = TinyMask(cand_mask);
+        let ctx = NoBudget;
+        let Ok(freed) = unreferenced_in::<TinyGraph, TinyMask, NoBudget, TinySet, TinyWorklist>(
+            &graph, &seeds, &cands, &ctx,
+        );
+
+        let live_from_trailer = reachable(&graph.edges, graph.trailer_mask, forced_mask);
+        for i in 0..N {
+            // Trailer roots are never freed.
+            if graph.trailer_mask[i] {
+                assert!(!freed.pending[i]);
+            }
+            // Any non-forced object reachable from the trailer stays alive.
+            if live_from_trailer[i] {
+                assert!(!freed.pending[i]);
+            }
+            // Every non-forced freed object has all its referrers freed too.
+            if freed.pending[i] && !forced_mask[i] {
+                for u in 0..N {
+                    if graph.edges[u][i] {
+                        assert!(freed.pending[u]);
+                    }
+                }
+            }
+        }
+    }
 }

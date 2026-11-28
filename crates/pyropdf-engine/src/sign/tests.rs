@@ -34,7 +34,7 @@ const RESERVE: usize = 64;
 /// A saved document's bytes around a placeholder of `reserve` bytes.
 fn document(reserve: usize) -> Vec<u8> {
     let mut data = b"%PDF-1.7\n1 0 obj\n<</Type /Sig ".to_vec();
-    data.extend_from_slice(&placeholder_prefix());
+    data.extend_from_slice(PLACEHOLDER_PREFIX);
     data.extend(std::iter::repeat_n(b'0', 2 * reserve));
     data.extend_from_slice(b")>>\nendobj\n%%EOF\n");
     data
@@ -232,4 +232,21 @@ fn a_certificate_may_hold_the_point_compressed() {
         33
     );
     assert!(key.matches(&certificate));
+}
+
+#[test]
+fn placeholder_find_refuses_overflowing_reserve_without_panicking() {
+    let data = b"/ByteRange [0 9999999999 9999999999 9999999999] /Contents ()";
+    assert!(matches!(
+        Placeholder::find(data, usize::MAX),
+        Err(Error::Placeholder(_))
+    ));
+    assert!(matches!(
+        Placeholder::find(data, usize::MAX / 2 + 1),
+        Err(Error::Placeholder(_))
+    ));
+    assert!(matches!(
+        Placeholder::find(data, usize::MAX / 2),
+        Err(Error::Placeholder(_))
+    ));
 }
