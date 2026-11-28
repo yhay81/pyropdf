@@ -58,3 +58,45 @@ rendering from 896 to 1,270 ms, and the walk from 4.5% to 4.9% of them.
   more than 5 streams, none invokes itself, and every Type 3 code maps to a
   procedure. No limit from 16,384 operators up refuses a page: the corpus
   holds no page that could set a limit.
+
+## Production pre-flight guard measurement (issue #1275)
+
+When issue #1275 integrated DAG operator fuel counting, the `#17` inline-image
+`EI` candidate cap, Type 0 `/Size` sample bounds, and Type 4 PostScript
+operator bounds into `crates/pyropdf-engine/src/bridge/preflight.rs`, the walk
+reused the guard's single-pass byte scanner (avoiding `Operations::parse`
+`Value` allocations).
+
+### Method
+
+```bash
+cargo run --release --locked --manifest-path evidence/interpretation-fuel/Cargo.toml \
+  --bin preflight_fuel -- evidence/interpretation-fuel/results preflight-macos-arm64 \
+  tests/assets/real_world/*.pdf
+```
+
+`src/bin/preflight_fuel.rs` benchmarks `pyropdf_engine::bridge::preflight::validate_page`
+under `DocumentLimits::web()` across all 15 corpus documents (156 pages, best
+of 5 runs, Apple Silicon `macos-arm64`, 2026-11-28) alongside 72 dpi
+`render::raster` and `extract::page_text`, plus five synthetic adversarial
+vectors.
+
+### Results (`results/preflight-macos-arm64.md`, `.json`)
+
+| Corpus, 15 documents / 156 pages | Measured |
+| --- | ---: |
+| False positives under `DocumentLimits::web()` | **0 / 156** |
+| `render::raster`, 72 dpi | 512.47 ms |
+| `extract::page_text` | 95.51 ms |
+| Cold pre-flight guard (nesting + DAG fuel + EI + Type 0/4) | **7.09 ms** (**1.38%** of render, **7.43%** of text) |
+| Cached pre-flight guard (shared `CheckedCache`) | **6.82 ms** (**1.33%** of render) |
+| Per-page cold pre-flight median / p90 / max | **0.032 ms** / **0.054 ms** / **0.611 ms** |
+| Max observed across corpus (vs bounds) | **11,562** / 1,048,576 ops; **1** / 64 `EI`; **4,096** / 1,048,576 Type 0 samples; **0** / 16,384 Type 4 ops |
+
+Synthetic adversarial refusals (all `LimitCode::InterpretationFuel` before `hayro` runs):
+
+- 20-level binary Form XObject bomb (`form-bomb-20`, 2,097,150 effective ops): **0.0438 ms**
+- Quadratic inline-image `EI` flood (`inline-ei-flood-500`, cap 64): **0.0014 ms**
+- Oversized Type 0 `/Size [2048 2048]` (`4,194,304` samples): **0.0014 ms**
+- Massive flat Type 4 procedure (`20,000` ops, cap 16,384): **0.1063 ms**
+- Huge tiling-pattern copy fan-out (`10000x10000` copies): **0.0030 ms**
