@@ -376,7 +376,13 @@ def render_page(
     /,
 ) -> Pixmap: ...
 def render_page_svg(
-    document: _Document, number: int, generation: int, annotations: bool, max_size: int | None, /
+    document: _Document,
+    number: int,
+    generation: int,
+    annotations: bool,
+    max_size: int | None,
+    text_layer: bool = False,
+    /,
 ) -> str: ...
 def render_pages(
     document: _Document,

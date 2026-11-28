@@ -694,10 +694,20 @@ orients the invisible baselines. An empty result changes nothing.
 ### `svg`
 
 ```python
-Page.svg(*, annotations: bool = True, max_size: int | None = 67108864) -> str
+Page.svg(
+    *,
+    annotations: bool = True,
+    max_size: int | None = 67108864,
+    text_layer: bool = False,
+) -> str
 ```
 
 Render the current version of the page to an SVG string at 72 dpi, with text drawn as paths.
+
+`text_layer=True` adds transparent, selectable SVG text for glyphs
+with Unicode mappings. It follows the PDF's painting order. Browser
+substitute fonts can affect selection geometry. The visible glyphs
+keep their original paths.
 
 `annotations=False` leaves out the appearances of annotations and
 form widgets. `max_size` caps the UTF-8 output and defaults to

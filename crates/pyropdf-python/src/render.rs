@@ -12,7 +12,7 @@ use crate::pixmap::{bridge_error, raster_error};
 
 /// Converts the page whose object is `number` and `generation` to SVG,
 /// refusing a document of more than `max_size` UTF-8 bytes.
-#[pyfunction]
+#[pyfunction(signature = (document, number, generation, annotations, max_size, text_layer=false))]
 pub fn render_page_svg(
     py: Python<'_>,
     document: &_Document,
@@ -20,6 +20,7 @@ pub fn render_page_svg(
     generation: u16,
     annotations: bool,
     max_size: Option<usize>,
+    text_layer: bool,
 ) -> PyResult<String> {
     crate::errors::boundary(|| {
         let budget =
@@ -39,7 +40,8 @@ pub fn render_page_svg(
                 .bridge
                 .get_for_render(&version, &index, &budget, annotations)
                 .map_err(|e| bridge_error(&e))?;
-            render::svg(&bridged, &fallback, at, annotations, &budget).map_err(raster_error)
+            render::svg_with_text_layer(&bridged, &fallback, at, annotations, text_layer, &budget)
+                .map_err(raster_error)
         })
     })?
 }

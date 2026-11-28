@@ -988,8 +988,19 @@ class Page:
             for word in self.words()
         )
 
-    def svg(self, *, annotations: bool = True, max_size: int | None = _DEFAULT_MAX_SVG_SIZE) -> str:
+    def svg(
+        self,
+        *,
+        annotations: bool = True,
+        max_size: int | None = _DEFAULT_MAX_SVG_SIZE,
+        text_layer: bool = False,
+    ) -> str:
         """Render the current version of the page to an SVG string at 72 dpi, with text drawn as paths.
+
+        ``text_layer=True`` adds transparent, selectable SVG text for glyphs
+        with Unicode mappings. It follows the PDF's painting order. Browser
+        substitute fonts can affect selection geometry. The visible glyphs
+        keep their original paths.
 
         ``annotations=False`` leaves out the appearances of annotations and
         form widgets. ``max_size`` caps the UTF-8 output and defaults to
@@ -1000,6 +1011,7 @@ class Page:
         is released while hayro-svg converts.
         """
         _validate_bool("annotations", annotations)
+        _validate_bool("text_layer", text_layer)
         _validate_optional_positive_int("max_size", max_size)
         try:
             return _core.render_page_svg(
@@ -1008,6 +1020,7 @@ class Page:
                 self._generation,
                 annotations,
                 max_size,
+                text_layer,
             )
         except StaleObjectError as error:
             raise self._stale() from error
