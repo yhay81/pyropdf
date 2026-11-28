@@ -1,0 +1,3 @@
+# Generated deterministically during wheel release via scripts/convert_model.py
+# (verified against SHA256SUMS) to keep binary model weights out of git history.
+*.rten

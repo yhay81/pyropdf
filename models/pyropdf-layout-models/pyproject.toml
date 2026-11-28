@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyropdf-layout-models"
+version = "0.1.0"
+description = "PP-DocLayout_plus-L INT8 RTen model for pyropdf's optional offline layout detector"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Yusuke Hayashi", email = "yusuke8h@gmail.com" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/yhay81/pyropdf"
+
+[tool.hatch.metadata]
+core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "pyproject.toml",
+    "scripts/convert_model.py",
+    "src/pyropdf_layout_models/**",
+]
+artifacts = [
+    "src/pyropdf_layout_models/SHA256SUMS",
+    "src/pyropdf_layout_models/model.json",
+    "src/pyropdf_layout_models/*.rten",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pyropdf_layout_models"]
+artifacts = [
+    "src/pyropdf_layout_models/SHA256SUMS",
+    "src/pyropdf_layout_models/model.json",
+    "src/pyropdf_layout_models/*.rten",
+]
