@@ -31,7 +31,7 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
 | read | 0 | 0 | 0 | 1 | 0 | 837 |
-| interpret | 16 | 19 | 0 | 6 | 1 | 796 |
+| interpret | 11 | 19 | 0 | 3 | 1 | 804 |
 | create | 0 | 0 | 28 | 1 | 0 | 809 |
 | edit | 0 | 0 | 0 | 3 | 0 | 835 |
 | preserve | 0 | 0 | 0 | 0 | 0 | 838 |
@@ -57,9 +57,9 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | 7.5.7 | Object streams | `object-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.5.8 | Cross-reference streams | `xref-streams` | 1 done | 1 n/a | 1 done | 1 done | 1 done |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 2 done, 5 engine | 3 done, 4 non-goal | 7 done | 7 done |
-| 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 done | 1 partial | 1 done | 1 done | 1 done |
-| 7.6.6 | Crypt filters | `crypt-filters` | 1 done | 1 partial | 1 done | 1 done | 1 done |
+| 7.6.4 | Standard security handler | `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`, `standard-aes-r5`, `standard-aes-r6` | 7 done | 7 done | 3 done, 4 non-goal | 7 done | 7 done |
+| 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 7.6.6 | Crypt filters | `crypt-filters` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.2 | Document catalog | `document-catalog` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.3 | Page tree | `page-tree`, `page-objects` | 2 done | 2 done | 2 done | 2 done | 2 done |
@@ -240,14 +240,14 @@ conformance needs evidence for that combination. Use specific feature rows for a
 | ISO/TS 24064 | RichMedia STEP assets | `step-rich-media` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 done | 1 partial | 1 done | 1 done | 1 done |
+| ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | ISO/TS 32007 | RichMedia glTF assets | `gltf-rich-media` | 1 done | 1 done | 1 done | 1 done | 1 done |
 
 ## Unfinished work by milestone
 
-28 unfinished cells in 838 features: 16 engine, 11 partial, 1 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+20 unfinished cells in 838 features: 11 engine, 8 partial, 1 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -306,17 +306,9 @@ No unfinished specification-map cells assigned.
 
 Milestone [#252](https://github.com/yhay81/pyropdf/issues/252).
 
-- [#968](https://github.com/yhay81/pyropdf/issues/968) Interpret AES-GCM encrypted pages through the authenticated store source. Render and extract from the authenticated AES-GCM store version without serializing untouched objects.
-    - interpret — `aes-gcm`.
-- [#937](https://github.com/yhay81/pyropdf/issues/937) Render legacy recipient-encrypted PDFs through the authenticated store source. Render authenticated pre-V5 recipient files through the engine object-source interface.
-    - interpret — `public-key-security-handler`.
-- [#993](https://github.com/yhay81/pyropdf/issues/993) Render explicit legacy crypt filters and independently keyed recipient streams from the store. Interpret explicit legacy password filters and an independently keyed page stream through the authenticated version, including correct refusal for an unauthorized page.
-    - interpret — `crypt-filters`.
 - [#982](https://github.com/yhay81/pyropdf/issues/982) Round-trip packed and wide predictor rows after adopting the hayro fix. Adopt the released row-local decoder through #603, then verify partially filled TIFF rows, externally filtered partial PNG pixel strides and predictor pixels wider than 255 bits in independent save and render controls.
     - read, interpret, create — `lzw-filter`.
     - edit — `flate-filter`, `lzw-filter`.
-- [#1043](https://github.com/yhay81/pyropdf/issues/1043) Interpret legacy encrypted PDFs with byte-encoded credentials in hayro-syntax. Interpret an owner-authenticated R2 to R4 document whose effective user credential is not UTF-8.
-    - interpret — `standard-security-handler`, `standard-rc4-r2`, `standard-rc4-r3`, `standard-rc4-r4`, `standard-aes-r4`.
 
 ### 253 Understanding
 

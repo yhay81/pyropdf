@@ -381,6 +381,18 @@ pub(crate) fn plain(
     Ok(crate::value::Bytes::new(out.into_vec()))
 }
 
+/// Returns whether `dict` declares an explicit `/Crypt` stream filter.
+pub fn has_explicit_crypt(dict: &Dict, lookup: &FilterLookup<'_>, budget: &Budget) -> Result<bool> {
+    if dict.get("Filter").is_none() {
+        return Ok(false);
+    }
+    Ok(explicit(
+        crate::value::filters::resolved(dict, lookup, budget)?.as_ref(),
+        budget,
+    )?
+    .is_some())
+}
+
 /// Keep data filters and any shared parameters when removing document encryption.
 pub(crate) fn remove_explicit(
     value: &mut Value,
@@ -420,6 +432,158 @@ pub(crate) fn remove_explicit(
 }
 
 impl Handler {
+    /// Returns whether pinned `hayro-syntax` cannot directly decrypt this
+    /// authenticated version through its password interface, requiring the
+    /// engine bridge's bounded in-memory decrypted fallback (DESIGN.md §6
+    /// workaround for #14 and #1043).
+    ///
+    /// Keeps the zero-decrypt fast path for Standard UTF-8 password documents
+    /// without explicit legacy/indirect `/Crypt` stream filters and for
+    /// single-key V5 recipient documents without indirect `/Crypt` selectors.
+    pub fn needs_decrypted_bridge(
+        &self,
+        version: &crate::version::Version,
+        budget: &Budget,
+    ) -> Result<bool> {
+        if self.uses_gcm() {
+            return Ok(true);
+        }
+        if self.is_recipient() {
+            if self.version != 5 {
+                return Ok(true);
+            }
+            let key: &[u8] = if self.key.len() == 32 {
+                &self.key
+            } else if self.strings == Method::Identity && self.streams == Method::Identity {
+                &[0; 32]
+            } else {
+                return Ok(true);
+            };
+            let single_bridge_key = self.filters.named.iter().all(|(_, method, selected)| {
+                *method == Method::Aes256
+                    && match selected {
+                        Key::File => true,
+                        Key::Recipient(confirmed) => {
+                            confirmed.get().is_some_and(|other| other.as_ref() == key)
+                        }
+                    }
+            });
+            if !single_bridge_key {
+                return Ok(true);
+            }
+            return self.has_hayro_incompatible_crypt_stream(version, false, budget);
+        }
+        if self.reader_password().is_err() {
+            return Ok(true);
+        }
+        if self.version < 4 {
+            return Ok(false);
+        }
+        if self.filters.named.len() > 1
+            || self
+                .filters
+                .named
+                .iter()
+                .any(|(_, method, _)| *method == Method::Identity)
+        {
+            return Ok(true);
+        }
+        let check_legacy_explicit = self
+            .filters
+            .named
+            .iter()
+            .any(|(_, method, _)| matches!(method, Method::Rc4 | Method::Aes128));
+        self.has_hayro_incompatible_crypt_stream(version, check_legacy_explicit, budget)
+    }
+
+    fn has_hayro_incompatible_crypt_stream(
+        &self,
+        version: &crate::version::Version,
+        check_legacy_explicit: bool,
+        budget: &Budget,
+    ) -> Result<bool> {
+        let lookup = |r, b: &Budget| version.filter_object(r, b);
+        if let Some(index) = version.base().file() {
+            for (number, entry) in index.entries() {
+                budget.poll()?;
+                if version.slot(number).is_some()
+                    || !matches!(entry.location(), crate::index::Location::Offset(_))
+                {
+                    continue;
+                }
+                let reference = Reference::new(number, entry.generation());
+                let dict = match index.stream_dictionary(reference, check_legacy_explicit, budget) {
+                    Ok(Some(dict)) => dict,
+                    Ok(None) => continue,
+                    Err(error) if error.limit().is_some() => return Err(error),
+                    Err(_) => continue,
+                };
+                if self.stream_needs_decrypted_bridge(
+                    &dict,
+                    &lookup,
+                    check_legacy_explicit,
+                    budget,
+                )? {
+                    return Ok(true);
+                }
+            }
+        }
+        for (_, slot) in version.slots() {
+            budget.poll()?;
+            if let crate::version::Slot::Written(written) = slot {
+                let value = written.value(budget)?;
+                if let Value::Stream(stream) = value.as_ref()
+                    && self.stream_needs_decrypted_bridge(
+                        stream.dict(),
+                        &lookup,
+                        check_legacy_explicit,
+                        budget,
+                    )?
+                {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    fn stream_needs_decrypted_bridge(
+        &self,
+        dict: &Dict,
+        lookup: &FilterLookup<'_>,
+        check_legacy_explicit: bool,
+        budget: &Budget,
+    ) -> Result<bool> {
+        if dict.get("Filter").is_none() {
+            return Ok(false);
+        }
+        let has_indirect = crate::value::filters::has_indirect(dict, budget)?;
+        if !check_legacy_explicit && !has_indirect {
+            return Ok(false);
+        }
+        let resolved = match crate::value::filters::resolved(dict, lookup, budget) {
+            Ok(resolved) => resolved,
+            Err(error) if error.limit().is_some() => return Err(error),
+            Err(_) => return Ok(false),
+        };
+        let name = match explicit(&resolved, budget) {
+            Ok(Some(name)) => name,
+            Ok(None) => return Ok(false),
+            Err(error) if error.limit().is_some() => return Err(error),
+            Err(_) => return Ok(false),
+        };
+        if has_indirect {
+            return Ok(true);
+        }
+        if check_legacy_explicit {
+            return Ok(matches!(
+                self.filters.method(name),
+                Ok(Method::Rc4 | Method::Aes128)
+            ));
+        }
+        Ok(false)
+    }
+
     /// An edit to a shared filter or file specification can change the encryption
     /// of an otherwise untouched stream. Its original plaintext must be re-encrypted.
     pub fn changed_streams(
