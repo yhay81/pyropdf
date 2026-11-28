@@ -106,9 +106,11 @@ le = pymupdf.PDF_ANNOT_LE_CLOSED_ARROW
 
 def test_pylopdf_015_rewrites() -> None:
     source = """\
+import warnings
 import pylopdf
 from pylopdf import PdfError, PylopdfWarning, peek_metadata
 
+warnings.filterwarnings("ignore", category=PylopdfWarning)
 info = peek_metadata("input.pdf")
 font = pylopdf.Font(fontname="Helvetica")
 custom = pylopdf.Font(fontfile="Noto.otf", weight=700)
@@ -124,6 +126,8 @@ with pylopdf.open("input.pdf") as doc:
     assert result.changed
     assert "import pyropdf" in result.source
     assert "from pyropdf import PdfError, PyropdfWarning, probe" in result.source
+    assert 'warnings.filterwarnings("ignore", category=PyropdfWarning)' in result.source
+    assert 'info = probe("input.pdf")' in result.source
     assert 'font = pyropdf.Font.standard("Helvetica")' in result.source
     assert 'custom = pyropdf.Font.from_file("Noto.otf", weight=700)' in result.source
     assert 'doc.form["name"].value = "Ada"' in result.source
@@ -132,6 +136,34 @@ with pylopdf.open("input.pdf") as doc:
     assert "xml = page.layout().to_xml()" in result.source
     assert "raw = doc.to_bytes()" in result.source
     assert any(d.code == "behavior-words-record" for d in result.diagnostics)
+
+
+def test_scoped_attribute_rewrites_and_current_save_cbz_options() -> None:
+    source = """\
+from fitz import open as fitz_open
+
+with fitz_open(stream=b"%PDF-1.7", filetype="pdf") as doc:
+    page = doc[0]
+    page_idx = page.number
+    issue_num = issue.number
+    nodes = soup.select("a")
+    doc.select([0])
+    raw = page.get_text("rawdict")
+    doc.save("out.pdf", clean=True, ascii=True, pretty=True)
+cbz = fitz_open("comic.cbz", filetype="cbz")
+"""
+    result = codemod.transform_source(source, mode="pymupdf")
+    assert result.changed
+    assert "from pyropdf import open as fitz_open" in result.source
+    assert 'with fitz_open(b"%PDF-1.7") as doc:' in result.source
+    assert "page_idx = page.index" in result.source
+    assert "issue_num = issue.number" in result.source
+    assert "raw = page.layout(chars=True).to_dict()" in result.source
+    codes = [d.code for d in result.diagnostics]
+    assert codes.count("manual-page-ops") == 1
+    assert "manual-cbz-to-pdf" in codes
+    assert "manual-save-option" not in codes
+    assert "unsupported-filetype" not in codes
 
 
 def test_non_mechanical_constructs_emit_actionable_diagnostics() -> None:

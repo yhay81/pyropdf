@@ -30,7 +30,7 @@ Pixmap image formats	Pixmap image input and output	Pixmap.from_bytes and to_byte
 Rendering speed	get_pixmap	page.pixmap	pixmap	365: see the measured release ratios below
 Shapes, images and placed pages	Shape, insert_image, show_pdf_page	page.draw with paths, images and page placement	canvas,canvas_page_forms	-
 Draw text and use fonts	insert_text, insert_textbox, Font	Canvas.text with standard and embedded fonts	canvas_text,canvas_embedded	-
-Images to PDF	open(image).convert_to_pdf	doc.pages.new_from_image	image_pages	-
+Images to PDF	open(image).convert_to_pdf	doc.pages.new_from_image, new_from_images and new_from_cbz	image_pages	-
 Read and edit annotations	annots, Annot	page.annotations	annotation_edits,annotation_reading	-
 Create markup annotations	add_*_annot	page.annotations with markup, free text, stamps and attachments	annotation_markup,annotation_free_text,annotation_stamps,annotation_files	-
 Links	insert_link, update_link	page.links	links	-
@@ -41,7 +41,7 @@ Linearized files	save(linear=True), is_fast_webaccess	doc.save(linearize=True), 
 Encryption	standard PDF security handlers	open(password=...) and save encryption options	encrypted	-
 Permanent redaction	add_redact_annot, apply_redactions	Content removal unavailable	-	362: permanent removal of text, images and vector paths
 Remove content outside a rectangle	clip_to_rect	Page cropping can hide content	-	420: permanent clipping of page content
-Clean streams and resources	clean_contents, save(clean=True)	page.clean_contents	clean_content	-
+Clean streams and resources	clean_contents, save(clean=True)	page.clean_contents and save(clean=True)	clean_content,save_options	-
 Sanitize	scrub	doc.sanitize	sanitize	-
 Subset fonts	subset_fonts	doc.subset_fonts	font_subsetting	-
 Rewrite images	rewrite_images	doc.rewrite_images returns an unsupported-image report	rewrite_images	-
@@ -51,5 +51,5 @@ Typed objects and structural checks	—	doc.objects and doc.check	typed_views,st
 Sign	—	doc.sign	signing	-
 Verify signatures	—	doc.signatures and signature.verify	verify	-
 Bounded operations	—	Limits and typed refusals	limit_codes	15: full construction bounds await the upstream parser
-Conformance and structure-aware reading	—	Profile validation and structured reading are separate tasks	profiles,markdown	1181: structure-driven Markdown, JSON and chunks remain open under #253
+Conformance and structure-aware reading	—	Profile validation and structure-driven Markdown, JSON and chunks; retrieval provenance remains	profiles,markdown,document_chunks	853: retrieval provenance tracing remains open under #253
 Free-threaded Python and licensing	—	Free-threaded wheels and MIT license	threads,release	-
