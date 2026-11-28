@@ -25,7 +25,7 @@ mod tests;
 
 pub use batch::{MAX_WORKERS, batch, batch_scaled};
 pub use fallback::{Fallback, FontFile, Language, Source};
-pub use svg::svg;
+pub use svg::{svg, svg_with_text_layer};
 
 /// The coverage threshold passed to hayro when [`Options::antialias`] is `false`.
 ///

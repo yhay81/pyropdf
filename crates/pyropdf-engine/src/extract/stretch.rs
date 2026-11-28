@@ -24,7 +24,7 @@ const SAME_LENGTH: f64 = 1e-9;
 
 /// Loads the fonts of the runs that hayro may have stretched, with the
 /// resolvers that it uses.
-pub(super) struct Stretches<'a> {
+pub(crate) struct Stretches<'a> {
     cache: FontCache<'a>,
     embedded: FontCache<'a>,
     no_substitution: FontResolverFn,
@@ -33,7 +33,7 @@ pub(super) struct Stretches<'a> {
 }
 
 impl<'a> Stretches<'a> {
-    pub(super) fn new(settings: &InterpreterSettings) -> Self {
+    pub(crate) fn new(settings: &InterpreterSettings) -> Self {
         Self {
             cache: FontCache::new(),
             embedded: FontCache::new(),
@@ -61,7 +61,7 @@ impl<'a> Stretches<'a> {
     /// The font that tells the stretches of `run`'s glyphs, or `None` when
     /// they have none. A run without a font dictionary shows hayro's fallback
     /// font, which has no PDF widths to stretch to.
-    pub(super) fn font_of(&self, run: &GlyphRun<'_, 'a>) -> Option<Font<'a>> {
+    pub(crate) fn font_of(&self, run: &GlyphRun<'_, 'a>) -> Option<Font<'a>> {
         let dict = run.font_dict()?;
         run.glyphs()
             .iter()
@@ -91,7 +91,7 @@ fn may_be_stretched(transform: Affine) -> bool {
 /// stretches the glyph to nothing, which leaves no x basis to scale back: the
 /// y basis then gives its direction, in display space, whose y axis points
 /// down.
-pub(super) fn without_stretch(
+pub(crate) fn without_stretch(
     transform: Affine,
     font: Option<&Font<'_>>,
     glyph: &Glyph<'_>,

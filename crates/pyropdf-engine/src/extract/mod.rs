@@ -28,7 +28,7 @@ mod model;
 mod provenance;
 mod reads;
 mod redraw;
-mod stretch;
+pub(crate) mod stretch;
 #[cfg(test)]
 mod tests;
 mod text;
