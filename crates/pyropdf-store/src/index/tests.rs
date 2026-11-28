@@ -1593,3 +1593,448 @@ fn repair_locates_pdf_header_past_1024_byte_leading_garbage() {
     assert_eq!(index.origin(), 2048);
     assert!(index.bytes()[index.origin()..].starts_with(b"%PDF-2.0"));
 }
+
+#[test]
+fn repaired_object_stream_requires_materialization_only_when_non_native() {
+    let budget = Budget::default();
+
+    // 1. Intact ObjStm on a repaired base does NOT require materialization.
+    let mut intact = Pdf::new();
+    intact.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    intact.object_stream(
+        4,
+        &[
+            (2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+            (3, "<< /Type /Page /Parent 2 0 R >>"),
+        ],
+    );
+    let idx = open(intact.bytes);
+    assert!(idx.is_repaired());
+    let stream = idx.object_stream(4, &budget).unwrap().unwrap();
+    assert!(!stream.requires_materialization());
+
+    // 2. Lenient overstated `/N` ObjStm requires materialization.
+    let mut lenient = Pdf::new();
+    lenient.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    let p2 = "<< /Type /Pages /Kids [3 0 R] /Count 1 >> ";
+    let p3 = "<< /Type /Page /Parent 2 0 R >> ";
+    let table = format!("2 0 3 {} ", p2.len());
+    let body = format!(
+        "<< /Type /ObjStm /N 5 /First {} /Length {} >>\nstream\n{table}{p2}{p3}\nendstream",
+        table.len(),
+        table.len() + p2.len() + p3.len(),
+    );
+    lenient.object(4, &body);
+    let idx = open(lenient.bytes);
+    assert!(idx.is_repaired());
+    let stream = idx.object_stream(4, &budget).unwrap().unwrap();
+    assert!(stream.requires_materialization());
+
+    // 3. Indirect `/Length` ObjStm requires materialization.
+    let mut indirect = Pdf::new();
+    indirect.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    let body = format!(
+        "<< /Type /ObjStm /N 2 /First {} /Length 6 0 R >>\nstream\n{table}{p2}{p3}\nendstream",
+        table.len(),
+    );
+    indirect.object(4, &body);
+    indirect.object(6, &(table.len() + p2.len() + p3.len()).to_string());
+    let idx = open(indirect.bytes);
+    assert!(idx.is_repaired());
+    let stream = idx.object_stream(4, &budget).unwrap().unwrap();
+    assert!(stream.requires_materialization());
+
+    // 4. Non-monotonic member offsets require materialization.
+    let mut non_mono = Pdf::new();
+    non_mono.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    let bad_table = format!("3 {} 2 0 ", p2.len());
+    let body = format!(
+        "<< /Type /ObjStm /N 2 /First {} /Length {} >>\nstream\n{bad_table}{p2}{p3}\nendstream",
+        bad_table.len(),
+        bad_table.len() + p2.len() + p3.len(),
+    );
+    non_mono.object(4, &body);
+    let idx = open(non_mono.bytes);
+    assert!(idx.is_repaired());
+    let stream = idx.object_stream(4, &budget).unwrap().unwrap();
+    assert!(stream.requires_materialization());
+}
+
+#[test]
+fn repair_synthesize_page_tree_rejects_cycles_duplicates_and_overlaps() {
+    use std::sync::Arc;
+
+    use crate::memo::Reads;
+    use crate::pages::PageIndex;
+    use crate::save::FileBase;
+    use crate::version::Document;
+
+    let page_numbers = |bytes: Vec<u8>| -> Vec<u32> {
+        let budget = Budget::default();
+        let index = open(bytes.clone());
+        assert!(index.is_repaired());
+        assert_order_free(&bytes);
+        let base = Arc::new(FileBase::new(index, &budget).unwrap());
+        let doc = Document::new(base, None);
+        let version = doc.current();
+        let pages = PageIndex::build(&mut Reads::new(&version, &budget)).unwrap();
+        pages
+            .pages()
+            .iter()
+            .map(|p| p.object().unwrap().number())
+            .collect()
+    };
+
+    // Case (a): Overlapping roots where Root 20 is rejected because child 21
+    // shares Page 10 with accepted Root 11, and Root 30 also points to 21.
+    // Rejected-root poisoning must not let Root 30 accept child 21.
+    let mut overlap = Pdf::new();
+    overlap.object(10, "<< /Type /Page /MediaBox [0 0 612 792] >>");
+    overlap.object(11, "<< /Type /Pages /Kids [10 0 R] /Count 1 >>");
+    overlap.object(12, "<< /Type /Page /MediaBox [0 0 612 792] >>");
+    overlap.object(13, "<< /Type /Page /MediaBox [0 0 612 792] >>");
+    overlap.object(
+        21,
+        "<< /Type /Pages /Parent 20 0 R /Kids [10 0 R 12 0 R] /Count 2 >>",
+    );
+    overlap.object(20, "<< /Type /Pages /Kids [21 0 R] /Count 2 >>");
+    overlap.object(30, "<< /Type /Pages /Kids [21 0 R 13 0 R] /Count 3 >>");
+    overlap.table(&[(0, 65535)], "<< /Size 31 /Root 99 0 R >>");
+    let mut found = page_numbers(overlap.bytes);
+    found.sort_unstable();
+    assert_eq!(found, vec![10, 12, 13]);
+
+    // Case (b): Cycle inside one `/Type /Pages` tree and duplicate `/Kids`.
+    let mut cyclic = Pdf::new();
+    cyclic.object(10, "<< /Type /Page /MediaBox [0 0 612 792] >>");
+    cyclic.object(11, "<< /Type /Pages /Kids [12 0 R] /Count 1 >>");
+    cyclic.object(
+        12,
+        "<< /Type /Pages /Parent 11 0 R /Kids [11 0 R 10 0 R] /Count 1 >>",
+    );
+    cyclic.object(20, "<< /Type /Page /MediaBox [0 0 612 792] >>");
+    cyclic.object(21, "<< /Type /Pages /Kids [20 0 R 20 0 R] /Count 2 >>");
+    cyclic.table(&[(0, 65535)], "<< /Size 22 /Root 99 0 R >>");
+    let mut found = page_numbers(cyclic.bytes);
+    found.sort_unstable();
+    assert_eq!(found, vec![10, 20]);
+
+    // Case (c): Shared empty `/Type /Pages` child across two roots.
+    let mut shared_empty = Pdf::new();
+    shared_empty.object(10, "<< /Type /Pages /Kids [] /Count 0 >>");
+    shared_empty.object(11, "<< /Type /Page /MediaBox [0 0 612 792] >>");
+    shared_empty.object(12, "<< /Type /Page /MediaBox [0 0 612 792] >>");
+    shared_empty.object(20, "<< /Type /Pages /Kids [10 0 R 11 0 R] /Count 1 >>");
+    shared_empty.object(21, "<< /Type /Pages /Kids [10 0 R 12 0 R] /Count 1 >>");
+    shared_empty.table(&[(0, 65535)], "<< /Size 22 /Root 99 0 R >>");
+    let mut found = page_numbers(shared_empty.bytes);
+    found.sort_unstable();
+    assert_eq!(found, vec![11, 12]);
+}
+
+#[test]
+fn repair_synthetic_objects_respect_exact_object_count_and_release_memory() {
+    let mut orphans = Pdf::new();
+    orphans.object(3, "<< /Type /Page /MediaBox [0 0 612 792] >>");
+    orphans.object(5, "<< /Type /Page >>");
+    orphans.table(&[(0, 65535)], "<< /Size 6 /Root 99 0 R >>");
+
+    // N = 2 existing objects + K = 2 synthetic objects (/Pages + /Catalog) = 4.
+    // Verify both broken-/Root table repair and headerless/xref-less scan repair.
+    let no_xref = replace(&orphans.bytes, b"startxref", b"startxrex");
+    for case in [&orphans.bytes, &no_xref] {
+        let exact = Budget::default().with_limit(LimitCode::ObjectCount, Some(4));
+        let index = Index::open(Bytes::from(case.clone()), &exact).unwrap();
+        assert!(index.is_repaired());
+        assert_eq!(index.len(), 4);
+        assert_eq!(exact.used(LimitCode::ObjectCount), 4);
+
+        // One fewer object must still fail cleanly with ObjectCount.
+        let below = Budget::default().with_limit(LimitCode::ObjectCount, Some(3));
+        let err = Index::open(Bytes::from(case.clone()), &below).unwrap_err();
+        assert_eq!(
+            err.limit().map(LimitExceeded::code),
+            Some(LimitCode::ObjectCount)
+        );
+    }
+}
+
+#[test]
+fn repair_ignores_stream_objects_masquerading_as_catalog_or_pages() {
+    // Stream masquerading as `/Root` and another masquerading as `/Pages`.
+    let mut pdf = Pdf::new();
+    pdf.object(
+        1,
+        "<< /Type /Catalog /Pages 2 0 R /Length 4 >>\nstream\nfake\nendstream",
+    );
+    pdf.object(
+        2,
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 /Length 4 >>\nstream\nfake\nendstream",
+    );
+    pdf.object(3, "<< /Type /Page /MediaBox [0 0 612 792] >>");
+    pdf.table(&[(0, 65535)], "<< /Size 4 /Root 1 0 R >>");
+    let damaged = replace(&pdf.bytes, b"startxref", b"startxrex");
+    let index = open(damaged);
+    assert!(index.is_repaired());
+    // Neither stream 1 nor stream 2 may be treated as Catalog or Pages;
+    // repair synthesizes a fresh Catalog and Pages wrapping orphan Page 3.
+    let Some(&Value::Reference(root)) = index.trailer().get("Root") else {
+        panic!("expected synthesized /Root");
+    };
+    assert_ne!(root.number(), 1);
+    let Some(&Value::Reference(pages_ref)) = dict(&index, root.number()).get("Pages") else {
+        panic!("expected synthesized /Pages");
+    };
+    assert_ne!(pages_ref.number(), 2);
+
+    // Step D fallback (no live pages): `is_catalog` must ignore a stream
+    // object with `/Pages` and pick the real non-stream catalog instead.
+    let mut step_d = Pdf::new();
+    step_d.object(
+        1,
+        "<< /Type /Catalog /Pages 99 0 R /Length 4 >>\nstream\nfake\nendstream",
+    );
+    step_d.object(2, "<< /Type /Catalog /Pages 99 0 R >>");
+    step_d.table(&[(0, 65535)], "<< /Size 3 /Root 1 0 R >>");
+    let damaged = replace(&step_d.bytes, b"startxref", b"startxrex");
+    let index = open(damaged);
+    assert!(index.is_repaired());
+    assert_eq!(index.trailer().get("Root"), Some(&reference(2)));
+}
+
+#[test]
+fn repair_origin_scan_bounds_to_prefix_validates_version_and_polls_budget() {
+    // Headerless PDF containing `%PDF-foo` and `%PDF-2.0` inside object 1.
+    let raw = b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Note (%PDF-foo %PDF-2.0) >>\nendobj\n\
+                2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n\
+                3 0 obj\n<< /Type /Page /Parent 2 0 R >>\nendobj\n";
+    let index = open(raw.to_vec());
+    assert!(index.is_repaired());
+    assert_eq!(index.origin(), 0);
+
+    // Leading garbage with invalid `%PDF-foo` before real `%PDF-1.7` past 1024 bytes.
+    let mut prefix = vec![b'X'; 2048];
+    prefix[100..108].copy_from_slice(b"%PDF-foo");
+    let body = simple();
+    let index = open([prefix, body].concat());
+    assert!(index.is_repaired());
+    assert_eq!(index.origin(), 2048);
+
+    // `find_rebuilt_origin` polls budget while scanning a long leading prefix.
+    let token = CancellationToken::new();
+    token.cancel();
+    let cancelled = Budget::default().with_cancellation(token);
+    let long_prefix = vec![b'X'; 4096];
+    let err = find_rebuilt_origin(&long_prefix, &[4096], &cancelled).unwrap_err();
+    assert_eq!(
+        err.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+}
+
+#[test]
+fn repair_multi_trailer_encrypted_preserves_encrypt_and_id() {
+    // 1. Step A: later trailer has valid `/Root` but omits both `/Encrypt` and `/ID`.
+    let mut step_a = Pdf::new();
+    step_a.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    step_a.object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    step_a.object(3, "<< /Type /Page /Parent 2 0 R >>");
+    step_a.object(4, "<< /Filter /Standard /V 1 /R 2 >>");
+    step_a.table(
+        &[(0, 65535)],
+        "<< /Size 5 /Root 1 0 R /Encrypt 4 0 R /ID [<AA><BB>] >>",
+    );
+    step_a.table(&[], "<< /Size 5 /Root 1 0 R >>");
+    let damaged = replace(&step_a.bytes, b"startxref", b"startxrex");
+    let damaged = replace(&damaged, b"startxref", b"startxrex");
+    let index = open(damaged);
+    assert!(index.is_repaired());
+    assert_eq!(index.trailer().get("Root"), Some(&reference(1)));
+    assert_eq!(index.trailer().get("Encrypt"), Some(&reference(4)));
+    assert!(index.trailer().get("ID").is_some());
+    assert_eq!(index.repair().unwrap().trailer(), None);
+
+    // 2. Step A partial + Step B (`merge_trailer`): later trailer keeps `/Encrypt`
+    //    but omits `/ID`, which lives in an earlier trailer.
+    let mut step_b = Pdf::new();
+    step_b.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    step_b.object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    step_b.object(3, "<< /Type /Page /Parent 2 0 R >>");
+    step_b.object(4, "<< /Filter /Standard /V 1 /R 2 >>");
+    step_b.table(&[(0, 65535)], "<< /Size 5 /Root 99 0 R /ID [<AA><BB>] >>");
+    step_b.table(&[], "<< /Size 5 /Root 99 0 R /Encrypt 4 0 R >>");
+    let damaged = replace(&step_b.bytes, b"startxref", b"startxrex");
+    let damaged = replace(&damaged, b"startxref", b"startxrex");
+    let index = open(damaged);
+    assert!(index.is_repaired());
+    assert_eq!(index.trailer().get("Root"), Some(&reference(1)));
+    assert_eq!(index.trailer().get("Encrypt"), Some(&reference(4)));
+    assert!(index.trailer().get("ID").is_some());
+    assert_eq!(index.repair().unwrap().trailer(), None);
+
+    // 3. Step D fallback (no live pages): later trailer omits `/Encrypt` and `/ID`.
+    let mut step_d = Pdf::new();
+    step_d.object(1, "<< /Type /Catalog /Pages 99 0 R >>");
+    step_d.object(4, "<< /Filter /Standard /V 1 /R 2 >>");
+    step_d.table(
+        &[(0, 65535)],
+        "<< /Size 5 /Root 1 0 R /Encrypt 4 0 R /ID [<AA><BB>] >>",
+    );
+    step_d.table(&[], "<< /Size 5 /Root 1 0 R >>");
+    let damaged = replace(&step_d.bytes, b"startxref", b"startxrex");
+    let damaged = replace(&damaged, b"startxref", b"startxrex");
+    let index = open(damaged);
+    assert!(index.is_repaired());
+    assert_eq!(index.trailer().get("Root"), Some(&reference(1)));
+    assert_eq!(index.trailer().get("Encrypt"), Some(&reference(4)));
+    assert!(index.trailer().get("ID").is_some());
+    assert_eq!(index.repair().unwrap().trailer(), None);
+}
+
+#[test]
+fn repair_unlock_with_eff_preserves_lenient_object_stream() {
+    use crate::security::{Handler, Method, PasswordEncryption};
+    use crate::write;
+
+    let budget = Budget::default();
+    let spec = PasswordEncryption {
+        user: b"userpw".to_vec(),
+        owner: b"ownerpw".to_vec(),
+        permissions: u32::MAX,
+        method: Method::Aes128,
+        random: [0x42; 64],
+    };
+    let (mut encrypt_dict, id, encryptor) = spec.build(None, &budget).unwrap();
+    // Distinguish embedded files (`/EFF /Identity` != `/StmF /StdCF`).
+    encrypt_dict.insert(Name::from("EFF"), Value::Name(Name::from("Identity")));
+    let handler = Handler::open(&encrypt_dict, &id, b"userpw", &budget).unwrap();
+    assert!(handler.distinguishes_embedded_files());
+
+    let p2 = b"<< /Type /Pages /Kids [3 0 R] /Count 1 >> ";
+    let p3 = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >> ";
+    let table = format!("2 0 3 {} ", p2.len());
+    let plain_objstm = [table.as_bytes(), p2, p3].concat();
+    let encrypted_objstm = encryptor
+        .encrypt(
+            crate::security::Kind::Stream,
+            Reference::new(4, 0),
+            &plain_objstm,
+            &budget,
+        )
+        .unwrap();
+
+    let mut enc_bytes = BudgetVec::new(&budget);
+    write::value(&mut enc_bytes, &Value::Dict(encrypt_dict)).unwrap();
+    let mut id_hex = String::new();
+    for byte in &id {
+        write!(id_hex, "{byte:02X}").unwrap();
+    }
+
+    let mut pdf = Pdf::new();
+    pdf.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    let objstm_pos = pdf.bytes.len();
+    pdf.objects.push((4, objstm_pos));
+    pdf.bytes.extend_from_slice(
+        format!(
+            "4 0 obj\n<< /Type /ObjStm /N 5 /First {} /Length {} >>\nstream\n",
+            table.len(),
+            encrypted_objstm.len()
+        )
+        .as_bytes(),
+    );
+    pdf.bytes.extend_from_slice(&encrypted_objstm);
+    pdf.bytes.extend_from_slice(b"\nendstream\nendobj\n");
+    pdf.object(5, std::str::from_utf8(&enc_bytes).unwrap());
+    pdf.table(
+        &[(0, 65535)],
+        &format!("/Size 6 /Root 1 0 R /Encrypt 5 0 R /ID [<{id_hex}><{id_hex}>]"),
+    );
+    // Corrupt trailer syntax slightly to force repair while keeping the trailer dict valid.
+    let damaged = replace(&pdf.bytes, b"/Size 6", b"<< /Size 6");
+    let damaged = replace(&damaged, b"startxref", b"startxrex");
+    let damaged = replace(
+        &damaged,
+        &format!("<{id_hex}>]").into_bytes(),
+        &format!("<{id_hex}>] >>").into_bytes(),
+    );
+
+    let mut index = open(damaged);
+    assert!(index.is_repaired());
+    assert!(index.is_encrypted());
+    index.unlock(handler, &budget).unwrap();
+    let stream = index.object_stream(4, &budget).unwrap().unwrap();
+    assert!(stream.requires_materialization());
+    assert_eq!(dict(&index, 2).get("Type"), Some(&name("Pages")));
+    assert_eq!(dict(&index, 3).get("Type"), Some(&name("Page")));
+}
+
+#[test]
+fn repair_ignores_false_positive_headers_in_literal_strings_and_indirect_length_streams() {
+    // 1. Literal strings (top-level, dictionary, array, stream dict, nested & escaped parens).
+    let mut pdf = Pdf::new();
+    pdf.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    pdf.object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    pdf.object(
+        3,
+        "<< /Type /Page /Parent 2 0 R /Note (Compare 1 0 obj and \\(2 0 obj\\) and (nested 3 0 obj)) /More (4 0 obj) >>",
+    );
+    pdf.object(4, "(Top-level 1 0 obj << /Fake true >> string)");
+    pdf.object(5, "[(1 0 obj) (2 0 obj)]");
+    // Indirect-`/Length` stream containing a fake `9 0 obj` and `trailer`.
+    let payload = "BT /F1 12 Tf (9 0 obj << /Fake 1 >> endobj trailer << /Root 9 0 R >>) Tj ET";
+    pdf.object(
+        6,
+        &format!("<< /Title (1 0 obj) /Length 7 0 R >>\nstream\n{payload}\nendstream"),
+    );
+    pdf.object(7, &payload.len().to_string());
+    // Indirect-`/Length` stream whose `/Length` object is missing (fallback).
+    let payload2 = "BT (8 0 obj << /Fake 2 >>) Tj ET";
+    pdf.object(
+        10,
+        &format!("<< /Length 99 0 R >>\nstream\n{payload2}\nendstream"),
+    );
+    // Damaged object with unclosed `(` (like a single bitflip `/Parent 2 0(R`)
+    // must NOT swallow the following real object 12.
+    pdf.bytes.extend_from_slice(
+        b"11 0 obj\n<< /Type /Page /Parent 2 0(R /MediaBox [0 0 612 792] >>\nendobj\n",
+    );
+    pdf.object(12, "<< /Survives true >>");
+
+    let index = open(pdf.bytes.clone());
+    assert!(index.is_repaired());
+    assert_eq!(dict(&index, 1).get("Type"), Some(&name("Catalog")));
+    assert_eq!(dict(&index, 2).get("Type"), Some(&name("Pages")));
+    assert_eq!(dict(&index, 3).get("Type"), Some(&name("Page")));
+    assert!(matches!(value(&index, 4), Some(Value::String(_))));
+    assert!(matches!(value(&index, 5), Some(Value::Array(_))));
+    let Some(Value::Stream(stream6)) = value(&index, 6) else {
+        panic!("expected intact indirect-length stream 6");
+    };
+    assert_eq!(stream6.data().as_slice(), payload.as_bytes());
+    let Some(Value::Stream(stream10)) = value(&index, 10) else {
+        panic!("expected intact fallback indirect-length stream 10");
+    };
+    assert_eq!(stream10.data().as_slice(), payload2.as_bytes());
+    assert_eq!(index.get(8), None);
+    assert_eq!(index.get(9), None);
+    assert_eq!(index.get(11), None);
+    assert_eq!(
+        dict(&index, 12).get("Survives"),
+        Some(&Value::Boolean(true))
+    );
+    assert_order_free(&pdf.bytes);
+
+    // 2. Hostile 200,000 unclosed `(` objects + trailing `)` must stay linear.
+    let hostile = [
+        &b"%PDF-1.4\n1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n2 0 obj\n<</Type/Pages/Kids[]/Count 0>>\nendobj\n"[..],
+        &b"3 0 obj\n(\n".repeat(200_000),
+        b")\ntrailer\n<</Root 1 0 R>>\nstartxref\n0\n%%EOF\n",
+    ]
+    .concat();
+    let start = Instant::now();
+    let index = open(hostile);
+    assert!(index.is_repaired());
+    assert_eq!(dict(&index, 1).get("Type"), Some(&name("Catalog")));
+    let bound = if cfg!(debug_assertions) { 20 } else { 2 };
+    assert!(start.elapsed() < Duration::from_secs(bound));
+}

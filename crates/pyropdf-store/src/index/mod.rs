@@ -220,13 +220,16 @@ impl Index {
         let damage = match read::read(&bytes, origin, budget) {
             Ok(chain) => match chain.check(&bytes, budget)? {
                 None => return Self::from_chain(bytes, origin, chain, budget),
-                Some(damage) => damage,
+                Some(damage) => {
+                    budget.release(LimitCode::ObjectCount, count(chain.entries.len()));
+                    damage
+                }
             },
             Err(error) if error.limit().is_some() => return Err(error),
             Err(error) => Damage::Unreadable(error.to_string().into_boxed_str()),
         };
         let rebuilt = scan::rebuild(&bytes, None, budget)?;
-        Self::from_rebuilt(bytes, origin, rebuilt, damage, budget)
+        Self::from_rebuilt(bytes, rebuilt, damage, budget)
     }
 
     /// Returns the index of the cross-reference data that `chain` read.
@@ -269,20 +272,12 @@ impl Index {
     /// Returns the index that a scan rebuilt after `damage`.
     fn from_rebuilt(
         bytes: Bytes,
-        origin: usize,
         rebuilt: scan::Rebuilt,
         damage: Damage,
         budget: &Budget,
     ) -> Result<Self> {
         let bytes = rebuilt.bytes.unwrap_or(bytes);
-        let origin = if origin == 0 && !bytes.starts_with(b"%PDF-") {
-            bytes
-                .windows(b"%PDF-".len())
-                .position(|window| window == b"%PDF-")
-                .unwrap_or(0)
-        } else {
-            origin
-        };
+        let origin = find_rebuilt_origin(&bytes, &rebuilt.bounds, budget)?;
         let streams = objstm::Streams::new(&rebuilt.entries, budget)?;
         for (number, decoded) in rebuilt.streams {
             streams.fill(number, decoded, budget)?;
@@ -493,8 +488,9 @@ impl Index {
         match chain.check(&bytes, budget)? {
             None => Self::from_chain(bytes, origin, chain, budget).map(Some),
             Some(damage) => {
+                budget.release(LimitCode::ObjectCount, count(chain.entries.len()));
                 let rebuilt = scan::rebuild(&bytes, None, budget)?;
-                Self::from_rebuilt(bytes, origin, rebuilt, damage, budget).map(Some)
+                Self::from_rebuilt(bytes, rebuilt, damage, budget).map(Some)
             }
         }
     }
@@ -523,29 +519,35 @@ impl Index {
     pub fn unlock(&mut self, handler: Handler, budget: &Budget) -> Result<()> {
         if let Some(repair) = &self.repair {
             let rebuilt = scan::rebuild(&self.bytes, Some(&handler), budget)?;
-            let mut candidate = Self::from_rebuilt(
-                self.bytes.clone(),
-                self.origin,
-                rebuilt,
-                repair.damage.clone(),
-                budget,
-            )?;
-            candidate.install_handler(handler, budget)?;
+            let mut candidate =
+                Self::from_rebuilt(self.bytes.clone(), rebuilt, repair.damage.clone(), budget)?;
+            candidate.install_handler(handler, true, budget)?;
             *self = candidate;
             return Ok(());
         }
-        self.install_handler(handler, budget)
+        self.install_handler(handler, false, budget)
     }
 
-    fn install_handler(&mut self, handler: Handler, budget: &Budget) -> Result<()> {
+    fn install_handler(
+        &mut self,
+        handler: Handler,
+        preserve_streams: bool,
+        budget: &Budget,
+    ) -> Result<()> {
         if !handler.distinguishes_embedded_files() {
             self.security = Some(handler);
             return Ok(());
         }
-        // Role discovery may need a compressed Filespec. Publish neither its
-        // decoded members nor the new credential if discovery subsequently fails.
-        let fresh = objstm::Streams::new(&self.entries, budget)?;
-        let old_streams = std::mem::replace(&mut self.streams, fresh);
+        // Role discovery may need a compressed Filespec. On an existing index,
+        // stage fresh stream caches so a failed discovery publishes neither
+        // decoded members nor the new credential. A freshly rebuilt candidate
+        // already decoded its streams with `handler` and is dropped on error.
+        let old_streams = if preserve_streams {
+            None
+        } else {
+            let fresh = objstm::Streams::new(&self.entries, budget)?;
+            Some(std::mem::replace(&mut self.streams, fresh))
+        };
         let old_handler = self.security.replace(handler);
         match crate::security::embedded::discover(self, None, budget) {
             Ok(roles) => {
@@ -557,7 +559,9 @@ impl Index {
             }
             Err(error) => {
                 self.security = old_handler;
-                self.streams = old_streams;
+                if let Some(old_streams) = old_streams {
+                    self.streams = old_streams;
+                }
                 Err(error)
             }
         }
@@ -712,13 +716,23 @@ impl Index {
                 })
                 .transpose()
         };
-        let decoded = objstm::decode(
-            &self.source(),
-            number,
-            self.security.as_ref(),
-            &lookup,
-            budget,
-        )
+        let decoded = if self.is_repaired() {
+            objstm::decode_repair(
+                &self.source(),
+                number,
+                self.security.as_ref(),
+                &lookup,
+                budget,
+            )
+        } else {
+            objstm::decode(
+                &self.source(),
+                number,
+                self.security.as_ref(),
+                &lookup,
+                budget,
+            )
+        }
         .and_then(|decoded| ObjectStream::new(decoded, self.streams.named(container), budget));
         let computed = match decoded {
             Err(error)
@@ -982,8 +996,40 @@ fn origin(bytes: &[u8]) -> usize {
         .unwrap_or(0)
 }
 
-/// Returns `positions`, sorted, with each position once.
-fn sorted(mut positions: BudgetVec<'_, usize>) -> Vec<usize> {
+/// Returns whether `bytes` at `pos` starts with a `%PDF-1.0`..=`%PDF-1.7` or
+/// `%PDF-2.0` header.
+fn has_pdf_header(bytes: &[u8], pos: usize) -> bool {
+    matches!(
+        bytes.get(pos..pos.saturating_add(8)),
+        Some([b'%', b'P', b'D', b'F', b'-', b'1', b'.', b'0'..=b'7'])
+            | Some([b'%', b'P', b'D', b'F', b'-', b'2', b'.', b'0'])
+    )
+}
+
+/// Searches strictly before the first scanned object header for a valid
+/// `%PDF-x.y` header, polling `budget` so large leading prefixes stay bounded.
+fn find_rebuilt_origin(bytes: &[u8], bounds: &[usize], budget: &Budget) -> Result<usize> {
+    let limit = bounds
+        .first()
+        .copied()
+        .unwrap_or(bytes.len())
+        .min(bytes.len());
+    let prefix = &bytes[..limit];
+    if prefix.len() < 8 {
+        return Ok(0);
+    }
+    let mut ticker = Ticker::default();
+    for pos in 0..=prefix.len() - 8 {
+        ticker.tick(budget)?;
+        if has_pdf_header(prefix, pos) {
+            return Ok(pos);
+        }
+    }
+    Ok(0)
+}
+
+/// Sorts `positions` in place and removes duplicates.
+fn sort_unique(positions: &mut BudgetVec<'_, usize>) {
     positions.sort_unstable();
     let mut kept = 0;
     for index in 0..positions.len() {
@@ -993,6 +1039,11 @@ fn sorted(mut positions: BudgetVec<'_, usize>) -> Vec<usize> {
         }
     }
     positions.truncate(kept);
+}
+
+/// Returns `positions`, sorted, with each position once.
+fn sorted(mut positions: BudgetVec<'_, usize>) -> Vec<usize> {
+    sort_unique(&mut positions);
     positions.into_vec()
 }
 

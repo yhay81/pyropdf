@@ -22,6 +22,11 @@ pub struct ObjectStream {
     /// The object numbers of the entries that name a member of the stream
     /// which the table does not confirm, ascending.
     mismatched: Vec<u32>,
+    /// Whether bridging must materialize members as top-level objects rather
+    /// than referencing this object stream with a type-2 xref row, because
+    /// decoding relied on repair leniency or syntax hayro-syntax cannot read
+    /// natively.
+    requires_materialization: bool,
 }
 
 /// An object stream's data and member table, before the check against the
@@ -29,6 +34,7 @@ pub struct ObjectStream {
 pub(super) struct Decoded {
     data: Bytes,
     members: Vec<(u32, usize)>,
+    requires_materialization: bool,
 }
 
 impl ObjectStream {
@@ -47,6 +53,7 @@ impl ObjectStream {
             data: decoded.data,
             members: decoded.members,
             mismatched: mismatched.into_vec(),
+            requires_materialization: decoded.requires_materialization,
         })
     }
 
@@ -70,6 +77,16 @@ impl ObjectStream {
     #[must_use]
     pub fn mismatched(&self) -> &[u32] {
         &self.mismatched
+    }
+
+    /// Returns whether consumers bridging this stream to hayro-syntax must
+    /// materialize its members instead of emitting type-2 compressed xref
+    /// rows (for example when repair decoding truncated an overstated `/N`
+    /// table, resolved indirect stream headers, or kept non-monotonic member
+    /// offsets).
+    #[must_use]
+    pub const fn requires_materialization(&self) -> bool {
+        self.requires_materialization
     }
 
     /// Returns the bytes of the member at `index`, from where its value
@@ -258,6 +275,13 @@ fn decode_inner(
     let stream = super::stream(&bytes)
         .ok_or_else(|| Error::malformed("it is not a stream that hayro-syntax reads"))?;
     let dict = dictionary(&bytes, &stream, budget)?;
+    let has_indirect_header = matches!(dict.get("N"), Some(Value::Reference(_)))
+        || matches!(dict.get("First"), Some(Value::Reference(_)))
+        || matches!(dict.get("Length"), Some(Value::Reference(_)));
+    let direct_length_matches = matches!(
+        dict.get("Length"),
+        Some(&Value::Integer(n)) if usize::try_from(n).ok() == Some(stream.raw_data().len())
+    );
     let count = integer(source, dict.get("N"), budget)?
         .ok_or_else(|| Error::malformed("its /N is not a number of members"))?;
     let first = integer(source, dict.get("First"), budget)?
@@ -292,6 +316,11 @@ fn decode_inner(
         resolved_selectors,
         budget,
     )?;
+    let mut requires_materialization = has_indirect_header
+        || !direct_length_matches
+        || resolved_selectors
+        || usize::try_from(count).is_err()
+        || usize::try_from(first).ok().is_none_or(|f| f > data.len());
     let table_end = if lenient {
         usize::try_from(first).unwrap_or(usize::MAX).min(data.len())
     } else {
@@ -301,22 +330,26 @@ fn decode_inner(
     let mut members = BudgetVec::new(budget);
     let mut ticker = Ticker::default();
     let mut pos = 0;
+    let mut last_member_start: Option<usize> = None;
     for _ in 0..count {
         ticker.tick(budget)?;
         let Some((listed, end)) = lex::unsigned(table, lex::skip_space(table, pos)) else {
             if lenient {
+                requires_materialization = true;
                 break;
             }
             return Err(Error::malformed("its member table ends early"));
         };
         let Some((offset, end)) = lex::unsigned(table, lex::skip_space(table, end)) else {
             if lenient {
+                requires_materialization = true;
                 break;
             }
             return Err(Error::malformed("its member table ends early"));
         };
         let Ok(listed) = u32::try_from(listed) else {
             if lenient {
+                requires_materialization = true;
                 break;
             }
             return Err(Error::malformed(
@@ -328,6 +361,13 @@ fn decode_inner(
             .checked_add(offset)
             .and_then(|start| usize::try_from(start).ok())
             .unwrap_or(usize::MAX);
+        if start < data.len() {
+            if last_member_start.is_some_and(|last| start <= last) {
+                requires_materialization = true;
+            } else {
+                last_member_start = Some(lex::skip_space(&data, start));
+            }
+        }
         members.try_push((listed, start))?;
         pos = end;
     }
@@ -337,6 +377,7 @@ fn decode_inner(
     Ok(Decoded {
         data,
         members: members.into_vec(),
+        requires_materialization,
     })
 }
 
