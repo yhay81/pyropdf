@@ -21,8 +21,8 @@ use pyo3::types::{PyBool, PyBytes, PyDict, PyInt, PyTuple};
 use pyropdf_engine::bridge::Error as BridgeError;
 use pyropdf_engine::ocr;
 use pyropdf_engine::pixmap::{
-    self as pixel_ops, Area, Bounded, BudgetedPngOutput, BufferViewError, DecodeError, Decoded,
-    EncodeError, Encoding, FORMATS, Layout, encode, encode_png, format_of,
+    self as pixel_ops, Area, Bounded, BudgetedPngOutput, BufferViewError, Colorspace, DecodeError,
+    Decoded, EncodeError, Encoding, FORMATS, Layout, encode, encode_png, format_of,
 };
 use pyropdf_engine::render::{self, Raster, RasterError};
 use pyropdf_store::LimitExceeded;
@@ -57,8 +57,8 @@ pub(crate) fn decode_error(error: DecodeError) -> PyErr {
     }
 }
 
-/// A rendered page: immutable pixels, row by row from the top, RGB or gray,
-/// each with or without straight alpha, 8 bits per channel.
+/// A rendered page: immutable pixels, row by row from the top, gray, RGB, or
+/// CMYK, each with or without straight alpha, 8 bits per channel.
 ///
 /// Implements Python's buffer protocol without copying: `memoryview(pixmap)`
 /// and `numpy.asarray(pixmap)` expose the samples read-only as `uint8` (`"B"`)
@@ -68,18 +68,18 @@ pub struct Pixmap {
     width: u32,
     height: u32,
     alpha: bool,
-    gray: bool,
+    colorspace: Colorspace,
     data: Arc<Vec<u8>>,
     resolution: (u32, u32),
 }
 
 impl Pixmap {
-    /// Returns the pixmap of `data`, `width` by `height` pixels of gray or
-    /// RGB, each followed by an alpha byte when `alpha`, at 96 dpi.
+    /// Returns the pixmap of `data`, `width` by `height` pixels in `colorspace`,
+    /// each followed by an alpha byte when `alpha`, at 96 dpi.
     pub(crate) fn from_samples(
         width: u32,
         height: u32,
-        gray: bool,
+        colorspace: Colorspace,
         alpha: bool,
         data: Vec<u8>,
     ) -> Self {
@@ -87,21 +87,21 @@ impl Pixmap {
             width,
             height,
             alpha,
-            gray,
+            colorspace,
             data: Arc::new(data),
             resolution: (96, 96),
         }
     }
 
-    fn channels(&self) -> u32 {
-        u32::from(!self.gray) * 2 + 1 + u32::from(self.alpha)
+    const fn channels(&self) -> u32 {
+        self.colorspace.components() as u32 + self.alpha as u32
     }
 
     const fn layout(&self) -> Layout {
         Layout {
             width: self.width,
             height: self.height,
-            gray: self.gray,
+            colorspace: self.colorspace,
             alpha: self.alpha,
         }
     }
@@ -112,20 +112,23 @@ impl Pixmap {
             width: layout.width,
             height: layout.height,
             alpha: layout.alpha,
-            gray: layout.gray,
+            colorspace: layout.colorspace,
             data: Arc::new(data),
             resolution: self.resolution,
         }
     }
 
-    fn converted(&self, py: Python<'_>, gray: bool) -> Self {
-        if self.gray == gray {
+    fn converted(&self, py: Python<'_>, target: Colorspace) -> Self {
+        if self.colorspace == target {
             return self.share();
         }
         let layout = self.layout();
         self.derive(
-            Layout { gray, ..layout },
-            py.detach(|| pixel_ops::convert(&self.data, layout, gray)),
+            Layout {
+                colorspace: target,
+                ..layout
+            },
+            py.detach(|| pixel_ops::convert(&self.data, layout, target)),
         )
     }
 
@@ -188,25 +191,35 @@ impl Pixmap {
     }
 
     /// Returns the samples and their layout, which OCR reads.
-    pub fn ocr_raster(&self) -> (Arc<Vec<u8>>, ocr::Layout) {
+    pub fn ocr_raster(&self) -> PyResult<(Arc<Vec<u8>>, ocr::Layout)> {
+        if self.colorspace.is_cmyk() {
+            return Err(PyValueError::new_err(
+                "OCR requires a gray or RGB pixmap; convert with to_rgb() first",
+            ));
+        }
         let layout = ocr::Layout {
             width: self.width as usize,
             height: self.height as usize,
-            gray: self.gray,
+            gray: self.colorspace.is_gray(),
             alpha: self.alpha,
         };
-        (Arc::clone(&self.data), layout)
+        Ok((Arc::clone(&self.data), layout))
     }
 
     /// Returns the samples and their layout, which layout detection reads.
-    pub fn layout_raster(&self) -> (Arc<Vec<u8>>, pyropdf_engine::layout::RasterLayout) {
+    pub fn layout_raster(&self) -> PyResult<(Arc<Vec<u8>>, pyropdf_engine::layout::RasterLayout)> {
+        if self.colorspace.is_cmyk() {
+            return Err(PyValueError::new_err(
+                "layout detection requires a gray or RGB pixmap; convert with to_rgb() first",
+            ));
+        }
         let layout = pyropdf_engine::layout::RasterLayout {
             width: self.width as usize,
             height: self.height as usize,
-            gray: self.gray,
+            gray: self.colorspace.is_gray(),
             alpha: self.alpha,
         };
-        (Arc::clone(&self.data), layout)
+        Ok((Arc::clone(&self.data), layout))
     }
 
     fn encode(
@@ -232,7 +245,7 @@ impl From<Raster> for Pixmap {
             width: u32::from(raster.width),
             height: u32::from(raster.height),
             alpha: raster.alpha,
-            gray: raster.gray,
+            colorspace: raster.colorspace,
             data: Arc::new(raster.data),
             resolution: raster.resolution,
         }
@@ -245,7 +258,7 @@ impl From<Decoded> for Pixmap {
             width: decoded.layout.width,
             height: decoded.layout.height,
             alpha: decoded.layout.alpha,
-            gray: decoded.layout.gray,
+            colorspace: decoded.layout.colorspace,
             data: Arc::new(decoded.data),
             resolution: decoded.resolution,
         }
@@ -266,7 +279,7 @@ impl Pixmap {
         crate::errors::boundary(|| self.height)
     }
 
-    /// Bytes per pixel: 1 for gray, 3 for RGB, and one more with alpha.
+    /// Bytes per pixel: 1 for gray, 3 for RGB, 4 for CMYK, and one more with alpha.
     #[getter(channels)]
     fn get_channels(&self) -> PyResult<u32> {
         crate::errors::boundary(|| self.channels())
@@ -282,9 +295,14 @@ impl Pixmap {
     #[getter]
     fn colorspace<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         crate::errors::boundary(|| {
+            let member = match self.colorspace {
+                Colorspace::Gray => "GRAY",
+                Colorspace::Rgb => "RGB",
+                Colorspace::Cmyk => "CMYK",
+            };
             py.import("pyropdf._pixmap")?
                 .getattr("Colorspace")?
-                .getattr(if self.gray { "GRAY" } else { "RGB" })
+                .getattr(member)
         })?
     }
 
@@ -335,7 +353,7 @@ impl Pixmap {
             let layout = self.layout();
             Ok(self.derive(
                 layout,
-                py.detach(|| pixel_ops::map_colors(&self.data, layout, &[table; 3])),
+                py.detach(|| pixel_ops::map_colors(&self.data, layout, &[table; 4])),
             ))
         })?
     }
@@ -346,30 +364,38 @@ impl Pixmap {
     #[pyo3(signature = (black=(0, 0, 0), white=(255, 255, 255)))]
     fn tint(&self, py: Python<'_>, black: (u8, u8, u8), white: (u8, u8, u8)) -> PyResult<Self> {
         crate::errors::boundary(|| {
+            if self.colorspace.is_cmyk() {
+                return Err(PyValueError::new_err(
+                    "tint is supported only for gray and RGB pixmaps; convert with to_rgb() first",
+                ));
+            }
             let (black, white) = ([black.0, black.1, black.2], [white.0, white.1, white.2]);
-            let tables = if self.gray {
-                [pixel_ops::tint_table(pixel_ops::luma(black), pixel_ops::luma(white)); 3]
+            let tables = if self.colorspace.is_gray() {
+                [pixel_ops::tint_table(pixel_ops::luma(black), pixel_ops::luma(white)); 4]
             } else {
-                std::array::from_fn(|component| {
-                    pixel_ops::tint_table(black[component], white[component])
-                })
+                [
+                    pixel_ops::tint_table(black[0], white[0]),
+                    pixel_ops::tint_table(black[1], white[1]),
+                    pixel_ops::tint_table(black[2], white[2]),
+                    [0; 256],
+                ]
             };
             let layout = self.layout();
-            self.derive(
+            Ok(self.derive(
                 layout,
                 py.detach(|| pixel_ops::map_colors(&self.data, layout, &tables)),
-            )
-        })
+            ))
+        })?
     }
 
     /// Returns the pixmap in gray, with ITU-R BT.601 luma weights, keeping alpha.
     fn to_gray(&self, py: Python<'_>) -> PyResult<Self> {
-        crate::errors::boundary(|| self.converted(py, true))
+        crate::errors::boundary(|| self.converted(py, Colorspace::Gray))
     }
 
     /// Returns the pixmap in RGB, keeping alpha.
     fn to_rgb(&self, py: Python<'_>) -> PyResult<Self> {
-        crate::errors::boundary(|| self.converted(py, false))
+        crate::errors::boundary(|| self.converted(py, Colorspace::Rgb))
     }
 
     /// Returns the pixmap with an alpha channel, opaque where it had none.
@@ -773,10 +799,23 @@ impl Pixmap {
         })?
     }
 
-    /// Returns the pixels as a Pillow image of mode `L`, `LA`, `RGB`, or
-    /// `RGBA`, with the resolution in its `dpi` info; it needs Pillow.
+    /// Returns the pixels as a Pillow image of mode `L`, `LA`, `RGB`, `RGBA`,
+    /// or `CMYK`, with the resolution in its `dpi` info; it needs Pillow.
+    /// CMYK with alpha has no Pillow mode and raises `ValueError`.
     fn to_pil<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         crate::errors::boundary(|| {
+            let mode = match (self.colorspace, self.alpha) {
+                (Colorspace::Gray, false) => "L",
+                (Colorspace::Gray, true) => "LA",
+                (Colorspace::Rgb, false) => "RGB",
+                (Colorspace::Rgb, true) => "RGBA",
+                (Colorspace::Cmyk, false) => "CMYK",
+                (Colorspace::Cmyk, true) => {
+                    return Err(PyValueError::new_err(
+                        "Pillow has no CMYK+alpha image mode; call without_alpha() or to_rgb() first",
+                    ));
+                }
+            };
             let module = py.import("PIL.Image").map_err(|error| {
                 if error.is_instance_of::<PyImportError>(py) {
                     PyImportError::new_err("Pixmap.to_pil needs Pillow: pip install pillow")
@@ -784,12 +823,6 @@ impl Pixmap {
                     error
                 }
             })?;
-            let mode = match (self.gray, self.alpha) {
-                (true, false) => "L",
-                (true, true) => "LA",
-                (false, false) => "RGB",
-                (false, true) => "RGBA",
-            };
             let image = module.call_method1(
                 "frombytes",
                 (
@@ -805,10 +838,12 @@ impl Pixmap {
 
     /// Returns the pixels encoded as `format` (`"png"`, `"jpeg"` at
     /// `quality`, 1 through 100, `"pam"`, `"pbm"`, `"pgm"`, `"ppm"`,
-    /// `"pnm"`, `"psd"`, or `"ps"`). PNG, PAM, and PSD keep alpha; the
-    /// others refuse it. PBM and PGM take gray, thresholding PBM at 128;
-    /// PPM takes RGB; PNM writes PGM or PPM. PSD sides end at 30,000
-    /// pixels, and PostScript is one Level 2 page at the resolution.
+    /// `"pnm"`, `"psd"`, or `"ps"`). PNG holds gray and RGB with or without
+    /// alpha (not CMYK); PAM and PSD hold gray, RGB, and CMYK with or
+    /// without alpha; JPEG and PostScript hold gray, RGB, and CMYK without
+    /// alpha; PBM and PGM take gray, thresholding PBM at 128; PPM takes RGB;
+    /// PNM writes PGM or PPM. PSD sides end at 30,000 pixels, and PostScript
+    /// is one Level 2 page at the resolution.
     ///
     /// `max_size` bounds the output, 64 MiB by default, and refuses the
     /// write that would pass it with `LimitError` code
@@ -822,7 +857,7 @@ impl Pixmap {
         #[pyo3(from_py_with = extract_max_size)] max_size: Option<usize>,
     ) -> PyResult<Bound<'py, PyBytes>> {
         crate::errors::boundary(|| {
-            let encoding = Encoding::parse(format, quality, self.gray, self.alpha)
+            let encoding = Encoding::parse(format, quality, self.colorspace, self.alpha)
                 .map_err(PyValueError::new_err)?;
             let written = AtomicUsize::new(0);
             let mut out = Bounded::new(&written, max_size);
@@ -866,7 +901,7 @@ impl Pixmap {
                     ))
                 })?,
             };
-            let encoding = Encoding::parse(format, quality, self.gray, self.alpha)
+            let encoding = Encoding::parse(format, quality, self.colorspace, self.alpha)
                 .map_err(PyValueError::new_err)?;
             py.detach(|| {
                 let error = |e: &dyn std::fmt::Display| {
@@ -909,7 +944,7 @@ impl Pixmap {
 
     fn __repr__(&self) -> PyResult<String> {
         crate::errors::boundary(|| {
-            let colorspace = if self.gray { "gray" } else { "rgb" };
+            let colorspace = self.colorspace.as_str();
             let alpha = if self.alpha { " alpha" } else { "" };
             format!(
                 "<Pixmap {}x{} {colorspace}{alpha}>",
@@ -1179,6 +1214,11 @@ pub fn pixmap_png<'py>(
     pixmap: &Pixmap,
 ) -> PyResult<Bound<'py, PyBytes>> {
     crate::errors::boundary(|| {
+        if pixmap.colorspace.is_cmyk() {
+            return Err(PyValueError::new_err(
+                "PNG does not support CMYK samples; convert to RGB or gray first",
+            ));
+        }
         let budget = document.budget();
         let mut out = BudgetedPngOutput::new(&budget);
         let layout = pixmap.layout();
@@ -1334,6 +1374,14 @@ pub fn recolor_samples<'py>(
     })?
 }
 
+fn parse_colorspace(colorspace: &str) -> PyResult<Colorspace> {
+    Colorspace::parse(colorspace).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "colorspace must be 'gray', 'rgb', or 'cmyk': {colorspace:?}"
+        ))
+    })
+}
+
 /// Renders the page whose object is `number` and `generation` through the
 /// linear `matrix` or `fit` pixel bound, with the GIL released. The Python
 /// layer has checked the options and resolved `background` to straight RGBA.
@@ -1347,7 +1395,7 @@ pub fn render_page(
     matrix: (f64, f64, f64, f64),
     fit: Option<(u32, u32)>,
     alpha: bool,
-    gray: bool,
+    colorspace: &str,
     background: (u8, u8, u8, u8),
     clip: Option<(f64, f64, f64, f64)>,
     annotations: bool,
@@ -1356,6 +1404,7 @@ pub fn render_page(
     antialias: bool,
 ) -> PyResult<Pixmap> {
     crate::errors::boundary(|| {
+        let colorspace = parse_colorspace(colorspace)?;
         let document = source.document();
         document.document()?;
         let budget = document.budget();
@@ -1364,7 +1413,7 @@ pub fn render_page(
         let options = render::Options {
             matrix,
             alpha,
-            gray,
+            colorspace,
             background: [red, green, blue, opacity],
             clip,
             annotations,
@@ -1390,9 +1439,16 @@ pub fn render_page(
                 .bridge
                 .get_for_render(&version, &index, &budget, annotations)
                 .map_err(|e| bridge_error(&e))?;
-            let raster =
-                render::raster_scaled(&bridged, Some(&index), &fallback, at, &options, scale)
-                    .map_err(raster_error)?;
+            let raster = render::raster_scaled(
+                &bridged,
+                Some(&index),
+                &fallback,
+                at,
+                &options,
+                scale,
+                &budget,
+            )
+            .map_err(raster_error)?;
             budget.poll().map_err(|e| limit_error(&e))?;
             Ok(raster)
         })?;
@@ -1441,7 +1497,7 @@ pub fn render_pages(
     matrix: (f64, f64, f64, f64),
     fit: Option<(u32, u32)>,
     alpha: bool,
-    gray: bool,
+    colorspace: &str,
     background: (u8, u8, u8, u8),
     annotations: bool,
     hinting: bool,
@@ -1453,15 +1509,16 @@ pub fn render_pages(
     max_size: Option<usize>,
 ) -> PyResult<Vec<Py<PyBytes>>> {
     crate::errors::boundary(|| {
+        let colorspace = parse_colorspace(colorspace)?;
         let encoding =
-            Encoding::parse(format, quality, gray, alpha).map_err(PyValueError::new_err)?;
+            Encoding::parse(format, quality, colorspace, alpha).map_err(PyValueError::new_err)?;
         let (version, index, budget) = crate::pages::index(document)?;
         let indexes = crate::pages::entries(pages, index.len())?;
         let (red, green, blue, opacity) = background;
         let options = render::Options {
             matrix,
             alpha,
-            gray,
+            colorspace,
             background: [red, green, blue, opacity],
             clip: None,
             annotations,
@@ -1474,14 +1531,13 @@ pub fn render_pages(
         });
         let written = AtomicUsize::new(0);
         let fallback = document.fallback();
-        let encoded =
-            py.detach(|| -> PyResult<Vec<Vec<u8>>> {
-                document.preflight_pages(&version, &index, &indexes, &budget)?;
-                let bridged = document
-                    .bridge
-                    .get_for_render(&version, &index, &budget, annotations)
-                    .map_err(|e| bridge_error(&e))?;
-                render::batch_scaled(
+        let encoded = py.detach(|| -> PyResult<Vec<Vec<u8>>> {
+            document.preflight_pages(&version, &index, &indexes, &budget)?;
+            let bridged = document
+                .bridge
+                .get_for_render(&version, &index, &budget, annotations)
+                .map_err(|e| bridge_error(&e))?;
+            render::batch_scaled(
                 &bridged,
                 Some(&index),
                 &fallback,
@@ -1489,35 +1545,40 @@ pub fn render_pages(
                 &options,
                 scale,
                 workers,
+                &budget,
                 |raster| {
-                let mut out = Bounded::new(&written, max_size);
-                let layout = Layout {
-                    width: u32::from(raster.width),
-                    height: u32::from(raster.height),
-                    gray: raster.gray,
-                    alpha: raster.alpha,
-                };
-                let result = encode(
-                    &mut out,
-                    layout,
-                    &raster.data,
-                    raster.resolution,
-                    encoding,
-                    &budget,
-                );
-                if out.exceeded() {
-                    let limit = max_size.unwrap_or_default();
-                    return Err(Failed(LimitError::new_err((
-                        LimitCode::RenderOutputSize.as_str(),
-                        format!("the rendered batch exceeds the {limit}-byte encoded-output limit"),
-                    ))));
-                }
-                result
-                    .map_err(|e| Failed(encode_error(e, "failed to encode the rendered image")))?;
-                Ok(out.into_bytes())
-            })
+                    let mut out = Bounded::new(&written, max_size);
+                    let layout = Layout {
+                        width: u32::from(raster.width),
+                        height: u32::from(raster.height),
+                        colorspace: raster.colorspace,
+                        alpha: raster.alpha,
+                    };
+                    let result = encode(
+                        &mut out,
+                        layout,
+                        &raster.data,
+                        raster.resolution,
+                        encoding,
+                        &budget,
+                    );
+                    if out.exceeded() {
+                        let limit = max_size.unwrap_or_default();
+                        return Err(Failed(LimitError::new_err((
+                            LimitCode::RenderOutputSize.as_str(),
+                            format!(
+                                "the rendered batch exceeds the {limit}-byte encoded-output limit"
+                            ),
+                        ))));
+                    }
+                    result.map_err(|e| {
+                        Failed(encode_error(e, "failed to encode the rendered image"))
+                    })?;
+                    Ok(out.into_bytes())
+                },
+            )
             .map_err(|Failed(error)| error)
-            })?;
+        })?;
         Ok(encoded
             .into_iter()
             .map(|bytes| PyBytes::new(py, &bytes).unbind())

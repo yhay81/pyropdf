@@ -58,7 +58,7 @@ from pyropdf._ocr import (
 )
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
 from pyropdf._page_labels import _label, _read_page_labels
-from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
+from pyropdf._pixmap import Colorspace, _render_background, _render_colorspace, _render_matrix, _validate_bool
 from pyropdf._prepress import BoxStyle, SeparationPlate, box_styles, separations, write_box_styles, write_separations
 from pyropdf._presentations import (
     NavigationStep,
@@ -622,7 +622,7 @@ class Page:
         alpha: bool = False,
         background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
         annotations: bool = True,
-        colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
+        colorspace: Colorspace | Literal["gray", "rgb", "cmyk"] = Colorspace.RGB,
         hinting: bool = False,
         glyph_cache: bool = False,
         antialias: bool = True,
@@ -640,7 +640,10 @@ class Page:
         painted beneath the page, which must be opaque without ``alpha``.
         ``annotations=False`` leaves out the appearances of annotations and
         form widgets. ``colorspace="gray"`` converts the rendered colors to
-        gray with ITU-R BT.601 luma weights.
+        gray with ITU-R BT.601 luma weights; ``colorspace="cmyk"`` renders
+        directly into 4-channel CMYK (or 5-channel straight-alpha CMYKA when
+        ``alpha=True``), keeping ``DeviceCMYK`` paints and images native
+        without an sRGB round-trip and mapping ``DeviceGray`` to pure black.
 
         ``hinting=True`` hints text, as FreeType's light hinting does, which
         sharpens small text: horizontal text filled at 4 to 128 pixels per
@@ -688,7 +691,7 @@ class Page:
         _validate_bool("hinting", hinting)
         _validate_bool("glyph_cache", glyph_cache)
         _validate_bool("antialias", antialias)
-        gray = _render_gray(colorspace)
+        cs = _render_colorspace(colorspace)
         box = None if clip is None else _clip_box(clip)
         try:
             return _core.render_page(
@@ -698,7 +701,7 @@ class Page:
                 linear,
                 fit_box,
                 alpha,
-                gray,
+                cs.value,
                 rgba,
                 box,
                 annotations,

@@ -9,7 +9,7 @@ use pyropdf_store::version::Version;
 
 use crate::extract::DecodedImage;
 
-use super::{DecodeError, Layout, MAX_PIXELS, check_size};
+use super::{Colorspace, DecodeError, Layout, MAX_PIXELS, check_size};
 
 /// The image filters whose encoded data an image keeps as stored
 /// (ISO 32000-2 table 6).
@@ -34,12 +34,13 @@ pub fn interleave_image(image: DecodedImage) -> Result<(Layout, Vec<u8>), String
         color,
         alpha,
     } = image;
+    let colorspace = Colorspace::from_gray(gray);
     let Some(alpha) = alpha else {
         return Ok((
             Layout {
                 width,
                 height,
-                gray,
+                colorspace,
                 alpha: false,
             },
             color,
@@ -61,7 +62,7 @@ pub fn interleave_image(image: DecodedImage) -> Result<(Layout, Vec<u8>), String
         Layout {
             width,
             height,
-            gray,
+            colorspace,
             alpha: true,
         },
         data,

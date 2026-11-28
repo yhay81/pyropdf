@@ -2,9 +2,9 @@ use proptest::prelude::*;
 use pyropdf_store::budget::{Budget, LimitCode};
 
 use super::{
-    DecodeError, EncodeError, Encoding, Layout, MAX_PIXELS, Projection, add_alpha, check_size,
-    color_runs, convert, crop, decode, drop_alpha, encode, fax, fill, flip, gamma_table, images,
-    invert, map_colors, recolor_samples, rotate, scale, tint_table, warp,
+    Colorspace, DecodeError, EncodeError, Encoding, Layout, MAX_PIXELS, Projection, add_alpha,
+    check_size, color_runs, convert, crop, decode, drop_alpha, encode, fax, fill, flip,
+    gamma_table, images, invert, map_colors, recolor_samples, rotate, scale, tint_table, warp,
 };
 
 fn layout_and_samples() -> impl Strategy<Value = (Layout, Vec<u8>)> {
@@ -13,7 +13,7 @@ fn layout_and_samples() -> impl Strategy<Value = (Layout, Vec<u8>)> {
             let layout = Layout {
                 width,
                 height,
-                gray,
+                colorspace: Colorspace::from_gray(gray),
                 alpha,
             };
             let len = width as usize * height as usize * layout.channels();
@@ -41,7 +41,7 @@ proptest! {
         prop_assert!(decoded.resolution.1.abs_diff(ydpi) <= 1);
 
         let (w, h, gray, color, alpha) = images::decode_png_buffers(&png, &budget).unwrap();
-        prop_assert_eq!((w, h, gray, alpha.is_some()), (layout.width, layout.height, layout.gray, layout.alpha));
+        prop_assert_eq!((w, h, gray, alpha.is_some()), (layout.width, layout.height, layout.colorspace.is_gray(), layout.alpha));
         if let Some(alpha) = alpha {
             let colors = layout.colors();
             let mut joined = Vec::new();
@@ -67,7 +67,7 @@ proptest! {
         height in 1_u32..=19,
         gray in any::<bool>(),
     ) {
-        let layout = Layout { width, height, gray, alpha: false };
+        let layout = Layout { width, height, colorspace: Colorspace::from_gray(gray), alpha: false };
         let len = width as usize * height as usize * layout.channels();
         let data: Vec<u8> = (0..len).map(|i| ((i * 73 + 19) % 256) as u8).collect();
         let budget = Budget::default();
@@ -175,7 +175,7 @@ fn size_and_malformed_header_bounds_refuse_before_allocation() {
     let layout = Layout {
         width: 4,
         height: 4,
-        gray: true,
+        colorspace: Colorspace::Gray,
         alpha: false,
     };
     let mut png = Vec::new();
@@ -200,7 +200,7 @@ fn jpeg_psd_ps_and_other_ops_behave_as_specified() {
     let layout = Layout {
         width: 4,
         height: 3,
-        gray: false,
+        colorspace: Colorspace::Rgb,
         alpha: false,
     };
     let data: Vec<u8> = (0..36).map(|i| (i * 7) as u8).collect();
@@ -211,7 +211,7 @@ fn jpeg_psd_ps_and_other_ops_behave_as_specified() {
     let wide = Layout {
         width: 30_001,
         height: 1,
-        gray: true,
+        colorspace: Colorspace::Gray,
         alpha: false,
     };
     assert!(encode(&mut Vec::new(), wide, &[], (96, 96), Encoding::Psd, &budget).is_err());
@@ -244,12 +244,12 @@ fn jpeg_psd_ps_and_other_ops_behave_as_specified() {
     assert_eq!(scaled.len(), 6 * 5 * 3);
     let filled = fill(&data, layout, (0, 0, 2, 1), &[9, 8, 7]);
     assert_eq!(&filled[..6], &[9, 8, 7, 9, 8, 7]);
-    let gray = convert(&data, layout, true);
+    let gray = convert(&data, layout, Colorspace::Gray);
     assert_eq!(gray.len(), 12);
     let gamma = gamma_table(1.0);
     let identity = tint_table(0, 255);
     assert_eq!(gamma, identity);
-    assert_eq!(map_colors(&data, layout, &[identity; 3]), data);
+    assert_eq!(map_colors(&data, layout, &[identity; 4]), data);
     let proj = Projection::new([(0.0, 0.0), (4.0, 0.0), (0.0, 3.0), (4.0, 3.0)]).unwrap();
     assert_eq!(warp(&data, layout, proj, 4, 3).len(), 36);
     assert!(fax::encode_checked(&[0xFF], (MAX_PIXELS as usize) + 1, 1, 64).is_err());
@@ -276,7 +276,7 @@ fn png_phys_dpi_clamps_to_u16_max_and_encoders_never_truncate() {
         Layout {
             width: 1,
             height: 1,
-            gray: false,
+            colorspace: Colorspace::Rgb,
             alpha: false,
         },
         &[10, 20, 30],
@@ -329,7 +329,7 @@ fn projection_rejects_overflowing_finite_quad_and_rotate_handles_zero_and_four()
     let layout = Layout {
         width: 2,
         height: 4,
-        gray: true,
+        colorspace: Colorspace::Gray,
         alpha: false,
     };
     let pixels: Vec<u8> = (0..8).collect();
@@ -344,7 +344,7 @@ fn recolor_and_encode_jpeg_samples_obey_budget_limits() {
     let layout = Layout {
         width: 4,
         height: 4,
-        gray: false,
+        colorspace: Colorspace::Rgb,
         alpha: false,
     };
     let data = vec![128_u8; 4 * 4 * 3];

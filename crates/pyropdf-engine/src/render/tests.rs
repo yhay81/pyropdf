@@ -493,6 +493,7 @@ fn scaled_fit_renders_mixed_pages_as_per_page_matrices_and_refuses_zero_bounds()
     let pages = PageIndex::build(&mut Reads::new(&version, &budget)).unwrap();
     let bridged = Arc::new(Bridged::new(&version, &pages, &budget).unwrap());
     let none = Fallback::default();
+    let budget = Budget::default();
     let options = Options::new((1.0, 0.0, 0.0, 1.0), false);
     let fit = Scale::Fit(800, 600);
 
@@ -501,7 +502,8 @@ fn scaled_fit_renders_mixed_pages_as_per_page_matrices_and_refuses_zero_bounds()
             let (width, height) = Display::from_page(&pages.pages()[at]).size();
             let factor = (800.0 / width).min(600.0 / height);
             let per_page = Options::new((factor, 0.0, 0.0, factor), false);
-            let fitted = raster_scaled(&bridged, Some(&pages), &none, at, &options, fit).unwrap();
+            let fitted =
+                raster_scaled(&bridged, Some(&pages), &none, at, &options, fit, &budget).unwrap();
             let direct = raster(&bridged, &none, at, &per_page).unwrap();
             assert_eq!(fitted, direct, "page {at}");
             fitted
@@ -521,6 +523,7 @@ fn scaled_fit_renders_mixed_pages_as_per_page_matrices_and_refuses_zero_bounds()
         &options,
         fit,
         3,
+        &budget,
         Ok::<_, RasterError>,
     )
     .unwrap();
@@ -529,7 +532,7 @@ fn scaled_fit_renders_mixed_pages_as_per_page_matrices_and_refuses_zero_bounds()
 
     for invalid in [Scale::Fit(0, 10), Scale::Fit(10, 0)] {
         assert_eq!(
-            raster_scaled(&bridged, Some(&pages), &none, 0, &options, invalid),
+            raster_scaled(&bridged, Some(&pages), &none, 0, &options, invalid, &budget),
             Err(RasterError::Geometry(
                 "fit dimensions must be positive".to_owned()
             ))
@@ -543,6 +546,7 @@ fn scaled_fit_renders_mixed_pages_as_per_page_matrices_and_refuses_zero_bounds()
                 &options,
                 invalid,
                 1,
+                &budget,
                 Ok::<_, RasterError>,
             ),
             Err(RasterError::Geometry(
@@ -565,16 +569,16 @@ fn with_cache_replaces_bridged_entry_and_drops_on_thread_exit() {
     // Run on a child thread so both `*held = None` replacement and TLS drop of
     // `Cached` (`RenderCache<'static>` before `Arc<Bridged>`) are checked.
     std::thread::spawn(move || {
-        let pages_first = with_cache(&first, &none, true, |bridged, _cache| {
+        let pages_first = with_cache(&first, &none, true, |bridged, _cache, _cmyk| {
             bridged.pdf().pages().len()
         });
-        let pages_cached = with_cache(&first, &none, true, |bridged, _cache| {
+        let pages_cached = with_cache(&first, &none, true, |bridged, _cache, _cmyk| {
             bridged.pdf().pages().len()
         });
-        let pages_aliased = with_cache(&first, &none, false, |bridged, _cache| {
+        let pages_aliased = with_cache(&first, &none, false, |bridged, _cache, _cmyk| {
             bridged.pdf().pages().len()
         });
-        let pages_second = with_cache(&second, &none, false, |bridged, _cache| {
+        let pages_second = with_cache(&second, &none, false, |bridged, _cache, _cmyk| {
             bridged.pdf().pages().len()
         });
         assert_eq!(
@@ -639,17 +643,17 @@ fn miri_smoke_render_with_cache_replacement_and_tls_drop() {
     // Run on a child thread so both `*held = None` replacement and TLS drop of
     // `Cached` (`RenderCache<'static>` before `Arc<Bridged>`) run under Miri.
     std::thread::spawn(move || {
-        with_cache(&b1, &none, true, |bridged, cache| {
+        with_cache(&b1, &none, true, |bridged, cache, cmyk| {
             let _ = bridged.pdf().pages().len();
-            let _ = cache;
+            let _ = (cache, cmyk);
         });
-        with_cache(&b1, &none, true, |bridged, _cache| {
+        with_cache(&b1, &none, true, |bridged, _cache, _cmyk| {
             assert_eq!(bridged.pdf().pages().len(), 1);
         });
-        with_cache(&b1, &none, false, |bridged, _cache| {
+        with_cache(&b1, &none, false, |bridged, _cache, _cmyk| {
             assert_eq!(bridged.pdf().pages().len(), 1);
         });
-        with_cache(&b2, &none, false, |bridged, _cache| {
+        with_cache(&b2, &none, false, |bridged, _cache, _cmyk| {
             assert_eq!(bridged.pdf().pages().len(), 1);
         });
     })

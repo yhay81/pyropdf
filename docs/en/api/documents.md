@@ -1143,7 +1143,7 @@ Document.render(
     alpha: bool = False,
     background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
     annotations: bool = True,
-    colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
+    colorspace: Colorspace | Literal['gray', 'rgb', 'cmyk'] = Colorspace.RGB,
     hinting: bool = False,
     glyph_cache: bool = False,
     antialias: bool = True,

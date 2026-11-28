@@ -432,11 +432,16 @@ pub fn annotation_pixmap(
     id: (u32, u16),
     matrix: (f64, f64, f64, f64),
     alpha: bool,
-    gray: bool,
+    colorspace: &str,
     background: (u8, u8, u8, u8),
     antialias: bool,
 ) -> PyResult<Option<Pixmap>> {
     crate::errors::boundary(|| {
+        let colorspace = render::Colorspace::parse(colorspace).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "colorspace must be 'gray', 'rgb', or 'cmyk': {colorspace:?}"
+            ))
+        })?;
         let Some(isolated) = isolated(py, document, number, generation, index, id)? else {
             return Ok(None);
         };
@@ -445,7 +450,7 @@ pub fn annotation_pixmap(
         let options = render::Options {
             matrix,
             alpha,
-            gray,
+            colorspace,
             background: [red, green, blue, opacity],
             clip: Some(isolated.rect),
             annotations: false,
@@ -466,8 +471,14 @@ pub fn annotation_pixmap(
                 Bridged::new(&isolated.version, &isolated.pages, &budget)
                     .map_err(|e| bridge_error(&e))?,
             );
-            let raster = render::raster(&bridged, &fallback, isolated.page_index, &options)
-                .map_err(raster_error)?;
+            let raster = render::raster_budgeted(
+                &bridged,
+                &fallback,
+                isolated.page_index,
+                &options,
+                &budget,
+            )
+            .map_err(raster_error)?;
             budget.poll().map_err(|e| limit_error(&e))?;
             Ok(raster)
         })?;

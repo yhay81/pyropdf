@@ -360,8 +360,8 @@ def test_gray_holds_the_luma_of_each_color() -> None:
     assert png_header(gray_alpha.to_bytes())[2] == PNG_GRAY_ALPHA
     rgba = bytes(page.pixmap(alpha=True))
     assert bytes(gray_alpha)[1::2] == rgba[3::4]
-    with pytest.raises(ValueError, match="colorspace must be 'gray' or 'rgb'"):
-        page.pixmap(colorspace="cmyk")  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="colorspace must be 'gray', 'rgb', or 'cmyk'"):
+        page.pixmap(colorspace="lab")  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize("matrix", [(1, 0, 0, 1), (1.5, 0, 0, 1.5), (0, 2, -2, 0), (1, 0.5, 0, 1)])
@@ -572,9 +572,11 @@ def test_old_names_are_removed() -> None:
 
 
 def test_colorspace_is_a_string_enum() -> None:
-    assert list(Colorspace) == [Colorspace.GRAY, Colorspace.RGB]
+    assert list(Colorspace) == [Colorspace.GRAY, Colorspace.RGB, Colorspace.CMYK]
     assert Colorspace("gray") is Colorspace.GRAY
+    assert Colorspace("cmyk") is Colorspace.CMYK
     assert Colorspace.RGB == "rgb"
+    assert Colorspace.CMYK == "cmyk"
     assert Colorspace.__module__ == "pyropdf"
     for name in ("csRGB", "csGRAY", "csCMYK", "CS_RGB", "CS_GRAY", "CS_CMYK"):
         assert not hasattr(pyropdf, name)

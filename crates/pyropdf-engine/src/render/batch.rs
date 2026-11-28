@@ -6,10 +6,12 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 
 use hayro::RenderCache;
+use pyropdf_store::budget::Budget;
 use pyropdf_store::pages::PageIndex;
 
 use super::{
-    Fallback, Options, Raster, RasterError, Scale, draw, extent, page_size, scaled_options,
+    Colorspace, Fallback, Options, Raster, RasterError, Scale, cmyk, draw, extent, page_size,
+    scaled_options,
 };
 use crate::bridge::Bridged;
 
@@ -23,6 +25,10 @@ const MAX_LIVE_BYTES: u64 = 512_000_000;
 /// The estimated bytes that one pixel of a raster holds while it is
 /// rendered and converted.
 const BYTES_PER_PIXEL: u64 = 8;
+
+/// The estimated bytes that one pixel of a two-pass CMYK raster holds while it
+/// is rendered and merged.
+const CMYK_BYTES_PER_PIXEL: u64 = 20;
 
 /// The pages that a worker renders through one cache before it starts
 /// another, so that a cache holds what at most this many pages use.
@@ -62,6 +68,7 @@ where
         options,
         Scale::Matrix(options.matrix),
         workers,
+        &Budget::default(),
         finish,
     )
 }
@@ -81,6 +88,7 @@ pub fn batch_scaled<T, E>(
     options: &Options,
     scale: Scale,
     workers: usize,
+    budget: &Budget,
     finish: impl Fn(Raster) -> Result<T, E> + Sync,
 ) -> Result<Vec<T>, E>
 where
@@ -99,7 +107,12 @@ where
         let (_, _, width, height) = extent(display, &resolved)?;
         most = u64::max(most, u64::from(width) * u64::from(height));
     }
-    let by_memory = usize::try_from(MAX_LIVE_BYTES / (most * BYTES_PER_PIXEL).max(1))
+    let bpp = if options.colorspace == Colorspace::Cmyk {
+        CMYK_BYTES_PER_PIXEL
+    } else {
+        BYTES_PER_PIXEL
+    };
+    let by_memory = usize::try_from(MAX_LIVE_BYTES / (most * bpp).max(1))
         .unwrap_or(usize::MAX)
         .max(1);
     let count = workers
@@ -111,6 +124,7 @@ where
     let work = || -> Result<Vec<(usize, T)>, E> {
         let mut done = Vec::new();
         let mut cache = RenderCache::new();
+        let mut cmyk_cache = cmyk::CmykCache::new();
         let mut cached = 0;
         while !failed.load(Ordering::Relaxed) {
             let at = next.fetch_add(1, Ordering::Relaxed);
@@ -119,12 +133,23 @@ where
             };
             if cached == CACHE_PAGES {
                 cache = RenderCache::new();
+                cmyk_cache = cmyk::CmykCache::new();
                 cached = 0;
             }
             cached += 1;
-            match draw(bridged, pages, &cache, fallback, index, options, scale)
-                .map_err(E::from)
-                .and_then(&finish)
+            match draw(
+                bridged,
+                pages,
+                &cache,
+                &cmyk_cache,
+                fallback,
+                index,
+                options,
+                scale,
+                budget,
+            )
+            .map_err(E::from)
+            .and_then(&finish)
             {
                 #[expect(
                     clippy::disallowed_methods,

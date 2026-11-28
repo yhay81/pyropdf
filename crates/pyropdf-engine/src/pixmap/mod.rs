@@ -27,12 +27,75 @@ pub use ops::{
 /// bounds one raster.
 pub const MAX_PIXELS: u64 = 64_000_000;
 
+/// The color space of a pixmap's samples.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Colorspace {
+    /// One gray component per pixel.
+    Gray,
+    /// Red, green, and blue components per pixel.
+    Rgb,
+    /// Cyan, magenta, yellow, and black ink components per pixel.
+    Cmyk,
+}
+
+impl Colorspace {
+    /// Converts a legacy `gray: bool` flag into [`Colorspace::Gray`] or
+    /// [`Colorspace::Rgb`].
+    #[must_use]
+    pub const fn from_gray(gray: bool) -> Self {
+        if gray { Self::Gray } else { Self::Rgb }
+    }
+
+    /// The number of color components per pixel, excluding alpha.
+    #[must_use]
+    pub const fn components(self) -> usize {
+        match self {
+            Self::Gray => 1,
+            Self::Rgb => 3,
+            Self::Cmyk => 4,
+        }
+    }
+
+    /// Returns whether this color space is gray.
+    #[must_use]
+    pub const fn is_gray(self) -> bool {
+        matches!(self, Self::Gray)
+    }
+
+    /// Returns whether this color space is CMYK.
+    #[must_use]
+    pub const fn is_cmyk(self) -> bool {
+        matches!(self, Self::Cmyk)
+    }
+
+    /// The lowercase name of this color space (`"gray"`, `"rgb"`, or `"cmyk"`).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Gray => "gray",
+            Self::Rgb => "rgb",
+            Self::Cmyk => "cmyk",
+        }
+    }
+
+    /// Parses `"gray"`, `"rgb"`, or `"cmyk"`.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "gray" => Some(Self::Gray),
+            "rgb" => Some(Self::Rgb),
+            "cmyk" => Some(Self::Cmyk),
+            _ => None,
+        }
+    }
+}
+
 /// The shape of a pixmap's samples.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
     pub width: u32,
     pub height: u32,
-    pub gray: bool,
+    pub colorspace: Colorspace,
     pub alpha: bool,
 }
 
@@ -40,7 +103,7 @@ impl Layout {
     /// The color components of a pixel, without alpha.
     #[must_use]
     pub const fn colors(self) -> usize {
-        if self.gray { 1 } else { 3 }
+        self.colorspace.components()
     }
 
     /// The bytes of a pixel.
@@ -202,7 +265,7 @@ mod buffer_math_tests {
         let rgb = Layout {
             width: 10,
             height: 5,
-            gray: false,
+            colorspace: Colorspace::Rgb,
             alpha: false,
         };
         assert_eq!(rgb.stride_u64(), 30);
@@ -214,11 +277,23 @@ mod buffer_math_tests {
         assert_eq!(rgb.pixel_offset(10, 0), None);
         assert_eq!(rgb.pixel_offset(0, 5), None);
 
+        let cmyka = Layout {
+            width: 4,
+            height: 3,
+            colorspace: Colorspace::Cmyk,
+            alpha: true,
+        };
+        assert_eq!(cmyka.colors(), 4);
+        assert_eq!(cmyka.channels(), 5);
+        assert_eq!(cmyka.stride_u64(), 20);
+        assert_eq!(cmyka.byte_len_checked(), Some(60));
+        assert_eq!(cmyka.pixel_offset(3, 2), Some(55));
+
         // Huge dimensions that would overflow 32-bit stride/size are checked cleanly.
         let huge = Layout {
             width: u32::MAX,
             height: 2,
-            gray: false,
+            colorspace: Colorspace::Rgb,
             alpha: true,
         };
         assert_eq!(huge.stride_u64(), u64::from(u32::MAX) * 4);
@@ -230,7 +305,7 @@ mod buffer_math_tests {
         let gray_1d = Layout {
             width: 1,
             height: 4,
-            gray: true,
+            colorspace: Colorspace::Gray,
             alpha: false,
         };
         let view = gray_1d.buffer_view(4, true).unwrap();
@@ -252,7 +327,7 @@ mod buffer_math_tests {
         let rgb_col = Layout {
             width: 1,
             height: 2,
-            gray: false,
+            colorspace: Colorspace::Rgb,
             alpha: false,
         };
         assert_eq!(
@@ -269,6 +344,14 @@ mod buffer_math_tests {
 mod kani_proofs {
     use super::*;
 
+    fn any_colorspace() -> Colorspace {
+        match kani::any::<u8>() % 3 {
+            0 => Colorspace::Gray,
+            1 => Colorspace::Rgb,
+            _ => Colorspace::Cmyk,
+        }
+    }
+
     /// `Layout::pixel_offset` never panics or wraps across the full 32-bit
     /// dimension and 64-bit coordinate domain, and rejects all out-of-bounds
     /// coordinates.
@@ -277,7 +360,7 @@ mod kani_proofs {
         let layout = Layout {
             width: kani::any(),
             height: kani::any(),
-            gray: kani::any(),
+            colorspace: any_colorspace(),
             alpha: kani::any(),
         };
         let x: i64 = kani::any();
@@ -299,7 +382,7 @@ mod kani_proofs {
         let layout = Layout {
             width: u32::from(width),
             height: u32::from(height),
-            gray: kani::any(),
+            colorspace: any_colorspace(),
             alpha: kani::any(),
         };
         let x1: i8 = kani::any();
@@ -335,7 +418,7 @@ mod kani_proofs {
         let layout = Layout {
             width: kani::any(),
             height: kani::any(),
-            gray: kani::any(),
+            colorspace: any_colorspace(),
             alpha: kani::any(),
         };
         let data_len: usize = kani::any();
@@ -370,7 +453,7 @@ mod kani_proofs {
         let layout = Layout {
             width,
             height,
-            gray: kani::any(),
+            colorspace: any_colorspace(),
             alpha: kani::any(),
         };
         let c = layout.channels();

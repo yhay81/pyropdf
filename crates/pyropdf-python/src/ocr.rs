@@ -102,7 +102,7 @@ impl _OcrEngine {
                 .as_ref()
                 .map_or_else(|| Budget::default().share(), |document| document.budget());
             drop(document);
-            let (pixels, layout) = pixmap.ocr_raster();
+            let (pixels, layout) = pixmap.ocr_raster()?;
             drop(pixmap);
             let options = Options {
                 tile_size,

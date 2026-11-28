@@ -11,7 +11,26 @@ use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
 
-use super::{Area, DecodeError, Decoded, Layout, check_size, codecs};
+use super::{Area, Colorspace, DecodeError, Decoded, Layout, check_size, codecs};
+
+/// Converts an 8-bit CMYK ink pixel `[C, M, Y, K]` to RGB using the
+/// subtractive formula `R = (1 - C)(1 - K)`.
+#[inline]
+fn cmyk_to_rgb(cmyk: [u8; 4]) -> [u8; 3] {
+    let inv_k = u32::from(255 - cmyk[3]);
+    [
+        ((u32::from(255 - cmyk[0]) * inv_k + 127) / 255) as u8,
+        ((u32::from(255 - cmyk[1]) * inv_k + 127) / 255) as u8,
+        ((u32::from(255 - cmyk[2]) * inv_k + 127) / 255) as u8,
+    ]
+}
+
+/// Converts an 8-bit RGB pixel to CMYK with full undercolor removal and black
+/// generation.
+#[inline]
+fn rgb_to_cmyk(rgb: [u8; 3]) -> [u8; 4] {
+    crate::render::rgb_u8_to_cmyk(rgb)
+}
 
 /// The ITU-R BT.601 luma weights, which rendering to gray uses.
 const LUMA: [f64; 3] = [0.299, 0.587, 0.114];
@@ -54,9 +73,9 @@ pub fn invert(data: &[u8], layout: Layout, area: Area) -> Vec<u8> {
 #[must_use]
 #[expect(
     clippy::disallowed_methods,
-    reason = "copies a validated Pixmap with at most MAX_PIXELS pixels and four bytes per pixel"
+    reason = "copies a validated Pixmap with at most MAX_PIXELS pixels and five bytes per pixel"
 )]
-pub fn map_colors(data: &[u8], layout: Layout, tables: &[[u8; 256]; 3]) -> Vec<u8> {
+pub fn map_colors(data: &[u8], layout: Layout, tables: &[[u8; 256]; 4]) -> Vec<u8> {
     let channels = layout.channels();
     let colors = layout.colors();
     let mut out = data.to_vec();
@@ -83,25 +102,44 @@ pub fn tint_table(black: u8, white: u8) -> [u8; 256] {
     std::array::from_fn(|value| byte(black + (white - black) * value as f64 / 255.0))
 }
 
-/// Returns the samples converted to gray or to RGB, keeping alpha.
+/// Returns the samples converted to `target_colorspace`, keeping alpha.
 #[must_use]
 #[expect(
     clippy::disallowed_methods,
-    reason = "one to four output samples per validated pixel, with at most MAX_PIXELS pixels"
+    reason = "one to five output samples per validated pixel, with at most MAX_PIXELS pixels"
 )]
-pub fn convert(data: &[u8], layout: Layout, gray: bool) -> Vec<u8> {
-    if layout.gray == gray {
+pub fn convert(data: &[u8], layout: Layout, target_colorspace: Colorspace) -> Vec<u8> {
+    if layout.colorspace == target_colorspace {
         return data.to_vec();
     }
     let channels = layout.channels();
-    let target = Layout { gray, ..layout };
+    let target = Layout {
+        colorspace: target_colorspace,
+        ..layout
+    };
     let mut out =
         Vec::with_capacity(layout.width as usize * layout.height as usize * target.channels());
     for pixel in data.chunks_exact(channels) {
-        if gray {
-            out.push(luma([pixel[0], pixel[1], pixel[2]]));
-        } else {
-            out.extend_from_slice(&[pixel[0]; 3]);
+        match (layout.colorspace, target_colorspace) {
+            (Colorspace::Rgb, Colorspace::Gray) => {
+                out.push(luma([pixel[0], pixel[1], pixel[2]]));
+            }
+            (Colorspace::Gray, Colorspace::Rgb) => {
+                out.extend_from_slice(&[pixel[0]; 3]);
+            }
+            (Colorspace::Cmyk, Colorspace::Rgb) => {
+                out.extend_from_slice(&cmyk_to_rgb([pixel[0], pixel[1], pixel[2], pixel[3]]));
+            }
+            (Colorspace::Cmyk, Colorspace::Gray) => {
+                out.push(luma(cmyk_to_rgb([pixel[0], pixel[1], pixel[2], pixel[3]])));
+            }
+            (Colorspace::Rgb, Colorspace::Cmyk) => {
+                out.extend_from_slice(&rgb_to_cmyk([pixel[0], pixel[1], pixel[2]]));
+            }
+            (Colorspace::Gray, Colorspace::Cmyk) => {
+                out.extend_from_slice(&[0, 0, 0, 255 - pixel[0]]);
+            }
+            _ => unreachable!("same colorspace returned above"),
         }
         if layout.alpha {
             out.push(pixel[channels - 1]);
@@ -123,13 +161,26 @@ pub fn device_samples(data: &[u8], layout: Layout, components: usize) -> Vec<u8>
     let channels = layout.channels();
     let mut out = Vec::with_capacity(layout.width as usize * layout.height as usize * components);
     for pixel in data.chunks_exact(channels) {
-        let rgb = if layout.gray {
+        if layout.colorspace == Colorspace::Cmyk {
+            let cmyk = [pixel[0], pixel[1], pixel[2], pixel[3]];
+            match components {
+                1 => out.push(luma(cmyk_to_rgb(cmyk))),
+                3 => out.extend_from_slice(&cmyk_to_rgb(cmyk)),
+                _ => out.extend_from_slice(&cmyk),
+            }
+            continue;
+        }
+        let rgb = if layout.colorspace == Colorspace::Gray {
             [pixel[0]; 3]
         } else {
             [pixel[0], pixel[1], pixel[2]]
         };
         match components {
-            1 => out.push(if layout.gray { pixel[0] } else { luma(rgb) }),
+            1 => out.push(if layout.colorspace == Colorspace::Gray {
+                pixel[0]
+            } else {
+                luma(rgb)
+            }),
             3 => out.extend_from_slice(&rgb),
             _ => {
                 let [c, m, y] = rgb.map(|value| 255 - value);
@@ -145,7 +196,7 @@ pub fn device_samples(data: &[u8], layout: Layout, components: usize) -> Vec<u8>
 #[must_use]
 #[expect(
     clippy::disallowed_methods,
-    reason = "adds one byte per validated pixel; the result has at most four times MAX_PIXELS samples"
+    reason = "adds one byte per validated pixel; the result has at most five times MAX_PIXELS samples"
 )]
 pub fn add_alpha(data: &[u8], layout: Layout) -> Vec<u8> {
     let colors = layout.colors();
@@ -158,18 +209,22 @@ pub fn add_alpha(data: &[u8], layout: Layout) -> Vec<u8> {
 }
 
 /// Returns the samples composited over `background` without alpha; a
-/// gray pixmap uses the luma of `background`.
+/// gray pixmap uses the luma of `background`, and a CMYK pixmap converts it
+/// to CMYK ink.
 #[must_use]
 #[expect(
     clippy::disallowed_methods,
-    reason = "at most three background components and three output bytes per validated pixel, bounded by MAX_PIXELS"
+    reason = "at most four background components and four output bytes per validated pixel, bounded by MAX_PIXELS"
 )]
 pub fn drop_alpha(data: &[u8], layout: Layout, background: [u8; 3]) -> Vec<u8> {
     let colors = layout.colors();
-    let under: Vec<f64> = if layout.gray {
-        vec![f64::from(luma(background))]
-    } else {
-        background.iter().map(|&value| f64::from(value)).collect()
+    let under: Vec<f64> = match layout.colorspace {
+        Colorspace::Gray => vec![f64::from(luma(background))],
+        Colorspace::Rgb => background.iter().map(|&value| f64::from(value)).collect(),
+        Colorspace::Cmyk => rgb_to_cmyk(background)
+            .iter()
+            .map(|&value| f64::from(value))
+            .collect(),
     };
     let mut out = Vec::with_capacity(data.len() / (colors + 1) * colors);
     for pixel in data.chunks_exact(colors + 1) {
@@ -251,12 +306,12 @@ fn taps(source: u32, target: u32) -> Taps {
 /// to `target` pixels a row.
 #[expect(
     clippy::disallowed_methods,
-    reason = "scale chooses the smaller intermediate raster, bounded by MAX_PIXELS; channels is at most four"
+    reason = "scale chooses the smaller intermediate raster, bounded by MAX_PIXELS; channels is at most five"
 )]
 fn resample_rows(data: &[u8], width: u32, height: u32, channels: usize, target: u32) -> Vec<u8> {
     let taps = taps(width, target);
     let mut out = Vec::with_capacity(target as usize * height as usize * channels);
-    let mut sums = [0.0; 4];
+    let mut sums = [0.0; 5];
     let sums = &mut sums[..channels];
     for row in data.chunks_exact(width as usize * channels) {
         for &(start, offset, len) in &taps.spans {
@@ -519,7 +574,7 @@ pub fn warp(
             };
             let (x0, x1, fx) = at(x, source_width);
             let (y0, y1, fy) = at(y, source_height);
-            let (mut mixed, mut plain) = ([0.0; 4], [0.0; 3]);
+            let (mut mixed, mut plain) = ([0.0; 5], [0.0; 4]);
             for (px, py, weight) in [
                 (x0, y0, (1.0 - fx) * (1.0 - fy)),
                 (x1, y0, fx * (1.0 - fy)),
@@ -565,9 +620,9 @@ pub fn warp(
 /// sorted, so that equal pixels lie together.
 #[expect(
     clippy::disallowed_methods,
-    reason = "one u32 per pixel in a checked area of a Pixmap with at most MAX_PIXELS pixels"
+    reason = "one u64 per pixel in a checked area of a Pixmap with at most MAX_PIXELS pixels"
 )]
-fn sorted_pixels(data: &[u8], layout: Layout, area: Area) -> Vec<u32> {
+fn sorted_pixels(data: &[u8], layout: Layout, area: Area) -> Vec<u64> {
     let channels = layout.channels();
     let (x0, y0, x1, y1) = area;
     let mut keys = Vec::with_capacity((x1 - x0) as usize * (y1 - y0) as usize);
@@ -577,7 +632,7 @@ fn sorted_pixels(data: &[u8], layout: Layout, area: Area) -> Vec<u32> {
         keys.extend(row.chunks_exact(channels).map(|pixel| {
             pixel
                 .iter()
-                .fold(0_u32, |key, &byte| key << 8 | u32::from(byte))
+                .fold(0_u64, |key, &byte| key << 8 | u64::from(byte))
         }));
     }
     keys.sort_unstable();
@@ -588,7 +643,7 @@ fn sorted_pixels(data: &[u8], layout: Layout, area: Area) -> Vec<u32> {
 /// its count, in ascending order of the channels, until it returns `false`.
 #[expect(
     clippy::disallowed_methods,
-    reason = "copies at most four bytes from one packed u32 pixel"
+    reason = "copies at most five bytes from one packed u64 pixel"
 )]
 pub fn color_runs(
     data: &[u8],
@@ -602,7 +657,7 @@ pub fn color_runs(
     while at < keys.len() {
         let key = keys[at];
         let end = at + keys[at..].partition_point(|&other| other == key);
-        let pixel = key.to_be_bytes()[4 - channels..].to_vec();
+        let pixel = key.to_be_bytes()[8 - channels..].to_vec();
         if !each(pixel, (end - at) as u64) {
             return;
         }
@@ -694,7 +749,7 @@ fn decode_png(data: &[u8]) -> Result<Decoded, String> {
     let layout = Layout {
         width: info.width,
         height: info.height,
-        gray,
+        colorspace: Colorspace::from_gray(gray),
         alpha,
     };
     Ok(Decoded {
@@ -729,7 +784,7 @@ fn decode_jpeg(data: &[u8]) -> Result<Decoded, String> {
     let layout = Layout {
         width: width as u32,
         height: height as u32,
-        gray,
+        colorspace: Colorspace::from_gray(gray),
         alpha: false,
     };
     if samples.len() != layout.stride() * height {

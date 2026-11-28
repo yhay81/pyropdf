@@ -12,12 +12,12 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 The color space of a `Pixmap`'s samples.
 
-Members: `GRAY`, `RGB`.
+Members: `GRAY`, `RGB`, `CMYK`.
 
 ## `Pixmap`
 
-A rendered page: immutable pixels, row by row from the top, RGB or gray,
-each with or without straight alpha, 8 bits per channel.
+A rendered page: immutable pixels, row by row from the top, gray, RGB, or
+CMYK, each with or without straight alpha, 8 bits per channel.
 
 Implements Python's buffer protocol without copying: `memoryview(pixmap)`
 and `numpy.asarray(pixmap)` expose the samples read-only as `uint8` (`"B"`)
@@ -37,7 +37,7 @@ Whether each pixel ends with a straight alpha byte.
 Pixmap.channels: int
 ```
 
-Bytes per pixel: 1 for gray, 3 for RGB, and one more with alpha.
+Bytes per pixel: 1 for gray, 3 for RGB, 4 for CMYK, and one more with alpha.
 
 ### `color_count`
 
@@ -258,10 +258,12 @@ Pixmap.to_bytes(
 
 Returns the pixels encoded as `format` (`"png"`, `"jpeg"` at
 `quality`, 1 through 100, `"pam"`, `"pbm"`, `"pgm"`, `"ppm"`,
-`"pnm"`, `"psd"`, or `"ps"`). PNG, PAM, and PSD keep alpha; the
-others refuse it. PBM and PGM take gray, thresholding PBM at 128;
-PPM takes RGB; PNM writes PGM or PPM. PSD sides end at 30,000
-pixels, and PostScript is one Level 2 page at the resolution.
+`"pnm"`, `"psd"`, or `"ps"`). PNG holds gray and RGB with or without
+alpha (not CMYK); PAM and PSD hold gray, RGB, and CMYK with or
+without alpha; JPEG and PostScript hold gray, RGB, and CMYK without
+alpha; PBM and PGM take gray, thresholding PBM at 128; PPM takes RGB;
+PNM writes PGM or PPM. PSD sides end at 30,000 pixels, and PostScript
+is one Level 2 page at the resolution.
 
 `max_size` bounds the output, 64 MiB by default, and refuses the
 write that would pass it with `LimitError` code
@@ -281,8 +283,9 @@ Returns the pixmap in gray, with ITU-R BT.601 luma weights, keeping alpha.
 Pixmap.to_pil() -> Any
 ```
 
-Returns the pixels as a Pillow image of mode `L`, `LA`, `RGB`, or
-`RGBA`, with the resolution in its `dpi` info; it needs Pillow.
+Returns the pixels as a Pillow image of mode `L`, `LA`, `RGB`, `RGBA`,
+or `CMYK`, with the resolution in its `dpi` info; it needs Pillow.
+CMYK with alpha has no Pillow mode and raises `ValueError`.
 
 ### `to_rgb`
 

@@ -18,18 +18,21 @@ use std::sync::Arc;
 
 use crate::display::Display;
 use pyropdf_store::LimitExceeded;
-use pyropdf_store::budget::LimitCode;
+use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::pages::PageIndex;
 
 use crate::bridge::{Bridged, Error, Result};
 
 mod batch;
+mod cmyk;
 mod fallback;
 mod svg;
 #[cfg(test)]
 mod tests;
 
+pub use crate::pixmap::Colorspace;
 pub use batch::{MAX_WORKERS, batch, batch_scaled};
+pub(crate) use cmyk::rgb_u8_to_cmyk;
 pub use fallback::{Fallback, FontFile, Language, Source};
 pub use svg::{svg, svg_with_text_layer};
 
@@ -222,8 +225,8 @@ pub const MAX_PAGE_SIDE: u32 = LimitCode::ClipPageSide
 /// `fz_round_rect` allows.
 const EDGE_TOLERANCE: f64 = 0.001;
 
-/// A rendered page as pylopdf's `Pixmap` holds it: straight-alpha RGBA, or
-/// RGB without alpha, or their gray counterparts, row by row from the top.
+/// A rendered page as `Pixmap` holds it: gray, RGB, or CMYK, with or without
+/// straight alpha, row by row from the top.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Raster {
     /// The width in pixels.
@@ -232,9 +235,9 @@ pub struct Raster {
     pub height: u16,
     /// Whether each pixel ends with an alpha byte.
     pub alpha: bool,
-    /// Whether each pixel holds one gray byte instead of three color bytes.
-    pub gray: bool,
-    /// One to four bytes per pixel.
+    /// The sample color space (gray, RGB, or CMYK).
+    pub colorspace: Colorspace,
+    /// One to five bytes per pixel.
     pub data: Vec<u8>,
     /// The dots per inch along each axis, which encoded images record.
     pub resolution: (u32, u32),
@@ -247,8 +250,8 @@ pub struct Options {
     pub matrix: Matrix,
     /// Whether the raster keeps a straight alpha channel.
     pub alpha: bool,
-    /// Whether the raster holds the ITU-R BT.601 luma of each color.
-    pub gray: bool,
+    /// The target sample color space (`Gray`, `Rgb`, or `Cmyk`).
+    pub colorspace: Colorspace,
     /// The straight RGBA color beneath the page, which must be opaque
     /// without `alpha`.
     pub background: [u8; 4],
@@ -277,7 +280,7 @@ impl Options {
         Self {
             matrix,
             alpha,
-            gray: false,
+            colorspace: Colorspace::Rgb,
             background: if alpha { [0; 4] } else { [255; 4] },
             clip: None,
             annotations: true,
@@ -346,8 +349,9 @@ impl std::error::Error for RasterError {}
 /// the fallback faces, so other faces start another cache too (DESIGN.md
 /// section 5).
 struct Cached {
-    // Declared first, so that it drops before the bridge that it borrows.
+    // Declared first, so that they drop before the bridge that they borrow.
     cache: RenderCache<'static>,
+    cmyk_cache: cmyk::CmykCache<'static>,
     bridged: Arc<Bridged>,
     fallback: Fallback,
     antialias: bool,
@@ -363,7 +367,7 @@ fn with_cache<T>(
     bridged: &Arc<Bridged>,
     fallback: &Fallback,
     antialias: bool,
-    render: impl FnOnce(&'static Bridged, &RenderCache<'static>) -> T,
+    render: impl FnOnce(&'static Bridged, &RenderCache<'static>, &cmyk::CmykCache<'static>) -> T,
 ) -> T {
     CACHE.with(|cell| {
         let mut held = cell.borrow_mut();
@@ -376,17 +380,18 @@ fn with_cache<T>(
             *held = None;
             *held = Some(Cached {
                 cache: RenderCache::new(),
+                cmyk_cache: cmyk::CmykCache::new(),
                 bridged: Arc::clone(bridged),
                 fallback: fallback.clone(),
                 antialias,
             });
         }
         let cached = held.as_ref().expect("the cache was just set");
-        // SAFETY: the cache borrows the PDF inside this immutable bridge.
-        // The Arc holds it at a fixed address and the cache drops first.
+        // SAFETY: the caches borrow the PDF inside this immutable bridge.
+        // The Arc holds it at a fixed address and the caches drop first.
         // Neither reference outlives this call.
         let bridged: &'static Bridged = unsafe { &*Arc::as_ptr(&cached.bridged) };
-        render(bridged, &cached.cache)
+        render(bridged, &cached.cache, &cached.cmyk_cache)
     })
 }
 
@@ -407,6 +412,27 @@ pub fn raster(
         index,
         options,
         Scale::Matrix(options.matrix),
+        &Budget::default(),
+    )
+}
+
+/// Renders page `index` as [`raster`] does, charging CMYK raster allocations
+/// and polling deadlines/cancellation against `budget`.
+pub fn raster_budgeted(
+    bridged: &Arc<Bridged>,
+    fallback: &Fallback,
+    index: usize,
+    options: &Options,
+    budget: &Budget,
+) -> std::result::Result<Raster, RasterError> {
+    raster_scaled(
+        bridged,
+        None,
+        fallback,
+        index,
+        options,
+        Scale::Matrix(options.matrix),
+        budget,
     )
 }
 
@@ -420,15 +446,23 @@ pub fn raster_scaled(
     index: usize,
     options: &Options,
     scale: Scale,
+    budget: &Budget,
 ) -> std::result::Result<Raster, RasterError> {
     if matches!(scale, Scale::Fit(0, _) | Scale::Fit(_, 0)) {
         return Err(RasterError::Geometry(
             "fit dimensions must be positive".to_owned(),
         ));
     }
-    with_cache(bridged, fallback, options.antialias, |bridged, cache| {
-        draw(bridged, pages, cache, fallback, index, options, scale)
-    })
+    with_cache(
+        bridged,
+        fallback,
+        options.antialias,
+        |bridged, cache, cmyk_cache| {
+            draw(
+                bridged, pages, cache, cmyk_cache, fallback, index, options, scale, budget,
+            )
+        },
+    )
 }
 
 /// The display width and height of page `index`, in points: the unrounded
@@ -620,14 +654,17 @@ fn extent(
     Ok((x0 + left, y0 + top, width, height))
 }
 
+#[expect(clippy::too_many_arguments, reason = "internal render dispatcher")]
 fn draw<'a>(
     bridged: &'a Bridged,
     pages: Option<&PageIndex>,
     cache: &RenderCache<'a>,
+    cmyk_cache: &cmyk::CmykCache<'a>,
     fallback: &Fallback,
     index: usize,
     options: &Options,
     scale: Scale,
+    budget: &Budget,
 ) -> std::result::Result<Raster, RasterError> {
     let (page, display) = bridged.page(index).ok_or(RasterError::NoPage(index))?;
     let resolved = scaled_options(options, scale, page_size(pages, index, display))?;
@@ -639,13 +676,16 @@ fn draw<'a>(
         },
         ..fallback.settings()
     };
+    if resolved.colorspace == Colorspace::Cmyk {
+        return cmyk::render_cmyk(page, display, cmyk_cache, &settings, &resolved, budget);
+    }
     let pixmap = paint(page, display, cache, &settings, &resolved)?;
     Ok(Raster {
         width: pixmap.width(),
         height: pixmap.height(),
         alpha: resolved.alpha,
-        gray: resolved.gray,
-        data: take_samples(pixmap, resolved.gray, resolved.alpha),
+        colorspace: resolved.colorspace,
+        data: take_samples(pixmap, resolved.colorspace.is_gray(), resolved.alpha),
         resolution: resolution(resolved.matrix),
     })
 }

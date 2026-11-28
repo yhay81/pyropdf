@@ -434,7 +434,7 @@ Page.pixmap(
     alpha: bool = False,
     background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
     annotations: bool = True,
-    colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
+    colorspace: Colorspace | Literal['gray', 'rgb', 'cmyk'] = Colorspace.RGB,
     hinting: bool = False,
     glyph_cache: bool = False,
     antialias: bool = True,
@@ -454,7 +454,10 @@ uniformly to fit within `(width, height)` pixels, with an integer
 painted beneath the page, which must be opaque without `alpha`.
 `annotations=False` leaves out the appearances of annotations and
 form widgets. `colorspace="gray"` converts the rendered colors to
-gray with ITU-R BT.601 luma weights.
+gray with ITU-R BT.601 luma weights; `colorspace="cmyk"` renders
+directly into 4-channel CMYK (or 5-channel straight-alpha CMYKA when
+`alpha=True`), keeping `DeviceCMYK` paints and images native
+without an sRGB round-trip and mapping `DeviceGray` to pure black.
 
 `hinting=True` hints text, as FreeType's light hinting does, which
 sharpens small text: horizontal text filled at 4 to 128 pixels per
