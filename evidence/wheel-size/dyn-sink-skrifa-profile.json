@@ -1,0 +1,79 @@
+{
+  "base_revision": "fc9e50672b3c3a873aba9ac91c34856d3c26e23d",
+  "change": "de-monomorphize ContentCollector over dyn ContentSink, align pyropdf-engine to hayro-font skrifa 0.49.0, and opt-level = \"z\" for harfrust, hayro-cmap, and remaining cold image/Unicode/RTen-aux/crypto crates",
+  "target": "aarch64-apple-darwin",
+  "host": "Apple M2 Pro, macOS 27.2",
+  "rustc": "1.100.0",
+  "maturin": "1.16.0",
+  "zopflipy": "1.14",
+  "before": {
+    "wheel": {
+      "filename": "pyropdf-0.4.1-cp311-abi3-macosx_11_0_arm64.whl",
+      "tag": "cp311-abi3-macosx_11_0_arm64",
+      "sha256": "21e2a73c6f26678b173797d01f7a4e8a52a3b93c26a52d60e48afe10c3dd864b",
+      "size_bytes": 8189550,
+      "size_mib": 7.810163,
+      "extension_bytes": 7445177
+    },
+    "benchmark": {
+      "engine": "pyropdf 0.4.1",
+      "python": "3.15.2",
+      "runs": 5,
+      "results": {
+        "bill-hr815": {
+          "open": 0.09191699791699648,
+          "text": 67.9639580193907,
+          "words": 99.08775007352233,
+          "search": 70.04549994599074,
+          "render_72": 373.42091696336865,
+          "render_144": 647.8660829598084,
+          "save": 0.8664589840918779
+        },
+        "usrguide": {
+          "open": 0.1099579967558384,
+          "text": 19.27829103078693,
+          "words": 24.63674999307841,
+          "search": 19.442707998678088,
+          "render_72": 76.39000006020069,
+          "render_144": 116.23991699889302,
+          "save": 1.4570000348612666
+        }
+      }
+    }
+  },
+  "after": {
+    "wheel": {
+      "filename": "pyropdf-0.4.1-cp311-abi3-macosx_11_0_arm64.whl",
+      "tag": "cp311-abi3-macosx_11_0_arm64",
+      "sha256": "80c0e2523c148a80433da68dc2a2a187913739361b657d0f4a2af13aa93c2d27",
+      "size_bytes": 7978338,
+      "size_mib": 7.608736,
+      "extension_bytes": 7234041
+    },
+    "benchmark": {
+      "engine": "pyropdf 0.4.1",
+      "python": "3.15.2",
+      "runs": 5,
+      "results": {
+        "bill-hr815": {
+          "open": 0.0878750579431653,
+          "text": 69.17454197537154,
+          "words": 100.55662493687123,
+          "search": 70.69287495687604,
+          "render_72": 368.4797079768032,
+          "render_144": 638.5394169483334,
+          "save": 0.9361250558868051
+        },
+        "usrguide": {
+          "open": 0.1052080187946558,
+          "text": 20.562916062772274,
+          "words": 26.4215829083696,
+          "search": 19.444500096142292,
+          "render_72": 76.74812502227724,
+          "render_144": 115.76987500302494,
+          "save": 1.4519169926643372
+        }
+      }
+    }
+  }
+}

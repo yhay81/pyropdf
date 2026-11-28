@@ -159,12 +159,14 @@ impl ShapingFace {
     /// Reads the face at `index` of `program`, a TrueType, OpenType, or
     /// collection file, which harfrust's font shares rather than copies.
     pub fn new(program: Arc<Vec<u8>>, index: u32) -> Result<Self, ShapeError> {
+        let face_ref = skrifa::FontRef::from_index(&program, index)
+            .map_err(|_| ShapeError::Font(format!("the program has no face {index}")))?;
+        if face_ref.head().is_err() {
+            return Err(ShapeError::Font("the face has no head table".into()));
+        }
         let source: Arc<dyn AsRef<[u8]> + Send + Sync> = program;
         let font = Font::new(source, index)
             .ok_or_else(|| ShapeError::Font(format!("the program has no face {index}")))?;
-        if font.tables().head().is_err() {
-            return Err(ShapeError::Font("the face has no head table".into()));
-        }
         Ok(Self { font })
     }
 

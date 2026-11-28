@@ -2517,8 +2517,8 @@ impl StoredColorKey {
     }
 }
 
-pub(crate) struct ContentCollector<'a, 'b, 'c, S> {
-    sink: S,
+pub(crate) struct ContentCollector<'a, 'b, 'c, 's> {
+    sink: &'s mut dyn ContentSink,
     /// The items to record; with none, the collector only feeds the sink.
     kinds: ItemKinds,
     records: Vec<Record>,
@@ -2573,11 +2573,11 @@ pub(crate) struct ContentCollector<'a, 'b, 'c, S> {
     error: Option<Error>,
 }
 
-impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
+impl<'a, 'b, 'c, 's> ContentCollector<'a, 'b, 'c, 's> {
     /// A collector that feeds `sink` and records the items of `kinds` within
     /// `budget`. `stretches` loads fonts as the interpretation does.
     pub(crate) fn new(
-        sink: S,
+        sink: &'s mut dyn ContentSink,
         kinds: ItemKinds,
         stretches: &'c Stretches<'a>,
         xref: &'a XRef,
@@ -3505,7 +3505,7 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
         Ok(())
     }
 
-    pub(crate) fn finish(mut self, clip: Option<BBox>) -> Result<(PageContent, S), Error> {
+    pub(crate) fn finish(mut self, clip: Option<BBox>) -> Result<PageContent, Error> {
         if let Some(error) = self.error {
             return Err(error);
         }
@@ -3593,7 +3593,7 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
                 states: self.states,
             }),
         };
-        Ok((content, self.sink))
+        Ok(content)
     }
 }
 
@@ -3754,7 +3754,7 @@ fn glyph_text(glyph: &Glyph<'_>) -> Result<Option<String>, Error> {
     })
 }
 
-impl<'a, S: ContentSink> Device<'a> for ContentCollector<'a, '_, '_, S> {
+impl<'a> Device<'a> for ContentCollector<'a, '_, '_, '_> {
     fn draw_path(&mut self, path: &BezPath, props: DrawProps<'a>, mode: &DrawMode) {
         let pending = self.pending.take();
         self.sink.path(path, props.transform, mode);
@@ -3886,11 +3886,32 @@ pub(crate) fn collect_page_content_with_stretches<'a, S: ContentSink>(
     settings: InterpreterSettings,
     cache: &InterpreterCache<'a>,
     stretches: &Stretches<'a>,
-    sink: S,
+    mut sink: S,
     kinds: ItemKinds,
     clip: Option<BBox>,
     budget: &Budget,
 ) -> Result<(PageContent, S), Error> {
+    let content = collect_page_content_with_stretches_dyn(
+        page, display, settings, cache, stretches, &mut sink, kinds, clip, budget,
+    )?;
+    Ok((content, sink))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one interpretation and what it collects"
+)]
+fn collect_page_content_with_stretches_dyn<'a>(
+    page: &Page<'a>,
+    display: Display,
+    settings: InterpreterSettings,
+    cache: &InterpreterCache<'a>,
+    stretches: &Stretches<'a>,
+    sink: &mut dyn ContentSink,
+    kinds: ItemKinds,
+    clip: Option<BBox>,
+    budget: &Budget,
+) -> Result<PageContent, Error> {
     let mut context = extraction_context(page, display, cache, settings);
     let mut collector =
         ContentCollector::new(sink, kinds, stretches, page.xref(), display.size(), budget);
@@ -3916,11 +3937,35 @@ pub(crate) fn collect_page_content_on_faces<'a, S: ContentSink>(
     display: Display,
     fallback: &Fallback,
     render_content: RenderContent,
-    sink: S,
+    mut sink: S,
     kinds: ItemKinds,
     clip: Option<BBox>,
     budget: &Budget,
 ) -> Result<(PageContent, S), Error> {
+    let content = collect_page_content_on_faces_dyn(
+        page,
+        display,
+        fallback,
+        render_content,
+        &mut sink,
+        kinds,
+        clip,
+        budget,
+    )?;
+    Ok((content, sink))
+}
+
+#[expect(clippy::too_many_arguments, reason = "the options of Page.content")]
+fn collect_page_content_on_faces_dyn<'a>(
+    page: &Page<'a>,
+    display: Display,
+    fallback: &Fallback,
+    render_content: RenderContent,
+    sink: &mut dyn ContentSink,
+    kinds: ItemKinds,
+    clip: Option<BBox>,
+    budget: &Budget,
+) -> Result<PageContent, Error> {
     let asked = Arc::new(AtomicBool::new(false));
     let settings = InterpreterSettings {
         render_content,
