@@ -14,7 +14,7 @@ mod appearance;
 mod font;
 mod layout;
 mod ops;
-mod scan;
+pub(crate) mod scan;
 
 pub use appearance::{DA_FONTS, DefaultAppearance, MAX_DEFAULT_APPEARANCE, da_font};
 pub use font::{
