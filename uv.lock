@@ -1462,6 +1462,9 @@ jp = [
 ko = [
     { name = "pylopdf-fonts-ko" },
 ]
+layout = [
+    { name = "pyropdf-layout-models" },
+]
 ocr = [
     { name = "pylopdf-ocr-models" },
 ]
@@ -1485,6 +1488,7 @@ dev = [
     { name = "pylopdf-fonts-zh-cn" },
     { name = "pylopdf-fonts-zh-tw" },
     { name = "pylopdf-ocr-models" },
+    { name = "pyropdf-layout-models" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
@@ -1510,8 +1514,9 @@ requires-dist = [
     { name = "pylopdf-fonts-zh-cn", marker = "extra == 'zh-cn'", specifier = ">=0.1.1,<0.2" },
     { name = "pylopdf-fonts-zh-tw", marker = "extra == 'zh-tw'", specifier = ">=0.1.1,<0.2" },
     { name = "pylopdf-ocr-models", marker = "extra == 'ocr'", specifier = ">=0.1.0,<0.2" },
+    { name = "pyropdf-layout-models", marker = "extra == 'layout'", specifier = ">=0.1.0,<0.2" },
 ]
-provides-extras = ["jp", "ko", "ocr", "recipients", "zh-cn", "zh-tw"]
+provides-extras = ["jp", "ko", "layout", "ocr", "recipients", "zh-cn", "zh-tw"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1522,6 +1527,7 @@ dev = [
     { name = "pylopdf-fonts-zh-cn", specifier = ">=0.1.1,<0.2" },
     { name = "pylopdf-fonts-zh-tw", specifier = ">=0.1.1,<0.2" },
     { name = "pylopdf-ocr-models", specifier = ">=0.1.0,<0.2" },
+    { name = "pyropdf-layout-models", specifier = ">=0.1.0,<0.2" },
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "ruff", specifier = ">=0.17.5" },
     { name = "ty", specifier = ">=0.0.107" },
@@ -1533,6 +1539,15 @@ oracles = [
     { name = "pypdfium2", specifier = ">=5.15.2" },
 ]
 wheel = [{ name = "zopflipy", specifier = "==1.14" }]
+
+[[package]]
+name = "pyropdf-layout-models"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/a7/cd2fbc5d116bb18a4fb8cda8c976ef633791955f3f623e8dc3ab95eb9517/pyropdf_layout_models-0.1.0.tar.gz", hash = "sha256:dbc01fc84220d1935f44d9d91478fa6b158461cdfb428264f99bfb94635bd36e", size = 24228309, upload-time = "2026-11-28T06:57:35.704Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/15/ec/c2db774ada8b0c0211b3b83f02fca6fdc7b561daf6b3b384934545c82639/pyropdf_layout_models-0.1.0-py3-none-any.whl", hash = "sha256:435861ca556a9223edac8969aa0ce1d613837bf5826d1245d925591c39739ce7", size = 24235511, upload-time = "2026-11-28T06:57:33.057Z" },
+]
 
 [[package]]
 name = "pytest"

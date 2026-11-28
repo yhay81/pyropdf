@@ -251,7 +251,7 @@ def _discover_default_model(
 ) -> tuple[str | os.PathLike[str], tuple[str, ...], int]:
     """Locate the default ``.rten`` model and metadata from ``pyropdf-layout-models``."""
     try:
-        import pyropdf_layout_models  # ty: ignore[import-not-found]  # noqa: PLC0415 - lazy optional dependency.
+        import pyropdf_layout_models  # noqa: PLC0415 - lazy optional dependency.
     except ImportError as exc:
         msg = "Layout models are not installed; install pyropdf[layout] or pass an explicit model_path"
         raise LayoutError(msg) from exc
