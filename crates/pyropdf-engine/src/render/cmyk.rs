@@ -193,7 +193,7 @@ pub(super) fn render_cmyk<'a>(
         device.k_ctx.push_clip_rect(&crop_box);
     }
 
-    interpret_page(page, &mut state, &mut device);
+    interpret_page(page, &mut state, &mut super::DynDevice(&mut device));
 
     if clip_crop_box {
         device.pop_clip();
@@ -876,7 +876,11 @@ impl<'doc> CmykDevice<'doc, '_, '_> {
                         break;
                     }
                     let offset = Affine::translate((f64::from(i) * x.step, f64::from(j) * y.step));
-                    t.interpret(&mut sub, to_texture * offset, is_stroke);
+                    t.interpret(
+                        &mut super::DynDevice(&mut sub),
+                        to_texture * offset,
+                        is_stroke,
+                    );
                 }
                 if sub.error.is_some() {
                     break;
@@ -1051,7 +1055,12 @@ impl<'doc> CmykDevice<'doc, '_, '_> {
             }
             Glyph::Type3(t3) => {
                 self.in_type3_glyph = true;
-                t3.interpret(self, props.transform, transform, &props.paint);
+                t3.interpret(
+                    &mut super::DynDevice(self),
+                    props.transform,
+                    transform,
+                    &props.paint,
+                );
                 self.in_type3_glyph = false;
             }
         }
@@ -1075,7 +1084,12 @@ impl<'doc> CmykDevice<'doc, '_, '_> {
                 );
             }
             Glyph::Type3(t3) => {
-                t3.interpret(self, props.transform, transform, &props.paint);
+                t3.interpret(
+                    &mut super::DynDevice(self),
+                    props.transform,
+                    transform,
+                    &props.paint,
+                );
             }
         }
     }
@@ -2408,7 +2422,7 @@ fn draw_soft_mask<'doc>(
             ops: 0,
             error: None,
         };
-        mask.interpret(&mut device);
+        mask.interpret(&mut super::DynDevice(&mut device));
         if let Some(err) = device.error.take() {
             return Err(err);
         }
@@ -2677,7 +2691,12 @@ impl<'doc> Device<'doc> for SoftMaskDevice<'doc, '_, '_> {
                     self.draw_path(&path, props, draw_mode);
                 }
                 Glyph::Type3(t3) => {
-                    t3.interpret(self, props.transform, glyph.transform(), &props.paint);
+                    t3.interpret(
+                        &mut super::DynDevice(self),
+                        props.transform,
+                        glyph.transform(),
+                        &props.paint,
+                    );
                 }
             }
         }
