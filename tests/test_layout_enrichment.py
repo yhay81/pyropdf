@@ -524,8 +524,21 @@ def test_preserves_geometric_tables_margins_images_ruby_and_max_graphics(
 def test_layout_enrichment_real_package_integration() -> None:
     pytest.importorskip("pyropdf_layout_models")
     with pyropdf.open(ASSETS / "mhlw-doc.pdf") as doc:
-        plain_md = doc.markdown()
-        enriched_md = doc.markdown(use_layout=True, ignore_headers_footers=True)
-        assert enriched_md != plain_md
-        assert any(line.startswith("#") for line in enriched_md.splitlines())
-        assert "| ---" not in enriched_md
+        # mhlw-doc.pdf has a trustworthy structure tree, so use_structure="auto" skips ML.
+        plain_auto = doc.markdown(ignore_headers_footers=True)
+        enriched_auto = doc.markdown(use_layout=True, ignore_headers_footers=True)
+        assert enriched_auto == plain_auto
+
+        # Disabling structure-tree reading exercises the real PP-DocLayout_plus-L INT8 model.
+        plain_geom = doc.markdown(use_structure="never", ignore_headers_footers=True)
+        enriched_geom = doc.markdown(use_layout=True, use_structure="never", ignore_headers_footers=True)
+        assert enriched_geom != plain_geom
+        assert any(line.startswith("#") for line in enriched_geom.splitlines())
+        assert "| ---" not in enriched_geom
+
+    # usrguide.pdf falls back to geometric layout under use_structure="auto" and enriches headings.
+    with pyropdf.open(ASSETS / "usrguide.pdf") as doc:
+        plain_p0 = doc.pages[0].markdown(ignore_headers_footers=True)
+        enriched_p0 = doc.pages[0].markdown(use_layout=True, ignore_headers_footers=True)
+        assert enriched_p0 != plain_p0
+        assert any(line.startswith("#") for line in enriched_p0.splitlines())
