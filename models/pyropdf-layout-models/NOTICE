@@ -1,0 +1,20 @@
+pyropdf-layout-models
+Copyright 2026 Yusuke Hayashi
+
+This product bundles PP-DocLayout_plus-L model artifacts from PaddleOCR / PaddlePaddle.
+The model copyright is held by Baidu / PaddlePaddle Authors and distributed under the
+Apache License, Version 2.0.
+
+Upstream source:
+  https://huggingface.co/PaddlePaddle/PP-DocLayout_plus-L_onnx
+  Pinned commit: feb74619326f634e0e883218598096a3733ad9f7
+  Original artifact: inference.onnx (Apache-2.0)
+
+Modifications:
+  The bundled RTen file (`PP-DocLayout_plus-L_int8.rten`) was produced mechanically from
+  `inference.onnx` via dynamic INT8 quantization (`onnxruntime.quantization.quantize_dynamic`,
+  `op_types_to_quantize=["MatMul", "Conv"]`, `weight_type=QUInt8`) and `rten-convert 0.22.0`
+  by the pyropdf project.
+
+Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserved.
+PaddleOCR: https://github.com/PaddlePaddle/PaddleOCR

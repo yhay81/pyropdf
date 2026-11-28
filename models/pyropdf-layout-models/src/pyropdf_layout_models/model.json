@@ -1,0 +1,46 @@
+{
+  "name": "PP-DocLayout_plus-L_int8",
+  "source_repo": "PaddlePaddle/PP-DocLayout_plus-L_onnx",
+  "source_commit": "feb74619326f634e0e883218598096a3733ad9f7",
+  "license": "Apache-2.0",
+  "quantization": "dynamic_int8_matmul_conv_uint8",
+  "rten_convert_version": "0.22.0",
+  "input_size": 800,
+  "normalize": {
+    "scale": 0.00392156862745098,
+    "mean": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "std": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "labels": [
+    "paragraph_title",
+    "image",
+    "text",
+    "number",
+    "abstract",
+    "content",
+    "figure_title",
+    "formula",
+    "table",
+    "reference",
+    "doc_title",
+    "footnote",
+    "header",
+    "algorithm",
+    "footer",
+    "seal",
+    "chart",
+    "formula_number",
+    "aside_text",
+    "reference_content"
+  ],
+  "sha256": "9f41f26cfae974913846ebe251a597da5a55f75cf426fe4f160320fed355a078",
+  "size_bytes": 34425280
+}
