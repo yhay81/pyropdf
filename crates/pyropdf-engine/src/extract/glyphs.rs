@@ -2,6 +2,8 @@
 //! each font, as hayro resolves them for rendering: the glyph use that
 //! subsetting an embedded font program keeps (ISO 32000-2 9.6.4).
 
+use std::sync::Arc;
+
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_syntax::object::{Dict, ObjectIdentifier};
 use hayro::hayro_interpret::{
@@ -11,6 +13,7 @@ use hayro::kurbo::{Affine, BezPath, Rect};
 use pyropdf_store::budget::Budget;
 use pyropdf_store::budget::BudgetVec;
 use pyropdf_store::budget::LimitCode;
+use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::PageIndex;
 use pyropdf_store::value::Value;
 use pyropdf_store::version::Version;
@@ -18,6 +21,7 @@ use pyropdf_store::version::Version;
 use super::Error;
 use super::model::{self, ContentSink, GlyphStyle, ItemKinds};
 use crate::bridge::Bridged;
+use crate::bridge::preflight::{self, CheckedCache, PreflightCache};
 
 /// The sink that gathers the glyph IDs of every outline glyph by font.
 struct Uses<'a> {
@@ -116,6 +120,36 @@ pub fn used_glyphs(
     fonts: &[(u32, u16)],
     budget: &Budget,
 ) -> Result<Vec<Vec<u32>>, Error> {
+    used_glyphs_inner(bridged, version, pages, fonts, None, budget)
+}
+
+/// Same as [`used_glyphs`], reusing `preflight`'s F4 per-page memo on `version`.
+pub fn used_glyphs_with_preflight(
+    bridged: &Bridged,
+    version: &Arc<Version>,
+    pages: &PageIndex,
+    fonts: &[(u32, u16)],
+    preflight: &PreflightCache,
+    budget: &Budget,
+) -> Result<Vec<Vec<u32>>, Error> {
+    used_glyphs_inner(
+        bridged,
+        version,
+        pages,
+        fonts,
+        Some((version, preflight)),
+        budget,
+    )
+}
+
+fn used_glyphs_inner(
+    bridged: &Bridged,
+    version: &Version,
+    pages: &PageIndex,
+    fonts: &[(u32, u16)],
+    cached: Option<(&Arc<Version>, &PreflightCache)>,
+    budget: &Budget,
+) -> Result<Vec<Vec<u32>>, Error> {
     let pdf = bridged.pdf();
     let settings = InterpreterSettings {
         render_content: RenderContent::all(),
@@ -137,8 +171,26 @@ pub fn used_glyphs(
         targets.try_push((number, generation, index))?;
     }
     sort_budgeted(&mut targets, budget)?;
+    let mut checked = CheckedCache::new();
     for index in 0..pdf.pages().len() {
         let (page, display) = bridged.page(index).ok_or(Error::NoPage(index))?;
+        if let Some(store_page) = pages.get(index) {
+            let result = match cached {
+                Some((ver, preflight)) => preflight.validate_page(ver, store_page, budget),
+                None => preflight::validate_page(
+                    &mut Reads::new(version, budget),
+                    store_page,
+                    Some(&mut checked),
+                )
+                .map(|_| ()),
+            };
+            if let Err(error) = result {
+                return Err(match error.limit().copied() {
+                    Some(refusal) => Error::Limit(refusal),
+                    None => Error::Allocation(error.to_string()),
+                });
+            }
+        }
         uses.next_page();
         // A missing/unreadable font or XObject dictionary in the inherited
         // page resources hides the fonts it could name. Keep all programs in

@@ -218,6 +218,7 @@ fn with_content<T: Send>(
                         .is_none_or(|remaining| elements <= remaining))
             },
             || {
+                document.preflight_page(&version, page, &budget)?;
                 let bridged = document
                     .bridge
                     .get(&version, &index, &budget)

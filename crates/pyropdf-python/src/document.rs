@@ -76,6 +76,10 @@ pub struct _Document {
     pub(crate) draft_fill_index: FillCache,
     /// hayro's reading of the latest version rendered.
     pub(crate) bridge: pyropdf_engine::bridge::Cache,
+    /// F4-memoized per-page pre-flight nesting guard before hayro (#1241).
+    pub(crate) preflight: pyropdf_engine::bridge::PreflightCache,
+    /// Pre-flight results for what an open transaction has written.
+    pub(crate) draft_preflight: pyropdf_engine::bridge::PreflightCache,
     /// The faces that render the CJK fonts that the document does not
     /// embed, which `python/pyropdf/_fonts.py` sets; a setting of this
     /// object, not of the document, so unlocking keeps it.
@@ -150,6 +154,8 @@ impl _Document {
             fill_index: FillCache::new(),
             draft_fill_index: FillCache::new(),
             bridge: pyropdf_engine::bridge::Cache::new(),
+            preflight: pyropdf_engine::bridge::PreflightCache::default(),
+            draft_preflight: pyropdf_engine::bridge::PreflightCache::default(),
             fallback: RwLock::new(Fallback::default()),
             references: pyropdf_store::refs::Cache::new(),
             history: Arc::new(history),
@@ -228,6 +234,8 @@ impl _Document {
         self.fill_index.clear();
         self.draft_fill_index.clear();
         self.bridge.clear();
+        self.preflight.clear();
+        self.draft_preflight.clear();
         self.references.clear();
     }
 
@@ -1041,6 +1049,19 @@ pub fn page_result_counts(document: &_Document) -> PyResult<(u64, u64)> {
     })
 }
 
+/// Returns how many pre-flight guard checks the document's F4 memos reused
+/// and how many they computed, for tests (#1241).
+#[pyfunction]
+pub fn preflight_counts(document: &_Document) -> PyResult<(u64, u64)> {
+    crate::errors::boundary(|| {
+        let (committed, drafts) = (document.preflight.stats(), document.draft_preflight.stats());
+        (
+            committed.hits + drafts.hits,
+            committed.computations + drafts.computations,
+        )
+    })
+}
+
 /// A failed computation of a page's result.
 pub(crate) struct Failed(pub(crate) PyErr);
 
@@ -1051,6 +1072,42 @@ impl From<Error> for Failed {
 }
 
 impl _Document {
+    /// Returns the active pre-flight memo (committed or draft transaction).
+    pub(crate) fn preflight_cache(&self) -> &pyropdf_engine::bridge::PreflightCache {
+        if self.in_transaction() {
+            &self.draft_preflight
+        } else {
+            &self.preflight
+        }
+    }
+
+    /// Runs the F4-memoized pre-flight nesting guard on `page` before handing
+    /// it to `hayro` (no-op when `max_object_depth` is `None`).
+    pub(crate) fn preflight_page(
+        &self,
+        version: &Arc<Version>,
+        page: &Page,
+        budget: &Budget,
+    ) -> PyResult<()> {
+        self.preflight_cache()
+            .validate_page(version, page, budget)
+            .map_err(|error| store_error(&error))
+    }
+
+    /// Runs the F4-memoized pre-flight nesting guard on `indexes` before
+    /// handing pages to `hayro` (no-op when `max_object_depth` is `None`).
+    pub(crate) fn preflight_pages(
+        &self,
+        version: &Arc<Version>,
+        pages: &PageIndex,
+        indexes: &[usize],
+        budget: &Budget,
+    ) -> PyResult<()> {
+        self.preflight_cache()
+            .validate_pages(version, pages, indexes, budget)
+            .map_err(|error| store_error(&error))
+    }
+
     /// Returns the result `key` of `page` on `version`: one that the memo
     /// holds while the changes since miss what interpreting the page may
     /// read ([`read_page`]), or else what `compute` returns.

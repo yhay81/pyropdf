@@ -1374,6 +1374,7 @@ pub fn render_page(
                         "page object {number} {generation} is no longer a page of the document"
                     ))
                 })?;
+            document.preflight_page(&version, &index.pages()[at], &budget)?;
             let bridged = document
                 .bridge
                 .get_for_render(&version, &index, &budget, annotations)
@@ -1464,6 +1465,7 @@ pub fn render_pages(
         let fallback = document.fallback();
         let encoded =
             py.detach(|| -> PyResult<Vec<Vec<u8>>> {
+                document.preflight_pages(&version, &index, &indexes, &budget)?;
                 let bridged = document
                     .bridge
                     .get_for_render(&version, &index, &budget, annotations)

@@ -216,6 +216,7 @@ pub fn page_text(
                 &budget,
                 |result| matches!(result, &PageResult::Text { peak, .. } if text_fits(&budget, peak)),
                 || {
+                    document.preflight_page(&version, page, &budget)?;
                     let bridged = document
                         .bridge
                         .get(&version, &index, &budget)
@@ -267,6 +268,7 @@ pub fn document_text(
             if indexes.is_empty() {
                 return Ok((text, skipped));
             }
+            document.preflight_pages(&version, &index, &indexes, &budget)?;
             let bridged = document
                 .bridge
                 .get(&version, &index, &budget)
@@ -610,6 +612,7 @@ fn layout_result(
             &budget,
             |result| matches!(result, PageResult::Layout(layout) if text_fits(&budget, layout.peak)),
             || {
+                document.preflight_page(&version, page, &budget)?;
                 let bridged = document
                     .bridge
                     .get(&version, &index, &budget)
@@ -707,6 +710,7 @@ pub fn page_search(
             let at = index
                 .index_of(reference)
                 .ok_or_else(|| stale(number, generation))?;
+            document.preflight_page(&version, &index.pages()[at], &budget)?;
             let bridged = document
                 .bridge
                 .get(&version, &index, &budget)
@@ -760,6 +764,7 @@ pub fn page_selection(
             let at = index
                 .index_of(Reference::new(number, generation))
                 .ok_or_else(|| stale(number, generation))?;
+            document.preflight_page(&version, &index.pages()[at], &budget)?;
             let bridged = document
                 .bridge
                 .get(&version, &index, &budget)
@@ -869,6 +874,7 @@ pub fn page_tables(
             let at = index
                 .index_of(Reference::new(number, generation))
                 .ok_or_else(|| stale(number, generation))?;
+            owner.preflight_page(&version, &index.pages()[at], &budget)?;
             let bridged = owner
                 .bridge
                 .get(&version, &index, &budget)

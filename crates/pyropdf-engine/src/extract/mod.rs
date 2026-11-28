@@ -36,7 +36,7 @@ mod text;
 pub use clusters::{
     ClusterInput, ClusterOptions, PathClusterTuple, cluster_path_inputs, cluster_path_table,
 };
-pub use glyphs::used_glyphs;
+pub use glyphs::{used_glyphs, used_glyphs_with_preflight};
 pub use images::{CapturedRaster, CapturedStencil, DecodedImage, page_image, page_thumbnail};
 pub use model::{
     BBox, CapturedTilingCell, CellPaint, CellStroke, ClipTuple, ContentItem, ContentSink, Contexts,
