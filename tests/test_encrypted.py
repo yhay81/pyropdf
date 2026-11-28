@@ -26,6 +26,7 @@ import pyropdf
 from pyropdf import Access, Encryption, Permissions
 
 if TYPE_CHECKING:
+    from pyhanko.pdf_utils.generic import DictionaryObject
     from pyhanko.pdf_utils.reader import PdfFileReader
 
 ASSETS = Path(__file__).parent / "assets" / "encrypted"
@@ -549,10 +550,7 @@ def test_public_key_algorithms_and_filter_selection(fixture: str, expected: str)
         assert doc.permissions == Permissions.MODIFY
         if fixture == "identity-strings":
             assert b"<x:xmpmeta" in doc.catalog["Metadata"].read()
-            assert doc.pages[0].pixmap(dpi=72).width == 50
-        else:
-            with pytest.raises(pyropdf.PdfError, match="legacy public-key file key"):
-                doc.pages[0].pixmap()
+        assert doc.pages[0].pixmap(dpi=72).width == 50
         doc.objects[4]["FixtureValue"] = b"edited"
         for incremental in (True, False):
             if "RC4" in expected:
@@ -562,6 +560,64 @@ def test_public_key_algorithms_and_filter_selection(fixture: str, expected: str)
                 saved = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
                 with pyropdf.open(saved, credential=recipient("editor")) as reopened:
                     assert reopened.objects[4]["FixtureValue"] == b"edited"
+
+
+@pytest.mark.spec("public-key-security-handler", "interpret")
+@pytest.mark.parametrize("fixture", ["recipients-aes128", "s3", "s4", "v2", "recipients"])
+def test_recipient_engine_reference_pages(fixture: str) -> None:
+    source = (RECIPIENT_ASSETS / f"pyhanko-{fixture}.pdf").read_bytes()
+    with pyropdf.open(source) as doc:
+        with pytest.raises(pyropdf.EncryptedDocumentError):
+            _ = doc.pages[0]
+        assert doc.unlock(recipient("owner")) is Access.OWNER
+
+        def check_page(expected: str, *, rotated: bool) -> bytes:
+            with pyropdf.open(doc.to_bytes()) as reference:
+                ref_page = reference.pages[0]
+                ref_pixmap = ref_page.pixmap()
+                assert (ref_pixmap.width, ref_pixmap.height) == ((40, 50) if rotated else (50, 40))
+                assert ref_pixmap.pixel(6, 6) == ((0, 0, 0) if rotated else (255, 255, 255))
+                assert ref_pixmap.pixel(5, 33) == ((255, 255, 255) if rotated else (0, 0, 0))
+                assert ref_page.text() == expected
+                rendered = ref_pixmap.to_bytes()
+                page = doc.pages[0]
+                assert page.pixmap().to_bytes() == rendered
+                assert page.svg() == ref_page.svg()
+                assert page.text() == expected
+                assert len(page.content().items) == len(ref_page.content().items)
+                if expected:
+                    with pytest.raises(pyropdf.LimitError):
+                        page.text(max_glyphs=1)
+                return rendered
+
+        original = check_page("", rotated=False)
+        doc.pages[0].rotation = 90
+        rotated = check_page("", rotated=True)
+        assert original != rotated
+        doc.objects[4]["Resources"] = {
+            "Font": {
+                "F1": {
+                    "Type": pyropdf.Name("Font"),
+                    "Subtype": pyropdf.Name("Type1"),
+                    "BaseFont": pyropdf.Name("Helvetica"),
+                }
+            }
+        }
+        doc.objects[3].write(RECIPIENT_STREAM + b"BT /F1 7 Tf 3 23 Td (Source) Tj ET\n", filter=None)
+        assert check_page("Source\n", rotated=True) != rotated
+        assert doc.objects[4]["FixtureValue"] == RECIPIENT_STRING
+        if fixture in {"recipients-aes128", "recipients"}:
+            metadata = doc.catalog["Metadata"]
+            header = f"{metadata.xref} {metadata.generation} obj\n".encode()
+            ciphertext = source.split(header, 1)[1].split(b"\nendobj", 1)[0]
+            assert ciphertext
+            assert b"<x:xmpmeta" not in ciphertext
+            for incremental in (False, True):
+                saved = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+                assert ciphertext in saved
+                with pyropdf.open(saved, credential=recipient("owner")) as reopened:
+                    assert reopened.catalog["Metadata"].read() == metadata.read()
+                    assert reopened.pages[0].text() == "Source\n"
 
 
 def test_public_key_changing_encryption_requires_authorized_recipient(tmp_path: Path) -> None:
@@ -886,14 +942,97 @@ def test_gcm_authenticates_independent_password_and_recipient_inputs() -> None:
             assert doc.encryption_method == "Standard V6 R7 256-bit AES-GCM"
             assert doc.pages[0].obj["XXLabel"] == b"independent GCM label"
             assert doc.pages[0].obj["Contents"].read() == GCM_CONTENT
-            with pytest.raises(pyropdf.EncryptedDocumentError, match=r"hayro.*AES-GCM"):
-                doc.pages[0].pixmap(dpi=36)
+            assert doc.pages[0].pixmap(dpi=36).width > 0
+            assert doc.pages[0].svg().startswith("<svg ")
+            assert doc.pages[0].text() == ""
+            assert doc.pages[0].content().paths
     with pytest.raises(pyropdf.PasswordError):
         pyropdf.open(GCM_SOURCE, password="wrong")
     with pyropdf.open(RECIPIENT_ASSETS / "pyhanko-gcm.pdf", credential=recipient("owner")) as doc:
         assert doc.encryption_method == "Adobe.PubSec adbe.pkcs7.s5 V6 256-bit AES-GCM"
         assert doc.objects[3].read() == RECIPIENT_STREAM
         assert doc.objects[4]["FixtureValue"] == RECIPIENT_STRING
+        assert doc.pages[0].pixmap(dpi=72).width == 50
+
+
+def _assert_gcm_page_matches_clear(
+    doc: pyropdf.Document, expected: str, paint: tuple[int, int, int], *, rotated: bool
+) -> bytes:
+    page = doc.pages[0]
+    with pyropdf.open(doc.to_bytes()) as clear:
+        saved_page = clear.pages[0]
+        ref_raster = saved_page.pixmap()
+        assert ref_raster.pixel(3, 3) == (paint if rotated else (255, 255, 255))
+        assert ref_raster.pixel(3, ref_raster.height - 4) == ((255, 255, 255) if rotated else paint)
+        assert saved_page.text() == expected
+        rendered = ref_raster.to_bytes()
+        assert page.pixmap().to_bytes() == rendered
+        assert page.svg() == saved_page.svg()
+        assert page.text() == expected
+        assert len(page.content().items) == len(saved_page.content().items)
+        if expected:
+            with pytest.raises(pyropdf.LimitError):
+                page.text(max_glyphs=1)
+        return rendered
+
+
+@pytest.mark.spec("aes-gcm", "interpret")
+@pytest.mark.parametrize("kind", ["standard", "recipient"])
+def test_gcm_engine_reference_pages(kind: str) -> None:
+    standard = kind == "standard"
+    source = (GCM_SOURCE if standard else RECIPIENT_ASSETS / "pyhanko-gcm.pdf").read_bytes()
+    credential = "ownerpw" if standard else recipient("owner")
+    paint = (0, 0, 255) if standard else (0, 0, 0)
+    with pyropdf.open(source) as doc:
+        with pytest.raises(pyropdf.EncryptedDocumentError):
+            _ = doc.pages[0]
+        assert doc.unlock(credential) is Access.OWNER
+        page = doc.pages[0]
+        stream = page.obj["Contents"]
+        original = stream.read()
+        header = f"{stream.xref} {stream.generation} obj\n".encode()
+        untouched = source.split(header, 1)[1].split(b"\nendobj", 1)[0]
+        assert original not in untouched
+
+        before = _assert_gcm_page_matches_clear(doc, "", paint, rotated=False)
+        page.rotation = 90
+        rotated = _assert_gcm_page_matches_clear(doc, "", paint, rotated=True)
+        assert before != rotated
+        for incremental in (False, True):
+            saved = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+            assert untouched in saved
+            with pyropdf.open(saved) as reopened:
+                assert reopened.unlock(credential) is Access.OWNER
+                assert reopened.pages[0].rotation == 90
+                assert reopened.pages[0].obj["Contents"].read() == original
+                assert reopened.pages[0].pixmap().to_bytes() == rotated
+
+        page.obj["Resources"] = {
+            "Font": {
+                "F1": {
+                    "Type": pyropdf.Name("Font"),
+                    "Subtype": pyropdf.Name("Type1"),
+                    "BaseFont": pyropdf.Name("Helvetica"),
+                }
+            }
+        }
+        stream.write(original + b"BT /F1 7 Tf 3 23 Td (Source) Tj ET\n", filter=None)
+        assert _assert_gcm_page_matches_clear(doc, "Source\n", paint, rotated=True) != rotated
+    token = pyropdf.CancellationToken()
+    with pyropdf.open(source, limits=pyropdf.DocumentLimits(cancellation=token)) as cancelled_doc:
+        assert cancelled_doc.unlock(credential) is Access.OWNER
+        cancelled_page = cancelled_doc.pages[0]
+        token.cancel()
+        for operation in (cancelled_page.pixmap, cancelled_page.svg, cancelled_page.text, cancelled_page.content):
+            with pytest.raises(pyropdf.LimitError) as caught:
+                operation()
+            assert caught.value.code == "cancelled"
+    with pyropdf.open(source, limits=pyropdf.DocumentLimits(max_interpretation_size=64)) as bounded:
+        assert bounded.unlock(credential) is Access.OWNER
+        for operation in (bounded.pages[0].pixmap, bounded.pages[0].text):
+            with pytest.raises(pyropdf.LimitError) as caught:
+                operation()
+            assert caught.value.code == "interpretation_size"
 
 
 @pytest.mark.spec("aes-gcm", "interpret")
@@ -917,6 +1056,9 @@ def test_gcm_rejects_bad_tags_before_releasing_data(kind: str, tmp_path: Path) -
     with pyropdf.open(corrupted, password="ownerpw") as doc:
         with pytest.raises(pyropdf.MalformedPdfError, match="AES-GCM authentication failed"):
             _ = doc.objects[4] if kind == "string" else doc.objects[3]
+        for op_name in ("pixmap", "svg", "text", "content"):
+            with pytest.raises(pyropdf.MalformedPdfError, match="AES-GCM authentication failed"):
+                getattr(doc.pages[0], op_name)()
         with pytest.raises(pyropdf.MalformedPdfError, match="AES-GCM authentication failed"):
             doc.save(target)
     assert target.read_bytes() == b"previous output"
@@ -1112,10 +1254,32 @@ def test_legacy_owner_uses_the_effective_user_bytes_within_the_reader(user: str)
             pyropdf.open(data, password="wrong")
 
 
-def test_legacy_pdfdocencoded_user_password_remains_a_typed_reader_boundary() -> None:
+@pytest.mark.spec("standard-security-handler", "interpret")
+@pytest.mark.spec("{profile}", "interpret")
+@pytest.mark.parametrize(
+    "profile",
+    [
+        "standard-rc4-r2",
+        "standard-rc4-r3",
+        "standard-rc4-r4",
+        "standard-aes-r4",
+    ],
+)
+def test_legacy_pdfdocencoded_user_password_interprets_directly(profile: str) -> None:
+    revisions: dict[str, Literal[2, 3, 4]] = {
+        "standard-rc4-r2": 2,
+        "standard-rc4-r3": 3,
+        "standard-rc4-r4": 4,
+        "standard-aes-r4": 4,
+    }
+    revision = revisions[profile]
+    use_aes = profile == "standard-aes-r4"
     data = io.BytesIO()
     with pikepdf.open(ASSETS / "user-aes-128.pdf", password="ownerpw") as independent:
-        independent.save(data, encryption=pikepdf.Encryption(owner="ownerpw", user="é", R=4, aes=True))
+        independent.save(
+            data,
+            encryption=pikepdf.Encryption(owner="ownerpw", user="é", R=revision, aes=use_aes, metadata=use_aes),
+        )
     raw = data.getvalue()
     with (
         pyropdf.open(raw, password="ownerpw") as doc,
@@ -1123,11 +1287,22 @@ def test_legacy_pdfdocencoded_user_password_remains_a_typed_reader_boundary() ->
     ):
         assert independent.owner_password_matched
         assert doc.access is Access.OWNER
+        assert doc.permissions == Permissions.ALL
         assert doc.pages[0].obj["Contents"].read() == independent.pages[0].Contents.read_bytes()
-        for operation in (doc.pages[0].text, doc.pages[0].pixmap):
-            with pytest.raises(pyropdf.EncryptedDocumentError, match="UTF-8"):
-                operation()
-        assert doc.to_bytes(incremental=True) == raw
+        for rotation in (0, 90):
+            if rotation:
+                doc.pages[0].rotation = rotation
+            with pyropdf.open(doc.to_bytes()) as plain:
+                expected = plain.pages[0]
+                assert "Encrypted page one" in expected.text()
+                page = doc.pages[0]
+                assert page.text() == expected.text()
+                assert page.svg() == expected.svg()
+                assert page.pixmap(dpi=36).to_bytes() == expected.pixmap(dpi=36).to_bytes()
+                assert len(page.content().items) == len(expected.content().items)
+            if rotation == 0:
+                assert doc.to_bytes(incremental=True) == raw
+        assert doc.access is Access.OWNER
         assert doc.permissions == Permissions.ALL
 
 
@@ -1411,7 +1586,15 @@ def test_encryption_requires_a_resolved_filter_selector(tmp_path: Path) -> None:
     assert path.read_bytes() == b"unchanged"
 
 
-def _private_recipient_control(*, attachment_only: bool, implicit: bool, mac: bool = False, gcm: bool = False) -> bytes:
+def _private_recipient_control(  # noqa: PLR0913, PLR0915 - independent fixture options for recipient controls.
+    *,
+    attachment_only: bool,
+    implicit: bool,
+    mac: bool = False,
+    gcm: bool = False,
+    page_data: bytes | None = None,
+    private_page: bool = False,
+) -> bytes:
     """Produce two independent recipient seeds with pyHanko (ISO Table 27)."""
     from unittest.mock import patch  # noqa: PLC0415
 
@@ -1460,7 +1643,13 @@ def _private_recipient_control(*, attachment_only: bool, implicit: bool, mac: bo
         normal.add_recipients(certs, policy=RecipientEncryptionPolicy())
     restricted.add_recipients(certs[:1], policy=RecipientEncryptionPolicy())
     writer._assign_security_handler(crypto)  # noqa: SLF001 - pyHanko accepts a custom crypt-filter configuration here.
-    page = PageObject(writer.add_object(generic.StreamObject(stream_data=b"0 g 1 2 3 4 re f\n")), [0, 0, 40, 50])
+    content = generic.StreamObject(stream_data=b"0 g 1 2 3 4 re f\n" if page_data is None else page_data)
+    if private_page:
+        content.compress()
+        content.add_crypt_filter(private, handler=crypto)
+    page = PageObject(
+        writer.add_object(content), [0, 0, 40, 50], resources=None if page_data is None else _source_font_resources()
+    )
     page[name("/FixtureName")] = generic.TextStringObject("fixture string")
     writer.insert_page(page)
     named = generic.StreamObject(stream_data=b"Named private data")
@@ -2062,3 +2251,133 @@ def test_gcm_promotes_only_the_output_header_of_a_new_document(*, linearized: bo
         with pyropdf.open(sealed, password="reader") as reopened:
             assert reopened.catalog["Extensions"]["ISO_"][0]["ExtensionLevel"] == 32003
         assert pyropdf.probe(doc.to_bytes(linearize=linearized)).version == "1.4"
+
+
+_SOURCE_PAGE = b"0 g 2 3 10 8 re f\nBT /F1 7 Tf 3 23 Td (Filter) Tj ET\n"
+
+
+def _source_font_resources() -> DictionaryObject:
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+
+    name = generic.pdf_name
+    font = generic.DictionaryObject(
+        {name("/Type"): name("/Font"), name("/Subtype"): name("/Type1"), name("/BaseFont"): name("/Helvetica")}
+    )
+    return generic.DictionaryObject({name("/Font"): generic.DictionaryObject({name("/F1"): font})})
+
+
+def _filter_engine_pdf(method: str, selector: str, rotation: int = 0) -> bytes:
+    from pyhanko.pdf_utils import generic  # noqa: PLC0415
+    from pyhanko.pdf_utils.crypt.standard import StandardSecurityHandler, StandardSecuritySettingsRevision  # noqa: PLC0415
+    from pyhanko.pdf_utils.writer import PageObject, PdfFileWriter  # noqa: PLC0415
+
+    if method == "recipient":
+        return _private_recipient_control(
+            attachment_only=selector == "attachment",
+            implicit=False,
+            page_data=_SOURCE_PAGE,
+            private_page=selector == "private",
+        )
+    writer = PdfFileWriter(stream_xrefs=False)
+    stream = generic.StreamObject(stream_data=_SOURCE_PAGE)
+    stream.compress()
+    if method != "clear":
+        handler = StandardSecurityHandler.build_from_pw_legacy(
+            StandardSecuritySettingsRevision.RC4_OR_AES128,
+            writer.document_id[0],
+            "owner",
+            "user",
+            use_aes128=method == "AESV2",
+        )
+        writer._assign_security_handler(handler)  # noqa: SLF001 - choose the independent writer's R4 method.
+        if selector != "implicit":
+            name = generic.pdf_name("/StdCF" if selector == "named" else "/Identity")
+            stream.add_crypt_filter(name, handler=handler)
+    page = PageObject(writer.add_object(stream), [0, 0, 40, 50], resources=_source_font_resources())
+    page[generic.pdf_name("/Rotate")] = generic.NumberObject(rotation)
+    writer.insert_page(page)
+    result = io.BytesIO()
+    writer.write(result)
+    return result.getvalue()
+
+
+def _assert_filter_page_matches_clear(target: pyropdf.Document, rotation: int) -> None:
+    with pyropdf.open(_filter_engine_pdf("clear", "implicit", rotation)) as reference:
+        expected = reference.pages[0]
+        assert expected.text() == "Filter\n"
+        pixels = expected.pixmap()
+        assert (pixels.width, pixels.height) == ((40, 50) if rotation == 0 else (50, 40))
+        point = (4, 43) if rotation == 0 else (5, 5)
+        assert pixels.pixel(*point) == (0, 0, 0)
+        page = target.pages[0]
+        assert page.pixmap().to_bytes() == pixels.to_bytes()
+        assert page.svg() == expected.svg()
+        assert page.text() == expected.text()
+        assert len(page.content().items) == len(expected.content().items)
+
+
+def _assert_page_refuses_password(page: pyropdf.Page) -> None:
+    for operation in (page.pixmap, page.svg, page.text, page.content):
+        with pytest.raises(pyropdf.PasswordError):
+            operation()
+
+
+@pytest.mark.spec("crypt-filters", "interpret")
+@pytest.mark.parametrize(
+    ("method", "selector"),
+    [
+        ("AESV2", "named"),
+        ("AESV2", "Identity"),
+        ("AESV2", "implicit"),
+        ("V2", "named"),
+        ("V2", "Identity"),
+        ("V2", "implicit"),
+        ("recipient", "private"),
+        ("recipient", "attachment"),
+    ],
+)
+@pytest.mark.usefixtures("_pyhanko_oracle")
+def test_named_filter_engine_pages_match_independent_controls(method: str, selector: str) -> None:
+    original = _filter_engine_pdf(method, selector)
+    password = None if method == "recipient" else "user"
+    credential = recipient("owner") if method == "recipient" else None
+
+    with pyropdf.open(original, password=password, credential=credential) as doc:
+        assert doc.pages[0].obj["Contents"].read() == _SOURCE_PAGE
+        _assert_filter_page_matches_clear(doc, 0)
+        doc.pages[0].rotation = 90
+        _assert_filter_page_matches_clear(doc, 90)
+        for incremental in (False, True):
+            saved = doc.to_bytes(encryption=Encryption.KEEP, incremental=incremental)
+            assert saved.startswith(original) == incremental
+            with pyropdf.open(saved, password=password, credential=credential) as reopened:
+                assert reopened.pages[0].rotation == 90
+                assert reopened.pages[0].obj["Contents"].read() == _SOURCE_PAGE
+                _assert_filter_page_matches_clear(reopened, 90)
+            if method == "recipient":
+                for limited_cred in (recipient("editor"), None) if selector == "attachment" else (recipient("editor"),):
+                    with pyropdf.open(saved, credential=limited_cred) as limited:
+                        with pytest.raises(pyropdf.PasswordError):
+                            limited.catalog["FixtureEmbedded"].read()
+                        with pytest.raises(pyropdf.PasswordError):
+                            limited.catalog["FixtureNamed"].read()
+                        if selector == "private":
+                            with pytest.raises(pyropdf.PasswordError):
+                                limited.pages[0].obj["Contents"].read()
+                            _assert_page_refuses_password(limited.pages[0])
+                        else:
+                            assert limited.pages[0].obj["Contents"].read() == _SOURCE_PAGE
+                            _assert_filter_page_matches_clear(limited, 90)
+    if method == "recipient" and selector == "private":
+        with pyropdf.open(original, credential=recipient("editor")) as limited:
+            _assert_page_refuses_password(limited.pages[0])
+            limited.pages[0].rotation = 90
+            _assert_page_refuses_password(limited.pages[0])
+        # Public page in a multi-recipient file with private attachments remains readable by editor.
+        public_multi = _private_recipient_control(
+            attachment_only=False, implicit=False, page_data=_SOURCE_PAGE, private_page=False
+        )
+        with pyropdf.open(public_multi, credential=recipient("editor")) as limited:
+            with pytest.raises(pyropdf.PasswordError):
+                limited.catalog["FixtureNamed"].read()
+            _assert_filter_page_matches_clear(limited, 0)

@@ -547,16 +547,13 @@ fn encrypted_files_render_unedited_and_edited_as_their_decrypted_saves() {
     for path in files {
         let (document, password) = open_encrypted(&path);
         let version = document.current();
-        if path.ends_with("user-aes-gcm.pdf") {
-            assert!(matches!(
-                Bridged::new(&version, &page_index(&version), &budget),
-                Err(Error::AesGcm)
-            ));
-            assert_eq!(hayro_renders(decrypted(&document, &budget)).len(), 1);
-            continue;
-        }
         let unedited = bridge(&version);
-        assert_eq!(unedited.stats().update, 0, "{}", path.display());
+        if path.ends_with("user-aes-gcm.pdf") {
+            assert!(unedited.stats().update > 0, "{}", path.display());
+            assert_eq!(unedited.stats().update, unedited.stats().bytes);
+        } else {
+            assert_eq!(unedited.stats().update, 0, "{}", path.display());
+        }
         assert_eq!(
             bridge_renders(&unedited),
             hayro_renders(decrypted(&document, &budget)),
@@ -1221,4 +1218,429 @@ fn ocg_lowering_refuses_cyclic_ve_with_optional_content_expression_limit() {
         }
         other => panic!("expected optional_content_expression limit, got {other:?}"),
     }
+}
+
+#[test]
+fn decrypted_bridge_enforces_interpretation_and_memory_limits_without_mutating_version() {
+    let budget = Budget::default();
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/assets/encrypted/user-aes-gcm.pdf");
+    let source = fs::read(&path).unwrap();
+    let (document, _) = open_encrypted(&path);
+    let version = document.current();
+    let pages = page_index(&version);
+
+    let bridged = Bridged::new(&version, &pages, &budget).unwrap();
+    let size = bridged.stats().bytes as u64;
+    assert_eq!(bridged.stats().update as u64, size);
+    assert!(size > 0);
+    assert!(!version.has_changes());
+
+    // Exact InterpretationSize fits; one byte smaller is refused.
+    assert_eq!(
+        Bridged::new(&version, &pages, &input_budget(size))
+            .unwrap()
+            .stats()
+            .bytes as u64,
+        size
+    );
+    assert_interpretation_limit(
+        Bridged::new(&version, &pages, &input_budget(size - 1)).unwrap_err(),
+        size - 1,
+    );
+
+    // Tight MemorySize is refused with LimitCode::MemorySize.
+    let tight_memory = Budget::default().with_limit(LimitCode::MemorySize, Some(1));
+    match Bridged::new(&version, &pages, &tight_memory).unwrap_err() {
+        Error::Store(err) => assert_eq!(err.limit().unwrap().code(), LimitCode::MemorySize),
+        other => panic!("expected MemorySize limit, got {other:?}"),
+    }
+
+    // Version and incremental save stay byte-identical to the encrypted source.
+    assert!(!version.has_changes());
+    let mut incremental = Vec::new();
+    save::incremental(&version, &mut incremental, &budget).unwrap();
+    assert_eq!(incremental, source);
+}
+
+#[test]
+fn decrypted_bridge_handles_non_utf8_legacy_password_and_explicit_v4_crypt() {
+    use pyropdf_store::security::{Encryption, Method, PasswordEncryption};
+
+    let budget = Budget::default();
+    let plain_doc = three_pages();
+    let plain_version = plain_doc.current();
+    let expected = bridge_renders(&bridge(&plain_version));
+
+    // 1) Non-UTF-8 R4 AES-128 user password (PDFDocEncoding 0xE9 = 'é') opened as owner.
+    let non_utf8_cfg = Encryption::Password(PasswordEncryption {
+        user: vec![0xE9, b'x'],
+        owner: b"ownerpw".to_vec(),
+        permissions: u32::MAX,
+        method: Method::Aes128,
+        random: [0x42; 64],
+    });
+    let mut encrypted = Vec::new();
+    save::full_encrypted(&plain_version, &mut encrypted, &budget, &non_utf8_cfg).unwrap();
+    let base =
+        FileBase::open_with_password(Bytes::new(encrypted.clone()), Some(b"ownerpw"), &budget)
+            .unwrap();
+    let doc = Document::new(Arc::new(base), None);
+    let version = doc.current();
+    assert!(
+        version
+            .base()
+            .file()
+            .unwrap()
+            .security()
+            .unwrap()
+            .needs_decrypted_bridge(&version, &budget)
+            .unwrap()
+    );
+    let bridged = bridge(&version);
+    assert_eq!(bridged.stats().update, bridged.stats().bytes);
+    assert_eq!(bridge_renders(&bridged), expected);
+    // Incremental save remains byte-identical.
+    let mut kept = Vec::new();
+    save::incremental(&version, &mut kept, &budget).unwrap();
+    assert_eq!(kept, encrypted);
+
+    // 2) R4 AES-128 with UTF-8 password AND explicit /Filter /Crypt /DecodeParms <</Name /StdCF>>.
+    let mut txn = plain_doc.begin();
+    let obj4 = txn.version().get(4, &budget).unwrap().unwrap();
+    let Value::Stream(mut stream) = (**obj4.value()).clone() else {
+        panic!("object 4 is a stream");
+    };
+    let mut crypt_parms = Dict::new();
+    crypt_parms.insert(Name::from("Name"), Value::Name(Name::from("StdCF")));
+    stream
+        .dict_mut()
+        .insert(Name::from("Filter"), Value::Name(Name::from("Crypt")));
+    stream
+        .dict_mut()
+        .insert(Name::from("DecodeParms"), Value::Dict(crypt_parms));
+    txn.write(4, &Value::Stream(stream), &budget).unwrap();
+    let with_crypt = txn.commit(&budget).unwrap();
+
+    let utf8_r4_cfg = Encryption::Password(PasswordEncryption {
+        user: b"userpw".to_vec(),
+        owner: b"ownerpw".to_vec(),
+        permissions: u32::MAX,
+        method: Method::Aes128,
+        random: [0x24; 64],
+    });
+    let mut explicit_bytes = Vec::new();
+    save::full_encrypted(&with_crypt, &mut explicit_bytes, &budget, &utf8_r4_cfg).unwrap();
+    let explicit_base =
+        FileBase::open_with_password(Bytes::new(explicit_bytes), Some(b"userpw"), &budget).unwrap();
+    let explicit_doc = Document::new(Arc::new(explicit_base), None);
+    let explicit_version = explicit_doc.current();
+    assert!(
+        explicit_version
+            .base()
+            .file()
+            .unwrap()
+            .security()
+            .unwrap()
+            .needs_decrypted_bridge(&explicit_version, &budget)
+            .unwrap()
+    );
+    let explicit_bridged = bridge(&explicit_version);
+    assert_eq!(
+        explicit_bridged.stats().update,
+        explicit_bridged.stats().bytes
+    );
+    assert_eq!(bridge_renders(&explicit_bridged), expected);
+}
+
+#[test]
+fn decrypted_bridge_composes_with_ocg_lowering_on_aes_gcm() {
+    use pyropdf_store::security::{Encryption, Method, PasswordEncryption};
+    use pyropdf_store::value::PdfString;
+
+    let budget = Budget::default();
+    let mut base = MemoryBase::new([(Name::from("Root"), reference(1))].into_iter().collect());
+    let mut put = |number: u32, value: Value| {
+        let mut out = BudgetVec::new(&budget);
+        write::value(&mut out, &value).unwrap();
+        base.insert(Reference::new(number, 0), Bytes::new(out.into_vec()));
+    };
+    let ocg_on = Reference::new(5, 0);
+    let ocg_off = Reference::new(6, 0);
+    let ocmd_hidden = Reference::new(7, 0);
+    let mut g1 = Dict::new();
+    g1.insert(Name::from("Type"), Value::Name(Name::from("OCG")));
+    g1.insert(
+        Name::from("Name"),
+        Value::String(PdfString::literal(b"On".as_slice())),
+    );
+    put(ocg_on.number(), Value::Dict(g1));
+    let mut g2 = Dict::new();
+    g2.insert(Name::from("Type"), Value::Name(Name::from("OCG")));
+    g2.insert(
+        Name::from("Name"),
+        Value::String(PdfString::literal(b"Off".as_slice())),
+    );
+    put(ocg_off.number(), Value::Dict(g2));
+    let mut ocmd = Dict::new();
+    ocmd.insert(Name::from("Type"), Value::Name(Name::from("OCMD")));
+    ocmd.insert(
+        Name::from("VE"),
+        Value::Array(Array::from(vec![
+            Value::Name(Name::from("And")),
+            Value::Reference(ocg_on),
+            Value::Reference(ocg_off),
+        ])),
+    );
+    put(ocmd_hidden.number(), Value::Dict(ocmd));
+    let stream = Stream::new(
+        Dict::new(),
+        Bytes::new(
+            b"/OC /Hid BDC 1 0 0 rg 10 40 20 20 re f EMC 0 0 1 rg 50 40 20 20 re f".to_vec(),
+        ),
+    );
+    put(4, Value::from(stream));
+    let mut props = Dict::new();
+    props.insert(Name::from("Hid"), Value::Reference(ocmd_hidden));
+    let mut resources = Dict::new();
+    resources.insert(Name::from("Properties"), Value::Dict(props));
+    let mut page_dict = Dict::new();
+    page_dict.insert(Name::from("Type"), Value::Name(Name::from("Page")));
+    page_dict.insert(Name::from("Parent"), reference(2));
+    page_dict.insert(Name::from("MediaBox"), rect(100, 100));
+    page_dict.insert(Name::from("Resources"), Value::Dict(resources));
+    page_dict.insert(Name::from("Contents"), reference(4));
+    put(3, Value::Dict(page_dict));
+    let mut pages_dict = Dict::new();
+    pages_dict.insert(Name::from("Type"), Value::Name(Name::from("Pages")));
+    pages_dict.insert(
+        Name::from("Kids"),
+        Value::Array(Array::from(vec![reference(3)])),
+    );
+    pages_dict.insert(Name::from("Count"), Value::Integer(1));
+    put(2, Value::Dict(pages_dict));
+    let mut default_cfg = Dict::new();
+    default_cfg.insert(Name::from("BaseState"), Value::Name(Name::from("ON")));
+    default_cfg.insert(
+        Name::from("OFF"),
+        Value::Array(Array::from(vec![Value::Reference(ocg_off)])),
+    );
+    let mut oc_props = Dict::new();
+    oc_props.insert(
+        Name::from("OCGs"),
+        Value::Array(Array::from(vec![
+            Value::Reference(ocg_on),
+            Value::Reference(ocg_off),
+        ])),
+    );
+    oc_props.insert(Name::from("D"), Value::Dict(default_cfg));
+    let mut cat = Dict::new();
+    cat.insert(Name::from("Type"), Value::Name(Name::from("Catalog")));
+    cat.insert(Name::from("Pages"), reference(2));
+    cat.insert(Name::from("OCProperties"), Value::Dict(oc_props));
+    put(1, Value::Dict(cat));
+
+    let clear_doc = Document::new(Arc::new(base), None);
+    let clear_ver = clear_doc.current();
+    let expected = render::page(&bridge(&clear_ver), 0, 1.0).unwrap();
+
+    let gcm_cfg = Encryption::Password(PasswordEncryption {
+        user: b"userpw".to_vec(),
+        owner: b"ownerpw".to_vec(),
+        permissions: u32::MAX,
+        method: Method::AesGcm,
+        random: [0x77; 64],
+    });
+    let mut gcm_bytes = Vec::new();
+    save::full_encrypted(&clear_ver, &mut gcm_bytes, &budget, &gcm_cfg).unwrap();
+    let gcm_base =
+        FileBase::open_with_password(Bytes::new(gcm_bytes), Some(b"userpw"), &budget).unwrap();
+    let gcm_doc = Document::new(Arc::new(gcm_base), None);
+    let gcm_ver = gcm_doc.current();
+    let actual = render::page(&bridge(&gcm_ver), 0, 1.0).unwrap();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn single_key_v5_recipient_keeps_zero_decrypt_fast_path_and_unauthorized_streams_stay_isolated() {
+    use pyropdf_store::security::{Encryption, Method, RecipientEncryption, RecipientPayload};
+    use pyropdf_store::value::{PdfString, StringForm};
+    use pyropdf_store::{ErrorKind, Password};
+
+    let budget = Budget::default();
+    let plain_doc = three_pages();
+    let plain_ver = plain_doc.current();
+    let expected = bridge_renders(&bridge(&plain_ver));
+
+    // 1) Single-key V5 recipient stays on the zero-decrypt fast path with the
+    // original encrypted bytes preserved verbatim as its prefix.
+    let seed = [0x33u8; 20];
+    let mut doc_payload = [0u8; 24];
+    doc_payload[..20].copy_from_slice(&seed);
+    doc_payload[20..].copy_from_slice(&u32::MAX.to_be_bytes());
+    let env_public = b"public-recipient-envelope".to_vec();
+    let cfg = Encryption::Recipient(RecipientEncryption {
+        seed,
+        id: [0x44u8; 16],
+        envelopes: vec![env_public.clone()],
+        encrypt_metadata: true,
+        method: Method::Aes256,
+    });
+    let mut v5_bytes = Vec::new();
+    save::full_encrypted(&plain_ver, &mut v5_bytes, &budget, &cfg).unwrap();
+    let v5_base = FileBase::open_with_recipient(
+        Bytes::new(v5_bytes.clone()),
+        |der| Ok((der == env_public.as_slice()).then_some(RecipientPayload::Document(doc_payload))),
+        &budget,
+    )
+    .unwrap();
+    let v5_doc = Document::new(Arc::new(v5_base), None);
+    let v5_ver = v5_doc.current();
+    assert!(
+        !v5_ver
+            .base()
+            .file()
+            .unwrap()
+            .security()
+            .unwrap()
+            .needs_decrypted_bridge(&v5_ver, &budget)
+            .unwrap()
+    );
+    let v5_bridged = bridge(&v5_ver);
+    assert!(v5_bridged.pdf.data().as_ref().starts_with(&v5_bytes));
+    assert_eq!(
+        v5_bridged.stats().bytes,
+        v5_bytes.len() + v5_bridged.stats().update
+    );
+    assert_eq!(bridge_renders(&v5_bridged), expected);
+
+    // 2) Public-key V5 document with /Identity defaults and an unauthorized
+    // /PrivateOnly crypt filter: an unreferenced/catalog private stream is
+    // omitted without leaking ciphertext, while a private page /Contents
+    // stream refuses with Password::Recipient.
+    let env_private = b"private-only-envelope".to_vec();
+    let build_multi = |private_on_page: bool| -> Vec<u8> {
+        let mut mem = MemoryBase::new([(Name::from("Root"), reference(1))].into_iter().collect());
+        let mut put = |number: u32, value: Value| {
+            let mut out = BudgetVec::new(&budget);
+            write::value(&mut out, &value).unwrap();
+            mem.insert(Reference::new(number, 0), Bytes::new(out.into_vec()));
+        };
+        let mut private_cf = Dict::new();
+        private_cf.insert(Name::from("CFM"), Value::Name(Name::from("AESV3")));
+        private_cf.insert(Name::from("AuthEvent"), Value::Name(Name::from("DocOpen")));
+        private_cf.insert(Name::from("Length"), Value::Integer(256));
+        private_cf.insert(
+            Name::from("Recipients"),
+            Value::Array(Array::from(vec![Value::String(PdfString::new(
+                env_private.clone(),
+                StringForm::Hexadecimal,
+            ))])),
+        );
+        let mut cf_map = Dict::new();
+        cf_map.insert(Name::from("PrivateOnly"), Value::Dict(private_cf));
+        let mut enc_dict = Dict::new();
+        enc_dict.insert(
+            Name::from("Filter"),
+            Value::Name(Name::from("Adobe.PubSec")),
+        );
+        enc_dict.insert(
+            Name::from("SubFilter"),
+            Value::Name(Name::from("adbe.pkcs7.s5")),
+        );
+        enc_dict.insert(Name::from("V"), Value::Integer(5));
+        enc_dict.insert(Name::from("CF"), Value::Dict(cf_map));
+        enc_dict.insert(Name::from("StmF"), Value::Name(Name::from("Identity")));
+        enc_dict.insert(Name::from("StrF"), Value::Name(Name::from("Identity")));
+        enc_dict.insert(Name::from("EFF"), Value::Name(Name::from("PrivateOnly")));
+        put(10, Value::Dict(enc_dict));
+
+        let mut private_parms = Dict::new();
+        private_parms.insert(Name::from("Name"), Value::Name(Name::from("PrivateOnly")));
+        let mut private_dict = Dict::new();
+        private_dict.insert(Name::from("Filter"), Value::Name(Name::from("Crypt")));
+        private_dict.insert(Name::from("DecodeParms"), Value::Dict(private_parms));
+        let secret_ciphertext = b"OPAQUE_SECRET_CIPHERTEXT_PAYLOAD".to_vec();
+        put(
+            11,
+            Value::from(Stream::new(private_dict, Bytes::new(secret_ciphertext))),
+        );
+
+        for number in 1..=9 {
+            let mut val = (**plain_ver.get(number, &budget).unwrap().unwrap().value()).clone();
+            if number == 1 && !private_on_page {
+                let Value::Dict(ref mut cat) = val else {
+                    unreachable!();
+                };
+                cat.insert(Name::from("PrivateAttachment"), reference(11));
+            }
+            if number == 3 && private_on_page {
+                let Value::Dict(ref mut page) = val else {
+                    unreachable!();
+                };
+                page.insert(Name::from("Contents"), reference(11));
+            }
+            put(number, val);
+        }
+        let temp_doc = Document::new(Arc::new(mem), None);
+        let mut raw = Vec::new();
+        save::full(&temp_doc.current(), &mut raw, &budget).unwrap();
+        // Splice `/Encrypt 10 0 R` into the trailing trailer dictionary; it
+        // lies after `xref`, so every object offset and `startxref` stays exact.
+        let trailer_at = raw
+            .windows(b"trailer\n".len())
+            .rposition(|w| w == b"trailer\n")
+            .unwrap();
+        let needle = b"/Root 1 0 R";
+        let root_at = trailer_at
+            + raw[trailer_at..]
+                .windows(needle.len())
+                .position(|w| w == needle)
+                .unwrap();
+        raw.splice(
+            root_at..root_at + needle.len(),
+            b"/Root 1 0 R /Encrypt 10 0 R".iter().copied(),
+        );
+        raw
+    };
+
+    // Case A: unauthorized stream on catalog -> public pages render, secret omitted/absent.
+    let catalog_only = build_multi(false);
+    let limited_base = FileBase::open(Bytes::new(catalog_only), &budget).unwrap();
+    let limited_doc = Document::new(Arc::new(limited_base), None);
+    let limited_ver = limited_doc.current();
+    assert!(
+        limited_ver
+            .base()
+            .file()
+            .unwrap()
+            .security()
+            .unwrap()
+            .needs_decrypted_bridge(&limited_ver, &budget)
+            .unwrap()
+    );
+    let limited_bridged = bridge(&limited_ver);
+    assert!(
+        !limited_bridged
+            .pdf
+            .data()
+            .as_ref()
+            .windows(b"OPAQUE_SECRET_CIPHERTEXT_PAYLOAD".len())
+            .any(|w| w == b"OPAQUE_SECRET_CIPHERTEXT_PAYLOAD")
+    );
+    assert_eq!(bridge_renders(&limited_bridged), expected);
+
+    // Case B: unauthorized stream on page /Contents -> refused with Password::Recipient.
+    let private_page = build_multi(true);
+    let refused_base = FileBase::open(Bytes::new(private_page), &budget).unwrap();
+    let refused_doc = Document::new(Arc::new(refused_base), None);
+    let refused_ver = refused_doc.current();
+    let err = Bridged::new(&refused_ver, &page_index(&refused_ver), &budget).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Store(ref store_err) if matches!(store_err.kind(), ErrorKind::Password(Password::Recipient))
+        ),
+        "expected Password::Recipient refusal, got {err:?}"
+    );
 }

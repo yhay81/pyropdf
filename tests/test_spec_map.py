@@ -522,12 +522,13 @@ def test_password_handler_claim_distinguishes_rc4_creation_from_legacy_interpret
     root = copy_root(tmp_path)
     result = claim(root, selector)
     assert result.returncode == 1
+    scope = json.loads((root / "docs/spec-map.json").read_text())
     for method in ("standard-rc4-r2", "standard-rc4-r3", "standard-rc4-r4"):
         assert f"{method} create is non-goal" in result.stdout
-        assert f"{method} interpret is engine" in result.stdout
-    scope = json.loads((root / "docs/spec-map.json").read_text())
+        row = next(item for item in scope["features"] if item["feature"] == method)
+        assert row["interpret"]["status"] == "done"
     legacy = next(row for row in scope["features"] if row["feature"] == "standard-aes-r4")
-    assert legacy["interpret"]["upstream"] == 1043
+    assert legacy["interpret"]["status"] == "done"
     assert "either role" in legacy["description"]
     assert "standard-aes-r5 create is non-goal" in result.stdout
     evidence = record_evidence(root)

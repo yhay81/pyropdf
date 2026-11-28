@@ -27,6 +27,7 @@
 //! The bridge checks that hayro's page list is the store's page index, so
 //! that a page number names the same page in both.
 
+mod decrypted;
 mod ocg;
 pub mod preflight;
 pub(crate) mod provenance_overlay;
@@ -209,8 +210,51 @@ impl Bridged {
         appearances: bool,
         budget: &Budget,
     ) -> Result<Self> {
+        budget.poll()?;
         let started = Instant::now();
         let handler = handler(version)?;
+        let use_decrypted = match handler {
+            Some(handler) => handler.needs_decrypted_bridge(version, budget)?,
+            None => false,
+        };
+        if use_decrypted {
+            let owned_extra;
+            let extra: &[(Reference, Value)] = if let Some(extra) = overlay {
+                extra
+            } else {
+                let lowered = ocg::lower(version, pages, budget)?;
+                let synthesized = if appearances {
+                    crate::annotations::synthesized_excluding(
+                        version,
+                        pages,
+                        &lowered.hidden_annots,
+                        lowered.next_number,
+                        budget,
+                    )?
+                } else {
+                    Vec::new()
+                };
+                owned_extra = merge_extra(lowered.objects, synthesized, budget)?;
+                &owned_extra
+            };
+            let bytes = decrypted::build(version, pages, extra, budget)?;
+            let store = started.elapsed();
+            let started = Instant::now();
+            let len = bytes.as_ref().len();
+            budget.check(LimitCode::InterpretationSize, len as u64)?;
+            let pdf = bytes.open().map_err(|_| Error::Unreadable)?;
+            let scaled_pages = check_pages(&pdf, pages, budget)?;
+            return Ok(Self {
+                pdf,
+                scaled_pages,
+                stats: Stats {
+                    store,
+                    hayro: started.elapsed(),
+                    bytes: len,
+                    update: len,
+                },
+            });
+        }
         if handler.is_some_and(Handler::uses_gcm) {
             return Err(Error::AesGcm);
         }
@@ -363,6 +407,7 @@ impl Cache {
         budget: &Budget,
         annotations: bool,
     ) -> Result<Arc<Bridged>> {
+        budget.poll()?;
         if let Some((held, mode, bridged)) = &*self.lock()
             && held.as_ptr() == Arc::as_ptr(version)
             && held.strong_count() > 0
@@ -437,7 +482,7 @@ fn copy(bytes: &[u8], budget: &Budget) -> Result<Vec<u8>> {
 
 /// The widths of the fields of the cross-reference stream: the type, an
 /// offset or object-stream number, and a generation or member index.
-const WIDTHS: [usize; 3] = [1, 8, 4];
+pub(super) const WIDTHS: [usize; 3] = [1, 8, 4];
 
 /// Returns the original bytes, or a header for a document without a file,
 /// followed by the written objects and the complete cross-reference
@@ -752,13 +797,13 @@ fn member_extent(bytes: &Bytes) -> Option<Bytes> {
     .flatten()
 }
 
-fn header(out: &mut BudgetVec<'_, u8>, number: u32, generation: u16) -> Result<()> {
+pub(super) fn header(out: &mut BudgetVec<'_, u8>, number: u32, generation: u16) -> Result<()> {
     out.try_extend_from_slice(format!("{number} {generation} obj\n").as_bytes())?;
     Ok(())
 }
 
 /// Returns one row of the cross-reference stream, big-endian.
-fn row(kind: u8, second: u64, third: u32) -> [u8; 13] {
+pub(super) fn row(kind: u8, second: u64, third: u32) -> [u8; 13] {
     let mut row = [0; 13];
     row[0] = kind;
     row[1..9].copy_from_slice(&second.to_be_bytes());
@@ -766,7 +811,7 @@ fn row(kind: u8, second: u64, third: u32) -> [u8; 13] {
     row
 }
 
-fn insert(dict: &mut Dict, key: Name, value: Value) {
+pub(super) fn insert(dict: &mut Dict, key: Name, value: Value) {
     #[expect(
         clippy::disallowed_methods,
         reason = "the trailer copies the entries of the version's trailer, which the store holds, and five constant keys"
