@@ -1,0 +1,47 @@
+# TLA+ state-machine model checking (TLC) for pyropdf-store's history,
+# allocation/save-numbering, read-set memoization, and settling protocols
+# (DESIGN.md sections 4.1, 5, and 7, #1255).
+name: Formal Models
+
+on:
+  pull_request:
+    paths:
+      - "crates/pyropdf-store/src/version/**"
+      - "crates/pyropdf-store/src/memo/**"
+      - "crates/pyropdf-store/src/settle.rs"
+      - "crates/pyropdf-store/tests/model_traces.rs"
+      - "evidence/formal-models/**"
+      - "tools/fetch_tlc.py"
+      - ".github/workflows/formal-models.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/pyropdf-store/src/version/**"
+      - "crates/pyropdf-store/src/memo/**"
+      - "crates/pyropdf-store/src/settle.rs"
+      - "crates/pyropdf-store/tests/model_traces.rs"
+      - "evidence/formal-models/**"
+      - "tools/fetch_tlc.py"
+      - ".github/workflows/formal-models.yml"
+  schedule:
+    # Mondays at 05:47 UTC.
+    - cron: "47 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: formal-models-${{ github.ref }}
+  # A push to a pull request supersedes its earlier run; every run on main finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tlc:
+    name: TLA+ (TLC)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run TLC on evidence/formal-models
+        run: python3 evidence/formal-models/run.py
