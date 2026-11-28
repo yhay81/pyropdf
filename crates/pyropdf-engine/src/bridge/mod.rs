@@ -29,6 +29,7 @@
 
 mod ocg;
 pub mod preflight;
+pub(crate) mod provenance_overlay;
 #[cfg(test)]
 mod tests;
 
@@ -171,11 +172,42 @@ impl Bridged {
         Self::build(version, pages, budget, true)
     }
 
+    /// Builds hayro's reading of `version` with caller-supplied ephemeral
+    /// object stand-ins (`extra`, sorted ascending by unique object number),
+    /// leaving `version` untouched.
+    pub(crate) fn with_extra(
+        version: &Version,
+        pages: &PageIndex,
+        extra: &[(Reference, Value)],
+        budget: &Budget,
+    ) -> Result<Self> {
+        Self::build_with_extra(version, pages, extra, budget)
+    }
+
     fn build(
         version: &Version,
         pages: &PageIndex,
         budget: &Budget,
         appearances: bool,
+    ) -> Result<Self> {
+        Self::build_inner(version, pages, None, appearances, budget)
+    }
+
+    fn build_with_extra(
+        version: &Version,
+        pages: &PageIndex,
+        extra: &[(Reference, Value)],
+        budget: &Budget,
+    ) -> Result<Self> {
+        Self::build_inner(version, pages, Some(extra), false, budget)
+    }
+
+    fn build_inner(
+        version: &Version,
+        pages: &PageIndex,
+        overlay: Option<&[(Reference, Value)]>,
+        appearances: bool,
+        budget: &Budget,
     ) -> Result<Self> {
         let started = Instant::now();
         let handler = handler(version)?;
@@ -201,19 +233,25 @@ impl Bridged {
         if let Some(file) = version.base().file() {
             budget.check(LimitCode::InterpretationSize, file.bytes().len() as u64)?;
         }
-        let lowered = ocg::lower(version, pages, budget)?;
-        let synthesized = if appearances {
-            crate::annotations::synthesized_excluding(
-                version,
-                pages,
-                &lowered.hidden_annots,
-                lowered.next_number,
-                budget,
-            )?
+        let owned_extra;
+        let extra: &[(Reference, Value)] = if let Some(extra) = overlay {
+            extra
         } else {
-            Vec::new()
+            let lowered = ocg::lower(version, pages, budget)?;
+            let synthesized = if appearances {
+                crate::annotations::synthesized_excluding(
+                    version,
+                    pages,
+                    &lowered.hidden_annots,
+                    lowered.next_number,
+                    budget,
+                )?
+            } else {
+                Vec::new()
+            };
+            owned_extra = merge_extra(lowered.objects, synthesized, budget)?;
+            &owned_extra
         };
-        let extra = merge_extra(lowered.objects, synthesized, budget)?;
         let (bytes, update) = match (handler, version.base().file()) {
             (Some(_), Some(file))
                 if bridge.is_none()
@@ -225,7 +263,7 @@ impl Bridged {
             }
             _ => update(
                 version,
-                &extra,
+                extra,
                 handler,
                 bridge.as_ref().map(|(_, dict)| dict),
                 budget,
