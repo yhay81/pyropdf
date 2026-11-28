@@ -2081,9 +2081,18 @@ impl<'b> TilingCellCollector<'b> {
                     }
                     let matrix = nested.matrix.as_coeffs();
                     let opacity = f64::from(nested.opacity);
-                    if !matrix.iter().all(|value| value.is_finite()) || !opacity.is_finite() {
+                    if !matrix.iter().all(|value| value.is_finite())
+                        || !opacity.is_finite()
+                        || !nested.bbox.x0.is_finite()
+                        || !nested.bbox.y0.is_finite()
+                        || !nested.bbox.x1.is_finite()
+                        || !nested.bbox.y1.is_finite()
+                        || !nested.x_step.is_finite()
+                        || !nested.y_step.is_finite()
+                    {
                         return Ok(None);
                     }
+                    let opacity = opacity.clamp(0.0, 1.0);
                     let cell = capture_tiling_cell(nested, is_stroke, self.depth + 1, self.budget)?;
                     if let Some(reason) = cell.refusal {
                         self.refusal = Some(reason);
@@ -2107,6 +2116,7 @@ impl<'b> TilingCellCollector<'b> {
         props: &DrawProps<'a>,
         mode: &DrawMode,
     ) -> Result<(), Error> {
+        self.budget.charge(LimitCode::InterpretationFuel, 1)?;
         if matches!(mode, DrawMode::Invisible) {
             return Ok(());
         }
@@ -2277,11 +2287,15 @@ impl<'a> Device<'a> for TilingCellCollector<'_> {
                 return Ok(());
             }
             let opacity = f64::from(opacity);
-            if !opacity.is_finite() {
-                return Ok(());
-            }
+            // Always emit a balanced PushGroup when group_depth increments;
+            // clamp finite values to [0.0, 1.0] and treat non-finite as 1.0.
+            let clamped = if opacity.is_finite() {
+                opacity.clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
             this.push_op(TilingCellOp::PushGroup {
-                opacity,
+                opacity: clamped,
                 blend: blend_code(blend),
             })
         });
@@ -2296,6 +2310,7 @@ impl<'a> Device<'a> for TilingCellCollector<'_> {
     }
 
     fn draw_glyph_run(&mut self, run: &GlyphRun<'_, 'a>, props: DrawProps<'a>, mode: &DrawMode) {
+        self.run(|this| Ok(this.budget.charge(LimitCode::InterpretationFuel, 1)?));
         if matches!(mode, DrawMode::Invisible) || self.stopped() {
             return;
         }
@@ -2304,6 +2319,10 @@ impl<'a> Device<'a> for TilingCellCollector<'_> {
             return;
         }
         for glyph in run.glyphs() {
+            if self.stopped() {
+                break;
+            }
+            self.run(|this| Ok(this.budget.charge(LimitCode::InterpretationFuel, 1)?));
             if self.stopped() {
                 break;
             }
@@ -2336,6 +2355,7 @@ impl<'a> Device<'a> for TilingCellCollector<'_> {
 
     fn draw_image(&mut self, image: Image<'a, '_>, props: ImageDrawProps<'a>) {
         self.run(|this| {
+            this.budget.charge(LimitCode::InterpretationFuel, 1)?;
             if props.soft_mask.is_some() {
                 this.refusal = Some("a tiling pattern cell with a soft mask cannot be drawn");
                 return Ok(());

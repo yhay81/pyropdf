@@ -62,23 +62,55 @@ pub(super) fn image_interpolate(stream: &Stream<'_>) -> bool {
         .unwrap_or(false)
 }
 
+/// Reads the pixel count of an optional `/SMask` or explicit `/Mask` stream
+/// attached to an image dictionary so `capture_raster_image` can pre-charge
+/// `TotalDecompressedSize` and `MemorySize` before `hayro` decodes it.
+fn attached_mask_pixels(stream: &Stream<'_>) -> u64 {
+    let dict = stream.dict();
+    let mask_stream = dict
+        .get::<Stream<'_>>(b"SMask")
+        .or_else(|| dict.get::<Stream<'_>>(b"Mask"));
+    let Some(mask) = mask_stream else {
+        return 0;
+    };
+    let mask_dict = mask.dict();
+    let width = mask_dict
+        .get::<u32>(b"Width")
+        .or_else(|| mask_dict.get::<u32>(b"W"))
+        .unwrap_or(0);
+    let height = mask_dict
+        .get::<u32>(b"Height")
+        .or_else(|| mask_dict.get::<u32>(b"H"))
+        .unwrap_or(0);
+    u64::from(width).saturating_mul(u64::from(height))
+}
+
 /// Decodes a `RasterImage` into an owned [`CapturedRaster`], charging the
-/// decoded RGBA footprint to `total_decompressed_size` before decoding and the
-/// retained pixel buffers to `memory_size`.
+/// decoded RGBA footprint (including any attached `/SMask` or `/Mask` stream)
+/// to `total_decompressed_size` before decoding and the retained pixel buffers
+/// to `memory_size`.
 pub(super) fn capture_raster_image(
     raster: &RasterImage<'_>,
     budget: &Budget,
 ) -> Result<Option<CapturedRaster>, Error> {
-    let pixels = u64::from(raster.width()).saturating_mul(u64::from(raster.height()));
-    budget.charge(LimitCode::TotalDecompressedSize, pixels.saturating_mul(4))?;
+    let base_pixels = u64::from(raster.width()).saturating_mul(u64::from(raster.height()));
+    let mask_pixels = attached_mask_pixels(raster.stream());
+    let precharged = base_pixels.saturating_mul(4).saturating_add(mask_pixels);
+    budget.charge(LimitCode::TotalDecompressedSize, precharged)?;
+    // Pre-check memory headroom for the decoded raster and attached mask before hayro allocates.
+    let estimated_mem = base_pixels.saturating_mul(3).saturating_add(mask_pixels);
+    budget.check(LimitCode::MemorySize, estimated_mem)?;
     let interpolate = image_interpolate(raster.stream());
     let mut out = None;
+    let mut actual_decoded: u64 = 0;
     raster.with_rgba(
         |data, alpha| {
             let (width, height, gray, color) = match data {
                 ImageData::Rgb(rgb) => (rgb.width, rgb.height, false, rgb.data),
                 ImageData::Luma(luma) => (luma.width, luma.height, true, luma.data),
             };
+            let raw_alpha_len = alpha.as_ref().map_or(0, |mask| mask.data.len());
+            actual_decoded = (color.len() as u64).saturating_add(raw_alpha_len as u64);
             let alpha = alpha
                 .filter(|mask| mask.data.iter().any(|&value| value < 255))
                 .map(|mask| (mask.width, mask.height, mask.data));
@@ -93,6 +125,12 @@ pub(super) fn capture_raster_image(
         },
         None,
     );
+    if actual_decoded > precharged {
+        budget.charge(
+            LimitCode::TotalDecompressedSize,
+            actual_decoded - precharged,
+        )?;
+    }
     if let Some(captured) = &out {
         let retained = captured
             .color

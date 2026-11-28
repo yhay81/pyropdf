@@ -100,8 +100,7 @@ def _expand_fallback_fonts(primary: Font, fallback_fonts: Sequence[Font] | Fallb
     """Validate and flatten ``fallback_fonts`` into an ordered list of :class:`Font`."""
     if isinstance(fallback_fonts, FallbackFonts):
         extras: list[Font] = []
-        for language in fallback_fonts:
-            entry = fallback_fonts[language]
+        for _language, entry in fallback_fonts._snapshot():  # noqa: SLF001 - atomic lock snapshot.
             order = (entry.serif, entry.sans) if primary.is_serif else (entry.sans, entry.serif)
             extras.extend(face for face in order if face is not None)
         return extras
@@ -547,7 +546,9 @@ class _GlyphRun:
                     ends_cluster=ends_span and index == order[-1],
                 )
                 if spacing and line[start:end] == " ":
-                    self.pending += spacing * 1000 / self.size
+                    delta = spacing * 1000 / self.size
+                    self.pending += delta
+                    self.pen_y -= delta
             else:
                 offset = x_offset * scale
                 follow = pens[-1] - (at + offset + self.widths[key]) if ends_span and index == order[-1] else 0.0

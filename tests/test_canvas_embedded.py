@@ -2059,3 +2059,122 @@ def test_fallback_fonts_undo_and_missing_glyph_atomicity(japanese: pyropdf.Font,
     document.history.undo()
     assert document.pages[0].text().strip() == ""
     assert _descriptor_programs(document) == set()
+
+
+def test_invisible_text_with_colour_and_bitmap_fonts_draws_no_ink_and_extracts() -> None:
+    for filename, text in (
+        ("colour-colr0.ttf", "A"),
+        ("colour-bitmaps-sbix-only.ttf", "D"),
+    ):
+        font = pyropdf.Font.from_file(FONTS / filename)
+        document, page = _new_page(200, 120)
+        blank = bytes(page.pixmap(dpi=72))
+        with page.draw() as canvas:
+            canvas.text(text, (30, 80), font=font, size=48, render_mode=pyropdf.TextRenderMode.INVISIBLE)
+        data = document.to_bytes()
+        reopened = pyropdf.open(data).pages[0]
+        assert bytes(page.pixmap(dpi=72)) == blank
+        assert bytes(reopened.pixmap(dpi=72)) == blank
+        assert _text_without_warning(reopened).strip() == text
+        if shutil.which("pdftoppm") is not None:
+            poppler_gray, _ = _poppler_gray(data)
+            assert min(poppler_gray) == 255
+
+
+@pytest.mark.parametrize(
+    ("filename", "text"),
+    [
+        ("colour-colr-sweep.ttf", "A"),
+        ("colour-sbix-jpeg.ttf", "A"),
+        ("colour-cbdt-raw.ttf", "A"),
+        ("colour-svg.ttf", "A"),
+        ("colour-colr0.ttf", "D"),
+    ],
+)
+def test_clip_text_refuses_colour_glyph_without_outline_even_when_glyf_present(filename: str, text: str) -> None:
+    font = pyropdf.Font.from_file(FONTS / filename)
+    document, page = _new_page(200, 120)
+    before = document.to_bytes(), document.history.steps
+    with page.draw() as canvas, pytest.raises(pyropdf.PdfError, match="no outline"):
+        canvas.clip_text(text, (20, 80), font=font, size=48)
+    assert (document.to_bytes(), document.history.steps) == before
+    # Glyph B in these fixtures carries a real fallback outline and clips cleanly.
+    with page.draw() as canvas, canvas.clip_text("B", (20, 80), font=font, size=48):
+        canvas.rect((0, 0, 200, 120), fill=pyropdf.Color(1, 0, 0))
+    assert min(bytes(page.pixmap(dpi=72).to_gray())) < 200
+
+
+def test_embedded_font_does_not_reuse_subsetted_font_in_place(japanese: pyropdf.Font) -> None:
+    document, page = _new_page(300, 160)
+    with page.draw() as canvas:
+        canvas.text("日", (20, 60), font=japanese, size=24)
+    document.subset_fonts()
+    with page.draw() as canvas:
+        canvas.text("本", (80, 60), font=japanese, size=24)
+    data = document.to_bytes()
+    reopened = pyropdf.open(data).pages[0]
+    extracted = _text_without_warning(reopened).replace(" ", "").strip()
+    assert "日" in extracted
+    assert "本" in extracted
+    # Both glyphs must paint visible dark ink on the page (left and right regions).
+    gray = reopened.pixmap(dpi=72).to_gray()
+    raw = bytes(gray)
+    left_min = min(raw[y * gray.width + x] for y in range(25, 75) for x in range(15, 55))
+    right_min = min(raw[y * gray.width + x] for y in range(25, 75) for x in range(75, 115))
+    assert left_min < 128
+    assert right_min < 128
+
+
+def test_shared_horizontal_and_vertical_embedded_font_subsets_cleanly(japanese: pyropdf.Font) -> None:
+    document, page = _new_page(260, 220)
+    with page.draw() as canvas:
+        canvas.text("日本", (20, 50), font=japanese, size=20)
+        canvas.text("かな", (200, 30), font=japanese, size=20, direction="vertical")
+    data = document.to_bytes()
+    reopened = pyropdf.open(data)
+    fonts = reopened.pages[0].fonts()
+    assert {font.encoding for font in fonts} == {"Identity-H", "Identity-V"}
+    assert all(font.subset for font in fonts)
+    assert len(_descriptor_programs(reopened)) == 1
+    extracted = _text_without_warning(reopened.pages[0])
+    assert "日本" in extracted
+    assert "か" in extracted
+    assert "な" in extracted
+
+
+def test_vertical_justified_textbox_preserves_word_spacing_and_budget(japanese: pyropdf.Font) -> None:
+    document, page = _new_page(240, 260)
+    with page.draw() as canvas:
+        fit = canvas.textbox(
+            (20, 20, 220, 240),
+            "日 本 語 、 か な 。",
+            font=japanese,
+            size=16,
+            align="justify",
+            direction="vertical",
+        )
+    assert fit.fits
+    reopened = pyropdf.open(document.to_bytes()).pages[0]
+    extracted = _text_without_warning(reopened)
+    assert "日" in extracted
+    assert "な" in extracted
+
+    # Excessive explicit line count in layout_text_fallback fails immediately on text_line_count.
+    with page.draw() as canvas, pytest.raises(pyropdf.LimitError) as refused:
+        canvas.textbox(
+            (20, 20, 220, 240),
+            "日\n" * 5000,
+            font=japanese,
+            size=12,
+            direction="vertical",
+        )
+    assert refused.value.code == "text_line_count"
+
+    # CancellationToken aborts vertical drawing cleanly.
+    token = pyropdf.CancellationToken()
+    cancelled_doc = pyropdf.Document(limits=pyropdf.DocumentLimits(cancellation=token))
+    cancelled_page = cancelled_doc.pages.new((200, 200))
+    with pytest.raises(pyropdf.LimitError) as refused, cancelled_page.draw() as canvas:  # noqa: PT012
+        token.cancel()
+        canvas.text("日本語", (120, 20), font=japanese, size=18, direction="vertical")
+    assert refused.value.code == "cancelled"

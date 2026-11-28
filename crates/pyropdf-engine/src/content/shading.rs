@@ -123,6 +123,10 @@ pub struct ShadingMetadata {
     pub background: Option<[f64; 4]>,
     /// Preserve the reader's bounded approximation with a sampled function.
     pub sampled: bool,
+    /// Optional transform mapping the soft-mask Form XObject from shading space
+    /// into the enclosing painting coordinate space (e.g. a `ShadingPattern`'s
+    /// `/Matrix`).
+    pub mask_matrix: Option<[f64; 6]>,
 }
 
 /// What a caller names to paint a gradient.
@@ -318,12 +322,13 @@ impl Shadings {
         )?;
         let shadings = dict([("S0", Value::Reference(gray))]);
         let resources = dict([("Shading", Value::Dict(shadings))]);
-        let group = self.transparency_group(
+        let group = self.transparency_group_with_matrix(
             transaction,
             b"/S0 sh",
             area,
             resources,
             "DeviceGray",
+            metadata.mask_matrix,
             budget,
         )?;
         let mask = self.luminosity_mask(transaction, group, budget)?;
@@ -372,18 +377,55 @@ impl Shadings {
         color_space: &str,
         budget: &Budget,
     ) -> Result<Reference, ShadingError> {
+        self.transparency_group_with_matrix(
+            transaction,
+            content,
+            bbox,
+            resources,
+            color_space,
+            None,
+            budget,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the fields of the emitted transparency-group Form XObject"
+    )]
+    fn transparency_group_with_matrix(
+        &mut self,
+        transaction: &mut Transaction,
+        content: &[u8],
+        bbox: [f64; 4],
+        resources: Dict,
+        color_space: &str,
+        matrix: Option<[f64; 6]>,
+        budget: &Budget,
+    ) -> Result<Reference, ShadingError> {
         let group = dict([
             ("Type", name("Group")),
             ("S", name("Transparency")),
             ("CS", name(color_space)),
         ]);
-        let form = dict([
+        let mut form = dict([
             ("Type", name("XObject")),
             ("Subtype", name("Form")),
             ("BBox", reals(&bbox)),
             ("Group", Value::Dict(group)),
             ("Resources", Value::Dict(resources)),
         ]);
+        if let Some(matrix) = matrix {
+            if !matrix.iter().copied().all(in_real_range) {
+                return Err(ShadingError::Invalid(
+                    "a soft-mask matrix is not finite and within PDF real range",
+                ));
+            }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "one optional /Matrix entry in this fixed Form XObject dictionary"
+            )]
+            form.insert(Name::from("Matrix"), reals(&matrix));
+        }
         let mut data = BudgetVec::new(budget);
         data.try_extend_from_slice(content)?;
         let data = Bytes::new(data.into_vec());
@@ -1126,5 +1168,111 @@ mod cache_tests {
         let after_mask = table.paint(&mut tx, &gradient, area, &budget).unwrap();
         assert_ne!(after_mask.mask, after_fn.mask);
         assert_eq!(after_mask.shading, after_fn.shading);
+    }
+
+    #[test]
+    fn mask_matrix_writes_form_matrix_and_distinguishes_cache_entries() {
+        let budget = Budget::default();
+        let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
+        let mut table = Shadings::new();
+        let stops = [
+            Stop {
+                offset: 0.0,
+                color: [1.0, 0.0, 0.0],
+                alpha: 1.0,
+            },
+            Stop {
+                offset: 1.0,
+                color: [0.0, 0.0, 1.0],
+                alpha: 0.0,
+            },
+        ];
+        let gradient = Gradient {
+            geometry: Geometry::Axial {
+                start: [0.0, 0.0],
+                end: [50.0, 0.0],
+            },
+            stops: &stops,
+            extend: Extend::Pad,
+        };
+        let area = [0.0, 0.0, 50.0, 50.0];
+        let matrix_a = [2.0, 0.0, 0.0, 2.0, 10.0, 20.0];
+        let matrix_b = [1.0, 0.0, 0.0, 1.0, 5.0, 5.0];
+
+        let mut tx = document.begin();
+        let plain = table
+            .paint_with_metadata(
+                &mut tx,
+                &gradient,
+                area,
+                ShadingMetadata::default(),
+                &budget,
+            )
+            .unwrap();
+        let with_a = table
+            .paint_with_metadata(
+                &mut tx,
+                &gradient,
+                area,
+                ShadingMetadata {
+                    mask_matrix: Some(matrix_a),
+                    ..ShadingMetadata::default()
+                },
+                &budget,
+            )
+            .unwrap();
+        let with_a_again = table
+            .paint_with_metadata(
+                &mut tx,
+                &gradient,
+                area,
+                ShadingMetadata {
+                    mask_matrix: Some(matrix_a),
+                    ..ShadingMetadata::default()
+                },
+                &budget,
+            )
+            .unwrap();
+        let with_b = table
+            .paint_with_metadata(
+                &mut tx,
+                &gradient,
+                area,
+                ShadingMetadata {
+                    mask_matrix: Some(matrix_b),
+                    ..ShadingMetadata::default()
+                },
+                &budget,
+            )
+            .unwrap();
+
+        assert_eq!(with_a, with_a_again);
+        assert_ne!(plain.mask, with_a.mask);
+        assert_ne!(with_a.mask, with_b.mask);
+
+        // Verify /Matrix on the soft-mask Form XObject of `with_a`.
+        let mask_obj = tx
+            .version()
+            .get(with_a.mask.unwrap().number(), &budget)
+            .unwrap()
+            .unwrap();
+        let Value::Dict(mask_dict) = mask_obj.value().as_ref() else {
+            panic!("expected ExtGState dict");
+        };
+        let Some(Value::Dict(smask)) = mask_dict.get("SMask") else {
+            panic!("expected SMask dict");
+        };
+        let Some(&Value::Reference(group_ref)) = smask.get("G") else {
+            panic!("expected Form reference");
+        };
+        let form_obj = tx
+            .version()
+            .get(group_ref.number(), &budget)
+            .unwrap()
+            .unwrap();
+        let Value::Stream(stream) = form_obj.value().as_ref() else {
+            panic!("expected Form stream");
+        };
+        assert_eq!(stream.dict().get("Matrix"), Some(&reals(&matrix_a)));
     }
 }

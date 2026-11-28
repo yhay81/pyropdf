@@ -10,7 +10,7 @@ use super::super::embed::Face;
 use super::super::sfnt;
 use super::{
     FallbackShapeError, FallbackSource, ShapeError, ShapedGlyph, ShapingFace, WritingDirection,
-    shape_with_fallback,
+    shape_with_fallback, shape_with_fallback_cached,
 };
 use crate::standard;
 
@@ -314,4 +314,104 @@ fn fallback_shaping_switches_faces_per_cluster_and_handles_missing() {
         .unwrap_err(),
         FallbackShapeError::NotWinAnsi('日')
     );
+}
+
+#[test]
+fn fallback_handles_default_ignorables_missing_char_and_rtl_mirroring() {
+    let budget = Budget::default();
+    let jp = Face::read(JAPANESE, 0).unwrap();
+    let he = Face::read(HEBREW, 0).unwrap();
+    let helvetica = standard::font("Helvetica").unwrap();
+
+    // 1. Single-face embedded fast path matches direct harfrust shaping for default-ignorables.
+    let single = shape_with_fallback(
+        &[FallbackSource::Embedded(&jp)],
+        "日\u{200D}本\u{00AD}A",
+        WritingDirection::Horizontal,
+        &budget,
+    )
+    .unwrap()
+    .into_vec();
+    let direct = ShapingFace::of(&jp)
+        .unwrap()
+        .shape("日\u{200D}本\u{00AD}A", &budget)
+        .unwrap()
+        .into_vec();
+    assert_eq!(single.len(), direct.len());
+    for (a, b) in single.iter().zip(&direct) {
+        assert_eq!(a.glyph, b.glyph);
+        assert_eq!(a.x_advance, b.x_advance);
+    }
+
+    // 2. Standalone default-ignorables never fail on a Standard 14 face.
+    let mixed = [
+        FallbackSource::Standard(helvetica),
+        FallbackSource::Embedded(&jp),
+    ];
+    let with_ignorable = shape_with_fallback(
+        &mixed,
+        "\u{200B}A\u{FEFF}",
+        WritingDirection::Horizontal,
+        &budget,
+    )
+    .unwrap()
+    .into_vec();
+    assert!(with_ignorable.iter().any(|g| g.glyph == u32::from(b'A')));
+    let std_only = shape_with_fallback(
+        &[FallbackSource::Standard(helvetica)],
+        "\u{200B}A\u{FEFF}",
+        WritingDirection::Horizontal,
+        &budget,
+    )
+    .unwrap()
+    .into_vec();
+    assert_eq!(std_only.len(), 1);
+    assert_eq!(std_only[0].glyph, u32::from(b'A'));
+
+    // 3. MissingGlyph reports the actual unsupported character in a multi-char cluster.
+    let err = shape_with_fallback(&mixed, "A\u{1AB0}", WritingDirection::Horizontal, &budget)
+        .unwrap_err();
+    assert_eq!(err, FallbackShapeError::MissingGlyph('\u{1AB0}'));
+
+    // 4. RTL runs in Standard 14 mirror bidi-mirrored punctuation per UAX #9 L4.
+    let rtl_sources = [
+        FallbackSource::Standard(helvetica),
+        FallbackSource::Embedded(&he),
+    ];
+    let rtl_text = "שלום (שלום)";
+    let rtl_glyphs = shape_with_fallback(
+        &rtl_sources,
+        rtl_text,
+        WritingDirection::Horizontal,
+        &budget,
+    )
+    .unwrap()
+    .into_vec();
+    let open_glyph = rtl_glyphs
+        .iter()
+        .find(|g| &rtl_text[g.text.clone()] == "(")
+        .expect("opening paren glyph");
+    let close_glyph = rtl_glyphs
+        .iter()
+        .find(|g| &rtl_text[g.text.clone()] == ")")
+        .expect("closing paren glyph");
+    assert_eq!(open_glyph.glyph, u32::from(b')'));
+    assert_eq!(close_glyph.glyph, u32::from(b'('));
+
+    // 5. Cached shaper reuse produces identical results and populates shapers.
+    let mut shapers: [Option<ShapingFace>; 2] = [None, None];
+    let cached = shape_with_fallback_cached(
+        &mixed,
+        &mut shapers,
+        "Hi 日本",
+        WritingDirection::Horizontal,
+        &budget,
+    )
+    .unwrap()
+    .into_vec();
+    assert!(shapers[1].is_some());
+    let uncached = shape_with_fallback(&mixed, "Hi 日本", WritingDirection::Horizontal, &budget)
+        .unwrap()
+        .into_vec();
+    assert_eq!(cached, uncached);
 }

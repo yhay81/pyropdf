@@ -629,3 +629,137 @@ def test_new_from_cbz_refuses_corrupt_empty_encrypted_and_cancelled() -> None:
         with pytest.raises(pyropdf.LimitError) as raised:
             cancelled_doc.pages.new_from_cbz(_make_cbz([("01.jpg", good_jpg)]))
         assert raised.value.code == "cancelled"
+
+
+def test_new_from_cbz_hardening_preflight_ratio_bypasses_nul_and_long_digits(monkeypatch: pytest.MonkeyPatch) -> None:
+    good_jpg = _encoded(_image("RGB", (20, 10)), "JPEG", quality=95, dpi=(72, 72))
+
+    # 1. Pre-flight Central Directory entry cap refuses before zipfile instantiates all ZipInfo objects.
+    monkeypatch.setattr("pyropdf._images._MAX_ARCHIVE_ENTRIES", 5)
+    many_entries = _make_cbz([(f"{i:02d}.jpg", good_jpg) for i in range(6)])
+    doc = pyropdf.Document()
+    with pytest.raises(pyropdf.LimitError) as raised:
+        doc.pages.new_from_cbz(many_entries)
+    assert raised.value.code == "content_element_count"
+    monkeypatch.undo()
+
+    # 2. Unsupported compression method (BZIP2) is refused with ValueError.
+    bzip_buf = io.BytesIO()
+    with zipfile.ZipFile(bzip_buf, "w", compression=zipfile.ZIP_BZIP2) as archive:
+        archive.writestr("01.jpg", good_jpg)
+    with pytest.raises(ValueError, match="unsupported compression method"):
+        doc.pages.new_from_cbz(bzip_buf.getvalue())
+
+    # 3. Archive-wide multi-member ratio bomb (each member under 64 KiB floor, archive ratio >> 100x).
+    chunk = b"\x00" * 60_000
+    multi_bomb = _make_cbz([(f"{i:02d}.png", chunk) for i in range(25)], compress=zipfile.ZIP_DEFLATED)
+    with pytest.raises(pyropdf.LimitError) as raised:
+        doc.pages.new_from_cbz(multi_bomb)
+    assert raised.value.code == "total_decompressed_size"
+
+    # 4. Overlapping entries (two CD records pointing to the same local header offset) are refused.
+    two = bytearray(_make_cbz([("01.jpg", good_jpg), ("02.jpg", good_jpg)]))
+    second_cd = two.rfind(b"PK\x01\x02")
+    assert second_cd > 0
+    # Overwrite second entry's relative local header offset (+42) to 0 (matching first entry).
+    struct.pack_into("<I", two, second_cd + 42, 0)
+    with pytest.raises(ValueError, match="overlapping entries"):
+        doc.pages.new_from_cbz(bytes(two))
+
+    # 5. Embedded NUL byte in ZIP filename (hidden by ZipInfo.filename truncation) is caught via orig_filename.
+    nul_cbz = bytearray(_make_cbz([("01.jpgX.txt", good_jpg)]))
+    nul_cbz = bytearray(bytes(nul_cbz).replace(b"01.jpgX.txt", b"01.jpg\x00.txt"))
+    with pytest.raises(ValueError, match="NUL byte"):
+        doc.pages.new_from_cbz(bytes(nul_cbz))
+
+    # 6. Filenames with >4,300 consecutive digits sort cleanly without hitting int() digit limits.
+    long_a = "1" * 5000 + ".jpg"
+    long_b = "2" + "0" * 4999 + ".jpg"
+    red_jpg = _encoded(Image.new("RGB", (12, 12), (255, 0, 0)), "JPEG", quality=95)
+    blue_jpg = _encoded(Image.new("RGB", (12, 12), (0, 0, 255)), "JPEG", quality=95)
+    pages = doc.pages.new_from_cbz(_make_cbz([(long_b, blue_jpg), (long_a, red_jpg)]))
+    assert len(pages) == 2
+    assert pages[0].pixmap(dpi=72).pixel(6, 6)[0] > 200
+    assert pages[1].pixmap(dpi=72).pixel(6, 6)[2] > 200
+
+
+def _jp2_box(box_type: bytes, payload: bytes) -> bytes:
+    return struct.pack(">I4s", 8 + len(payload), box_type) + payload
+
+
+def _make_exif_orientation(orientation: int, x_dpi: int = 72, y_dpi: int = 72) -> bytes:
+    """Build a minimal big-endian Exif TIFF block with XResolution, YResolution, ResolutionUnit, Orientation."""
+    # Header (8B) + IFD count (2B) + 4 entries (48B) + next IFD (4B) = 62B; rationals at 62 and 70.
+    entries = b"".join(
+        [
+            struct.pack(">HHII", 0x0112, 3, 1, orientation << 16),
+            struct.pack(">HHII", 0x011A, 5, 1, 62),
+            struct.pack(">HHII", 0x011B, 5, 1, 70),
+            struct.pack(">HHII", 0x0128, 3, 1, 2 << 16),
+        ]
+    )
+    return (
+        b"MM\x00*\x00\x00\x00\x08"
+        + struct.pack(">H", 4)
+        + entries
+        + b"\x00\x00\x00\x00"
+        + struct.pack(">IIII", x_dpi, 1, y_dpi, 1)
+    )
+
+
+def test_new_from_image_hardening_dpi_exif_jp2_zero_jpeg_pillow_limits_and_locked() -> None:
+    # 1. Non-square embedded DPI + Exif orientation 6 matches between JPEG and Pillow TIFF,
+    #    and caller dpi=(x, y) override is always in display orientation.
+    base = _image("RGB", (40, 20))
+    exif_bytes = b"Exif\x00\x00" + _make_exif_orientation(6, x_dpi=200, y_dpi=100)
+    jpeg = _encoded(base, "JPEG", quality=95, exif=exif_bytes)
+    tiff = _encoded(base, "TIFF", dpi=(200, 100), exif=exif_bytes)
+    doc = pyropdf.Document()
+    (jpg_page,) = doc.pages.new_from_image(jpeg)
+    (tif_page,) = doc.pages.new_from_image(tiff)
+    # Transposed 40x20 -> display 20px wide at 100 dpi (14.4 pt), 40px tall at 200 dpi (14.4 pt).
+    assert tuple(jpg_page.rect) == pytest.approx((0, 0, 20 * 72 / 100, 40 * 72 / 200))
+    assert tuple(tif_page.rect) == pytest.approx(tuple(jpg_page.rect))
+    (jpg_override,) = doc.pages.new_from_image(jpeg, dpi=(200, 100))
+    (tif_override,) = doc.pages.new_from_image(tiff, dpi=(200, 100))
+    assert tuple(jpg_override.rect) == pytest.approx((0, 0, 20 * 72 / 200, 40 * 72 / 100))
+    assert tuple(tif_override.rect) == pytest.approx(tuple(jpg_override.rect))
+
+    # 2. Zero-dimension JPEG raises ValueError (not ZeroDivisionError) even when size= is given.
+    zero_jpg = b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x00\x00\x00\x03\x01\x11\x00\xff\xd9"
+    with pytest.raises(ValueError, match="non-positive"):
+        doc.pages.new_from_image(zero_jpg, size=(100, 100))
+
+    # 3. JP2 box parser ignores decoy `ihdr` in earlier uuid box and honors JP2 Exif orientation.
+    jp2_raw = _encoded(base, "JPEG2000")
+    assert jp2_raw.startswith(b"\x00\x00\x00\x0cjP  \r\n\x87\n")
+    decoy_uuid = _jp2_box(b"uuid", b"\x00" * 16 + b"ihdr" + struct.pack(">II", 999, 999))
+    exif_uuid = _jp2_box(b"uuid", b"JpgTiffExif->JP2" + _make_exif_orientation(6, x_dpi=72, y_dpi=72))
+    # Insert both boxes right after signature (12B) + ftyp box.
+    ftyp_len = struct.unpack(">I", jp2_raw[12:16])[0]
+    jp2_with_meta = jp2_raw[: 12 + ftyp_len] + decoy_uuid + exif_uuid + jp2_raw[12 + ftyp_len :]
+    (jp2_page,) = doc.pages.new_from_image(jp2_with_meta)
+    # 40x20 transposed by Exif 6 at 72 dpi -> 20x40 pt.
+    assert tuple(jp2_page.rect) == pytest.approx((0, 0, 20, 40))
+
+    # 4. Pillow decode path enforces DocumentLimits before decoding.
+    big_tiff = _encoded(Image.new("RGB", (200, 200), (10, 20, 30)), "TIFF", compression="tiff_deflate")
+    with pyropdf.Document(limits=pyropdf.DocumentLimits(max_decompressed_size=10_000)) as limited:
+        with pytest.raises(pyropdf.LimitError) as raised:
+            limited.pages.new_from_image(big_tiff)
+        assert raised.value.code == "decompressed_size"
+        assert len(limited.pages) == 0
+
+    # 5. Locked encrypted documents fail up front with EncryptedDocumentError.
+    enc_src = pyropdf.Document()
+    enc_src.pages.new((100, 100))
+    encrypted = enc_src.to_bytes(
+        encryption=pyropdf.Encryption(user_password="secret", owner_password="owner")  # noqa: S106 - test fixture
+    )
+    with pyropdf.open(encrypted) as locked:
+        with pytest.raises(pyropdf.EncryptedDocumentError):
+            locked.pages.new_from_images([])
+        with pytest.raises(pyropdf.EncryptedDocumentError):
+            locked.pages.new_from_image(jpeg)
+        with pytest.raises(pyropdf.EncryptedDocumentError):
+            locked.pages.new_from_cbz(_make_cbz([("01.jpg", jpeg)]))

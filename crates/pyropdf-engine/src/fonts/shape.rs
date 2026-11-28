@@ -18,12 +18,13 @@ use harfrust::{
 };
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use skrifa::MetadataProvider as _;
 use skrifa::raw::TableProvider;
 use unicode_bidi::BidiInfo;
 use unicode_script::{Script as UnicodeScript, UnicodeScript as _};
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::embed::{Face, Measure};
+use super::embed::Face;
 use crate::standard::{self, Base14Font};
 
 #[cfg(test)]
@@ -334,6 +335,23 @@ pub fn shape_with_fallback<'b>(
     direction: WritingDirection,
     budget: &'b Budget,
 ) -> Result<BudgetVec<'b, FallbackShapedGlyph>, FallbackShapeError> {
+    let mut shapers: BudgetVec<'_, Option<ShapingFace>> = BudgetVec::new(budget);
+    shapers.try_reserve_exact(faces.len())?;
+    for _ in 0..faces.len() {
+        shapers.try_push(None)?;
+    }
+    shape_with_fallback_cached(faces, &mut shapers, text, direction, budget)
+}
+
+/// Like [`shape_with_fallback`], reusing initialized [`ShapingFace`] instances
+/// across repeated shaping calls (such as line-wrapping probes).
+pub fn shape_with_fallback_cached<'b>(
+    faces: &[FallbackSource<'_>],
+    shapers: &mut [Option<ShapingFace>],
+    text: &str,
+    direction: WritingDirection,
+    budget: &'b Budget,
+) -> Result<BudgetVec<'b, FallbackShapedGlyph>, FallbackShapeError> {
     if faces.is_empty() {
         return Err(ShapeError::Font("at least one font face is required".into()).into());
     }
@@ -351,15 +369,54 @@ pub fn shape_with_fallback<'b>(
     if text.is_empty() {
         return Ok(glyphs);
     }
+    // Single embedded face: shape directly through harfrust so Unicode
+    // default-ignorable hiding and NFC/NFD normalization match `Font.layout`
+    // and `Font.text_width` exactly.
+    if faces.len() == 1
+        && let FallbackSource::Embedded(face) = faces[0]
+    {
+        if shapers[0].is_none() {
+            shapers[0] = Some(ShapingFace::of(face)?);
+        }
+        let shaping_face = shapers[0].as_ref().expect("shaping face initialized above");
+        let shaped = shaping_face.shape_direction(text, direction, budget)?;
+        glyphs.try_reserve_exact(shaped.len())?;
+        for glyph in shaped.into_vec() {
+            if glyph.glyph == 0
+                && let Some(character) = text[glyph.cluster.clone()]
+                    .chars()
+                    .find(|character| !is_cluster_ignorable(*character))
+            {
+                return Err(FallbackShapeError::MissingGlyph(character));
+            }
+            glyphs.try_push(FallbackShapedGlyph {
+                face_index: 0,
+                glyph: glyph.glyph,
+                x_advance: glyph.x_advance,
+                y_advance: glyph.y_advance,
+                x_offset: glyph.x_offset,
+                y_offset: glyph.y_offset,
+                cluster: glyph.cluster,
+                text: glyph.text,
+                rtl: glyph.rtl,
+            })?;
+        }
+        return Ok(glyphs);
+    }
     let all_standard = faces
         .iter()
         .all(|face| matches!(face, FallbackSource::Standard(_)));
-    let mut shapers: BudgetVec<'_, Option<ShapingFace>> = BudgetVec::new(budget);
-    shapers.try_reserve_exact(faces.len())?;
-    for _ in 0..faces.len() {
-        shapers.try_push(None)?;
+    let mut font_refs: BudgetVec<'_, Option<skrifa::FontRef<'_>>> = BudgetVec::new(budget);
+    font_refs.try_reserve_exact(faces.len())?;
+    for face in faces {
+        let parsed = match face {
+            FallbackSource::Standard(_) => None,
+            FallbackSource::Embedded(embedded) => Some(embedded.font()),
+        };
+        font_refs.try_push(parsed)?;
     }
     let mut buffer = Buffer::new();
+    let mut probe_buffer = Buffer::new();
     let mut shape_script_run = |range: Range<usize>,
                                 script: Option<Script>,
                                 rtl: bool,
@@ -374,7 +431,19 @@ pub fn shape_with_fallback<'b>(
             }
             let c_start = range.start + offset;
             let c_end = c_start + cluster.len();
-            let chosen = pick_face_for_cluster(faces, cluster, last_face, all_standard)?;
+            let Some(chosen) = pick_face_for_cluster(
+                faces,
+                &font_refs,
+                shapers,
+                &mut probe_buffer,
+                cluster,
+                last_face,
+                all_standard,
+                direction,
+            )?
+            else {
+                continue;
+            };
             last_face = Some(chosen);
             if let Some(previous) = face_runs.last_mut()
                 && previous.0 == chosen
@@ -441,8 +510,12 @@ pub fn shape_with_fallback<'b>(
                     if let Some(character) = glyphs[start_len..]
                         .iter()
                         .filter(|glyph| glyph.glyph == 0)
-                        .filter_map(|glyph| text[glyph.cluster.clone()].chars().next())
-                        .find(|character| !character.is_control())
+                        .filter_map(|glyph| {
+                            text[glyph.cluster.clone()]
+                                .chars()
+                                .find(|character| !is_cluster_ignorable(*character))
+                        })
+                        .next()
                     {
                         return Err(FallbackShapeError::MissingGlyph(character));
                     }
@@ -483,51 +556,244 @@ pub fn shape_with_fallback<'b>(
     Ok(glyphs)
 }
 
-fn is_cluster_ignorable(character: char) -> bool {
-    character.is_control()
-        || matches!(character, '\u{200C}' | '\u{200D}' | '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}')
+/// Whether `character` is a Unicode `Default_Ignorable_Code_Point` (excluding
+/// C0/C1 controls handled separately).
+fn is_default_ignorable(character: char) -> bool {
+    matches!(
+        character,
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF0}'..='\u{FFF8}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E0FFF}'
+    )
 }
 
-fn face_supports_cluster(face: FallbackSource<'_>, cluster: &str) -> bool {
-    match face {
-        FallbackSource::Standard(font) => cluster.chars().all(|character| {
-            standard::glyph_code(font, character).is_some()
-                && standard::winansi_byte(character).is_some()
-        }),
-        FallbackSource::Embedded(face) => {
-            let measure = Measure::new(face);
-            cluster
-                .chars()
-                .filter(|&character| !is_cluster_ignorable(character))
-                .all(|character| measure.glyph(character).is_some())
+fn is_cluster_ignorable(character: char) -> bool {
+    character.is_control() || is_default_ignorable(character)
+}
+
+fn is_variation_selector(character: char) -> bool {
+    matches!(
+        character,
+        '\u{180B}'..='\u{180D}' | '\u{180F}' | '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}'
+    )
+}
+
+/// Returns `(base, variation_selector)` if `cluster` contains a variation
+/// selector following a non-ignorable base character.
+fn cluster_variation_pair(cluster: &str) -> Option<(char, char)> {
+    let mut base: Option<char> = None;
+    for character in cluster.chars() {
+        if is_variation_selector(character) {
+            if let Some(base_char) = base {
+                return Some((base_char, character));
+            }
+        } else if !is_cluster_ignorable(character) {
+            base = Some(character);
         }
     }
+    None
 }
 
+fn standard_supports_cluster(font: Base14Font, cluster: &str) -> bool {
+    let mut has_visible = false;
+    for character in cluster.chars() {
+        if is_default_ignorable(character) {
+            continue;
+        }
+        has_visible = true;
+        if standard::glyph_code(font, character).is_none()
+            || standard::winansi_byte(character).is_none()
+        {
+            return false;
+        }
+    }
+    has_visible
+}
+
+fn embedded_supports_cluster(font: &skrifa::FontRef<'_>, cluster: &str) -> bool {
+    let charmap = font.charmap();
+    cluster
+        .chars()
+        .filter(|&character| !is_cluster_ignorable(character))
+        .all(|character| charmap.map(character).is_some())
+}
+
+fn embedded_supports_variant(
+    font: &skrifa::FontRef<'_>,
+    cluster: &str,
+    base: char,
+    selector: char,
+) -> bool {
+    let charmap = font.charmap();
+    charmap.map_variant(base, selector).is_some()
+        && cluster
+            .chars()
+            .filter(|&character| !is_cluster_ignorable(character))
+            .all(|character| charmap.map(character).is_some())
+}
+
+/// Probe-shapes a single cluster with `face` to detect canonical NFC/NFD
+/// equivalence (for example NFD `"e\u{0301}"` on a font containing only `'é'`).
+fn probe_embedded_cluster(
+    face: &Face,
+    shaper_slot: &mut Option<ShapingFace>,
+    probe_buffer: &mut Buffer,
+    cluster: &str,
+    direction: WritingDirection,
+) -> Result<bool, FallbackShapeError> {
+    if shaper_slot.is_none() {
+        *shaper_slot = Some(ShapingFace::of(face)?);
+    }
+    let shaping_face = shaper_slot
+        .as_ref()
+        .expect("shaping face initialized above");
+    let shaper = ShaperFont::new(&shaping_face.font);
+    probe_buffer.clear();
+    probe_buffer.push_str(cluster);
+    probe_buffer.set_direction(match direction {
+        WritingDirection::Vertical => Direction::TopToBottom,
+        WritingDirection::Horizontal => Direction::LeftToRight,
+    });
+    probe_buffer.guess_segment_properties();
+    harfrust::shape(&shaper, probe_buffer, ShapeOptions::new())
+        .map_err(|error| ShapeError::Font(error.to_string()))?;
+    let supported = probe_buffer.allocation_successful()
+        && !probe_buffer.is_empty()
+        && probe_buffer
+            .glyph_infos()
+            .iter()
+            .all(|info| info.glyph_id != 0);
+    probe_buffer.clear();
+    Ok(supported)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "precomputed face metadata and reusable probe state for fallback resolution"
+)]
 fn pick_face_for_cluster(
     faces: &[FallbackSource<'_>],
+    font_refs: &[Option<skrifa::FontRef<'_>>],
+    shapers: &mut [Option<ShapingFace>],
+    probe_buffer: &mut Buffer,
     cluster: &str,
     last_face: Option<usize>,
     all_standard: bool,
-) -> Result<usize, FallbackShapeError> {
+    direction: WritingDirection,
+) -> Result<Option<usize>, FallbackShapeError> {
     if cluster.chars().all(is_cluster_ignorable) {
-        return Ok(last_face.unwrap_or(0));
+        // Prefer an embedded face so control/format chars never fail Standard 14 WinAnsi checks.
+        if let Some(index) = last_face
+            && matches!(faces[index], FallbackSource::Embedded(_))
+        {
+            return Ok(Some(index));
+        }
+        if let Some(index) = faces
+            .iter()
+            .position(|face| matches!(face, FallbackSource::Embedded(_)))
+        {
+            return Ok(Some(index));
+        }
+        if cluster.chars().all(is_default_ignorable) {
+            return Ok(None);
+        }
+        return Ok(Some(last_face.unwrap_or(0)));
     }
-    if let Some(index) = faces
-        .iter()
-        .position(|&face| face_supports_cluster(face, cluster))
+    // First pass: prefer an embedded face that explicitly maps a variation sequence.
+    if let Some((base, selector)) = cluster_variation_pair(cluster)
+        && let Some(index) = font_refs.iter().position(|font_ref| {
+            font_ref
+                .as_ref()
+                .is_some_and(|font| embedded_supports_variant(font, cluster, base, selector))
+        })
     {
-        return Ok(index);
+        return Ok(Some(index));
     }
+    // Second pass: direct cmap / WinAnsi support.
+    for (index, &face) in faces.iter().enumerate() {
+        let supported = match face {
+            FallbackSource::Standard(font) => standard_supports_cluster(font, cluster),
+            FallbackSource::Embedded(_) => font_refs[index]
+                .as_ref()
+                .is_some_and(|font| embedded_supports_cluster(font, cluster)),
+        };
+        if supported {
+            return Ok(Some(index));
+        }
+    }
+    // Third pass: NFC/NFD canonical equivalence via harfrust normalization on embedded faces.
+    if !cluster.is_ascii() {
+        for (index, &face) in faces.iter().enumerate() {
+            if let FallbackSource::Embedded(embedded) = face
+                && probe_embedded_cluster(
+                    embedded,
+                    &mut shapers[index],
+                    probe_buffer,
+                    cluster,
+                    direction,
+                )?
+            {
+                return Ok(Some(index));
+            }
+        }
+    }
+    // Report the actual unsupported codepoint rather than blindly picking the cluster's first char.
     let missing = cluster
         .chars()
-        .find(|&character| !is_cluster_ignorable(character))
+        .filter(|&character| !is_cluster_ignorable(character))
+        .find(|&character| match faces[0] {
+            FallbackSource::Standard(font) => {
+                standard::glyph_code(font, character).is_none()
+                    || standard::winansi_byte(character).is_none()
+            }
+            FallbackSource::Embedded(_) => font_refs[0]
+                .as_ref()
+                .is_none_or(|font| font.charmap().map(character).is_none()),
+        })
+        .or_else(|| {
+            cluster
+                .chars()
+                .find(|&character| !is_cluster_ignorable(character))
+        })
         .or_else(|| cluster.chars().next())
         .unwrap_or('\u{FFFD}');
     if all_standard {
         Err(FallbackShapeError::NotWinAnsi(missing))
     } else {
         Err(FallbackShapeError::MissingGlyph(missing))
+    }
+}
+
+/// Applies UAX #9 Rule L4 bidi mirroring for paired WinAnsi punctuation in RTL runs.
+fn mirror_winansi(character: char) -> char {
+    match character {
+        '(' => ')',
+        ')' => '(',
+        '[' => ']',
+        ']' => '[',
+        '{' => '}',
+        '}' => '{',
+        '<' => '>',
+        '>' => '<',
+        '\u{00AB}' => '\u{00BB}',
+        '\u{00BB}' => '\u{00AB}',
+        '\u{2039}' => '\u{203A}',
+        '\u{203A}' => '\u{2039}',
+        other => other,
     }
 }
 
@@ -543,9 +809,17 @@ fn push_standard_run(
     let budget = glyphs.budget();
     let mut entries = BudgetVec::new(budget);
     for (offset, character) in text[range.clone()].char_indices() {
+        if is_default_ignorable(character) {
+            continue;
+        }
         let start = range.start + offset;
         let end = start + character.len_utf8();
-        entries.try_push((character, start..end))?;
+        let display_char = if rtl {
+            mirror_winansi(character)
+        } else {
+            character
+        };
+        entries.try_push((display_char, start..end))?;
     }
     if rtl {
         entries.reverse();

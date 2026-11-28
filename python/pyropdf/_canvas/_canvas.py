@@ -43,6 +43,7 @@ from pyropdf._canvas._patterns import (
     _compile_tiling_cell,
     _CompiledTilingCell,
     _pattern_operands,
+    _shading_area,
     _write_tiling_stream,
 )
 from pyropdf._canvas._resources import (
@@ -117,7 +118,7 @@ if TYPE_CHECKING:
 
     from pyropdf._canvas._path import PathInput
     from pyropdf._canvas._tags import ListNumbering, TableHeaderScope, TagRole, _Element
-    from pyropdf._canvas._text import TextFit, _TextPaint
+    from pyropdf._canvas._text import TextFit, _FallbackShapedGlyph, _TextPaint
     from pyropdf._content import Segment
     from pyropdf._core import Pixmap
     from pyropdf._document import Document
@@ -333,6 +334,7 @@ class Canvas:
             raise
         finally:
             self._layers = [([], None)]
+            self._tiling_cells.clear()
         if keep:
             _core.end_transaction(core, True)  # noqa: FBT003 - the core's flag
         else:
@@ -416,26 +418,67 @@ class Canvas:
             msg = f"the canvas holds more than {limit} path points"
             raise LimitError(code, msg)
 
-    def _enter_scope(self) -> None:
+    def _check_scope_available(self) -> None:
         self._check_open()
         if self._depth >= _MAX_SCOPES:
             msg = f"canvas scopes nest at most {_MAX_SCOPES} deep"
             raise ValueError(msg)
-        self._depth += 1
-        self._unmark()
 
-    def _push(self, opening: bytes, closing: bytes, *, group: _Group | None, matrix: Matrix | None) -> None:
-        self._enter_scope()
-        self._matrices.append(self._matrix)
+    def _enter_scope(self) -> None:
+        self._check_scope_available()
+        self._unmark()
+        self._depth += 1
+
+    def _push(
+        self,
+        opening: bytes,
+        closing: bytes,
+        *,
+        group: _Group | None,
+        matrix: Matrix | None,
+        emit: bytes | None = None,
+    ) -> None:
+        self._check_scope_available()
+        self._unmark()
         if group is not None:
+            self._depth += 1
+            self._matrices.append(self._matrix)
             self._scopes.append(None)
             self._layers.append(([], group))
             self._matrix = _IDENTITY
-        else:
-            self._scopes.append(closing)
-            self._append(self._layers[-1][0], opening)
-            if matrix is not None:
-                self._matrix = matrix * self._matrix
+            return
+        parts = self._layers[-1][0]
+        prev_len = len(parts)
+        prev_buffered = self._buffered
+        prev_marked = self._marked
+        prev_mcids = self._mcids
+        added_kid_owner: _Element | None = None
+        try:
+            self._append(parts, opening)
+            if emit is not None:
+                if len(self._layers) == 1:
+                    before_mcids = self._mcids
+                    marked = self._mark(emit)
+                    if self._mcids != before_mcids:
+                        added_kid_owner = self._marked
+                else:
+                    marked = emit
+                self._append(parts, marked)
+        except BaseException:
+            del parts[prev_len:]
+            delta = self._buffered - prev_buffered
+            self._buffered = prev_buffered
+            self._release(delta)
+            if added_kid_owner is not None:
+                added_kid_owner.kids.pop()
+            self._marked = prev_marked
+            self._mcids = prev_mcids
+            raise
+        self._depth += 1
+        self._matrices.append(self._matrix)
+        self._scopes.append(closing)
+        if matrix is not None:
+            self._matrix = matrix * self._matrix
 
     def _pop(self) -> None:
         self._depth -= 1
@@ -538,7 +581,7 @@ class Canvas:
             self._gstates[key] = name
         return name
 
-    def _gradient(
+    def _gradient(  # noqa: PLR0913 - shading geometry, metadata, and optional soft-mask matrix.
         self,
         gradient: Gradient,
         area: tuple[float, float, float, float],
@@ -546,6 +589,7 @@ class Canvas:
         background: tuple[float, float, float, float] | None = None,
         *,
         sampled: bool = False,
+        mask_matrix: tuple[float, float, float, float, float, float] | None = None,
     ) -> tuple[int, int | None, float]:
         """Return the objects of ``gradient`` that paints ``area``: its shading, its soft mask, and its alpha."""
         start, end = _point(gradient.start, "start"), _point(gradient.end, "end")
@@ -578,6 +622,7 @@ class Canvas:
                 background,
                 sampled,
                 self._active,
+                mask_matrix=mask_matrix,
             )
 
     def _write_pattern(self, shading: int, matrix: Matrix) -> int:
@@ -610,8 +655,8 @@ class Canvas:
                 self._patterns[name] = self._write_pattern(shading, matrix)
         return name
 
-    def _tiling_pattern(self, paint: TilingPattern) -> str:
-        """Return the resource name of the pattern that paints ``paint`` in the current space."""
+    def _compile_cached_tiling(self, paint: TilingPattern) -> _CompiledTilingCell:
+        """Validate, compile, charge, and cache the cell of ``paint``."""
         source = paint._source  # noqa: SLF001 - validated before opening the item's context.
         if source is None:
             msg = "the TilingPattern does not retain its pattern cell"
@@ -620,7 +665,14 @@ class Canvas:
         if compiled is None:
             cell = source.cell(self._active)
             compiled = _compile_tiling_cell(self, cell, _max_content_size())
+            self._charge(len(compiled.stream_bytes))
             self._tiling_cells[source] = compiled
+        return compiled
+
+    def _tiling_pattern(self, paint: TilingPattern) -> str:
+        """Return the resource name of the pattern that paints ``paint`` in the current space."""
+        compiled = self._compile_cached_tiling(paint)
+        source = paint._source  # noqa: SLF001 - validated in _compile_cached_tiling.
         in_page = len(self._layers) == 1
         inner = paint.matrix * self._matrix
         key = (source, inner, in_page)
@@ -632,15 +684,14 @@ class Canvas:
         return name
 
     def _validate_paint(self, paint: Color | Gradient | PatternPaint | ShadingPattern | TilingPattern | None) -> None:
-        """Validate a retained tiling pattern before any graphics-state scope opens."""
+        """Validate a retained or pattern paint before any graphics-state scope opens."""
         if isinstance(paint, TilingPattern):
-            source = paint._source  # noqa: SLF001
-            if source is None:
-                msg = "the TilingPattern does not retain its pattern cell"
-                raise TypeError(msg)
-            cell = source.cell(self._active)
-            if cell[3] is not None:
-                raise ValueError(cell[3])
+            self._compile_cached_tiling(paint)
+        elif isinstance(paint, ShadingPattern) and paint._source is None:  # noqa: SLF001
+            msg = "the ShadingPattern does not retain its source"
+            raise TypeError(msg)
+        elif isinstance(paint, PatternPaint):
+            _pattern_operands(self._page.document, paint)
 
     def _write_captured_raster(
         self,
@@ -759,13 +810,15 @@ class Canvas:
         if isinstance(paint, TilingPattern):
             tname = self._tiling_pattern(paint).encode("ascii")
             space, operator = (b"/Pattern cs", b" scn") if stroke is None else (b"/Pattern CS", b" SCN")
-            alpha = None if paint.opacity >= 1 else paint.opacity
+            opacity = min(max(paint.opacity, 0.0), 1.0)
+            alpha = None if opacity >= 1 else opacity
             return _Painting((space, b"/" + tname + operator), alpha, None)
         # Past the path by half a line, or by a miter or a square cap, and a thin line's own width.
         pad = 1.0 if stroke is None else max(stroke.width, 1.0) / 2 * max(stroke.miter_limit, math.sqrt(2)) + 1.0
         area = _bounds(segments, pad)
         matrix = self._matrix
         bbox = background = None
+        mask_matrix: tuple[float, float, float, float, float, float] | None = None
         if isinstance(paint, ShadingPattern):
             source = paint._source  # noqa: SLF001 - validated before opening the item's context.
             if source is None:
@@ -773,12 +826,24 @@ class Canvas:
                 raise TypeError(msg)
             gradient, bbox, background = source.gradient(self._active)
             matrix = paint.matrix * self._matrix
-            x0, y0, x1, y1 = Rect(*area) / paint.matrix
-            area = (x0, y0, x1, y1)
+            area = _shading_area(area, paint.matrix, area)
+            mask_matrix = (
+                paint.matrix.a,
+                paint.matrix.b,
+                paint.matrix.c,
+                paint.matrix.d,
+                paint.matrix.e,
+                paint.matrix.f,
+            )
         else:
             gradient = paint
         shading, mask, alpha = self._gradient(
-            gradient, area, bbox, background, sampled=isinstance(paint, ShadingPattern)
+            gradient,
+            area,
+            bbox,
+            background,
+            sampled=isinstance(paint, ShadingPattern),
+            mask_matrix=mask_matrix,
         )
         name = self._pattern(shading, matrix).encode()
         space, operator = (b"/Pattern cs", b" scn") if stroke is None else (b"/Pattern CS", b" SCN")
@@ -880,6 +945,9 @@ class Canvas:
         painted_fill = None if fill is None else _paint(fill, "fill")
         painted_stroke = _stroke(stroke)
         even_odd = FillRule(fill_rule) is FillRule.EVEN_ODD
+        self._validate_paint(painted_fill)
+        if painted_stroke is not None:
+            self._validate_paint(painted_stroke.paint)
         construction, points = _path_bytes(segments)
         self._count(points)
         filling = None if painted_fill is None else self._setting(painted_fill, segments, None)
@@ -1215,13 +1283,46 @@ class Canvas:
                     for index, line in enumerate(lines)
                     if line
                 ]
-            clip_ops = self._build_clip_text_opening(
-                _TextLayout(faces, font_size, rotation, placed, checked_direction == "vertical"),
-                (fill_paint, stroke_paint, tr_mode),
-            )
-            return _Scope(self, b"q", b"Q", emit=clip_ops)
+            layout = _TextLayout(faces, font_size, rotation, placed, checked_direction == "vertical")
+            pre_shaped: list[list[_FallbackShapedGlyph]] | None = None
+            if len(faces) == 1 and faces[0]._font.standard_name is not None and not layout.vertical:  # noqa: SLF001
+                _shown_winansi(faces[0], placed, self._operation)
+            else:
+                pre_shaped = self._shape_and_validate_clip(layout)
+            if not any(line.strip() for line in lines):
+                return _Scope(self, b"q\n0 0 0 0 re W n", b"Q")
+            paint = (fill_paint, stroke_paint, tr_mode)
 
-    def _build_text_object(self, layout: _TextLayout, *, allow_type3: bool) -> bytes:
+            def prepare() -> bytes:
+                return self._build_clip_text_opening(layout, paint, pre_shaped=pre_shaped)
+
+            return _Scope(self, b"q", b"Q", prepare=prepare)
+
+    def _shape_and_validate_clip(self, layout: _TextLayout) -> list[list[_FallbackShapedGlyph]]:
+        """Shape and validate glyph outlines for :meth:`clip_text` without mutating document state."""
+        faces, lines, vertical = layout.faces, layout.lines, layout.vertical
+        core_faces = [face._font for face in faces]  # noqa: SLF001
+        shaped = [
+            _core.shape_text_fallback(core_faces, line, vertical=vertical, colour_check=2, operation=self._operation)
+            for line, _x, _y, _spacing in lines
+        ]
+        used_faces = {glyph[0] for glyphs in shaped for glyph in glyphs if glyph[1]}
+        for face_idx in used_faces:
+            face = faces[face_idx]
+            if face._font.standard_name is None and not face._font.outlines:  # noqa: SLF001
+                msg = f"{face.name} has colour bitmaps and no outlines, so it cannot clip text"
+                raise PdfError(msg)
+        return shaped
+
+    def _build_text_object(
+        self,
+        layout: _TextLayout,
+        *,
+        allow_type3: bool,
+        colour_check: int = 1,
+        invisible: bool = False,
+        pre_shaped: list[list[_FallbackShapedGlyph]] | None = None,
+    ) -> bytes:
         """Assemble the ``BT ... ET`` text object for ``layout``."""
         cos, sin = _TURNS[layout.rotation]
         parts: list[bytes] = []
@@ -1230,7 +1331,14 @@ class Canvas:
             shown = _shown_winansi(layout.faces[0], layout.lines, self._operation)
             parts.append(b"BT\n/" + name.encode() + b" " + _fmt(layout.size) + b" Tf")
         else:
-            shown = self._shown_glyphs(layout, turn=(cos, sin), allow_type3=allow_type3)
+            shown = self._shown_glyphs(
+                layout,
+                turn=(cos, sin),
+                allow_type3=allow_type3,
+                colour_check=colour_check,
+                invisible=invisible,
+                pre_shaped=pre_shaped,
+            )
             parts.append(b"BT")
         for (_line, x, y, _spacing), operators in zip(layout.lines, shown, strict=True):
             # Display space points down, so the text's own y axis is flipped up.
@@ -1239,9 +1347,16 @@ class Canvas:
         parts.append(b"ET")
         return b"\n".join(parts)
 
-    def _build_clip_text_opening(self, layout: _TextLayout, paint: _TextPaint) -> bytes:
+    def _build_clip_text_opening(
+        self,
+        layout: _TextLayout,
+        paint: _TextPaint,
+        *,
+        pre_shaped: list[list[_FallbackShapedGlyph]] | None = None,
+    ) -> bytes:
         """Build the clip-text operators emitted inside ``q ... Q`` for :meth:`clip_text`."""
         fill, stroke, tr_mode = paint
+        shown_text = self._build_text_object(layout, allow_type3=False, colour_check=2, pre_shaped=pre_shaped)
         segments = (
             self._text_bounds(layout)
             if (
@@ -1256,7 +1371,6 @@ class Canvas:
             if stroke is None
             else self._setting(cast("Color | Gradient | PatternPaint", stroke.paint), segments, stroke)
         )
-        shown_text = self._build_text_object(layout, allow_type3=False)
         has_mask = (filling is not None and filling.mask is not None) or (
             stroking is not None and stroking.mask is not None
         )
@@ -1291,8 +1405,8 @@ class Canvas:
             parts.extend(_line_style(stroke))
         parts.append(f"{tr_mode} Tr".encode("ascii"))
         parts.append(shown_text)
-        # Restore text render mode and graphics-state alpha so drawings inside
-        # the clip scope do not inherit clip-text styling.
+        # Restore text render mode and graphics-state styling so drawings inside
+        # the clip scope do not inherit clip-text colors, alpha, or stroke style.
         parts.append(b"0 Tr")
         if fill_alpha is not None or stroke_alpha is not None:
             reset_fill = 1.0 if fill_alpha is not None else None
@@ -1301,7 +1415,7 @@ class Canvas:
         if filling is not None:
             parts.append(b"0 0 0 rg")
         if stroking is not None:
-            parts.append(b"0 0 0 RG")
+            parts.append(b"0 0 0 RG\n1 w\n0 J 0 j\n10 M\n[] 0 d")
         return b"\n".join(parts)
 
     def _emit_text(self, layout: _TextLayout, paint: _TextPaint) -> None:
@@ -1310,10 +1424,11 @@ class Canvas:
             return
         fill, stroke, tr_mode = paint
         if tr_mode == _TR_INVISIBLE:
-            shown_text = self._build_text_object(layout, allow_type3=True)
+            shown_text = self._build_text_object(layout, allow_type3=False, colour_check=0, invisible=True)
             with self._scratch(2 * len(shown_text) + 256):
                 self._emit(b"q\n3 Tr\n" + shown_text + b"\nQ")
             return
+        shown_text = self._build_text_object(layout, allow_type3=True, colour_check=1)
         segments = (
             self._text_bounds(layout)
             if (
@@ -1329,7 +1444,6 @@ class Canvas:
             else self._setting(cast("Color | Gradient | PatternPaint", stroke.paint), segments, stroke)
         )
         split = filling is not None and stroking is not None and (filling.mask is not None or stroking.mask is not None)
-        shown_text = self._build_text_object(layout, allow_type3=True)
         passes = ((filling, None, 0), (None, stroking, 1)) if split else ((filling, stroking, tr_mode),)
         with self._scratch(4 * len(shown_text) + 1024):
             painted = [
@@ -1396,7 +1510,7 @@ class Canvas:
                     advance = faces[0]._font.text_width(line, size, None)  # noqa: SLF001
             else:
                 glyphs = _core.shape_text_fallback(
-                    core_faces, line, vertical=vertical, check_colour=False, operation=self._operation
+                    core_faces, line, vertical=vertical, colour_check=0, operation=self._operation
                 )
                 if vertical:
                     advance = sum(-glyph[3] * size / ems[glyph[0]] for glyph in glyphs)
@@ -1425,6 +1539,7 @@ class Canvas:
         tables: tuple[dict[tuple[int, int], tuple[bytes, bytes]], dict[tuple[int, int], str], set[tuple[int, int]]],
         *,
         vertical: bool,
+        v_metrics: dict[int, tuple[float, float, float]] | None = None,
     ) -> None:
         """Register one embedded face's outlined (Type0) and colour (Type 3) glyphs."""
         face_idx, face = face_entry
@@ -1435,7 +1550,9 @@ class Canvas:
         painted = [(cast("_ColourGlyph", colour[glyph])[0], text) for glyph, text in drawn if colour[glyph] is not None]
         if outlined:
             xref = embedded_font(document, face, _cache(document).fonts, vertical=vertical)
-            face_mapped = add_glyphs(document, xref, face, outlined, vertical=vertical)
+            face_mapped = add_glyphs(
+                document, xref, face, outlined, vertical=vertical, v_metrics=v_metrics, operation=self._operation
+            )
             font_name = self._font_name(xref).encode()
             for glyph, _ in outlined:
                 codes[face_idx, glyph] = (font_name, b"<%04X>" % glyph)
@@ -1459,6 +1576,7 @@ class Canvas:
         per_face_colour: dict[int, dict[int, _ColourGlyph | None]],
         *,
         vertical: bool,
+        per_face_v_metrics: dict[int, dict[int, tuple[float, float, float]]],
     ) -> tuple[dict[tuple[int, int], tuple[bytes, bytes]], dict[tuple[int, int], str], frozenset[tuple[int, int]]]:
         """Embed used faces and return per-glyph ``(font_name, hex_code)``, CMap text, and Type 3 keys."""
         codes: dict[tuple[int, int], tuple[bytes, bytes]] = {}
@@ -1475,7 +1593,11 @@ class Canvas:
                         mapped[face_idx, glyph] = text
                     continue
                 self._register_embedded_face(
-                    (face_idx, face), (drawn, per_face_colour[face_idx]), tables, vertical=vertical
+                    (face_idx, face),
+                    (drawn, per_face_colour[face_idx]),
+                    tables,
+                    vertical=vertical,
+                    v_metrics=per_face_v_metrics.get(face_idx),
                 )
         return codes, mapped, frozenset(type3_keys)
 
@@ -1486,10 +1608,15 @@ class Canvas:
         per_face_ids: dict[int, list[int]],
         *,
         vertical: bool,
-    ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], tuple[float, float]]]:
+    ) -> tuple[
+        dict[tuple[int, int], float],
+        dict[tuple[int, int], tuple[float, float]],
+        dict[int, dict[int, tuple[float, float, float]]],
+    ]:
         """Collect per-glyph PDF advance widths and vertical origin vectors matching ``W`` / ``W2`` / AFM."""
         widths: dict[tuple[int, int], float] = {}
         v_origins: dict[tuple[int, int], tuple[float, float]] = {}
+        per_face_v_metrics: dict[int, dict[int, tuple[float, float, float]]] = {}
         for face_idx, drawn in per_face_drawn.items():
             face = faces[face_idx]
             if face._font.standard_name is not None:  # noqa: SLF001
@@ -1499,32 +1626,56 @@ class Canvas:
                 continue
             ids = per_face_ids[face_idx]
             if vertical:
-                for glyph, (w1y, vx, vy) in zip(ids, face._font.glyph_v_metrics(ids), strict=True):  # noqa: SLF001
+                face_v: dict[int, tuple[float, float, float]] = {}
+                for glyph, metrics in zip(
+                    ids,
+                    face._font.glyph_v_metrics(ids, operation=self._operation),  # noqa: SLF001
+                    strict=True,
+                ):
+                    w1y, vx, vy = metrics
                     widths[face_idx, glyph] = w1y
                     v_origins[face_idx, glyph] = (vx, vy)
+                    face_v[glyph] = metrics
+                per_face_v_metrics[face_idx] = face_v
             else:
                 for glyph, width in zip(ids, face._font.glyph_widths(ids), strict=True):  # noqa: SLF001
                     widths[face_idx, glyph] = width
-        return widths, v_origins
+        return widths, v_origins, per_face_v_metrics
 
-    def _shown_glyphs(self, layout: _TextLayout, *, turn: tuple[int, int], allow_type3: bool) -> list[bytes]:
+    def _shown_glyphs(  # noqa: PLR0913 - text shaping and rendering mode controls.
+        self,
+        layout: _TextLayout,
+        *,
+        turn: tuple[int, int],
+        allow_type3: bool,
+        colour_check: int = 1,
+        invisible: bool = False,
+        pre_shaped: list[list[_FallbackShapedGlyph]] | None = None,
+    ) -> list[bytes]:
         """Return the operators that show each line across ``layout.faces``.
 
         Glyphs are shaped in visual (horizontal) or top-to-bottom (vertical)
         order. Only faces that actually produce at least one glyph are embedded
         or added to page resources. When ``allow_type3`` is true, COLR and
         bitmap-strike glyphs use Type 3 fonts; clip paths set
-        ``allow_type3=False`` so outline faces clip via Type0 outlines.
+        ``allow_type3=False`` so outline faces clip via Type0 outlines; and
+        invisible text (``3 Tr``) uses Type0 for outline faces and empty
+        ``d0``-only Type 3 procedures for bitmap-only faces so zero ink is
+        painted (ISO 32000-2 section 9.3.6).
         """
         faces, size, lines, vertical = layout.faces, layout.size, layout.lines, layout.vertical
         operation = self._operation
         core_faces = [face._font for face in faces]  # noqa: SLF001 - the package's own faces.
-        shaped = [
-            _core.shape_text_fallback(
-                core_faces, line, vertical=vertical, check_colour=allow_type3, operation=operation
-            )
-            for line, _x, _y, _spacing in lines
-        ]
+        shaped = (
+            pre_shaped
+            if pre_shaped is not None
+            else [
+                _core.shape_text_fallback(
+                    core_faces, line, vertical=vertical, colour_check=colour_check, operation=operation
+                )
+                for line, _x, _y, _spacing in lines
+            ]
+        )
         per_face_drawn: dict[int, list[tuple[int, str]]] = {}
         for (line, *_), glyphs in zip(lines, shaped, strict=True):
             for glyph in glyphs:
@@ -1537,21 +1688,33 @@ class Canvas:
             face = faces[face_idx]
             if face._font.standard_name is not None:  # noqa: SLF001
                 continue
-            if not allow_type3 and not face._font.outlines:  # noqa: SLF001
-                msg = f"{face.name} has colour bitmaps and no outlines, so it cannot clip text"
-                raise PdfError(msg)
             ids = sorted({glyph for glyph, _ in drawn})
             per_face_ids[face_idx] = ids
-            per_face_colour[face_idx] = (
-                dict(zip(ids, face._font.colour_glyphs(ids, size, operation=operation), strict=True))  # noqa: SLF001
-                if allow_type3
-                else dict.fromkeys(ids, None)
-            )
+            if invisible:
+                if face._font.outlines:  # noqa: SLF001
+                    per_face_colour[face_idx] = dict.fromkeys(ids, None)
+                else:
+                    em = face._font.units_per_em  # noqa: SLF001
+                    advances = face._font.glyph_widths(ids)  # noqa: SLF001
+                    per_face_colour[face_idx] = {
+                        glyph: (f"g{glyph}i", adv * em / 1000.0, 0) for glyph, adv in zip(ids, advances, strict=True)
+                    }
+            elif allow_type3:
+                per_face_colour[face_idx] = dict(
+                    zip(ids, face._font.colour_glyphs(ids, size, operation=operation), strict=True)  # noqa: SLF001
+                )
+            else:
+                if not face._font.outlines:  # noqa: SLF001
+                    msg = f"{face.name} has colour bitmaps and no outlines, so it cannot clip text"
+                    raise PdfError(msg)
+                per_face_colour[face_idx] = dict.fromkeys(ids, None)
 
-        codes, mapped, type3_keys = self._register_drawn_faces(
-            faces, per_face_drawn, per_face_colour, vertical=vertical
+        widths, v_origins, per_face_v_metrics = self._collect_glyph_metrics(
+            faces, per_face_drawn, per_face_ids, vertical=vertical
         )
-        widths, v_origins = self._collect_glyph_metrics(faces, per_face_drawn, per_face_ids, vertical=vertical)
+        codes, mapped, type3_keys = self._register_drawn_faces(
+            faces, per_face_drawn, per_face_colour, vertical=vertical, per_face_v_metrics=per_face_v_metrics
+        )
         scales = [1000.0 / face._font.units_per_em for face in faces]  # noqa: SLF001
         run = _GlyphRun(
             size,
@@ -1895,6 +2058,7 @@ class Canvas:
         fill = None if item.fill is None else _paint(item.fill, "fill")
         # Checked before any scope opens, so that a refused paint or stroke draws nothing.
         stroke = _stroke(item.stroke)
+        self._check_item_scopes(item)
         self._validate_paint(fill)
         if stroke is not None:
             self._validate_paint(stroke.paint)
@@ -1918,6 +2082,7 @@ class Canvas:
             msg = "a text run with a pattern paint cannot be drawn"
             raise ValueError(msg)
         replay.source.document._ensure_open()  # noqa: SLF001
+        self._check_item_scopes(item)
         snapshot = replay.source.snapshot
         # PDF real operands fit in 51 characters at f32 range. Reserve the
         # per-glyph operator and the joins used to assemble and paint the run.
@@ -1984,8 +2149,23 @@ class Canvas:
             known = self._copies[source, item.xref] = copy
         return known
 
+    def _check_item_scopes(self, item: Path | Image | TextRun) -> None:
+        """Refuse an item whose clips, groups, and blend mode would overflow scope nesting."""
+        needed = len(item.context.clips)
+        for group in item.context.groups:
+            if group.blend_mode is not BlendMode.NORMAL:
+                needed += 1
+            if group.opacity < 1:
+                needed += 1
+        if item.blend_mode is not BlendMode.NORMAL:
+            needed += 1
+        if self._depth + needed > _MAX_SCOPES:
+            msg = f"canvas scopes nest at most {_MAX_SCOPES} deep"
+            raise ValueError(msg)
+
     def _draw_image(self, item: Image) -> None:
         """Paint an :class:`Image` item, indirect or inline, raster or stencil mask."""
+        self._check_item_scopes(item)
         stencil_fill: Color | Gradient | PatternPaint | ShadingPattern | TilingPattern | None = None
         if item.is_stencil:
             if item.fill is None:
