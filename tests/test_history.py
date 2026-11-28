@@ -417,3 +417,38 @@ def test_concurrent_history_limit_and_commits_stay_consistent() -> None:
     for _ in range(final_pos):
         doc.history.undo()
     assert not doc.history.can_undo
+
+
+def test_concurrent_unlock_replace_and_history_reads_keep_post_unlock_steps() -> None:
+    """Concurrent history reads/limit updates during unlock() replacement never wipe later steps."""
+    credential = "test-unlock-secret"
+    source = pyropdf.open(numbered(1))
+    encrypted = source.to_bytes(encryption=pyropdf.Encryption(user_password=credential))
+
+    for _ in range(25):
+        doc = pyropdf.open(encrypted)
+        stop = threading.Event()
+        errors: list[BaseException] = []
+
+        def inspect_history(target: Document = doc) -> None:
+            steps = target.history.steps
+            assert steps in ((), ("after-unlock",)), steps
+            pos = target.history.position
+            assert pos in (0, 1), pos
+            target.history.max_size = None
+
+        readers = [_spawn_loop(stop, errors, inspect_history) for _ in range(3)]
+        try:
+            doc.unlock(credential)
+            with doc.transaction("after-unlock"):
+                doc.pages[0].rotation = 90
+        finally:
+            stop.set()
+            for thread in readers:
+                thread.join()
+
+        assert not errors, errors
+        assert doc.history.steps == ("after-unlock",)
+        assert doc.history.position == 1
+        assert doc.pages[0].rotation == 90
+        doc.close()

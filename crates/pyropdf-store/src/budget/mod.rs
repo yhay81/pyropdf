@@ -31,9 +31,10 @@ mod tests;
 
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering::Relaxed;
 use std::time::{Duration, Instant};
+
+use crate::sync::atomic::AtomicU64;
+use crate::sync::atomic::Ordering::Relaxed;
 
 pub use cancel::CancellationToken;
 pub use code::LimitCode;
@@ -281,9 +282,11 @@ impl Budget {
         for code in LimitCode::ALL {
             if self.tightened[code.index()]
                 && let Some(limit) = self.limit(code)
-                && self.used(code) > limit
             {
-                return Err(LimitExceeded::over(code, limit, self.used(code)));
+                let used = self.used(code);
+                if used > limit {
+                    return Err(LimitExceeded::over(code, limit, used));
+                }
             }
         }
         Ok(())

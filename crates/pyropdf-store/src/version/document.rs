@@ -4,13 +4,14 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::mem;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
+use std::sync::Arc;
 
 use super::base::Origin;
 use super::{Base, Transaction, Version, journal};
 use crate::Result;
 use crate::budget::{Budget, BudgetVec};
 use crate::settle::Settlers;
+use crate::sync::{Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 
 /// The versions of a document: the current one, the writer lock through
 /// which transactions publish the next, and the history that undo and redo
@@ -100,7 +101,7 @@ impl Document {
                     history: History::new(first, history_limit),
                 }),
                 idle: Condvar::new(),
-                settlers: RwLock::default(),
+                settlers: RwLock::new(Settlers::default()),
             }),
         }
     }

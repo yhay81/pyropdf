@@ -296,10 +296,17 @@ impl State {
         }
     }
 
-    /// Forgets the open transaction and the step names.
-    pub fn clear(&self) {
-        let open = lock(&self.open).take();
+    /// Resets the step names; called while holding the document write lock
+    /// so `history_state` and `set_history_limit` never sync a replaced store
+    /// against the new document's steps.
+    pub(crate) fn clear_steps(&self) {
         *lock(&self.steps) = Steps::default();
+    }
+
+    /// Forgets any open transaction outside the document write lock so its
+    /// transaction and write guard drop without holding the document lock.
+    pub(crate) fn clear_open(&self) {
+        let open = lock(&self.open).take();
         drop(open);
     }
 
@@ -825,12 +832,13 @@ pub fn history_state(
     document: &_Document,
 ) -> PyResult<(Vec<String>, usize, Option<u64>, u64)> {
     crate::errors::boundary(|| {
-        let store = document.document()?;
         let (names, position, status) = py.detach(|| {
-            let mut steps = lock(&document.history.steps);
-            let status = sync(&mut steps, &store);
-            (steps.names.clone(), steps.position, status)
-        });
+            document.with_store(|store| {
+                let mut steps = lock(&document.history.steps);
+                let status = sync(&mut steps, store);
+                (steps.names.clone(), steps.position, status)
+            })
+        })?;
         Ok((names, position, status.limit, status.size))
     })?
 }
@@ -895,12 +903,13 @@ pub fn history_redo(py: Python<'_>, document: &_Document) -> PyResult<()> {
 #[pyfunction]
 pub fn set_history_limit(py: Python<'_>, document: &_Document, limit: Option<u64>) -> PyResult<()> {
     crate::errors::boundary(|| {
-        let store = document.document()?;
         py.detach(|| {
-            let mut steps = lock(&document.history.steps);
-            store.set_history_limit(limit);
-            sync(&mut steps, &store);
-        });
+            document.with_store(|store| {
+                let mut steps = lock(&document.history.steps);
+                store.set_history_limit(limit);
+                sync(&mut steps, store);
+            })
+        })?;
         Ok(())
     })?
 }

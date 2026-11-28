@@ -198,6 +198,17 @@ impl _Document {
             .ok_or_else(|| DocumentClosedError::new_err("document closed"))
     }
 
+    /// Runs `work` with a shared borrow of the current store under the
+    /// document read lock so concurrent `replace()` and `close()` cannot
+    /// swap or clear the store's history metadata mid-call.
+    pub(crate) fn with_store<T>(&self, work: impl FnOnce(&Document) -> T) -> PyResult<T> {
+        let guard = self.document.read().unwrap_or_else(PoisonError::into_inner);
+        let Some(store) = guard.as_deref() else {
+            return Err(DocumentClosedError::new_err("document closed"));
+        };
+        Ok(work(store))
+    }
+
     pub(crate) fn current(&self) -> PyResult<Arc<Version>> {
         Ok(self.document()?.current())
     }
@@ -234,9 +245,10 @@ impl _Document {
                 return Err(DocumentClosedError::new_err("document closed"));
             }
             *guard = Some(Arc::new(document));
+            self.history.clear_steps();
         }
         self.clear_caches();
-        self.history.clear();
+        self.history.clear_open();
         Ok(())
     }
 
@@ -600,9 +612,10 @@ impl _Document {
                     .fallback
                     .write()
                     .unwrap_or_else(PoisonError::into_inner) = Fallback::default();
+                self.history.clear_steps();
             }
             self.clear_caches();
-            self.history.clear();
+            self.history.clear_open();
         })
     }
 }
