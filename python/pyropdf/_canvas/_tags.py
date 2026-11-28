@@ -14,6 +14,7 @@ from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, _encode
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from types import TracebackType
 
     from pyropdf._canvas._canvas import Canvas
@@ -160,6 +161,7 @@ class _Scope(AbstractContextManager[None]):
         group: _Group | None = None,
         matrix: Matrix | None = None,
         emit: bytes | None = None,
+        prepare: Callable[[], bytes] | None = None,
     ) -> None:
         self._canvas = canvas
         self._opening = opening
@@ -167,15 +169,14 @@ class _Scope(AbstractContextManager[None]):
         self._group = group
         self._matrix = matrix
         self._emit = emit
+        self._prepare = prepare
 
     def __enter__(self) -> None:
-        self._canvas._push(self._opening, self._closing, group=self._group, matrix=self._matrix)  # noqa: SLF001
-        if self._emit is not None:
-            try:
-                self._canvas._emit(self._emit)  # noqa: SLF001
-            except BaseException:
-                self._canvas._pop()  # noqa: SLF001
-                raise
+        self._canvas._check_scope_available()  # noqa: SLF001
+        emit = self._prepare() if self._prepare is not None else self._emit
+        self._canvas._push(  # noqa: SLF001
+            self._opening, self._closing, group=self._group, matrix=self._matrix, emit=emit
+        )
 
     def __exit__(
         self,

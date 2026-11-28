@@ -65,7 +65,11 @@ fn check_active(document: &_Document, operation: &OperationBudget) -> PyResult<(
 /// `radii` makes it radial. `stops` are `(offset, red, green, blue, alpha)`;
 /// the canvas charged the memory they hold before it built them.
 #[pyfunction]
-#[allow(clippy::too_many_arguments)] // The fields of a gradient and where it goes.
+#[pyo3(signature = (document, shadings, start, end, radii, stops, extend, area, bbox, background, sampled, operation, *, mask_matrix=None))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the geometry, stops, extension, bounds, and canvas operation of a gradient"
+)]
 #[expect(
     clippy::disallowed_methods,
     reason = "Canvas._gradient charges _STOP_SIZE per stop before conversion, including this native copy"
@@ -84,6 +88,7 @@ pub fn canvas_gradient(
     background: Option<[f64; 4]>,
     sampled: bool,
     operation: &OperationBudget,
+    mask_matrix: Option<[f64; 6]>,
 ) -> PyResult<(u32, Option<u32>, f64)> {
     crate::errors::boundary(|| {
         check_active(document, operation)?;
@@ -136,6 +141,7 @@ pub fn canvas_gradient(
                         bbox,
                         background,
                         sampled,
+                        mask_matrix,
                     },
                     budget,
                 )

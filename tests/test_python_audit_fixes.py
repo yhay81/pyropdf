@@ -614,7 +614,8 @@ def test_rewrite_images_bytes_before_includes_mask_and_jpx_size_validates_dimens
     assert report.bytes_before == img_encoded + mask_encoded
     assert report.bytes_after < report.bytes_before
 
-    bad_jp2 = b"\x00\x00\x00\x0cjP  \r\n\x87\nihdr" + struct.pack(">II", 0, 10)
+    ihdr = struct.pack(">I4sII", 16, b"ihdr", 0, 10)
+    bad_jp2 = b"\x00\x00\x00\x0cjP  \r\n\x87\n" + struct.pack(">I4s", 8 + len(ihdr), b"jp2h") + ihdr
     with pytest.raises(ValueError, match="non-positive"):
         _images._jpx_size(bad_jp2)  # noqa: SLF001
 

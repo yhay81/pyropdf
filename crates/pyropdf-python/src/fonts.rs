@@ -12,13 +12,13 @@ use pyo3::types::{PyBytes, PyFloat, PyList, PyString, PyTuple};
 use pyropdf_engine::extract::{self, Error};
 use pyropdf_engine::fonts::bitmap::{self, Bitmaps, DRAWING_PPI};
 use pyropdf_engine::fonts::codec::{self, EncodedSegment, Type0Codec};
-use pyropdf_engine::fonts::colour::{Painted, Refused, refused_canvas_glyph};
+use pyropdf_engine::fonts::colour::{Painted, Refused, refused_canvas_glyph, refused_colour_glyph};
 use pyropdf_engine::fonts::colr::{Colr, ColrError, Verdict};
 use pyropdf_engine::fonts::embed::{Face, FaceError, GlyphId, Measure};
 use pyropdf_engine::fonts::instance::InstanceError;
 use pyropdf_engine::fonts::shape::{
     FallbackShapeError, FallbackShapedGlyph, FallbackSource, ShapeError, ShapedGlyph, ShapingFace,
-    WritingDirection, shape_with_fallback,
+    WritingDirection, shape_with_fallback, shape_with_fallback_cached,
 };
 use pyropdf_engine::fonts::type3::{Code, Fonts, Glyph};
 use pyropdf_engine::fonts::{self, Format};
@@ -955,31 +955,50 @@ impl _Font {
 
     /// Returns `(w1_y, v_x, v_y)` in thousandths of the em for each glyph ID
     /// in `glyphs`, as a CIDFont's `W2` array records them for `Identity-V`.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the internal callers deduplicate glyph IDs from budgeted shaping, at most the loaded face's glyph count"
-    )]
-    fn glyph_v_metrics(&self, glyphs: Vec<u32>) -> PyResult<Vec<(f64, f64, f64)>> {
+    #[pyo3(signature = (glyphs, *, operation=None))]
+    fn glyph_v_metrics(
+        &self,
+        py: Python<'_>,
+        glyphs: Vec<u32>,
+        operation: Option<PyRef<'_, OperationBudget>>,
+    ) -> PyResult<Vec<(f64, f64, f64)>> {
         crate::errors::boundary(|| {
             let Kind::Embedded(face) = &self.kind else {
                 return Err(PyValueError::new_err("a Standard 14 font has no glyph IDs"));
             };
-            let budget = Budget::default();
-            let shaper = ShapingFace::of(face).map_err(|error| shape_error(&error))?;
-            let metrics = shaper
-                .vertical_metrics(&glyphs, &budget)
-                .map_err(|error| shape_error(&error))?;
-            let scale = 1000.0 / self.em();
-            Ok(metrics
-                .iter()
-                .map(|&(v_adv, v_x, v_y)| {
-                    (
-                        f64::from(v_adv) * scale,
-                        f64::from(v_x) * scale,
-                        f64::from(v_y) * scale,
-                    )
-                })
-                .collect())
+            let budget = match operation.as_deref() {
+                Some(operation) => {
+                    operation.ensure_active()?;
+                    TextBudget::shared(operation.operation.clone())
+                }
+                None => TextBudget {
+                    budget: Budget::default().share(),
+                    start: None,
+                },
+            };
+            let em = self.em();
+            let budget = &budget;
+            py.detach(|| {
+                let shaper = ShapingFace::of(face).map_err(|error| shape_error(&error))?;
+                let metrics = shaper
+                    .vertical_metrics(&glyphs, budget)
+                    .map_err(|error| shape_error(&error))?;
+                let scale = 1000.0 / em;
+                let mut result = BudgetVec::new(budget);
+                result
+                    .try_reserve_exact(metrics.len())
+                    .map_err(|error| limit_error(&error))?;
+                for &(v_adv, v_x, v_y) in metrics.iter() {
+                    result
+                        .try_push((
+                            f64::from(v_adv) * scale,
+                            f64::from(v_x) * scale,
+                            f64::from(v_y) * scale,
+                        ))
+                        .map_err(|error| limit_error(&error))?;
+                }
+                Ok(result.into_vec())
+            })
         })?
     }
 
@@ -1295,10 +1314,12 @@ fn fallback_advance(
 }
 
 /// Shapes one line of `text` across an ordered fallback sequence of `faces`,
-/// horizontally or vertically, refusing colour glyphs that have no outline
-/// when `check_colour` is true.
+/// horizontally or vertically. `colour_check` controls colour-glyph validation:
+/// `0` skips colour checks (e.g. invisible text), `1` refuses colour glyphs
+/// that neither COLR/bitmap painting nor outlines cover (canvas drawing), and
+/// `2` refuses any colour glyph lacking an outline (e.g. text clipping paths).
 #[pyfunction]
-#[pyo3(signature = (faces, text, *, vertical=false, check_colour=true, operation=None))]
+#[pyo3(signature = (faces, text, *, vertical=false, colour_check=1, operation=None))]
 #[expect(
     clippy::disallowed_methods,
     reason = "the character index is charged above; returned records map budgeted shaped glyphs one to one"
@@ -1308,12 +1329,17 @@ pub fn shape_text_fallback(
     faces: Vec<PyRef<'_, _Font>>,
     text: &str,
     vertical: bool,
-    check_colour: bool,
+    colour_check: u8,
     operation: Option<PyRef<'_, OperationBudget>>,
 ) -> PyResult<Vec<FallbackPlaced>> {
     crate::errors::boundary(|| {
         if faces.is_empty() {
             return Err(PyValueError::new_err("at least one font face is required"));
+        }
+        if colour_check > 2 {
+            return Err(PyValueError::new_err(format!(
+                "invalid colour_check mode: {colour_check}"
+            )));
         }
         let budget = match operation.as_deref() {
             Some(operation) => {
@@ -1356,8 +1382,9 @@ pub fn shape_text_fallback(
             let sources = fallback_sources(&kinds, budget)?;
             let glyphs = shape_with_fallback(&sources, text, direction, budget)
                 .map_err(|error| fallback_shape_error(&kinds, &error))?;
-            if check_colour {
+            if colour_check != 0 {
                 for (face_index, kind) in kinds.iter().enumerate() {
+                    budget.poll().map_err(|error| limit_error(&error))?;
                     let Kind::Embedded(face) = kind else {
                         continue;
                     };
@@ -1379,18 +1406,39 @@ pub fn shape_text_fallback(
                     if per_face.is_empty() {
                         continue;
                     }
-                    let font = face.font();
-                    let bitmaps = Bitmaps::read(&font).map_err(|error| shape_error(&error))?;
-                    let refused = Colr::of_face(face, |colr| {
-                        let painted = Painted {
-                            colr,
-                            bitmaps: &bitmaps,
-                        };
-                        refused_canvas_glyph(face, text, &per_face, painted, budget)
-                    })
-                    .map_err(|error| shape_error(&error))?;
-                    if let Some(refused) = refused {
-                        return Err(colour_refused(face, &refused));
+                    if colour_check == 2 {
+                        if !face.outlines {
+                            return Err(PdfError::new_err(format!(
+                                "{} has colour bitmaps and no outlines, so it cannot clip text",
+                                face.full_name
+                            )));
+                        }
+                        let refused = refused_colour_glyph(face, text, &per_face, budget)
+                            .map_err(|error| shape_error(&error))?;
+                        if let Some(character) = refused {
+                            return Err(colour_refused(
+                                face,
+                                &Refused {
+                                    character,
+                                    glyph: 0,
+                                    verdict: None,
+                                },
+                            ));
+                        }
+                    } else {
+                        let font = face.font();
+                        let bitmaps = Bitmaps::read(&font).map_err(|error| shape_error(&error))?;
+                        let refused = Colr::of_face(face, |colr| {
+                            let painted = Painted {
+                                colr,
+                                bitmaps: &bitmaps,
+                            };
+                            refused_canvas_glyph(face, text, &per_face, painted, budget)
+                        })
+                        .map_err(|error| shape_error(&error))?;
+                        if let Some(refused) = refused {
+                            return Err(colour_refused(face, &refused));
+                        }
                     }
                 }
             }
@@ -1502,8 +1550,23 @@ pub fn layout_text_fallback(
             };
             let text = normalized.as_deref().unwrap_or(text);
             let sources = fallback_sources(&kinds, &budget)?;
-            for line in text.lines() {
-                shape_with_fallback(&sources, line, direction, &budget)
+            let mut shapers: BudgetVec<'_, Option<ShapingFace>> = BudgetVec::new(&budget);
+            shapers
+                .try_reserve_exact(sources.len())
+                .map_err(|error| limit_error(&error))?;
+            for _ in 0..sources.len() {
+                shapers
+                    .try_push(None)
+                    .map_err(|error| limit_error(&error))?;
+            }
+            for (line_idx, line) in text.lines().enumerate() {
+                budget
+                    .check(
+                        LimitCode::TextLineCount,
+                        u64::try_from(line_idx.saturating_add(1)).unwrap_or(u64::MAX),
+                    )
+                    .map_err(|error| limit_error(&error))?;
+                shape_with_fallback_cached(&sources, &mut shapers, line, direction, &budget)
                     .map_err(|error| fallback_shape_error(&kinds, &error))?;
             }
             let mut shape_failure: Option<PyErr> = None;
@@ -1518,7 +1581,13 @@ pub fn layout_text_fallback(
                     if shape_failure.is_some() {
                         return f64::INFINITY;
                     }
-                    match shape_with_fallback(&sources, line, direction, &budget) {
+                    match shape_with_fallback_cached(
+                        &sources,
+                        &mut shapers,
+                        line,
+                        direction,
+                        &budget,
+                    ) {
                         Ok(glyphs) => fallback_advance(&kinds, &glyphs, size, vertical),
                         Err(error) => {
                             shape_failure = Some(fallback_shape_error(&kinds, &error));

@@ -807,3 +807,56 @@ def test_clip_text_marks_artifact_on_tagged_documents() -> None:
                 canvas.rect((0, 70, 80, 110), fill=RED)
             assert doc.changes(incremental=False).claims == ()
             assert doc.changes(incremental=True).claims == ()
+
+
+def test_clip_text_whitespace_only_clips_everything() -> None:
+    _doc, page = _new_page(100, 100)
+    blank = bytes(page.pixmap(dpi=72))
+    with page.draw() as canvas, canvas.clip_text("   \n  ", (20, 60), size=48):
+        canvas.rect((0, 0, 100, 100), fill=RED)
+    assert bytes(page.pixmap(dpi=72)) == blank
+
+
+def test_clip_text_defers_mutation_and_resets_stroke_style() -> None:
+    doc, page = _new_page(200, 140)
+    before = doc.to_bytes(), doc.history.steps
+    with page.draw() as canvas:
+        # Creating a clip_text scope without entering it must not mutate canvas or document.
+        _unused = canvas.clip_text(
+            "H",
+            (30, 110),
+            font=pyropdf.Font.standard("Helvetica-Bold"),
+            size=60,
+            fill=BLUE,
+            stroke=Stroke(paint=GREEN, width=8, dashes=(4, 2)),
+        )
+    assert (doc.to_bytes(), doc.history.steps) == before
+
+    # Entering clip_text with a thick dashed stroke resets w/J/j/M/d inside the clip scope.
+    with (
+        page.draw() as canvas,
+        canvas.clip_text(
+            "H",
+            (30, 110),
+            font=pyropdf.Font.standard("Helvetica-Bold"),
+            size=96,
+            stroke=Stroke(paint=GREEN, width=8, dashes=(4, 2)),
+        ),
+    ):
+        canvas.rect((0, 0, 200, 140), fill=RED)
+    ops = [(op.operator, op.operands) for op in page.operations]
+    assert ("w", (1,)) in ops
+    assert ("d", ((), 0)) in ops
+
+
+def test_clip_text_rolls_back_cleanly_on_content_input_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc, page = _new_page(200, 140)
+    monkeypatch.setattr("pyropdf._canvas._DEFAULT_MAX_CONTENT_SIZE", 24)
+    before = doc.to_bytes(), doc.history.steps
+    with page.draw() as canvas:
+        scope = canvas.clip_text("Hello", (20, 80), size=24)
+        with pytest.raises(pyropdf.LimitError) as refused, scope:
+            canvas.rect((0, 0, 10, 10), fill=RED)
+        assert refused.value.code == "content_input_size"
+    # Canvas exits cleanly with zero leaked scopes or dangling `q` operators.
+    assert (doc.to_bytes(), doc.history.steps) == before

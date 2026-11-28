@@ -38,7 +38,7 @@ from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Array, Dictionary, Name, Stream
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from pyropdf._document import Document
     from pyropdf._limit_codes import LimitCode
@@ -1143,10 +1143,16 @@ def _type0_parts(document: Document, xref: int, *, vertical: bool = False) -> tu
 
 
 def _matches_base_font(document: Document, xref: int, face: Font) -> bool:
+    """Return whether Type0 ``xref`` is still an un-subsetted font written for ``face``.
+
+    Once ``doc.subset_fonts()`` compacts a font in place, its ``/BaseFont`` gains
+    a ``XXXXXX+`` subset prefix and strips unused glyphs, so later draws must
+    allocate a fresh full Type0 font instead of appending new CIDs to the subset.
+    """
     base = document.objects[xref].get("BaseFont")
     name = face._font.postscript_name  # noqa: SLF001
     text = str(base) if isinstance(base, Name) else ""
-    return text == name or (_TAG.match(text) is not None and text[7:] == name)
+    return text == name
 
 
 def embedded_font(
@@ -1291,8 +1297,14 @@ def _cmap(mapped: dict[int, str]) -> bytes:
     return b"".join(lines)
 
 
-def _update_vertical_metrics(
-    descendant: Dictionary, font: _core._Font, count: int, glyphs: Sequence[tuple[int, str]]
+def _update_vertical_metrics(  # noqa: PLR0913 - CIDFont vertical metric update parameters.
+    descendant: Dictionary,
+    font: _core._Font,
+    count: int,
+    glyphs: Sequence[tuple[int, str]],
+    *,
+    v_metrics: Mapping[int, tuple[float, float, float]] | None = None,
+    operation: _core._OperationBudget | None = None,
 ) -> bool:
     """Record ``DW2`` and ``W2`` entries for new vertical glyphs; return whether any were added."""
     if "DW2" not in descendant:
@@ -1301,7 +1313,13 @@ def _update_vertical_metrics(
     new_v = sorted({glyph for glyph, _ in glyphs if glyph not in widths2})
     if not new_v:
         return False
-    widths2.update(zip(new_v, font.glyph_v_metrics(new_v), strict=True))
+    missing = [glyph for glyph in new_v if v_metrics is None or glyph not in v_metrics]
+    if v_metrics is not None:
+        for glyph in new_v:
+            if glyph in v_metrics:
+                widths2[glyph] = v_metrics[glyph]
+    if missing:
+        widths2.update(zip(missing, font.glyph_v_metrics(missing, operation=operation), strict=True))
     descendant["W2"] = _w2_array(widths2)
     return True
 
@@ -1314,6 +1332,8 @@ def add_glyphs(  # noqa: PLR0913 - keyword options mirror embedded_font.
     *,
     editable: bool = False,
     vertical: bool = False,
+    v_metrics: Mapping[int, tuple[float, float, float]] | None = None,
+    operation: _core._OperationBudget | None = None,
 ) -> dict[int, str]:
     """Record the widths and texts of ``glyphs`` in the Type0 font ``xref`` and return the texts that the CMap maps.
 
@@ -1336,7 +1356,11 @@ def add_glyphs(  # noqa: PLR0913 - keyword options mirror embedded_font.
     mapped = _mapped(stream, count)
     new = sorted({glyph for glyph, _ in glyphs if glyph not in widths})
     widths.update(zip(new, font.glyph_widths(new), strict=True))
-    added_v = _update_vertical_metrics(descendant, font, count, glyphs) if vertical else False
+    added_v = (
+        _update_vertical_metrics(descendant, font, count, glyphs, v_metrics=v_metrics, operation=operation)
+        if vertical
+        else False
+    )
     added = False
     for glyph, text in glyphs:
         if mapped.get(glyph, _NO_TEXT) != _NO_TEXT or not text or mapped.get(glyph) == text:

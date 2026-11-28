@@ -43,7 +43,7 @@ from pyropdf._xobjects import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
+    from collections.abc import Callable, Generator, Iterator
     from typing import BinaryIO
 
     from pyropdf._content import Image
@@ -115,6 +115,18 @@ _IGNORED_ARCHIVE_FILES = frozenset({".ds_store", "thumbs.db", "desktop.ini"})
 _NATURAL_SPLIT = re.compile(r"([0-9]+)")
 _PATH_SEPARATORS = re.compile(r"[/\\]")
 _MIN_PNG_IHDR_BYTES = 24
+_MAX_JP2_BOXES = 1024
+_JP2_EXIF_UUID = b"JpgTiffExif->JP2"
+_ZIP_EOCD_SIG = b"PK\x05\x06"
+_ZIP64_LOCATOR_SIG = b"PK\x06\x07"
+_ZIP64_EOCD_SIG = b"PK\x06\x06"
+_ZIP_EOCD_MIN_SIZE = 22
+_ZIP_MAX_TAIL = _ZIP_EOCD_MIN_SIZE + 65_535
+_ZIP64_LOCATOR_SIZE = 20
+_ZIP64_EOCD_MIN_SIZE = 56
+_ZIP_LOCAL_HEADER_SIZE = 30
+_ZIP_INFO_ESTIMATE = 512
+_ALLOWED_ZIP_METHODS = frozenset({zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -210,31 +222,86 @@ def _jpeg_frame(data: bytes) -> tuple[int, int, int, bool]:
             adobe = True
         if marker in _JPEG_FRAMES and at + 10 <= len(data):
             height, width = struct.unpack(">HH", data[at + 5 : at + 9])
+            if width <= 0 or height <= 0:
+                msg = "the JPEG frame header has non-positive dimensions"
+                raise ValueError(msg)
             return width, height, data[at + 9], adobe
         at += 2 + length
     msg = "the JPEG data has no frame header"
     raise ValueError(msg)
 
 
+def _iter_jp2_boxes(data: bytes, start: int, end: int) -> Iterator[tuple[bytes, bytes]]:
+    """Walk ISO/IEC 15444-1 JP2 boxes inside ``data[start:end]`` within ``_MAX_JP2_BOXES``."""
+    at = start
+    seen = 0
+    while at + 8 <= end and seen < _MAX_JP2_BOXES:
+        lbox, tbox = struct.unpack(">I4s", data[at : at + 8])
+        if lbox == 0:
+            header = 8
+            box_end = end
+        elif lbox == 1:
+            if at + 16 > end:
+                break
+            (xlbox,) = struct.unpack(">Q", data[at + 8 : at + 16])
+            if xlbox < 16 or at + xlbox > end:  # noqa: PLR2004 - extended box header is 16 bytes
+                break
+            header = 16
+            box_end = at + xlbox
+        else:
+            if lbox < 8 or at + lbox > end:  # noqa: PLR2004 - minimum JP2 box header is 8 bytes
+                break
+            header = 8
+            box_end = at + lbox
+        yield tbox, data[at + header : box_end]
+        at = box_end
+        seen += 1
+
+
+def _j2k_codestream_size(data: bytes) -> tuple[int, int]:
+    """Return ``(width, height)`` from a JPEG 2000 codestream starting with SOC+SIZ."""
+    if not data.startswith(_J2K_SIGNATURE) or len(data) < 24:  # noqa: PLR2004 - SOC+SIZ header
+        msg = "the JPEG 2000 data has no image header"
+        raise ValueError(msg)
+    xsiz, ysiz, xosiz, yosiz = struct.unpack(">IIII", data[8:24])
+    width, height = xsiz - xosiz, ysiz - yosiz
+    if width > 0 and height > 0:
+        return width, height
+    msg = "the JPEG 2000 codestream header has non-positive dimensions"
+    raise ValueError(msg)
+
+
 def _jpx_size(data: bytes) -> tuple[int, int]:
     """Return the width and height of JPEG 2000 data, a JP2 file or a codestream."""
-    at = data.find(b"ihdr") if data.startswith(_JP2_SIGNATURE) else -1
-    if at >= 0 and at + 12 <= len(data):
-        height, width = struct.unpack(">II", data[at + 4 : at + 12])
-        if width > 0 and height > 0:
-            return width, height
-        msg = "the JPEG 2000 image header has non-positive dimensions"
+    if data.startswith(_JP2_SIGNATURE):
+        codestream: bytes | None = None
+        for tbox, payload in _iter_jp2_boxes(data, 0, len(data)):
+            if tbox == b"jp2h":
+                for sub_type, sub_payload in _iter_jp2_boxes(payload, 0, len(payload)):
+                    if sub_type == b"ihdr" and len(sub_payload) >= 8:  # noqa: PLR2004
+                        height, width = struct.unpack(">II", sub_payload[:8])
+                        if width > 0 and height > 0:
+                            return width, height
+                        msg = "the JPEG 2000 image header has non-positive dimensions"
+                        raise ValueError(msg)
+            elif tbox == b"jp2c" and codestream is None:
+                codestream = payload
+        if codestream is not None:
+            return _j2k_codestream_size(codestream)
+        msg = "the JPEG 2000 data has no image header"
         raise ValueError(msg)
-    at = data.find(_J2K_SIGNATURE)
-    if at >= 0 and at + 24 <= len(data):
-        xsiz, ysiz, xosiz, yosiz = struct.unpack(">IIII", data[at + 8 : at + 24])
-        width, height = xsiz - xosiz, ysiz - yosiz
-        if width > 0 and height > 0:
-            return width, height
-        msg = "the JPEG 2000 codestream header has non-positive dimensions"
-        raise ValueError(msg)
-    msg = "the JPEG 2000 data has no image header"
-    raise ValueError(msg)
+    return _j2k_codestream_size(data)
+
+
+def _jp2_exif_bytes(data: bytes) -> bytes | None:
+    """Return the Exif TIFF payload from a JP2 ``uuid`` box, or ``None`` if absent."""
+    if not data.startswith(_JP2_SIGNATURE):
+        return None
+    for tbox, payload in _iter_jp2_boxes(data, 0, len(data)):
+        if tbox == b"uuid" and len(payload) >= len(_JP2_EXIF_UUID) and payload[: len(_JP2_EXIF_UUID)] == _JP2_EXIF_UUID:
+            body = payload[len(_JP2_EXIF_UUID) :]
+            return body[6:] if body.startswith(b"Exif\x00\x00") else body
+    return None
 
 
 def _image_stream(document: Document, xref: int) -> Stream:
@@ -1688,14 +1755,15 @@ def _encoded_image_size(data: bytes) -> tuple[int, int] | None:
     return None
 
 
-def _natural_tokens(text: str) -> tuple[tuple[int, int, int, str] | tuple[int, str, str], ...]:
-    """Return natural-sort tokens for one path component (numbers compare numerically)."""
-    tokens: list[tuple[int, int, int, str] | tuple[int, str, str]] = []
+def _natural_tokens(text: str) -> tuple[tuple[int, int, str, int, str] | tuple[int, str, str], ...]:
+    """Return natural-sort tokens for one path component without integer string conversion limits."""
+    tokens: list[tuple[int, int, str, int, str] | tuple[int, str, str]] = []
     for part in _NATURAL_SPLIT.split(text):
         if not part:
             continue
         if part.isascii() and part.isdigit():
-            tokens.append((0, int(part), len(part), part))
+            stripped = part.lstrip("0") or "0"
+            tokens.append((0, len(stripped), stripped, len(part), part))
         else:
             tokens.append((1, part.casefold(), part))
     return tuple(tokens)
@@ -1725,22 +1793,25 @@ def _cbz_sort_key(filename: str) -> tuple[tuple[tuple[object, ...], tuple[object
 
 
 def _validate_cbz_entry(info: zipfile.ZipInfo) -> list[str]:
-    """Validate one ZIP entry name and mode against path traversal and symlinks; return its segments."""
-    name = info.filename
-    if "\x00" in name:
-        msg = f"CBZ entry {name!r} contains a NUL byte"
-        raise ValueError(msg)
-    if name.startswith(("/", "\\")) or (len(name) >= 2 and name[0].isalpha() and name[1] == ":"):  # noqa: PLR2004
-        msg = f"CBZ entry {name!r} has an absolute path"
-        raise ValueError(msg)
-    parts = [part for part in _PATH_SEPARATORS.split(name) if part not in ("", ".")]
-    if ".." in parts:
-        msg = f"CBZ entry {name!r} escapes the archive root"
-        raise ValueError(msg)
+    """Validate one ZIP entry name and mode against NUL bytes, path traversal, and symlinks."""
+    raw_name = getattr(info, "orig_filename", info.filename)
+    for candidate in (raw_name, info.filename):
+        if "\x00" in candidate:
+            msg = f"CBZ entry {raw_name!r} contains a NUL byte"
+            raise ValueError(msg)
+        if candidate.startswith(("/", "\\")) or (
+            len(candidate) >= 2 and candidate[0].isalpha() and candidate[1] == ":"  # noqa: PLR2004
+        ):
+            msg = f"CBZ entry {raw_name!r} has an absolute path"
+            raise ValueError(msg)
+        cand_parts = [part for part in _PATH_SEPARATORS.split(candidate) if part not in ("", ".")]
+        if ".." in cand_parts:
+            msg = f"CBZ entry {raw_name!r} escapes the archive root"
+            raise ValueError(msg)
     if stat.S_ISLNK(info.external_attr >> 16):
-        msg = f"CBZ entry {name!r} is a symbolic link"
+        msg = f"CBZ entry {raw_name!r} is a symbolic link"
         raise ValueError(msg)
-    return parts
+    return [part for part in _PATH_SEPARATORS.split(info.filename) if part not in ("", ".")]
 
 
 def _is_cbz_image_entry(info: zipfile.ZipInfo, parts: list[str]) -> bool:
@@ -1766,7 +1837,13 @@ def _effective_limit(budget: _core._OperationBudget, hard_max: int, *codes: str)
     return bound
 
 
-def _check_ratio(info: zipfile.ZipInfo, output_bytes: int, archive_size: int) -> None:
+def _check_ratio(
+    info: zipfile.ZipInfo,
+    output_bytes: int,
+    archive_size: int,
+    *,
+    max_span: int | None = None,
+) -> None:
     """Refuse compressed ZIP members whose expansion ratio exceeds ``_MAX_ZIP_EXPANSION_RATIO``."""
     if info.compress_type == zipfile.ZIP_STORED:
         if output_bytes > archive_size:
@@ -1775,10 +1852,21 @@ def _check_ratio(info: zipfile.ZipInfo, output_bytes: int, archive_size: int) ->
         return
     if output_bytes <= _ZIP_RATIO_FLOOR:
         return
-    compressed = max(1, min(info.compress_size, archive_size))
+    bound = archive_size if max_span is None else min(archive_size, max_span)
+    compressed = max(1, min(info.compress_size, bound))
     if output_bytes > compressed * _MAX_ZIP_EXPANSION_RATIO:
         code = "decompressed_size"
         msg = f"CBZ entry {info.filename!r} expands beyond the {_MAX_ZIP_EXPANSION_RATIO}x decompression ratio limit"
+        raise LimitError(code, msg)
+
+
+def _check_archive_ratio(total_output: int, archive_size: int) -> None:
+    """Refuse archives whose cumulative decompressed bytes exceed ``_MAX_ZIP_EXPANSION_RATIO``."""
+    if total_output <= _ZIP_RATIO_FLOOR:
+        return
+    if total_output > max(1, archive_size) * _MAX_ZIP_EXPANSION_RATIO:
+        code = "total_decompressed_size"
+        msg = f"the CBZ archive expands beyond the {_MAX_ZIP_EXPANSION_RATIO}x total decompression ratio limit"
         raise LimitError(code, msg)
 
 
@@ -1854,6 +1942,85 @@ def _read_bounded_stream(
     return data, total
 
 
+def _find_zip_eocd(tail: bytes) -> int:
+    """Return the offset within ``tail`` of the ZIP End of Central Directory record, or -1."""
+    search_end = len(tail)
+    while search_end >= _ZIP_EOCD_MIN_SIZE:
+        pos = tail.rfind(_ZIP_EOCD_SIG, 0, search_end)
+        if pos < 0:
+            return -1
+        if pos + _ZIP_EOCD_MIN_SIZE <= len(tail):
+            (comment_len,) = struct.unpack("<H", tail[pos + 20 : pos + 22])
+            if pos + _ZIP_EOCD_MIN_SIZE + comment_len == len(tail):
+                return pos
+        search_end = pos
+    return -1
+
+
+def _read_zip64_directory_bounds(
+    stream: BinaryIO,
+    archive_size: int,
+    eocd_file_offset: int,
+) -> tuple[int, int] | None:
+    """Read ``(total_entries, cd_size)`` from a ZIP64 EOCD record, or ``None`` if absent/invalid."""
+    locator_offset = eocd_file_offset - _ZIP64_LOCATOR_SIZE
+    if locator_offset < 0:
+        return None
+    stream.seek(locator_offset)
+    locator = stream.read(_ZIP64_LOCATOR_SIZE)
+    if len(locator) != _ZIP64_LOCATOR_SIZE or locator[:4] != _ZIP64_LOCATOR_SIG:
+        return None
+    (eocd64_offset,) = struct.unpack("<Q", locator[8:16])
+    if eocd64_offset + _ZIP64_EOCD_MIN_SIZE > archive_size:
+        msg = "invalid CBZ archive: ZIP64 central directory locator is out of range"
+        raise ValueError(msg)
+    stream.seek(eocd64_offset)
+    record = stream.read(_ZIP64_EOCD_MIN_SIZE)
+    if len(record) != _ZIP64_EOCD_MIN_SIZE or record[:4] != _ZIP64_EOCD_SIG:
+        return None
+    total_entries, cd_size = struct.unpack("<QQ", record[32:48])
+    return total_entries, cd_size
+
+
+def _preflight_zip_directory(stream: BinaryIO, archive_size: int, budget: _core._OperationBudget) -> int:
+    """Enforce ``_MAX_ARCHIVE_ENTRIES`` and charge Central Directory memory before ``zipfile.ZipFile`` parses it."""
+    budget.poll()
+    if archive_size < _ZIP_EOCD_MIN_SIZE:
+        return 0
+    tail_len = min(archive_size, _ZIP_MAX_TAIL)
+    tail_start = archive_size - tail_len
+    try:
+        stream.seek(tail_start)
+        tail = stream.read(tail_len)
+        eocd_pos = _find_zip_eocd(tail)
+        if eocd_pos < 0:
+            return 0
+        _disk, _cd_disk, disk_entries, total_entries, cd_size, cd_offset, _comment_len = struct.unpack(
+            "<HHHHIIH", tail[eocd_pos + 4 : eocd_pos + _ZIP_EOCD_MIN_SIZE]
+        )
+        if (
+            disk_entries == 0xFFFF  # noqa: PLR2004 - ZIP64 sentinel
+            or total_entries == 0xFFFF  # noqa: PLR2004
+            or cd_size == 0xFFFFFFFF  # noqa: PLR2004
+            or cd_offset == 0xFFFFFFFF  # noqa: PLR2004
+        ):
+            zip64 = _read_zip64_directory_bounds(stream, archive_size, tail_start + eocd_pos)
+            if zip64 is not None:
+                total_entries, cd_size = zip64
+    finally:
+        stream.seek(0)
+    if total_entries > _MAX_ARCHIVE_ENTRIES:
+        code = "content_element_count"
+        msg = f"the CBZ archive has more than {_MAX_ARCHIVE_ENTRIES} entries"
+        raise LimitError(code, msg)
+    if cd_size > archive_size:
+        msg = "invalid CBZ archive: central directory size exceeds archive size"
+        raise ValueError(msg)
+    cd_charge = cd_size + total_entries * _ZIP_INFO_ESTIMATE
+    budget.charge("memory_size", cd_charge)
+    return cd_charge
+
+
 @contextmanager
 def _open_cbz_archive(
     source: str | os.PathLike[str] | bytes | bytearray | memoryview | BinaryIO,
@@ -1883,10 +2050,11 @@ def _open_cbz_archive(
         else:
             msg = f"source must be a path, bytes, or binary file-like object, not {type(source).__name__}"
             raise TypeError(msg)
+        charged += _preflight_zip_directory(stream, archive_size, budget)
         try:
             with zipfile.ZipFile(stream, "r") as archive:
                 yield archive, archive_size
-        except (zipfile.BadZipFile, zlib.error, EOFError, struct.error) as exc:
+        except (zipfile.BadZipFile, zlib.error, EOFError, struct.error, NotImplementedError) as exc:
             msg = f"invalid CBZ archive: {exc}"
             raise ValueError(msg) from exc
     finally:
@@ -1928,6 +2096,28 @@ def _prepare_cbz_stream(
     return io.BytesIO(data), len(data), charged
 
 
+def _check_cbz_spans(infos: list[zipfile.ZipInfo], archive_size: int) -> dict[int, int]:
+    """Refuse duplicate, out-of-bounds, or overlapping ZIP member spans; return per-entry max payload span."""
+    ordered = sorted(infos, key=lambda entry: (entry.header_offset, entry.compress_size))
+    max_spans: dict[int, int] = {}
+    for index, info in enumerate(ordered):
+        offset = info.header_offset
+        comp = info.compress_size
+        if offset < 0 or comp < 0 or offset + _ZIP_LOCAL_HEADER_SIZE > archive_size:
+            msg = f"invalid CBZ archive: entry {info.filename!r} has an out-of-range header offset"
+            raise ValueError(msg)
+        next_offset = ordered[index + 1].header_offset if index + 1 < len(ordered) else archive_size
+        if index + 1 < len(ordered):
+            if next_offset == offset:
+                msg = f"invalid CBZ archive: overlapping entries at offset {offset}"
+                raise ValueError(msg)
+            if offset + _ZIP_LOCAL_HEADER_SIZE + comp > next_offset:
+                msg = f"invalid CBZ archive: overlapping entries {info.filename!r} and {ordered[index + 1].filename!r}"
+                raise ValueError(msg)
+        max_spans[id(info)] = max(1, next_offset - offset - _ZIP_LOCAL_HEADER_SIZE)
+    return max_spans
+
+
 def _select_cbz_entries(
     archive: zipfile.ZipFile,
     budget: _core._OperationBudget,
@@ -1935,7 +2125,7 @@ def _select_cbz_entries(
     archive_size: int,
     max_frames: int,
     max_input: int,
-) -> list[zipfile.ZipInfo]:
+) -> list[tuple[zipfile.ZipInfo, int]]:
     """Validate every ZIP entry, check archive bounds before decompression, and sort image entries naturally."""
     infos = archive.infolist()
     budget.poll()
@@ -1943,6 +2133,7 @@ def _select_cbz_entries(
         code = "content_element_count"
         msg = f"the CBZ archive has more than {_MAX_ARCHIVE_ENTRIES} entries"
         raise LimitError(code, msg)
+    max_spans = _check_cbz_spans(infos, archive_size)
     selected: list[zipfile.ZipInfo] = []
     for info in infos:
         budget.poll()
@@ -1950,6 +2141,9 @@ def _select_cbz_entries(
         if _is_cbz_image_entry(info, parts):
             if info.flag_bits & 0x1:
                 msg = f"encrypted CBZ entry {info.filename!r} is not supported"
+                raise ValueError(msg)
+            if info.compress_type not in _ALLOWED_ZIP_METHODS:
+                msg = f"unsupported compression method {info.compress_type} for CBZ entry {info.filename!r}"
                 raise ValueError(msg)
             selected.append(info)
     if not selected:
@@ -1963,15 +2157,16 @@ def _select_cbz_entries(
     declared_total = 0
     for info in selected:
         _check_entry_size(budget, info.file_size, max_input)
-        _check_ratio(info, info.file_size, archive_size)
+        _check_ratio(info, info.file_size, archive_size, max_span=max_spans[id(info)])
         declared_total += info.file_size
         budget.check("total_decompressed_size", declared_total)
+        _check_archive_ratio(declared_total, archive_size)
         if declared_total > total_limit:
             code = "total_decompressed_size"
             msg = f"the CBZ archive expands beyond {total_limit} bytes"
             raise LimitError(code, msg)
     selected.sort(key=lambda entry: (_cbz_sort_key(entry.filename), entry.filename))
-    return selected
+    return [(info, max_spans[id(info)]) for info in selected]
 
 
 def _check_total_decompressed(budget: _core._OperationBudget, total: int, total_limit: int) -> None:
@@ -1991,12 +2186,14 @@ def _read_cbz_member(  # noqa: PLR0913 - bounded archive read context.
     archive_size: int,
     max_input: int,
     total_so_far: int,
+    max_span: int | None = None,
 ) -> bytes:
     """Read one CBZ member in bounded chunks, charging ``total_decompressed_size`` and ``memory_size``."""
     entry_limit = _effective_limit(budget, max_input, "decompressed_size", "image_input_size")
     total_limit = _effective_limit(budget, max_input, "total_decompressed_size")
     parts: list[bytes] = []
     entry_bytes = 0
+    charged = 0
     try:
         with archive.open(info, "r") as member:
             while True:
@@ -2007,18 +2204,22 @@ def _read_cbz_member(  # noqa: PLR0913 - bounded archive read context.
                     break
                 entry_bytes += len(chunk)
                 _check_entry_size(budget, entry_bytes, max_input)
-                _check_ratio(info, entry_bytes, archive_size)
+                _check_ratio(info, entry_bytes, archive_size, max_span=max_span)
+                _check_archive_ratio(total_so_far + entry_bytes, archive_size)
                 _check_total_decompressed(budget, total_so_far + entry_bytes, total_limit)
                 budget.charge("total_decompressed_size", len(chunk))
                 budget.charge("memory_size", len(chunk))
+                charged += len(chunk)
                 parts.append(chunk)
         return _join_charged(parts, entry_bytes, budget)
-    except (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError) as exc:
-        budget.release("memory_size", entry_bytes)
+    except (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError, NotImplementedError) as exc:
+        if charged:
+            budget.release("memory_size", charged)
         msg = f"corrupt CBZ entry {info.filename!r}: {exc}"
         raise ValueError(msg) from exc
     except BaseException:
-        budget.release("memory_size", entry_bytes)
+        if charged:
+            budget.release("memory_size", charged)
         raise
 
 

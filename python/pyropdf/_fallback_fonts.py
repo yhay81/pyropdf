@@ -197,6 +197,14 @@ class FallbackFonts(MutableMapping[str, FallbackFont]):
         with self._document._lock:  # noqa: SLF001 - the package's own document.
             return dict(self._state_locked())
 
+    def _snapshot(self) -> tuple[tuple[str, FallbackFont], ...]:
+        """Return an atomic snapshot of ``(language, FallbackFont)`` pairs under one lock."""
+        state = self._state()
+        return tuple(
+            (language, _package_font(value) if isinstance(value, _FontPackage) else value)
+            for language, value in state.items()
+        )
+
     def __getitem__(self, language: str) -> FallbackFont:
         """Return the faces that render ``language``, loading an installed extra's once per process."""
         value = self._state()[_fallback_language(language)]

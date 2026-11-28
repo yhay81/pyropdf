@@ -19,6 +19,7 @@ from pyropdf._images import (
     _PNG_SIGNATURE,
     _effective_limit,
     _encoded_image_size,
+    _jp2_exif_bytes,
     _open_cbz_archive,
     _read_bounded_stream,
     _read_cbz_member,
@@ -26,6 +27,7 @@ from pyropdf._images import (
     add_image,
 )
 from pyropdf._interchange import _has_dparts, _prune_dparts_for_removed_pages
+from pyropdf._objects import _unlocked
 from pyropdf._page import Page
 from pyropdf._page_labels import _label, _read_page_labels
 from pyropdf._threads import (
@@ -59,6 +61,8 @@ _CM_PER_INCH = 2.54
 _METRES_PER_INCH = 0.0254
 #: The most frames that one call reads from a multi-frame image.
 _MAX_FRAMES = 4096
+#: The most pixels in any single decoded Pillow frame (matching Rust decode_png::MAX_PIXELS).
+_MAX_DECODED_PIXELS = 64_000_000
 #: The most pixels, over all its frames, that one call reads from a multi-frame image.
 _MAX_FRAME_PIXELS = 256_000_000
 #: The most bytes of encoded image data that one call reads.
@@ -264,6 +268,7 @@ class Pages(Sequence[Page]):
         its aspect ratio (mutually exclusive with ``dpi``). The pages go where
         :meth:`new` puts one, in order, and are returned.
         """
+        _unlocked(self._document)
         override, page_size, start = self._image_page_options(dpi=dpi, size=size, index=index)
         return self._add_image_sources((source,), "new_from_image", override=override, page_size=page_size, start=start)
 
@@ -287,6 +292,7 @@ class Pages(Sequence[Page]):
         """
         from pyropdf._core import Pixmap  # noqa: PLC0415 - the stub names the extension's class.
 
+        _unlocked(self._document)
         if isinstance(sources, (str, bytes, bytearray, memoryview, os.PathLike, Pixmap)) or not isinstance(
             sources, Iterable
         ):
@@ -317,6 +323,7 @@ class Pages(Sequence[Page]):
         members are embedded without lossy recompression, PNG keeps its alpha
         soft mask, and Exif orientation is honored.
         """
+        _unlocked(self._document)
         override, page_size, start = self._image_page_options(dpi=dpi, size=size, index=index)
         document = self._document
         core = document._core()  # noqa: SLF001
@@ -334,7 +341,7 @@ class Pages(Sequence[Page]):
                 operation.check("page_count", len(self) + len(entries))
                 state = _ImageBatch(operation, existing_pages=len(self), override=override, page_size=page_size)
                 total_decompressed = 0
-                for info in entries:
+                for info, max_span in entries:
                     operation.poll()
                     raw = _read_cbz_member(
                         archive,
@@ -343,6 +350,7 @@ class Pages(Sequence[Page]):
                         archive_size=archive_size,
                         max_input=_MAX_IMAGE_INPUT,
                         total_so_far=total_decompressed,
+                        max_span=max_span,
                     )
                     total_decompressed += len(raw)
                     try:
@@ -457,7 +465,9 @@ class Pages(Sequence[Page]):
         if data.startswith((_JP2_SIGNATURE, _J2K_SIGNATURE)):
             width, height = _require_encoded_size(data)
             state.charge_frame(width, height)
-            self._append_frame_page(data, None, 1, state, pages, start=start)
+            exif = _jp2_exif_bytes(data)
+            found, orientation = _exif_info(exif) if exif is not None else (None, 1)
+            self._append_frame_page(data, found, orientation, state, pages, start=start)
             return
         for frame_data, found, orientation in _pillow_frames(data, state):
             self._append_frame_page(frame_data, found, orientation, state, pages, start=start)
@@ -477,13 +487,15 @@ class Pages(Sequence[Page]):
         xref = add_image(document, data)
         stream = document.objects[xref]
         raw_w, raw_h = float(stream["Width"]), float(stream["Height"])
-        x_dpi, y_dpi = state.override or found_dpi or (_DEFAULT_DPI, _DEFAULT_DPI)
         if orientation in _TRANSPOSED_ORIENTATIONS:
-            display_w = raw_h * _POINTS_PER_INCH / y_dpi
-            display_h = raw_w * _POINTS_PER_INCH / x_dpi
+            disp_px_w, disp_px_h = raw_h, raw_w
+            embedded_dpi = (found_dpi[1], found_dpi[0]) if found_dpi is not None else None
         else:
-            display_w = raw_w * _POINTS_PER_INCH / x_dpi
-            display_h = raw_h * _POINTS_PER_INCH / y_dpi
+            disp_px_w, disp_px_h = raw_w, raw_h
+            embedded_dpi = found_dpi
+        x_dpi, y_dpi = state.override or embedded_dpi or (_DEFAULT_DPI, _DEFAULT_DPI)
+        display_w = disp_px_w * _POINTS_PER_INCH / x_dpi
+        display_h = disp_px_h * _POINTS_PER_INCH / y_dpi
         if state.page_size is not None:
             page_w, page_h = state.page_size
             scale = min(page_w / display_w, page_h / display_h)
@@ -893,6 +905,22 @@ def _png_resolution(pixels_per_metre: int) -> float:
     return rounded if round(rounded / _METRES_PER_INCH) == pixels_per_metre else exact
 
 
+def _valid_dpi(value: object) -> tuple[float, float] | None:
+    """Return a positive finite ``(x, y)`` DPI pair from Pillow metadata, or ``None`` if invalid."""
+    if not isinstance(value, (tuple, list)) or len(value) != 2:  # noqa: PLR2004
+        return None
+    x_raw, y_raw = value
+    if isinstance(x_raw, (bool, str, bytes)) or isinstance(y_raw, (bool, str, bytes)):
+        return None
+    try:
+        x_dpi, y_dpi = float(x_raw), float(y_raw)
+    except (TypeError, ValueError, ZeroDivisionError, OverflowError):
+        return None
+    if not (math.isfinite(x_dpi) and math.isfinite(y_dpi) and x_dpi > 0 and y_dpi > 0):
+        return None
+    return (x_dpi, y_dpi)
+
+
 def _pillow_frames(data: bytes, state: _ImageBatch) -> Iterator[tuple[bytes, tuple[float, float] | None, int]]:
     """Return each frame of an image that Pillow reads, as PNG data with its resolution and orientation."""
     try:
@@ -902,10 +930,42 @@ def _pillow_frames(data: bytes, state: _ImageBatch) -> Iterator[tuple[bytes, tup
         raise ValueError(msg) from None
     try:
         image = Image.open(io.BytesIO(data))
+    except Image.DecompressionBombError as exc:
+        code = "content_element_count"
+        msg = f"the image exceeds the pixel limit: {exc}"
+        raise LimitError(code, msg) from exc
     except Exception as exc:  # Pillow raises its own errors for each format.
         msg = f"the image data is not in a format that Pillow reads: {exc}"
         raise ValueError(msg) from exc
-    return _converted_frames(image, ImageSequence.Iterator(image), state, ImageOps.exif_transpose)
+    return _converted_frames(
+        image, ImageSequence.Iterator(image), state, ImageOps.exif_transpose, Image.DecompressionBombError
+    )
+
+
+def _encode_pillow_frame(
+    frame: PillowImage,
+    exif_transpose: Callable[[PillowImage], PillowImage | None],
+) -> tuple[bytes, tuple[float, float] | None]:
+    """Apply Exif orientation to ``frame`` and return PNG bytes with display-space DPI."""
+    raw_orientation = frame.getexif().get(_EXIF_ORIENTATION, 1)
+    dpi = _valid_dpi(frame.info.get("dpi"))
+    if raw_orientation in _TRANSPOSED_ORIENTATIONS and dpi is not None:
+        dpi = (dpi[1], dpi[0])
+    oriented = frame
+    try:
+        if raw_orientation != 1:
+            transposed = exif_transpose(frame)
+            if transposed is not None:
+                oriented = transposed
+        alpha = oriented.mode in ("RGBA", "LA", "PA") or "transparency" in oriented.info
+        gray = oriented.mode in ("1", "L", "LA", "I", "I;16", "F")
+        mode = ("LA" if alpha else "L") if gray else ("RGBA" if alpha else "RGB")
+        out = io.BytesIO()
+        oriented.convert(mode).save(out, "PNG")
+        return out.getvalue(), dpi
+    finally:
+        if oriented is not frame:
+            oriented.close()
 
 
 def _converted_frames(
@@ -913,22 +973,36 @@ def _converted_frames(
     sequence: Iterable[PillowImage],
     state: _ImageBatch,
     exif_transpose: Callable[[PillowImage], PillowImage | None],
+    bomb_error: type[BaseException],
 ) -> Iterator[tuple[bytes, tuple[float, float] | None, int]]:
     """Yield each frame of ``sequence`` as PNG data with its resolution and orientation, within limits."""
     with image:
         for frame in sequence:
             width, height = frame.size
+            if width <= 0 or height <= 0:
+                msg = "the image frame has non-positive dimensions"
+                raise ValueError(msg)
+            pixels = width * height
+            if pixels > _MAX_DECODED_PIXELS:
+                code = "content_element_count"
+                msg = f"the image frame has {pixels} pixels, over the {_MAX_DECODED_PIXELS}-pixel limit"
+                raise LimitError(code, msg)
             state.charge_frame(width, height)
-            found = frame.info.get("dpi")
-            dpi = (float(found[0]), float(found[1])) if found and found[0] and found[1] else None
-            oriented = frame
-            if frame.getexif().get(_EXIF_ORIENTATION, 1) != 1:
-                transposed = exif_transpose(frame)
-                if transposed is not None:
-                    oriented = transposed
-            alpha = oriented.mode in ("RGBA", "LA", "PA") or "transparency" in oriented.info
-            gray = oriented.mode in ("1", "L", "LA", "I", "I;16", "F")
-            mode = ("LA" if alpha else "L") if gray else ("RGBA" if alpha else "RGB")
-            out = io.BytesIO()
-            oriented.convert(mode).save(out, "PNG")
-            yield out.getvalue(), dpi, 1
+            raster_bytes = pixels * 4
+            state.budget.check("decompressed_size", raster_bytes)
+            state.budget.charge("total_decompressed_size", raster_bytes)
+            state.budget.charge("memory_size", raster_bytes)
+            try:
+                encoded, dpi = _encode_pillow_frame(frame, exif_transpose)
+            except bomb_error as exc:
+                code = "content_element_count"
+                msg = f"the image exceeds the pixel limit: {exc}"
+                raise LimitError(code, msg) from exc
+            except (LimitError, ValueError):
+                raise
+            except Exception as exc:
+                msg = f"the image frame could not be decoded: {exc}"
+                raise ValueError(msg) from exc
+            finally:
+                state.budget.release("memory_size", raster_bytes)
+            yield encoded, dpi, 1

@@ -19,6 +19,7 @@ the round trip.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import io
 import math
@@ -1111,3 +1112,158 @@ def test_redraw_preserves_text_paint_and_clipping(tmp_path: FilePath, mode: int)
     copied_text, copied_pixels = _poppler_page(result_path, 1)
     assert copied_text == text == "Paint"
     assert max(abs(a - b) for a, b in zip(pixels, copied_pixels, strict=True)) <= ROUND_TRIP_TOLERANCE
+
+
+def test_draw_handles_singular_shading_matrix_and_scoped_tiling_resources() -> None:
+    # 1. Singular ShadingPattern matrix must not raise ZeroDivisionError during canvas.draw().
+    shading = (
+        "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] /Extend [true true] "
+        "/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> >>"
+    )
+    shading_pat = "<< /Type /Pattern /PatternType 2 /Shading 7 0 R /Matrix [0 0 0 0 10 20] >>"
+    page = page_with(
+        "/Pattern cs /PS scn 10 10 80 60 re f",
+        resources="/Pattern << /PS 6 0 R >>",
+        objects={6: shading_pat, 7: shading},
+    )
+    path_item = page.content().paths[0]
+    assert isinstance(path_item.fill, ShadingPattern)
+    target = pyropdf.Document()
+    blank = target.pages.new((200, 100))
+    with blank.draw() as canvas:
+        canvas.draw(path_item)
+
+    # 2. Sequential transparency groups inside a tiling cell keep O(1) scoped /Resources per Form.
+    forms: dict[int, str] = {}
+    ops: list[str] = []
+    res_entries: list[str] = []
+    for idx in range(8):
+        form_num = 10 + idx
+        forms[form_num] = stream_object(
+            f"0.{idx + 1} 0.2 0.8 rg {idx * 2} 0 4 4 re f",
+            "/Type /XObject /Subtype /Form /BBox [0 0 20 20] "
+            "/Group << /Type /Group /S /Transparency /I true >> /Resources << >>",
+        )
+        res_entries.append(f"/G{idx} {form_num} 0 R")
+        ops.append(f"q /GS1 gs /G{idx} Do Q")
+    tiling_cell = stream_object(
+        " ".join(ops),
+        "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+        f"/BBox [0 0 20 20] /XStep 20 /YStep 20 "
+        f"/Resources << /ExtGState << /GS1 7 0 R >> /XObject << {' '.join(res_entries)} >> >>",
+    )
+    group_page = page_with(
+        "/Pattern cs /PT scn 0 0 60 60 re f",
+        resources="/Pattern << /PT 6 0 R >>",
+        objects={6: tiling_cell, 7: "<< /Type /ExtGState /ca 0.5 >>", **forms},
+    )
+    redrawn = _redraw(group_page)
+    assert _largest_difference(group_page.pixmap(dpi=72), redrawn.pixmap(dpi=72), []) <= ROUND_TRIP_TOLERANCE
+    form_xobjects = [
+        redrawn.document.objects[xref]
+        for xref in redrawn.document.objects
+        if isinstance(redrawn.document.objects[xref], pyropdf.Stream)
+        and redrawn.document.objects[xref].get("Subtype") == "Form"
+    ]
+    assert len(form_xobjects) == 8
+    # None of the leaf group forms may inherit sibling Form XObjects into their /Resources.
+    for form in form_xobjects:
+        resources = form.get("Resources")
+        if isinstance(resources, pyropdf.Dictionary) and "XObject" in resources:
+            assert len(resources["XObject"]) == 0
+
+
+def test_draw_atomicity_on_stroke_tiling_refusal_scope_overflow_and_smask_budget() -> None:
+    # 1. Refused tiling stroke in Canvas.path must fail before mutating canvas points/state.
+    smask_group = stream_object(
+        "0.5 g 0 0 10 10 re f",
+        "/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Group << /S /Transparency /CS /DeviceGray >>",
+    )
+    smask_cell = stream_object(
+        "/GS1 gs 1 0 0 rg 0 0 10 10 re f",
+        "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+        "/BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /ExtGState << /GS1 7 0 R >> >>",
+    )
+    bad_tiling = (
+        page_with(
+            "/Pattern cs /P scn 0 0 50 50 re f",
+            resources="/Pattern << /P 6 0 R >>",
+            objects={
+                6: smask_cell,
+                7: "<< /Type /ExtGState /SMask << /Type /Mask /S /Luminosity /G 8 0 R >> >>",
+                8: smask_group,
+            },
+        )
+        .content()
+        .paths[0]
+        .fill
+    )
+    assert isinstance(bad_tiling, TilingPattern)
+
+    target = pyropdf.Document()
+    blank = target.pages.new((200, 100))
+    before = target.to_bytes(), target.history.steps
+    with blank.draw() as canvas:
+        with pytest.raises(ValueError, match="soft mask"):
+            canvas.path(
+                pyropdf.PathBuilder().rect((10, 10, 60, 60)),
+                fill=Color(1, 0, 0),
+                stroke=Stroke(paint=bad_tiling, width=2),
+            )
+        assert canvas._points == 0  # noqa: SLF001 - verify refusal did not charge path points.
+    assert (target.to_bytes(), target.history.steps) == before
+
+    # 2. Scope overflow in Canvas.draw(image) refuses before copying/writing image XObjects.
+    clipped_img = (
+        page_with(
+            "q 0 0 100 100 re W n 5 5 90 90 re W n 20 0 0 20 10 10 cm "
+            "BI /W 2 /H 1 /BPC 8 /CS /RGB ID \xff\x00\x00\x00\xff\x00 EI Q"
+        )
+        .content()
+        .images[0]
+    )
+    with blank.draw() as canvas:
+        stack = contextlib.ExitStack()
+        for _ in range(15):
+            stack.enter_context(canvas.transform(Matrix(1, 0, 0, 1, 0, 0)))
+        with pytest.raises(ValueError, match="nest at most"):
+            canvas.draw(clipped_img)
+        assert not canvas._xobjects  # noqa: SLF001 - verify refusal did not write an image XObject.
+        assert not canvas._inline_xobjects  # noqa: SLF001
+        stack.close()
+    assert not any(
+        isinstance(target.objects[xref], pyropdf.Stream) and target.objects[xref].get("Subtype") == "Image"
+        for xref in target.objects
+    )
+
+    # 3. Raster image with large /SMask inside a tiling cell charges mask pixels against total_decompressed_size.
+    smask_bytes = zlib.compress(b"\x80" * (128 * 128))
+    rgb_bytes = zlib.compress(b"\xff\x00\x00" * (4 * 4))
+    tiling_masked_pdf = page_with(
+        "/Pattern cs /PT scn 0 0 80 80 re f",
+        resources="/Pattern << /PT 8 0 R >>",
+        objects={
+            6: stream_object(
+                rgb_bytes.decode("latin1"),
+                "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceRGB "
+                "/BitsPerComponent 8 /Filter /FlateDecode /SMask 7 0 R",
+            ),
+            7: stream_object(
+                smask_bytes.decode("latin1"),
+                "/Type /XObject /Subtype /Image /Width 128 /Height 128 /ColorSpace /DeviceGray "
+                "/BitsPerComponent 8 /Filter /FlateDecode",
+            ),
+            8: stream_object(
+                "q 20 0 0 20 0 0 cm /Im Do Q",
+                "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 "
+                "/BBox [0 0 20 20] /XStep 20 /YStep 20 /Resources << /XObject << /Im 6 0 R >> >>",
+            ),
+        },
+    ).document.to_bytes()
+    limited_mask = pyropdf.open(
+        tiling_masked_pdf,
+        limits=pyropdf.DocumentLimits(max_total_decompressed_size=1024),
+    )
+    with pytest.raises(pyropdf.LimitError) as refused:
+        limited_mask.pages[0].content()
+    assert refused.value.code == "total_decompressed_size"

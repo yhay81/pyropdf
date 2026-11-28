@@ -35,33 +35,68 @@ impl Settler for FontSubsetSettler {
         // every Type0 dictionary receives the same subset tag.
         let mut groups: BudgetVec<'_, FontGroup> = BudgetVec::new(budget);
         for &number in numbers {
-            let Some(font) = Font::read(transaction.version(), number, budget)? else {
+            // Check the Type0 dictionary and descendant reference before
+            // decoding the font program stream so H+V companions share one decode.
+            let Some((font_dict, descendant)) =
+                read_type0_descendant(transaction.version(), number, budget)?
+            else {
                 continue;
             };
             if let Some(group) = groups
                 .iter_mut()
-                .find(|group| group.primary.descendant.0 == font.descendant.0)
+                .find(|group| group.primary.descendant.0 == descendant)
             {
-                if group.primary.number != font.number
+                if group.primary.number != number
                     && group
                         .extra_type0s
                         .iter()
-                        .all(|(existing, _)| *existing != font.number)
+                        .all(|(existing, _)| *existing != number)
                 {
-                    group.extra_type0s.try_push((font.number, font.font))?;
+                    group.extra_type0s.try_push((number, font_dict))?;
                 }
-            } else {
-                groups.try_push(FontGroup {
-                    primary: font,
-                    extra_type0s: BudgetVec::new(budget),
-                })?;
+                continue;
             }
+            let Some(font) = Font::read(transaction.version(), number, budget)? else {
+                continue;
+            };
+            groups.try_push(FontGroup {
+                primary: font,
+                extra_type0s: BudgetVec::new(budget),
+            })?;
         }
         for group in groups.into_vec() {
             group.subset(transaction, target, budget)?;
         }
         Ok(())
     }
+}
+
+/// Reads a Type0 font dictionary and its single `DescendantFonts[0]` reference
+/// without decoding its embedded font program stream.
+fn read_type0_descendant(
+    version: &Version,
+    number: u32,
+    budget: &Budget,
+) -> Result<Option<(Dict, Reference)>> {
+    let Some(object) = version.get(number, budget)? else {
+        return Ok(None);
+    };
+    let Value::Dict(font) = &**object.value() else {
+        return Ok(None);
+    };
+    if !is_name(font.get("Subtype"), b"Type0") {
+        return Ok(None);
+    }
+    let Some(Value::Array(descendants)) = font.get("DescendantFonts") else {
+        return Ok(None);
+    };
+    let [descendant] = descendants.as_slice() else {
+        return Ok(None);
+    };
+    let Some(descendant) = reference(Some(descendant)) else {
+        return Ok(None);
+    };
+    Ok(Some((font.clone(), descendant)))
 }
 
 /// One or more Type0 fonts sharing a single CIDFont descendant and program.

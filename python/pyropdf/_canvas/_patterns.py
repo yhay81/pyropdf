@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pyropdf._canvas._path import (
@@ -17,7 +17,7 @@ from pyropdf._canvas._path import (
 )
 from pyropdf._canvas._resources import _gstate_dict
 from pyropdf._content import _BLEND_MODES, _LINE_CAPS, _LINE_JOINS, BlendMode, Color, Stroke, _sampled_to_gradient
-from pyropdf._errors import LimitError
+from pyropdf._errors import LimitError, PdfError
 from pyropdf._geometry import Matrix, Rect
 from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, Stream
@@ -48,6 +48,8 @@ _MOVE = ord("m")
 _LINE = ord("l")
 _CURVE = ord("c")
 _SINGULAR_DET = 1e-18
+_FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
+_RESOURCE_ENTRY_BYTES = 64
 
 _COMPONENTS = {
     "DeviceGray": 1,
@@ -167,21 +169,46 @@ def _matrix_bbox(matrix: Matrix) -> tuple[float, float, float, float]:
     return (min(xs), min(ys), max(xs), max(ys))
 
 
+def _valid_area(area: tuple[float, float, float, float]) -> bool:
+    """Return whether ``area`` has finite PDF-range coordinates in non-inverted order."""
+    x0, y0, x1, y1 = area
+    return all(math.isfinite(v) and abs(v) <= _FLOAT32_MAX for v in area) and x0 <= x1 and y0 <= y1
+
+
 def _shading_area(
     area: tuple[float, float, float, float],
     matrix: Matrix,
     fallback: tuple[float, float, float, float],
 ) -> tuple[float, float, float, float]:
-    """Map ``area`` into shading space through ``matrix`` when invertible."""
-    if not all(math.isfinite(v) for v in area):
-        area = fallback
+    """Map ``area`` into shading space through ``matrix`` when invertible and in PDF real range."""
+    safe_fallback = fallback if _valid_area(fallback) else (0.0, 0.0, 1.0, 1.0)
+    if not _valid_area(area):
+        area = safe_fallback
     det = matrix.a * matrix.d - matrix.b * matrix.c
-    if abs(det) <= _SINGULAR_DET:
-        return fallback
-    x0, y0, x1, y1 = Rect(*area) / matrix
-    if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
-        return fallback
-    return (x0, y0, x1, y1)
+    if not math.isfinite(det) or abs(det) <= _SINGULAR_DET:
+        return safe_fallback
+    try:
+        x0, y0, x1, y1 = Rect(*area) / matrix
+    except (ZeroDivisionError, PdfError, OverflowError, ValueError):
+        return safe_fallback
+    mapped = (x0, y0, x1, y1)
+    if not _valid_area(mapped):
+        return safe_fallback
+    return mapped
+
+
+@dataclass(slots=True)
+class _TilingLayer:
+    """One transparency group layer inside a compiled tiling pattern cell."""
+
+    parts: list[bytes] = field(default_factory=list)
+    opacity: float = 1.0
+    blend_name: str | None = None
+    has_non_normal_blend: bool = False
+    xobjects: set[str] = field(default_factory=set)
+    gstates: set[tuple[float | None, float | None, str | None]] = field(default_factory=set)
+    patterns: set[str] = field(default_factory=set)
+    masks: set[int] = field(default_factory=set)
 
 
 class _TilingBuilder:
@@ -198,8 +225,7 @@ class _TilingBuilder:
         self._gstates: dict[tuple[float | None, float | None, str | None], str] = {}
         self._patterns: dict[str, int] = {}
         self._masks: dict[int, str] = {}
-        # Each layer is [parts, opacity, blend_name, has_non_normal_blend].
-        self._layers: list[list[Any]] = [[[], 1.0, None, False]]
+        self._layers: list[_TilingLayer] = [_TilingLayer()]
 
     def _emit(self, data: bytes) -> None:
         size = len(data) + 1
@@ -209,7 +235,7 @@ class _TilingBuilder:
             raise LimitError(code, msg)
         self._canvas._charge(size)  # noqa: SLF001 - charge cell assembly to active canvas operation.
         self._bytes += size
-        self._layers[-1][0].append(data)
+        self._layers[-1].parts.append(data)
 
     def _gstate(
         self, *, fill_alpha: float | None = None, stroke_alpha: float | None = None, blend: str | None = None
@@ -217,49 +243,60 @@ class _TilingBuilder:
         if fill_alpha is not None or stroke_alpha is not None or blend is not None:
             document = self._canvas._page.document  # noqa: SLF001
             _require_version(document, document.catalog, (1, 4))
+        layer = self._layers[-1]
         if blend is not None:
-            self._layers[-1][3] = True
+            layer.has_non_normal_blend = True
         key = (fill_alpha, stroke_alpha, blend)
         name = self._gstates.get(key)
         if name is None:
             name = f"PyroTG{len(self._gstates) + 1}"
             self._gstates[key] = name
+        layer.gstates.add(key)
         return name
 
     def _xobject(self, xref: int) -> str:
         for name, known in self._xobjects.items():
             if known == xref:
+                self._layers[-1].xobjects.add(name)
                 return name
         name = f"PyroTX{len(self._xobjects) + 1}"
         self._xobjects[name] = xref
+        self._layers[-1].xobjects.add(name)
         return name
 
     def _pattern(self, xref: int) -> str:
         for name, known in self._patterns.items():
             if known == xref:
+                self._layers[-1].patterns.add(name)
                 return name
         name = f"PyroTP{len(self._patterns) + 1}"
         self._patterns[name] = xref
+        self._layers[-1].patterns.add(name)
         return name
 
     def _mask(self, xref: int) -> str:
         name = self._masks.get(xref)
         if name is None:
             name = self._masks[xref] = f"PyroTM{len(self._masks) + 1}"
+        self._layers[-1].masks.add(xref)
         return name
 
-    def _resources(self) -> dict[str, dict[str, object]]:
+    def _resources_for(self, layer: _TilingLayer) -> dict[str, dict[str, object]]:
         objects = self._canvas._page.document.objects  # noqa: SLF001
         resources: dict[str, dict[str, object]] = {}
-        if self._xobjects:
-            resources["XObject"] = {name: objects[xref] for name, xref in self._xobjects.items()}
-        if self._gstates or self._masks:
-            resources["ExtGState"] = {
-                **{name: _gstate_dict(key) for key, name in self._gstates.items()},
-                **{name: objects[xref] for xref, name in self._masks.items()},
+        if layer.xobjects:
+            resources["XObject"] = {
+                name: objects[xref] for name, xref in self._xobjects.items() if name in layer.xobjects
             }
-        if self._patterns:
-            resources["Pattern"] = {name: objects[xref] for name, xref in self._patterns.items()}
+        if layer.gstates or layer.masks:
+            resources["ExtGState"] = {
+                **{name: _gstate_dict(key) for key, name in self._gstates.items() if key in layer.gstates},
+                **{name: objects[xref] for xref, name in self._masks.items() if xref in layer.masks},
+            }
+        if layer.patterns:
+            resources["Pattern"] = {
+                name: objects[xref] for name, xref in self._patterns.items() if name in layer.patterns
+            }
         return resources
 
     def _paint(
@@ -272,22 +309,29 @@ class _TilingBuilder:
         kind = raw_paint[0]
         if kind == _PAINT_COLOR:
             r, g, b, a = raw_paint[1]
+            alpha = min(max(a, 0.0), 1.0)
             operator = b" RG" if is_stroke else b" rg"
-            return _Painting((_numbers(r, g, b) + operator,), None if a >= 1 else a, None)
+            return _Painting((_numbers(r, g, b) + operator,), None if alpha >= 1 else alpha, None)
         if kind == _PAINT_SHADING:
             sampled, matrix_coeffs = raw_paint[1], raw_paint[2]
             gradient, bbox, background = _sampled_to_gradient(sampled)
             matrix = Matrix(*matrix_coeffs)
             shaded_area = _shading_area(area, matrix, self._bbox)
             shading, mask, alpha = self._canvas._gradient(  # noqa: SLF001
-                gradient, shaded_area, bbox, background, sampled=True
+                gradient,
+                shaded_area,
+                bbox,
+                background,
+                sampled=True,
+                mask_matrix=(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f),
             )
             pattern_xref = self._canvas._write_pattern(shading, matrix)  # noqa: SLF001
             pname = self._pattern(pattern_xref).encode("ascii")
             space, operator = (b"/Pattern CS", b" SCN") if is_stroke else (b"/Pattern cs", b" scn")
             masked = None if mask is None else self._mask(mask)
             return _Painting((space, b"/" + pname + operator), None if alpha >= 1 else alpha, masked)
-        nested_cell, matrix_coeffs, opacity = raw_paint[1], raw_paint[2], raw_paint[3]
+        nested_cell, matrix_coeffs, raw_opacity = raw_paint[1], raw_paint[2], raw_paint[3]
+        opacity = min(max(raw_opacity, 0.0), 1.0)
         nested_xref = _write_tiling_cell_object(self._canvas, nested_cell, Matrix(*matrix_coeffs), self._limit)
         pname = self._pattern(nested_xref).encode("ascii")
         space, operator = (b"/Pattern CS", b" SCN") if is_stroke else (b"/Pattern cs", b" scn")
@@ -410,16 +454,24 @@ class _TilingBuilder:
     def _op_pop_group(self) -> None:
         if len(self._layers) <= 1:
             return
-        parts, opacity, blend_name, has_blend = self._layers.pop()
-        if not parts:
+        layer = self._layers.pop()
+        if not layer.parts:
             return
-        if opacity >= 1.0 and blend_name is None and not has_blend:
-            self._emit(b"q\n" + b"\n".join(parts) + b"\nQ")
+        opacity = min(max(layer.opacity, 0.0), 1.0)
+        if opacity >= 1.0 and layer.blend_name is None and not layer.has_non_normal_blend:
+            parent = self._layers[-1]
+            parent.xobjects.update(layer.xobjects)
+            parent.gstates.update(layer.gstates)
+            parent.patterns.update(layer.patterns)
+            parent.masks.update(layer.masks)
+            self._emit(b"q\n" + b"\n".join(layer.parts) + b"\nQ")
             return
         document = self._canvas._page.document  # noqa: SLF001
         _require_version(document, document.catalog, (1, 4))
-        body = b"\n".join(parts)
-        with self._canvas._scratch(len(body) + 128):  # noqa: SLF001
+        body = b"\n".join(layer.parts)
+        resources = self._resources_for(layer)
+        res_entries = sum(len(table) for table in resources.values())
+        with self._canvas._scratch(len(body) + 128 + res_entries * _RESOURCE_ENTRY_BYTES):  # noqa: SLF001
             form = document.objects.add_stream(
                 body,
                 {
@@ -427,14 +479,14 @@ class _TilingBuilder:
                     "Subtype": Name("Form"),
                     "BBox": list(self._bbox),
                     "Group": {"Type": Name("Group"), "S": Name("Transparency"), "I": True},
-                    "Resources": self._resources(),
+                    "Resources": resources,
                 },
             )
         fname = self._xobject(form).encode("ascii")
         gname = self._gstate(
             fill_alpha=None if opacity >= 1.0 else opacity,
             stroke_alpha=None if opacity >= 1.0 else opacity,
-            blend=blend_name,
+            blend=layer.blend_name,
         ).encode("ascii")
         self._emit(b"q\n/" + gname + b" gs\n/" + fname + b" Do\nQ")
 
@@ -442,7 +494,7 @@ class _TilingBuilder:
         _, opacity, blend_code = op
         blend = _BLEND_MODES[blend_code]
         blend_name = None if blend is BlendMode.NORMAL else _BLEND_NAMES[blend]
-        self._layers.append([[], opacity, blend_name, False])
+        self._layers.append(_TilingLayer(opacity=min(max(opacity, 0.0), 1.0), blend_name=blend_name))
 
     def _apply_op(self, op: Any) -> None:  # noqa: ANN401 - core op tuple.
         code = op[0]
@@ -469,8 +521,9 @@ class _TilingBuilder:
                 self._apply_op(op)
             while len(self._layers) > 1:
                 self._op_pop_group()
-            stream_bytes = b"\n".join(self._layers[0][0])
-            resources = self._resources()
+            root = self._layers[0]
+            stream_bytes = b"\n".join(root.parts)
+            resources = self._resources_for(root)
         finally:
             self._canvas._release(self._bytes)  # noqa: SLF001
             self._bytes = 0
@@ -501,7 +554,8 @@ def _compile_tiling_cell(canvas: Canvas, cell: _TilingCellData, limit: int) -> _
 def _write_tiling_stream(canvas: Canvas, compiled: _CompiledTilingCell, matrix: Matrix) -> int:
     """Write one PDF ``/PatternType 1`` stream object in the canvas document."""
     document = canvas._page.document  # noqa: SLF001
-    with canvas._scratch(len(compiled.stream_bytes) + 256):  # noqa: SLF001
+    res_entries = sum(len(table) for table in compiled.resources.values())
+    with canvas._scratch(len(compiled.stream_bytes) + 256 + res_entries * _RESOURCE_ENTRY_BYTES):  # noqa: SLF001
         return document.objects.add_stream(
             compiled.stream_bytes,
             {
