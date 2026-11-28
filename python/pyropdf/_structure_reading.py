@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Collection, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 from pyropdf import _core
@@ -39,6 +39,7 @@ from pyropdf._text import (
 from pyropdf._xobjects import _resources
 
 if TYPE_CHECKING:
+    from pyropdf._images import PageImage
     from pyropdf._markdown import TextPageDict
     from pyropdf._page import Page
     from pyropdf._structure import StructureItem
@@ -549,6 +550,8 @@ class PageStructureData:
     height: float
     layout: TextPageDict | None = None
     words: list[Word] | None = None
+    has_paths: bool | None = None
+    content_images: tuple[PageImage, ...] | None = None
 
 
 def escape_markdown_alt(text: str) -> str:
@@ -741,8 +744,10 @@ class _PageMcidIndex:
     __slots__ = (
         "_graphic_bboxes",
         "artifact_char_count",
+        "content_images",
         "external_char_count",
         "has_artifact_ops",
+        "has_paths",
         "height",
         "incomplete_mcids",
         "layout",
@@ -780,6 +785,8 @@ class _PageMcidIndex:
         self.external_char_count = 0
         self.artifact_char_count = 0
         self.has_artifact_ops = False
+        self.has_paths: bool | None = None
+        self.content_images: tuple[PageImage, ...] | None = None
         self._graphic_bboxes: dict[int, Rect] | None = None
 
         op_mcid, op_artifact, mcid_ops = self._scan_operations(page, budget, expand=expand)
@@ -1045,8 +1052,23 @@ class _PageMcidIndex:
     def graphic_bbox(self, mcid: int, budget: _core._OperationBudget) -> Rect | None:
         """Return the display-space bounding box of painted graphics/images tagged with ``mcid``."""
         if self._graphic_bboxes is None:
+            from pyropdf._content import Path as _ContentPath  # noqa: PLC0415
+            from pyropdf._images import PageImage  # noqa: PLC0415
+
+            content = self.page.content(
+                text_runs=False,
+                paths=True,
+                images=True,
+                annotations=True,
+                max_elements=self.max_graphics,
+            )
+            self.has_paths = any(isinstance(item, _ContentPath) for item in content.items)
+            self.content_images = tuple(
+                PageImage(page=self.page, index=idx, item=item, annotations=True)
+                for idx, item in enumerate(content.images)
+            )
             bboxes: dict[int, Rect] = {}
-            for item in self.page.content(text_runs=False, max_elements=self.max_graphics):
+            for item in content.items:
                 budget.poll()
                 for mark in item.context.marked_content:
                     if mark.mcid is not None:
@@ -1245,14 +1267,52 @@ class _TableState:
         if entry.page is not None and entry.bbox is not None:
             self.bbox_by_page[entry.page] = _union_rect(self.bbox_by_page.get(entry.page), entry.bbox) or entry.bbox
 
-    def _target_page(self, all_rows: list[list[_CellEntry]]) -> int | None:
+    def _target_page(
+        self,
+        all_rows: list[list[_CellEntry]],
+        selected_pages: Collection[int] | None,
+    ) -> int | None:
+        if selected_pages is not None:
+            if self.page is not None and self.page in selected_pages:
+                return self.page
+            return next(
+                (
+                    cell.page
+                    for row in all_rows
+                    for cell in row
+                    if cell.page is not None and cell.page in selected_pages
+                ),
+                None,
+            )
         if self.page is not None:
             return self.page
         return next((cell.page for row in all_rows for cell in row if cell.page is not None), None)
 
-    def build_blocks(self, *, as_table: bool) -> list[StructureBlock]:
+    def covered_pages(self) -> set[int]:
+        """Return every page index that contributed cells to this table."""
+        pages = set(self.bbox_by_page)
+        for row in (*self.head_rows, *self.body_rows, *self.foot_rows):
+            for cell in row:
+                if cell.page is not None:
+                    pages.add(cell.page)
+        return pages
+
+    def _row_selected(self, row: list[_CellEntry], selected_pages: Collection[int]) -> bool:
+        pages = [cell.page for cell in row if cell.page is not None]
+        if pages:
+            return any(page in selected_pages for page in pages)
+        return self.page in selected_pages
+
+    def build_blocks(
+        self,
+        *,
+        as_table: bool,
+        selected_pages: Collection[int] | None = None,
+    ) -> list[StructureBlock]:
         all_rows = [row for row in (*self.head_rows, *self.body_rows, *self.foot_rows) if row]
-        target_page = self._target_page(all_rows) if all_rows else None
+        if selected_pages is not None:
+            all_rows = [row for row in all_rows if self._row_selected(row, selected_pages)]
+        target_page = self._target_page(all_rows, selected_pages) if all_rows else None
         if target_page is None:
             return list(self.captions_after)
         if not as_table:
@@ -1453,58 +1513,16 @@ def _record_scanned_leaf(
     child: MarkedContentReference | ObjectReference,
     elem_page: int | None,
     mcids: list[tuple[int, int]],
+    budget: _core._OperationBudget,
 ) -> tuple[int | None, bool]:
     pg = elem_page if child.page is None else child.page
     if isinstance(child, MarkedContentReference):
         if child.stream_xref is not None:
             return pg, True
         if pg is not None:
+            budget.charge("memory_size", 64)
             mcids.append((pg, child.mcid))
     return pg, False
-
-
-def _scan_subtree_mcids(
-    root_elem: StructureElement,
-    root_page: int | None,
-    budget: _core._OperationBudget,
-    seen_global: set[int],
-    *,
-    skip_caption_children: bool = False,
-) -> tuple[list[tuple[int, int]], int | None, bool, list[StructureElement]]:
-    """Collect ``(page, mcid)`` pairs under ``root_elem`` iteratively without emitting blocks."""
-    mcids: list[tuple[int, int]] = []
-    captions: list[StructureElement] = []
-    first_page = root_page
-    has_form_ref = False
-    stack: list[tuple[StructureElement, int | None, int]] = [(root_elem, root_page, 1)]
-    visited_count = 0
-    while stack:
-        elem, elem_page, depth = stack.pop()
-        for child in elem._iter_items(budget):  # noqa: SLF001
-            budget.poll()
-            visited_count += 1
-            if visited_count > _DEFAULT_MAX_ELEMENTS:
-                msg = f"structure interpretation exceeds {_DEFAULT_MAX_ELEMENTS} child entries"
-                raise LimitError(_CODE_OBJECT_COUNT, msg)
-            if isinstance(child, StructureElement):
-                if skip_caption_children and depth == 1 and _resolved_export_role(child, budget) == "Caption":
-                    captions.append(child)
-                    continue
-                if child.xref in seen_global:
-                    msg = "structure /K contains a cycle or a repeated element"
-                    raise MalformedPdfError(msg)
-                if depth >= _MAX_STRUCTURE_DEPTH:
-                    raise _depth_limit_error()
-                seen_global.add(child.xref)
-                child_pg = _page_index_from_dict(child.document, child.obj.get("Pg"))
-                next_pg = elem_page if child_pg is None else child_pg
-                first_page = next_pg if first_page is None else first_page
-                stack.append((child, next_pg, depth + 1))
-            else:
-                pg, is_form_ref = _record_scanned_leaf(child, elem_page, mcids)
-                first_page = pg if first_page is None else first_page
-                has_form_ref |= is_form_ref
-    return mcids, first_page, has_form_ref, captions
 
 
 class _StructureExportWalker:
@@ -1532,6 +1550,7 @@ class _StructureExportWalker:
         self.blocks_by_page: dict[int, list[StructureBlock]] = {idx: [] for idx in page_map}
         self.referenced_mcids: dict[int, set[int]] = {idx: set() for idx in page_map}
         self.artifact_mcids: dict[int, set[int]] = {idx: set() for idx in page_map}
+        self.emitted_continuation_pages: set[int] = set()
         self.unresolved_form_pages: set[int] = set()
         self.form_replacement_pages: set[int] = set()
         self.element_count = 0
@@ -1597,15 +1616,62 @@ class _StructureExportWalker:
                 sub_role = frame.role
         return None
 
+    def _scan_subtree_mcids(
+        self,
+        root_elem: StructureElement,
+        root_page: int | None,
+        *,
+        skip_caption_children: bool = False,
+    ) -> tuple[list[tuple[int, int]], int | None, bool, list[StructureElement]]:
+        """Collect ``(page, mcid)`` pairs under ``root_elem`` under global element, depth, and memory budgets."""
+        mcids: list[tuple[int, int]] = []
+        captions: list[StructureElement] = []
+        first_page = root_page
+        has_form_ref = False
+        base_depth = len(self.frames)
+        stack: list[tuple[StructureElement, int | None, int]] = [(root_elem, root_page, base_depth + 1)]
+        while stack:
+            elem, elem_page, depth = stack.pop()
+            for child in elem._iter_items(self.budget):  # noqa: SLF001
+                self.budget.poll()
+                if isinstance(child, StructureElement):
+                    if (
+                        skip_caption_children
+                        and depth == base_depth + 1
+                        and _resolved_export_role(child, self.budget) == "Caption"
+                    ):
+                        captions.append(child)
+                        continue
+                    self.element_count += 1
+                    if self.element_count > _DEFAULT_MAX_ELEMENTS:
+                        msg = f"structure interpretation exceeds {_DEFAULT_MAX_ELEMENTS} child entries"
+                        raise LimitError(_CODE_OBJECT_COUNT, msg)
+                    if child.xref in self.seen:
+                        msg = "structure /K contains a cycle or a repeated element"
+                        raise MalformedPdfError(msg)
+                    if depth >= _MAX_STRUCTURE_DEPTH:
+                        raise _depth_limit_error()
+                    self.budget.charge("memory_size", 512)
+                    self.seen.add(child.xref)
+                    child_pg = _page_index_from_dict(child.document, child.obj.get("Pg"))
+                    next_pg = elem_page if child_pg is None else child_pg
+                    first_page = next_pg if first_page is None else first_page
+                    stack.append((child, next_pg, depth + 1))
+                else:
+                    pg, is_form_ref = _record_scanned_leaf(child, elem_page, mcids, self.budget)
+                    first_page = pg if first_page is None else first_page
+                    has_form_ref |= is_form_ref
+        return mcids, first_page, has_form_ref, captions
+
     def _flush_enclosing_text(self) -> None:
-        """Flush any active paragraph or list-item text before starting a nested block."""
+        """Flush any active paragraph, block quote, or list-item text before starting a nested block."""
         for frame in reversed(self.frames):
             if frame.cell is not None:
                 return
             if frame.list_item is not None and not frame.list_item.flushed:
                 self._flush_list_item(frame.list_item)
                 return
-            if frame.collector is not None and frame.collector.kind == "paragraph":
+            if frame.collector is not None and frame.collector.kind in {"paragraph", "blockquote"}:
                 for block in frame.collector.drain_blocks():
                     self._emit_block(block)
                 return
@@ -1732,7 +1798,7 @@ class _StructureExportWalker:
         for pg, mcid in mcids:
             if fig_page is None:
                 fig_page = pg
-            if pg in self.referenced_mcids:
+            if desc is not None and pg in self.referenced_mcids:
                 self.referenced_mcids[pg].add(mcid)
             pidx = self._page_index(pg)
             if pidx is not None:
@@ -1776,7 +1842,7 @@ class _StructureExportWalker:
         heading_level = _heading_level(role)
         if heading_level is not None or role == "H":
             lvl = heading_level if heading_level is not None else 1
-            cleaned = repl.strip()
+            cleaned = " ".join(repl.split())
             return StructureBlock(
                 kind="heading",
                 page=page,
@@ -1883,8 +1949,8 @@ class _StructureExportWalker:
     ) -> bool:
         """Handle elements that replace their subtree via ``/E``, ``/ActualText``, or ``/Alt``."""
         if role == "Figure":
-            mcids, resolved_page, has_form_ref, captions = _scan_subtree_mcids(
-                elem, page, self.budget, self.seen, skip_caption_children=elem.actual_text is None
+            mcids, resolved_page, has_form_ref, captions = self._scan_subtree_mcids(
+                elem, page, skip_caption_children=elem.actual_text is None
             )
             self._handle_figure(elem, resolved_page, lang, mcids, has_form_ref=has_form_ref)
             if captions:
@@ -1903,7 +1969,7 @@ class _StructureExportWalker:
         repl = _replacement(elem, expand=self.expand)
         if repl is None:
             return False
-        mcids, resolved_page, has_form_ref, _ = _scan_subtree_mcids(elem, page, self.budget, self.seen)
+        mcids, resolved_page, has_form_ref, _ = self._scan_subtree_mcids(elem, page)
         bbox: Rect | None = None
         for pg, mcid in mcids:
             if pg in self.referenced_mcids:
@@ -1938,7 +2004,7 @@ class _StructureExportWalker:
         page = parent.page if elem_pg is None else elem_pg
 
         if role == "Artifact":
-            mcids, _, _, _ = _scan_subtree_mcids(elem, page, self.budget, self.seen)
+            mcids, _, _, _ = self._scan_subtree_mcids(elem, page)
             for pg, mcid in mcids:
                 if pg in self.artifact_mcids:
                     self.artifact_mcids[pg].add(mcid)
@@ -2038,7 +2104,8 @@ class _StructureExportWalker:
             return
         if role in _PARAGRAPH_ROLES or role == "Formula":
             li = self._active_list_item()
-            if parent.in_blockquote and parent.collector is not None and parent.collector.kind == "blockquote":
+            if frame.in_blockquote and (li is None or li.flushed):
+                self._flush_enclosing_text()
                 frame.collector = _TextCollector(kind="blockquote", language=lang, default_page=page)
             elif li is not None and not li.flushed:
                 if li.body.has_content():
@@ -2160,7 +2227,13 @@ class _StructureExportWalker:
             self._finish_cell(frame)
             return
         if frame.table is not None:
-            for block in frame.table.build_blocks(as_table=self.table_strategy is not None):
+            table_blocks = frame.table.build_blocks(
+                as_table=self.table_strategy is not None,
+                selected_pages=self.page_map,
+            )
+            if any(block.kind == "table" and block.page in self.blocks_by_page for block in table_blocks):
+                self.emitted_continuation_pages.update(frame.table.covered_pages() & self.blocks_by_page.keys())
+            for block in table_blocks:
                 self._emit_block(block)
             return
         if frame.list_item is not None:
@@ -2276,14 +2349,11 @@ def _resolve_unnumbered_headings(blocks_by_page: dict[int, list[StructureBlock]]
             if block.raw_section_depth is not None:
                 level = max(1, min(6, block.raw_section_depth - base + 1))
                 updated.append(
-                    StructureBlock(
-                        kind=block.kind,
-                        page=block.page,
-                        bbox=block.bbox,
-                        text=block.text,
-                        markdown=f"{'#' * level} {block.text}",
+                    replace(
+                        block,
                         level=level,
-                        language=block.language,
+                        markdown=f"{'#' * level} {block.text}",
+                        raw_section_depth=None,
                     )
                 )
                 changed = True
@@ -2324,7 +2394,7 @@ def _is_page_trustworthy(
         return bool(blocks) or pidx.has_artifact_ops or bool(artifact_mcids)
 
     structure_chars = _structure_block_non_ws(blocks)
-    if not blocks or structure_chars == 0:
+    if (not blocks or structure_chars == 0) and page_idx not in walker.emitted_continuation_pages:
         return False
 
     covered_stream_chars = sum(pidx.mcid_non_ws_counts.get(mcid, 0) for mcid in referenced)
@@ -2377,6 +2447,8 @@ def _collect_structure_pages(  # noqa: PLR0913 - bundles export options under re
             height=pidx.height,
             layout=pidx.layout,
             words=pidx.words,
+            has_paths=pidx.has_paths,
+            content_images=pidx.content_images,
         )
     if use_structure == "auto" and not any_structured:
         return None

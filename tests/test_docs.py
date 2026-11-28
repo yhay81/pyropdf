@@ -181,14 +181,22 @@ def test_every_page_has_a_translation() -> None:
     for language in LANGUAGES[1:]:
         assert names[language] == names["en"], language
         for en_page, loc_page in zip(PAGES["en"], PAGES[language], strict=True):
-            en_no_code = FENCE.sub("", en_page.read_text(encoding="utf-8"))
-            loc_no_code = FENCE.sub("", loc_page.read_text(encoding="utf-8"))
+            en_text = en_page.read_text(encoding="utf-8")
+            loc_text = loc_page.read_text(encoding="utf-8")
+            en_no_code = FENCE.sub("", en_text)
+            loc_no_code = FENCE.sub("", loc_text)
             en_h2 = len(re.findall(r"^## ", en_no_code, re.MULTILINE))
             loc_h2 = len(re.findall(r"^## ", loc_no_code, re.MULTILINE))
             assert loc_h2 == en_h2, f"{en_page.name}: H2 count en={en_h2} != {language}={loc_h2}"
+            en_h3 = len(re.findall(r"^### ", en_no_code, re.MULTILINE))
+            loc_h3 = len(re.findall(r"^### ", loc_no_code, re.MULTILINE))
+            assert loc_h3 == en_h3, f"{en_page.name}: H3 count en={en_h3} != {language}={loc_h3}"
             en_tables = len(re.findall(r"^\| ---", en_no_code, re.MULTILINE))
             loc_tables = len(re.findall(r"^\| ---", loc_no_code, re.MULTILINE))
             assert loc_tables == en_tables, f"{en_page.name}: table count en={en_tables} != {language}={loc_tables}"
+            en_py = len(EXAMPLE.findall(en_text))
+            loc_py = len(EXAMPLE.findall(loc_text))
+            assert loc_py == en_py, f"{en_page.name}: python example count en={en_py} != {language}={loc_py}"
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="the worker example uses GNU timeout and util-linux prlimit")
@@ -372,6 +380,7 @@ def test_stability_policy_matches_package_metadata_and_limits() -> None:
         for token in (
             "pyropdf.__all__",
             "pyropdf.typed.__all__",
+            "PdfError",
             "LimitError.code",
             "LIMIT_CODES",
             "limits.toml",
@@ -380,6 +389,7 @@ def test_stability_policy_matches_package_metadata_and_limits() -> None:
             "capabilities.zip",
         ):
             assert token in text, (language, token)
+        assert "PyropdfError" not in text, language
 
         anchor_ids[language] = re.findall(r"\{#([A-Za-z0-9_:-]+)\}", text)
 

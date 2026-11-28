@@ -27,7 +27,8 @@ SourceKind = Literal["auto", "pymupdf", "pylopdf"]
 _PAIR_ARITY = 2
 _PYMUPDF_MODULES = frozenset({"fitz", "pymupdf"})
 _PYLOPDF_MODULES = frozenset({"pylopdf"})
-_NON_PDF_FILETYPES = frozenset({"xps", "epub", "mobi", "fb2", "cbz", "svg", "txt", "html", "xhtml"})
+_NON_PDF_FILETYPES = frozenset({"xps", "epub", "mobi", "fb2", "svg", "txt", "html", "xhtml"})
+_CBZ_FILETYPES = frozenset({"cbz"})
 _IMAGE_FILETYPES = frozenset({"png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "jp2", "jpx", "pnm", "pam"})
 
 # Mechanical module-level symbol renames when imported from fitz/pymupdf/pylopdf.
@@ -262,7 +263,7 @@ _MANUAL_METHODS: dict[str, tuple[str, str]] = {
     ),
     "convert_to_pdf": (
         "manual-image-to-pdf",
-        "Create a pyropdf.Document() and call doc.pages.new_from_image(source) for images; non-PDF is unsupported.",
+        "Use doc.pages.new_from_image(), new_from_images(), or new_from_cbz(); non-PDF formats are out of scope.",
     ),
 }
 
@@ -277,10 +278,6 @@ _SAVE_MANUAL_KWARGS: dict[str, tuple[str, str]] = {
         "manual-save-option",
         "Replace garbage=1..4 with explicit keyword options: prune=True, renumber=True, dedupe=True.",
     ),
-    "clean": (
-        "manual-save-option",
-        "Call page.clean_contents() before saving instead of save(clean=True) (pre-save flag tracked in #1191).",
-    ),
     "encryption": (
         "manual-encryption",
         "Pass encryption=pyropdf.Encryption(user_password=..., owner_password=..., permissions=...) to save().",
@@ -292,14 +289,6 @@ _SAVE_MANUAL_KWARGS: dict[str, tuple[str, str]] = {
     "user_pw": (
         "manual-encryption",
         "Pass encryption=pyropdf.Encryption(user_password=...) instead of user_pw=.",
-    ),
-    "pretty": (
-        "manual-save-option",
-        "ASCII/pretty save serialization is tracked in #1191.",
-    ),
-    "ascii": (
-        "manual-save-option",
-        "ASCII/pretty save serialization is tracked in #1191.",
     ),
 }
 
@@ -327,7 +316,7 @@ _GET_TEXT_MODES: dict[str, tuple[str, tuple[str, str] | None]] = {
         ),
     ),
     "rawdict": (
-        "{recv}.layout({kw}).to_dict()",
+        "{recv}.layout({kw_chars}).to_dict()",
         (
             "manual-get-text-dict",
             "get_text('rawdict') schema differs from PyMuPDF; inspect page.layout(chars=True).to_dict() or chars().",
@@ -341,7 +330,7 @@ _GET_TEXT_MODES: dict[str, tuple[str, tuple[str, str] | None]] = {
         ),
     ),
     "rawjson": (
-        "{recv}.layout({kw}).to_dict()",
+        "{recv}.layout({kw_chars}).to_dict()",
         (
             "manual-get-text-dict",
             "get_text('rawjson') schema differs from PyMuPDF; serialize page.layout(chars=True).to_dict().",
@@ -435,9 +424,29 @@ def _is_doc_open_expr(node: ast.AST, mod_aliases: set[str], direct_open_names: s
     return isinstance(func, ast.Name) and func.id in direct_open_names
 
 
-def _collect_import_bindings(tree: ast.Module, target_mods: frozenset[str]) -> tuple[dict[str, str], set[str]]:
+def _record_import_from(
+    node: ast.ImportFrom,
+    direct_open: dict[str, str],
+    direct_renames: dict[str, str],
+) -> None:
+    for alias in node.names:
+        local = alias.asname or alias.name
+        if alias.name in {"open", "Document"}:
+            direct_open[local] = local
+        elif alias.asname is None:
+            if alias.name == "peek_metadata":
+                direct_renames[alias.name] = "probe"
+            elif alias.name in _MODULE_SYMBOL_RENAMES and "." not in _MODULE_SYMBOL_RENAMES[alias.name]:
+                direct_renames[alias.name] = _MODULE_SYMBOL_RENAMES[alias.name]
+
+
+def _collect_import_bindings(
+    tree: ast.Module,
+    target_mods: frozenset[str],
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     alias_map: dict[str, str] = {}
-    direct_open: set[str] = set()
+    direct_open: dict[str, str] = {}
+    direct_renames: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -446,10 +455,8 @@ def _collect_import_bindings(tree: ast.Module, target_mods: frozenset[str]) -> t
                     new_local = "pyropdf" if alias.asname in {None, "fitz", "pymupdf", "pylopdf"} else alias.asname
                     alias_map[local] = new_local
         elif isinstance(node, ast.ImportFrom) and node.module in target_mods:
-            for alias in node.names:
-                if alias.name in {"open", "Document"}:
-                    direct_open.add(alias.asname or alias.name)
-    return alias_map, direct_open
+            _record_import_from(node, direct_open, direct_renames)
+    return alias_map, direct_open, direct_renames
 
 
 def _collect_doc_vars(tree: ast.Module, mod_aliases: set[str], direct_open: set[str]) -> set[str]:
@@ -476,6 +483,45 @@ def _collect_doc_vars(tree: ast.Module, mod_aliases: set[str], direct_open: set[
     return doc_vars - non_doc_vars
 
 
+def _is_page_source_expr(expr: ast.AST, doc_vars: set[str]) -> bool:
+    if isinstance(expr, ast.Subscript) and isinstance(expr.value, ast.Name) and expr.value.id in doc_vars:
+        return True
+    return (
+        isinstance(expr, ast.Call)
+        and isinstance(expr.func, ast.Attribute)
+        and expr.func.attr in {"load_page", "new_page"}
+        and (isinstance(expr.func.value, ast.Name) and expr.func.value.id in doc_vars)
+    )
+
+
+def _collect_page_vars(tree: ast.Module, doc_vars: set[str]) -> set[str]:
+    page_vars: set[str] = set()
+    non_page_vars: set[str] = set()
+
+    def record(target: ast.AST | None, expr: ast.AST | None) -> None:
+        if not isinstance(target, ast.Name) or expr is None:
+            return
+        if _is_page_source_expr(expr, doc_vars):
+            page_vars.add(target.id)
+        else:
+            non_page_vars.add(target.id)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                record(target, node.value)
+        elif isinstance(node, ast.AnnAssign):
+            record(node.target, node.value)
+        elif (
+            isinstance(node, ast.For)
+            and isinstance(node.iter, ast.Name)
+            and node.iter.id in doc_vars
+            and isinstance(node.target, ast.Name)
+        ):
+            page_vars.add(node.target.id)
+    return page_vars - non_page_vars
+
+
 class _Rewriter:
     """Span-preserving AST rewriter that composes nested edits cleanly."""
 
@@ -484,9 +530,12 @@ class _Rewriter:
         self._index = _SpanIndex(source)
         self._target_mods = _target_modules(mode)
         self._tree = ast.parse(source)
-        self._alias_map, self._direct_open = _collect_import_bindings(self._tree, self._target_mods)
+        self._alias_map, self._direct_open, self._direct_renames = _collect_import_bindings(
+            self._tree, self._target_mods
+        )
         self._mod_aliases = set(self._alias_map)
-        self._doc_vars = _collect_doc_vars(self._tree, self._mod_aliases, self._direct_open)
+        self._doc_vars = _collect_doc_vars(self._tree, self._mod_aliases, set(self._direct_open))
+        self._page_vars = _collect_page_vars(self._tree, self._doc_vars)
         self._diagnostics: list[Diagnostic] = []
         self._pyropdf_ref = next(iter(self._alias_map.values()), "pyropdf")
 
@@ -547,9 +596,16 @@ class _Rewriter:
                 edits = self._visit_attribute(node)
             case ast.Call():
                 edits = self._visit_call(node)
+            case ast.Name():
+                edits = self._visit_name(node)
             case _:
                 edits = self._visit_children(node)
         return edits
+
+    def _visit_name(self, node: ast.Name) -> list[_Edit]:
+        if isinstance(node.ctx, ast.Load) and node.id in self._direct_renames:
+            return self._replace(node, self._direct_renames[node.id])
+        return []
 
     def _visit_children(self, node: ast.AST) -> list[_Edit]:
         edits: list[_Edit] = []
@@ -628,6 +684,11 @@ class _Rewriter:
             return self._replace(node, f"{node.value.id}.pages[{self._render(node.slice)}]")
         return self._visit_children(node)
 
+    def _is_page_expr(self, node: ast.AST) -> bool:
+        if isinstance(node, ast.Name) and node.id in self._page_vars:
+            return True
+        return _is_page_source_expr(node, self._doc_vars)
+
     def _visit_attribute(self, node: ast.Attribute) -> list[_Edit]:
         if isinstance(node.value, ast.Name) and node.value.id in self._mod_aliases:
             return self._rewrite_module_attr(node, self._alias_map[node.value.id])
@@ -636,10 +697,11 @@ class _Rewriter:
             "page_count": lambda recv: f"len({recv}.pages)",
             "needs_pass": lambda recv: f"{recv}.needs_password",
             "is_fast_webaccess": lambda recv: f"{recv}.is_linearized",
-            "number": lambda recv: f"{recv}.index",
         }.get(node.attr)
         if simple_attr is not None:
             return self._replace(node, simple_attr(self._render(node.value)))
+        if node.attr == "number" and self._is_page_expr(node.value):
+            return self._replace(node, f"{self._render(node.value)}.index")
         if node.attr == "name" and isinstance(node.value, ast.Name) and node.value.id in self._doc_vars:
             return self._replace(node, f"{node.value.id}.path")
         return self._visit_children(node)
@@ -693,7 +755,10 @@ class _Rewriter:
                 if isinstance(arg, ast.Name) and arg.id in self._doc_vars:
                     return self._replace(node, f"len({arg.id}.pages)")
             if node.func.id in self._direct_open:
-                return self._rewrite_open_call(node, prefix="")
+                return self._rewrite_open_call(node, open_callee=self._direct_open[node.func.id], doc_prefix="")
+            if node.func.id in self._direct_renames:
+                target = self._direct_renames[node.func.id]
+                return self._replace(node, f"{target}({self._format_call_args(node)})")
         elif isinstance(node.func, ast.Attribute):
             if isinstance(node.func.value, ast.Name) and node.func.value.id in self._mod_aliases:
                 return self._rewrite_module_call(node, self._alias_map[node.func.value.id], node.func.attr)
@@ -702,7 +767,7 @@ class _Rewriter:
 
     def _rewrite_module_call(self, node: ast.Call, mod_name: str, attr: str) -> list[_Edit]:
         if attr in {"open", "Document"}:
-            return self._rewrite_open_call(node, prefix=f"{mod_name}.")
+            return self._rewrite_open_call(node, open_callee=f"{mod_name}.open", doc_prefix=f"{mod_name}.")
         if attr == "peek_metadata":
             return self._replace(node, f"{mod_name}.probe({self._format_call_args(node)})")
         if attr == "Font":
@@ -731,9 +796,16 @@ class _Rewriter:
         )
         return self._visit_children(node)
 
-    def _rewrite_open_call(self, node: ast.Call, prefix: str) -> list[_Edit]:
+    def _rewrite_open_call(self, node: ast.Call, *, open_callee: str, doc_prefix: str) -> list[_Edit]:
         if not node.args and not node.keywords:
-            return self._replace(node, f"{prefix}Document()")
+            if doc_prefix or "Document" in self._direct_open:
+                return self._replace(node, f"{doc_prefix}Document()")
+            self._warn(
+                node,
+                "manual-empty-document",
+                "Import Document from pyropdf and call Document() to create a blank PDF.",
+            )
+            return []
 
         kw = {k.arg: k.value for k in node.keywords if k.arg is not None}
         filetype_node = kw.get("filetype")
@@ -744,7 +816,7 @@ class _Rewriter:
         if "stream" in kw and not node.args:
             other_kw = [f"{k}={self._render(v)}" for k, v in kw.items() if k not in {"stream", "filetype"}]
             rest = f", {', '.join(other_kw)}" if other_kw else ""
-            return self._replace(node, f"{prefix}open({self._render(kw['stream'])}{rest})")
+            return self._replace(node, f"{open_callee}({self._render(kw['stream'])}{rest})")
 
         if (
             len(node.args) == _PAIR_ARITY
@@ -754,11 +826,11 @@ class _Rewriter:
         ):
             other_kw = [f"{k}={self._render(v)}" for k, v in kw.items() if k != "filetype"]
             rest = f", {', '.join(other_kw)}" if other_kw else ""
-            return self._replace(node, f"{prefix}open({self._render(node.args[1])}{rest})")
+            return self._replace(node, f"{open_callee}({self._render(node.args[1])}{rest})")
 
         other_args = [self._render(arg) for arg in node.args]
         other_kw = [f"{k}={self._render(v)}" for k, v in kw.items() if k != "filetype"]
-        return self._replace(node, f"{prefix}open({', '.join([*other_args, *other_kw])})")
+        return self._replace(node, f"{open_callee}({', '.join([*other_args, *other_kw])})")
 
     def _check_open_filetype(self, node: ast.Call, filetype_node: ast.AST | None) -> None:
         if not (isinstance(filetype_node, ast.Constant) and isinstance(filetype_node.value, str)):
@@ -770,23 +842,29 @@ class _Rewriter:
                 "unsupported-filetype",
                 f"pyropdf opens PDF files only; non-PDF format {filetype_node.value!r} is out of scope (#355).",
             )
+        elif ft in _CBZ_FILETYPES:
+            self._warn(
+                node,
+                "manual-cbz-to-pdf",
+                "To build a PDF from a CBZ archive, use doc = pyropdf.Document(); doc.pages.new_from_cbz(source).",
+            )
         elif ft in _IMAGE_FILETYPES:
             self._warn(
                 node,
                 "manual-image-to-pdf",
-                "To build a PDF from an image, use doc = pyropdf.Document(); doc.pages.new_from_image(source).",
+                "To build a PDF from images, use doc.pages.new_from_image(src) or doc.pages.new_from_images(srcs).",
             )
 
     def _rewrite_method_call(self, node: ast.Call, func: ast.Attribute) -> list[_Edit]:
         attr = func.attr
         recv = self._render(func.value)
-        if attr in _MANUAL_METHODS:
-            code, message = _MANUAL_METHODS[attr]
-            self._warn(node, code, message)
+        if attr == "select":
+            if isinstance(func.value, ast.Name) and func.value.id in self._doc_vars:
+                self._warn(node, *_MANUAL_METHODS[attr])
             return self._visit_children(node)
-        if attr in _IMMUTABLE_GEOMETRY_METHODS:
-            code, message = _IMMUTABLE_GEOMETRY_METHODS[attr]
-            self._warn(node, code, message)
+        manual = _MANUAL_METHODS.get(attr) or _IMMUTABLE_GEOMETRY_METHODS.get(attr)
+        if manual is not None:
+            self._warn(node, *manual)
             return self._visit_children(node)
         if attr in _ZERO_ARG_METHOD_TO_PROPERTY and not node.args and not node.keywords:
             return self._replace(node, f"{recv}.{_ZERO_ARG_METHOD_TO_PROPERTY[attr]}")
@@ -802,9 +880,7 @@ class _Rewriter:
             "bake": lambda: self._rewrite_bake(node, recv),
             "new_page": lambda: self._rewrite_new_page(node, recv),
         }.get(attr)
-        if special is not None:
-            return special()
-        return self._rewrite_page_or_storage_method(node, recv, attr)
+        return special() if special is not None else self._rewrite_page_or_storage_method(node, recv, attr)
 
     def _rewrite_page_or_storage_method(self, node: ast.Call, recv: str, attr: str) -> list[_Edit]:
         rewritten = self._rewrite_page_helper(node, recv, attr)
@@ -939,6 +1015,7 @@ class _Rewriter:
             return self._visit_children(node)
 
         kw_str = self._collect_get_text_kwargs(node.keywords)
+        kw_chars = kw_str if "chars=" in kw_str else (f"chars=True, {kw_str}" if kw_str else "chars=True")
         entry = _GET_TEXT_MODES.get(mode_arg)
         if entry is None:
             self._warn(
@@ -950,7 +1027,7 @@ class _Rewriter:
         template, warning = entry
         if warning is not None:
             self._warn(node, warning[0], warning[1])
-        return self._replace(node, template.format(recv=recv, kw=kw_str))
+        return self._replace(node, template.format(recv=recv, kw=kw_str, kw_chars=kw_chars))
 
     def _collect_get_text_kwargs(self, keywords: list[ast.keyword]) -> str:
         extra_kw: list[str] = []

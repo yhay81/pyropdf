@@ -732,6 +732,36 @@ def _emit_ordered_media(
             builder.append_block(kind, markdown)
 
 
+def _emit_table_line(  # noqa: PLR0913 - emits one table-owned line with ordered media and residuals.
+    builder: _MarkdownBuilder,
+    line: TextLine,
+    levels: dict[float, int],
+    *,
+    table_data: list[_MarkdownTable],
+    pending_tables: list[int],
+    pending_images: list[_MarkdownImage],
+    residual: tuple[str, str],
+) -> None:
+    if pending_tables and pending_images:
+        table_top = min(table_data[index][0][1] for index in pending_tables)
+        images_before = [item for item in pending_images if item[0][1] <= table_top]
+        images_after = [item for item in pending_images if item[0][1] > table_top]
+    else:
+        images_before = pending_images
+        images_after = []
+    for _, img_md in images_before:
+        builder.append_block("image", img_md)
+    before, after = residual
+    kind, text = _classify_line(line, levels, before)
+    builder.append_classified(kind, text)
+    if pending_tables:
+        builder.append_tables(table_data, pending_tables)
+    for _, img_md in images_after:
+        builder.append_block("image", img_md)
+    kind, text = _classify_line(line, levels, after)
+    builder.append_classified(kind, text)
+
+
 def page_to_markdown(  # noqa: PLR0913 - page conversion with optional tables, words, images, and budget.
     layout: TextPageDict,
     levels: dict[float, int],
@@ -752,15 +782,15 @@ def page_to_markdown(  # noqa: PLR0913 - page conversion with optional tables, w
             pending_tables = table_events.get(line_position, [])
             pending_images = image_events.get(line_position, [])
             if table_memberships[line_position]:
-                for _, img_md in pending_images:
-                    builder.append_block("image", img_md)
-                before, after = residual_texts.get(line_position, ("", ""))
-                kind, text = _classify_line(line, levels, before)
-                builder.append_classified(kind, text)
-                if pending_tables:
-                    builder.append_tables(table_data, pending_tables)
-                kind, text = _classify_line(line, levels, after)
-                builder.append_classified(kind, text)
+                _emit_table_line(
+                    builder,
+                    line,
+                    levels,
+                    table_data=table_data,
+                    pending_tables=pending_tables,
+                    pending_images=pending_images,
+                    residual=residual_texts.get(line_position, ("", "")),
+                )
                 line_position += 1
                 continue
             if pending_tables or pending_images:
@@ -794,6 +824,8 @@ _MAX_HEADER_FOOTER_CHARS = 200
 #: Maximum candidate keys recorded per page and across a document (F6 memory bound).
 _MAX_BAND_CANDIDATES_PER_PAGE = 64
 _MAX_HEADER_FOOTER_KEYS = 8192
+#: Maximum non-empty page table results cached across passes (F6 memory bound).
+_MAX_CACHED_TABLE_PAGES = 256
 _FLOAT32_MAX = 3.4028234663852886e38
 _MARGIN_PAIR_LEN = 2
 _MARGIN_QUAD_LEN = 4
@@ -802,14 +834,14 @@ _WS_RE = re.compile(r"\s+")
 _DIGITS_RE = re.compile(r"\d+")
 _ROMAN = r"m{0,3}(?:cm|cd|d?c{0,3})(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})"
 _SMALL_ROMAN = r"(?=[clxvi])c{0,3}(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})"
-_STANDALONE_ROMAN_RE = re.compile(rf"^([\s\-–—|•·\[\]()]*)(?=[mdclxvi]){_ROMAN}([\s\-–—|•·\[\]()]*)$")
+_STANDALONE_ROMAN_RE = re.compile(rf"^([\s\-–—|•·\[\]()]*)(?=[mdclxvi]){_ROMAN}([\s\-–—|•·\[\]().]*)$")
 _PAGE_ROMAN_RE = re.compile(
     rf"\b(page|pg\.?|p\.?|pp\.?)\s+(?=[mdclxvi]){_ROMAN}(?:\s*(of|/)\s*(?=[mdclxvi]){_ROMAN})?\b"
 )
 _RATIO_ROMAN_RE = re.compile(rf"(?<!\w)(?=[mdclxvi]){_ROMAN}\s*(/|of)\s*(?=[mdclxvi]){_ROMAN}(?!\w)")
-_BRACKET_ROMAN_RE = re.compile(rf"([\[(]\s*)(?=[mdclxvi]){_ROMAN}(\s*[\])])")
-_DELIM_TRAIL_ROMAN_RE = re.compile(rf"([\-–—|•·]\s*)(?=[mdclxvi]){_ROMAN}(?=\s|$)")
-_DELIM_LEAD_ROMAN_RE = re.compile(rf"(?:^|(?<=\s))(?=[mdclxvi]){_ROMAN}(\s*[\-–—|•·])")
+_BRACKET_ROMAN_RE = re.compile(rf"([\[(]\s*){_SMALL_ROMAN}(\s*[\])])")
+_DELIM_TRAIL_ROMAN_RE = re.compile(rf"([\-–—|•·]\s*){_SMALL_ROMAN}(?=\s|$)")
+_DELIM_LEAD_ROMAN_RE = re.compile(rf"(?:^|(?<=\s)){_SMALL_ROMAN}(\s*[\-–—|•·])")
 _EDGE_TRAIL_SMALL_ROMAN_RE = re.compile(rf"(\s+){_SMALL_ROMAN}$")
 _EDGE_LEAD_SMALL_ROMAN_RE = re.compile(rf"^({_SMALL_ROMAN})(\s+)")
 
@@ -979,14 +1011,25 @@ def _filter_images_by_margins(
 
 
 class _GraphicsCache:
-    """Cache bounded graphic inspection results once per unique page index."""
+    """Cache bounded graphic inspection and table extraction results per unique page index."""
 
-    __slots__ = ("_entries", "_max_graphics", "_need_images")
+    __slots__ = ("_entries", "_max_graphics", "_need_images", "_nonempty_table_pages", "_tables")
 
     def __init__(self, *, max_graphics: int | None, need_images: bool) -> None:
         self._max_graphics = max_graphics
         self._need_images = need_images
         self._entries: dict[int, _PageGraphics] = {}
+        self._tables: dict[int, tuple[Table, ...]] = {}
+        self._nonempty_table_pages = 0
+
+    def seed_from_structure(self, structure_pages: dict[int, PageStructureData] | None) -> None:
+        """Reuse ``Page.content(text_runs=False)`` results already captured during structure extraction."""
+        if structure_pages is None:
+            return
+        for page_idx, data in structure_pages.items():
+            if data.has_paths is not None and data.content_images is not None:
+                imgs = data.content_images if self._need_images else ()
+                self._entries[page_idx] = _PageGraphics(has_paths=data.has_paths, images=imgs)
 
     def inspect(self, page: Page) -> _PageGraphics:
         cached = self._entries.get(page.index)
@@ -1011,10 +1054,33 @@ class _GraphicsCache:
         self._entries[page.index] = entry
         return entry
 
+    def tables(
+        self,
+        page: Page,
+        strategy: Literal["lines", "text"] | None,
+        *,
+        clip: _BBox | None = None,
+        body_empty: bool = False,
+    ) -> list[Table]:
+        """Extract tables once per page within a bounded non-empty page cache."""
+        if strategy is None or body_empty:
+            return []
+        cached = self._tables.get(page.index)
+        if cached is not None:
+            return list(cached)
+        page_gfx = self.inspect(page)
+        found = _page_tables(page, strategy, clip=clip, body_empty=False, has_paths=page_gfx.has_paths)
+        if not found:
+            self._tables[page.index] = ()
+        elif self._nonempty_table_pages < _MAX_CACHED_TABLE_PAGES:
+            self._tables[page.index] = tuple(found)
+            self._nonempty_table_pages += 1
+        return found
+
 
 def _normalize_band_text(text: str) -> str:
     """Normalize a top/bottom band string for repeated header/footer detection."""
-    norm = _WS_RE.sub(" ", text.strip()).lower()
+    norm = _WS_RE.sub(" ", unicodedata.normalize("NFKC", text.strip())).lower()
     if not norm or len(norm) > _MAX_HEADER_FOOTER_CHARS:
         return ""
     standalone = _STANDALONE_ROMAN_RE.match(norm)
@@ -1034,14 +1100,17 @@ def _normalize_band_text(text: str) -> str:
 
 
 def _band_for_bbox(bbox: _BBox, y_min: float, y_max: float) -> Literal["top", "bottom"] | None:
-    """Return ``"top"`` or ``"bottom"`` if ``bbox``'s vertical center lies in an edge band."""
+    """Return ``"top"`` or ``"bottom"`` if ``bbox`` fits inside an edge band."""
     span = y_max - y_min
     if span <= 0.0:
         return None
+    band_height = span * _HEADER_FOOTER_BAND_RATIO
+    if (bbox[3] - bbox[1]) > band_height:
+        return None
     center_y = (bbox[1] + bbox[3]) * 0.5
-    if center_y <= y_min + span * _HEADER_FOOTER_BAND_RATIO:
+    if center_y <= y_min + band_height:
         return "top"
-    if center_y >= y_max - span * _HEADER_FOOTER_BAND_RATIO:
+    if center_y >= y_max - band_height:
         return "bottom"
     return None
 
@@ -1209,8 +1278,7 @@ def _detect_headers_footers(
             top, bottom = _collect_band_keys_from_blocks(blocks, y_min, y_max)
         else:
             layout = _fallback_or_clipped_layout(page, data, body_clip, body_empty=False, ruby=config.ruby)[0]
-            page_gfx = graphics.inspect(page)
-            tables = _page_tables(page, config.table_strategy, clip=body_clip, has_paths=page_gfx.has_paths)
+            tables = graphics.tables(page, config.table_strategy, clip=body_clip)
             table_bboxes = [(t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1) for t in tables]
             y_min, y_max = _band_bounds(layout["height"], body_clip)
             top, bottom = _collect_band_keys_from_layout(layout, y_min, y_max, table_bboxes)
@@ -1289,7 +1357,7 @@ class _ImageExporter:
         try:
             data = pixmap.to_bytes("png", max_size=remaining)
         except LimitError as error:
-            if error.code == "pixmap_output_size" and self._memory_limited:
+            if error.code == "pixmap_output_size":
                 self._fail_budget()
             raise
         if len(data) > remaining:
@@ -1663,7 +1731,7 @@ def _render_geometric_page(  # noqa: PLR0913 - renders one geometric page with c
     if body_empty:
         return ""
     layout, words = _fallback_or_clipped_layout(page, data, body_clip, body_empty=False, ruby=config.ruby)
-    tables = _page_tables(page, config.table_strategy, clip=body_clip, has_paths=page_gfx.has_paths)
+    tables = graphics.tables(page, config.table_strategy, clip=body_clip)
     table_bboxes = [(t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1) for t in tables]
     y_min, y_max = _band_bounds(layout["height"], body_clip)
     layout, words = hf_rule.filter_layout(layout, words, y_min, y_max, table_bboxes)
@@ -1697,11 +1765,11 @@ def _collect_geometric_heading_levels(
         if data is not None and data.blocks is not None:
             continue
         body_clip, body_empty = _page_body_clip(page, config.margins)
-        page_gfx = graphics.inspect(page)
+        graphics.inspect(page)
         if body_empty:
             continue
         layout, words = _fallback_or_clipped_layout(page, data, body_clip, body_empty=False, ruby=config.ruby)
-        tables = _page_tables(page, config.table_strategy, clip=body_clip, has_paths=page_gfx.has_paths)
+        tables = graphics.tables(page, config.table_strategy, clip=body_clip)
         table_bboxes = [(t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1) for t in tables]
         y_min, y_max = _band_bounds(layout["height"], body_clip)
         layout, _ = hf_rule.filter_layout(layout, words, y_min, y_max, table_bboxes)
@@ -1774,6 +1842,7 @@ def pages_markdown(  # noqa: PLR0913 - keyword-only retrieval export options.
     )
     exporter = _ImageExporter(config.images, memory_limit=pages[0].document.limits.max_memory_size)
     graphics = _GraphicsCache(max_graphics=config.max_graphics, need_images=exporter.active)
+    graphics.seed_from_structure(structure_pages)
     hf_rule = _detect_headers_footers(pages, config, graphics, structure_pages)
     levels = _collect_geometric_heading_levels(pages, config, graphics, hf_rule, structure_pages)
 

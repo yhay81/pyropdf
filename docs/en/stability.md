@@ -91,7 +91,7 @@ documented in [Limits and errors](limits.md).
   resource-exhaustion gap.
 - Tightening a default limit or adding a new guard may refuse a malformed or
   excessively expensive PDF that an earlier release attempted to process. Handle
-  refusals by catching `LimitError` (or its base class `PyropdfError`) and
+  refusals by catching `LimitError` (or its base class `PdfError`) and
   checking `error.code` against `LIMIT_CODES`, never by matching message prose.
 - Bug fixes may change extracted text, reading order, table cells, glyph boxes,
   rendered pixels, or damaged-file repair output in any release when the prior

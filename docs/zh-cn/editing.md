@@ -115,7 +115,7 @@ with page.draw() as canvas:
     canvas.line((0, 180), (200, 180), stroke=Stroke(paint=stripes, width=6))
 ```
 
-`extend` 控制渐变在起止范围之外的绘制方式：两端颜色向外延续（`PAD`，默认）、仅起点或仅终点延续（`PAD_START`、`PAD_END`）、不绘制（`NONE`）、重复循环（`REPEAT`）或往返镜像（`REFLECT`）。同一画布中相同的函数与着色对象只会写入一次。`page.content()` 与 `page.paths()` 会将轴向和径向着色连同其颜色函数读回为 `ShadingPattern`，`canvas.draw` 会以有界采样近似重绘其填充与描边（其他类型的着色以及 `TilingPattern` 不会被重绘）。当软蒙版要求将文本填充与描边拆分为两个独立对象时，第二个对象会带有空的 `ActualText`，以确保文本提取仅读取一次。
+`extend` 控制渐变在起止范围之外的绘制方式：两端颜色向外延续（`PAD`，默认）、仅起点或仅终点延续（`PAD_START`、`PAD_END`）、不绘制（`NONE`）、重复循环（`REPEAT`）或往返镜像（`REFLECT`）。同一画布中相同的函数与着色对象只会写入一次。`page.content()` 与 `page.paths()` 会将轴向和径向着色连同其颜色函数读回为 `ShadingPattern`，并将平铺图案连同所捕获的图案单元格读回为 `TilingPattern`，`canvas.draw` 会重绘它们的填充与描边（轴向与径向着色以有界采样近似输出，平铺图案以有界 `/PatternType 1` 流输出；函数着色与网格着色不会被重绘）。`canvas.draw` 还会使用其 `Image.fill` 颜料重绘内联光栅图像以及间接或内联模板图像遮罩（stencil image mask）。当软蒙版要求将文本填充与描边拆分为两个独立对象时，第二个对象会带有空的 `ActualText`，以确保文本提取仅读取一次。
 
 ### 文本
 
@@ -179,6 +179,24 @@ with pyropdf.open("input.pdf") as source, pyropdf.Document() as target:
 每个字形都会保留其原始 PDF 字符代码、文本矩阵与字体字典。画布会从产出这些文本片段的对应版本复制所选字体，因此源文档后续对编码或字体程序的修改不会影响此次绘制。来自同一 `content()` 结果的字体会共享复制后的资源。支持复制嵌入简单字体、标准 14 字体、嵌入的 Identity-H 与 Identity-V 字体，以及带有自有资源的 Type 3 字体。若文本片段包含不可用字体、直接字体字典、未知码宽的复合编码、奇异字形变换矩阵、包裹替换文本、图案填充或软蒙版，会抛出 `ValueError`。源文档已关闭时抛出 `DocumentClosedError`。若画布超出当前文档或源文档的资源限制，整个绘制操作会回滚。
 
 在 15 份文档组成的往返测试语料库中，共重绘了 17,246 个文本片段。其中 `mhlw-doc.pdf` 有 8 个片段使用了未嵌入的非标准字体。语料库测试会以 72 dpi 校验其余页面像素的每个 RGB 通道误差在 16 个色阶以内，并校验上述排除项的数量与原因保持不变。
+
+### 替换文本 {#replacing-text}
+
+`page.replace_text(old, new, *, count=None, fallback=None)` 可在页面正文及其绘制的 Form XObject 中替换文本，覆盖 Type 1、TrueType、Type 3 以及横排（`WMode = 0`）与竖排（`WMode = 1`）的复合字体（Type 0 / CID），包括 `Identity-H`、`Identity-V`、预定义 CMap 以及自定义嵌入 CMap 流。沿着当前书写轴施加的补偿性 `TJ` 位移可保持后续文本位置不变，外层结构标签（`/MCID`）保持完整，匹配的 `/ActualText` 标记内容跨度也会随字形一并更新。
+
+如果未子集化的嵌入 Type 0 字体已包含所需字形，`replace_text` 会自动扩展其 `/W`、`/W2` 和 `/ToUnicode` 条目。若已子集化的字体、Type 3 字体的 `/CharProcs` 或字体编码中缺少某个字形，可传入 `fallback=Font(...)` 用该回退字体绘制缺失字符并保持后续文本对齐；未提供 `fallback` 时则会抛出 `ValueError` 且不修改文档。
+
+```python
+import pyropdf
+
+doc = pyropdf.Document()
+page = doc.pages.new((300, 120))
+with page.draw() as canvas:
+    canvas.text("Invoice #001 total", (20, 60), size=14)
+page.replace_text("#001", "#002")
+if "ja" in doc.fallback_fonts and (jp := doc.fallback_fonts["ja"].sans) is not None:
+    page.replace_text("total", "合計", fallback=jp)
+```
 
 ## 注释
 

@@ -1,74 +1,74 @@
 {
   "aggregate": {
     "pyropdf heuristic (text)": {
-      "anchors_found": 140,
-      "anchors_total": 140,
-      "pairs_in_order": 129,
-      "pairs_total": 129,
-      "true_tables": 2,
+      "anchors_found": 152,
+      "anchors_total": 152,
+      "pairs_in_order": 140,
+      "pairs_total": 140,
+      "true_tables": 3,
       "fp_tables": 0,
       "jp_headings": 0
     },
     "pyropdf heuristic (md)": {
-      "anchors_found": 137,
-      "anchors_total": 140,
-      "pairs_in_order": 126,
-      "pairs_total": 126,
-      "true_tables": 2,
+      "anchors_found": 147,
+      "anchors_total": 152,
+      "pairs_in_order": 134,
+      "pairs_total": 135,
+      "true_tables": 3,
       "fp_tables": 0,
       "jp_headings": 0
     },
     "pymupdf-layout 2.2 (md)": {
-      "anchors_found": 103,
-      "anchors_total": 140,
-      "pairs_in_order": 90,
-      "pairs_total": 92,
+      "anchors_found": 112,
+      "anchors_total": 152,
+      "pairs_in_order": 98,
+      "pairs_total": 100,
       "true_tables": 2,
       "fp_tables": 3,
       "jp_headings": 0
     },
     "PP-DocLayout-S (FP32, 480x480)": {
-      "anchors_found": 140,
-      "anchors_total": 140,
-      "pairs_in_order": 118,
-      "pairs_total": 129,
+      "anchors_found": 152,
+      "anchors_total": 152,
+      "pairs_in_order": 129,
+      "pairs_total": 140,
       "true_tables": 0,
       "fp_tables": 1,
       "jp_headings": 6
     },
     "PP-DocLayout_plus-L (FP32, 800x800)": {
-      "anchors_found": 140,
-      "anchors_total": 140,
-      "pairs_in_order": 125,
-      "pairs_total": 129,
-      "true_tables": 2,
+      "anchors_found": 152,
+      "anchors_total": 152,
+      "pairs_in_order": 136,
+      "pairs_total": 140,
+      "true_tables": 3,
       "fp_tables": 0,
       "jp_headings": 9
     },
     "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
-      "anchors_found": 140,
-      "anchors_total": 140,
-      "pairs_in_order": 122,
-      "pairs_total": 129,
-      "true_tables": 2,
+      "anchors_found": 152,
+      "anchors_total": 152,
+      "pairs_in_order": 133,
+      "pairs_total": 140,
+      "true_tables": 3,
       "fp_tables": 0,
       "jp_headings": 9
     },
     "PP-DocLayoutV3 (FP32, 800x800)": {
-      "anchors_found": 140,
-      "anchors_total": 140,
-      "pairs_in_order": 126,
-      "pairs_total": 129,
-      "true_tables": 2,
+      "anchors_found": 152,
+      "anchors_total": 152,
+      "pairs_in_order": 137,
+      "pairs_total": 140,
+      "true_tables": 3,
       "fp_tables": 0,
       "jp_headings": 9
     },
     "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
-      "anchors_found": 140,
-      "anchors_total": 140,
-      "pairs_in_order": 124,
-      "pairs_total": 129,
-      "true_tables": 2,
+      "anchors_found": 152,
+      "anchors_total": 152,
+      "pairs_in_order": 135,
+      "pairs_total": 140,
+      "true_tables": 3,
       "fp_tables": 0,
       "jp_headings": 9
     }
@@ -123,7 +123,7 @@
             "in_order": 10,
             "pairs": 11
           },
-          "infer_4t_ms": 21.95,
+          "infer_4t_ms": 27.9,
           "regions": {
             "header_image": 1,
             "doc_title": 1,
@@ -138,7 +138,7 @@
             "in_order": 11,
             "pairs": 11
           },
-          "infer_4t_ms": 1028.89,
+          "infer_4t_ms": 900.93,
           "regions": {
             "header": 2,
             "doc_title": 1,
@@ -153,7 +153,7 @@
             "in_order": 11,
             "pairs": 11
           },
-          "infer_4t_ms": 390.75,
+          "infer_4t_ms": 434.89,
           "regions": {
             "header": 2,
             "doc_title": 1,
@@ -168,7 +168,7 @@
             "in_order": 11,
             "pairs": 11
           },
-          "infer_4t_ms": 769.49,
+          "infer_4t_ms": 844.55,
           "regions": {
             "header_image": 1,
             "header": 1,
@@ -184,7 +184,7 @@
             "in_order": 11,
             "pairs": 11
           },
-          "infer_4t_ms": 557.74,
+          "infer_4t_ms": 644.18,
           "regions": {
             "header_image": 1,
             "header": 1,
@@ -207,7 +207,7 @@
             "pairs": 17
           },
           "regions": {
-            "blocks": 16,
+            "blocks": 19,
             "tables": 1
           }
         },
@@ -240,7 +240,7 @@
             "in_order": 17,
             "pairs": 17
           },
-          "infer_4t_ms": 24.2,
+          "infer_4t_ms": 27.94,
           "regions": {
             "table": 3,
             "text": 3,
@@ -254,7 +254,7 @@
             "in_order": 17,
             "pairs": 17
           },
-          "infer_4t_ms": 815.9,
+          "infer_4t_ms": 779.36,
           "regions": {
             "table": 1,
             "footer": 1
@@ -267,7 +267,7 @@
             "in_order": 17,
             "pairs": 17
           },
-          "infer_4t_ms": 396.67,
+          "infer_4t_ms": 359.24,
           "regions": {
             "table": 1,
             "footer": 1
@@ -280,7 +280,7 @@
             "in_order": 17,
             "pairs": 17
           },
-          "infer_4t_ms": 706.33,
+          "infer_4t_ms": 745.34,
           "regions": {
             "table": 1,
             "vision_footnote": 1
@@ -293,7 +293,7 @@
             "in_order": 17,
             "pairs": 17
           },
-          "infer_4t_ms": 474.62,
+          "infer_4t_ms": 820.98,
           "regions": {
             "table": 1,
             "vision_footnote": 1
@@ -346,7 +346,7 @@
             "in_order": 17,
             "pairs": 17
           },
-          "infer_4t_ms": 22.54,
+          "infer_4t_ms": 23.54,
           "regions": {
             "header": 1,
             "content": 1,
@@ -361,7 +361,7 @@
             "in_order": 17,
             "pairs": 17
           },
-          "infer_4t_ms": 621.54,
+          "infer_4t_ms": 678.61,
           "regions": {
             "table": 1,
             "footer": 1,
@@ -375,7 +375,7 @@
             "in_order": 17,
             "pairs": 17
           },
-          "infer_4t_ms": 378.88,
+          "infer_4t_ms": 352.71,
           "regions": {
             "table": 1,
             "number": 1,
@@ -389,7 +389,7 @@
             "in_order": 17,
             "pairs": 17
           },
-          "infer_4t_ms": 701.69,
+          "infer_4t_ms": 739.31,
           "regions": {
             "number": 1,
             "table": 1,
@@ -403,11 +403,121 @@
             "in_order": 17,
             "pairs": 17
           },
-          "infer_4t_ms": 487.03,
+          "infer_4t_ms": 756.87,
           "regions": {
             "number": 1,
             "table": 1,
             "vision_footnote": 2
+          }
+        }
+      }
+    },
+    "mhlw-deposit-report-p1": {
+      "document": "forms/mhlw-deposit-report.pdf",
+      "page": 1,
+      "engines": {
+        "pyropdf heuristic (text)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "regions": {
+            "blocks": 12,
+            "tables": 2
+          }
+        },
+        "pyropdf heuristic (md)": {
+          "anchors": {
+            "found": 9,
+            "total": 12,
+            "in_order": 8,
+            "pairs": 8
+          },
+          "regions": {
+            "tables": 2
+          }
+        },
+        "pymupdf-layout 2.2 (md)": {
+          "anchors": {
+            "found": 9,
+            "total": 12,
+            "in_order": 8,
+            "pairs": 8
+          },
+          "regions": {
+            "caption": 1,
+            "page-footer": 1,
+            "picture": 2
+          }
+        },
+        "PP-DocLayout-S (FP32, 480x480)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "infer_4t_ms": 23.39,
+          "regions": {
+            "image": 1
+          }
+        },
+        "PP-DocLayout_plus-L (FP32, 800x800)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "infer_4t_ms": 637.28,
+          "regions": {
+            "text": 2,
+            "table": 1
+          }
+        },
+        "PP-DocLayout_plus-L (INT8 MatMul+Conv, 800x800)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "infer_4t_ms": 352.66,
+          "regions": {
+            "text": 2,
+            "table": 1
+          }
+        },
+        "PP-DocLayoutV3 (FP32, 800x800)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "infer_4t_ms": 751.29,
+          "regions": {
+            "doc_title": 1,
+            "text": 2,
+            "table": 1,
+            "vision_footnote": 1
+          }
+        },
+        "PP-DocLayoutV3 (INT8 Conv-only, 800x800)": {
+          "anchors": {
+            "found": 12,
+            "total": 12,
+            "in_order": 11,
+            "pairs": 11
+          },
+          "infer_4t_ms": 720.19,
+          "regions": {
+            "doc_title": 1,
+            "text": 2,
+            "table": 1,
+            "vision_footnote": 1
           }
         }
       }
@@ -430,10 +540,10 @@
         },
         "pyropdf heuristic (md)": {
           "anchors": {
-            "found": 10,
+            "found": 11,
             "total": 11,
             "in_order": 9,
-            "pairs": 9
+            "pairs": 10
           },
           "regions": {
             "tables": 0
@@ -460,7 +570,7 @@
             "in_order": 5,
             "pairs": 10
           },
-          "infer_4t_ms": 21.69,
+          "infer_4t_ms": 23.91,
           "regions": {
             "text": 13,
             "paragraph_title": 4,
@@ -474,7 +584,7 @@
             "in_order": 9,
             "pairs": 10
           },
-          "infer_4t_ms": 587.05,
+          "infer_4t_ms": 726.39,
           "regions": {
             "header": 1,
             "paragraph_title": 6,
@@ -489,7 +599,7 @@
             "in_order": 7,
             "pairs": 10
           },
-          "infer_4t_ms": 362.24,
+          "infer_4t_ms": 367.06,
           "regions": {
             "header": 2,
             "text": 12,
@@ -504,7 +614,7 @@
             "in_order": 9,
             "pairs": 10
           },
-          "infer_4t_ms": 725.16,
+          "infer_4t_ms": 743.25,
           "regions": {
             "header": 1,
             "doc_title": 1,
@@ -520,7 +630,7 @@
             "in_order": 9,
             "pairs": 10
           },
-          "infer_4t_ms": 485.18,
+          "infer_4t_ms": 799.65,
           "regions": {
             "header": 1,
             "doc_title": 1,
@@ -578,7 +688,7 @@
             "in_order": 3,
             "pairs": 4
           },
-          "infer_4t_ms": 19.53,
+          "infer_4t_ms": 22.97,
           "regions": {
             "text": 4,
             "paragraph_title": 2
@@ -591,7 +701,7 @@
             "in_order": 4,
             "pairs": 4
           },
-          "infer_4t_ms": 596.77,
+          "infer_4t_ms": 619.41,
           "regions": {
             "paragraph_title": 3,
             "text": 4,
@@ -605,7 +715,7 @@
             "in_order": 4,
             "pairs": 4
           },
-          "infer_4t_ms": 348.71,
+          "infer_4t_ms": 345.83,
           "regions": {
             "paragraph_title": 3,
             "text": 4,
@@ -619,7 +729,7 @@
             "in_order": 4,
             "pairs": 4
           },
-          "infer_4t_ms": 699.71,
+          "infer_4t_ms": 765.18,
           "regions": {
             "paragraph_title": 3,
             "text": 4,
@@ -633,7 +743,7 @@
             "in_order": 4,
             "pairs": 4
           },
-          "infer_4t_ms": 471.54,
+          "infer_4t_ms": 878.65,
           "regions": {
             "paragraph_title": 3,
             "text": 4,
@@ -690,7 +800,7 @@
             "in_order": 9,
             "pairs": 10
           },
-          "infer_4t_ms": 21.45,
+          "infer_4t_ms": 23.22,
           "regions": {
             "chart": 1,
             "number": 1
@@ -703,7 +813,7 @@
             "in_order": 9,
             "pairs": 10
           },
-          "infer_4t_ms": 602.99,
+          "infer_4t_ms": 626.79,
           "regions": {
             "figure_title": 1,
             "table": 1,
@@ -717,7 +827,7 @@
             "in_order": 9,
             "pairs": 10
           },
-          "infer_4t_ms": 351.18,
+          "infer_4t_ms": 339.59,
           "regions": {
             "figure_title": 1,
             "table": 1,
@@ -731,7 +841,7 @@
             "in_order": 9,
             "pairs": 10
           },
-          "infer_4t_ms": 702.36,
+          "infer_4t_ms": 1097.2,
           "regions": {
             "figure_title": 1,
             "table": 1,
@@ -746,7 +856,7 @@
             "in_order": 9,
             "pairs": 10
           },
-          "infer_4t_ms": 484.26,
+          "infer_4t_ms": 692.1,
           "regions": {
             "figure_title": 1,
             "table": 1,
@@ -802,7 +912,7 @@
             "in_order": 8,
             "pairs": 8
           },
-          "infer_4t_ms": 22.03,
+          "infer_4t_ms": 25.51,
           "regions": {
             "header": 1,
             "doc_title": 1,
@@ -817,7 +927,7 @@
             "in_order": 8,
             "pairs": 8
           },
-          "infer_4t_ms": 594.87,
+          "infer_4t_ms": 623.42,
           "regions": {
             "doc_title": 1,
             "text": 10,
@@ -831,7 +941,7 @@
             "in_order": 7,
             "pairs": 8
           },
-          "infer_4t_ms": 420.58,
+          "infer_4t_ms": 355.56,
           "regions": {
             "doc_title": 1,
             "text": 7,
@@ -845,7 +955,7 @@
             "in_order": 8,
             "pairs": 8
           },
-          "infer_4t_ms": 691.7,
+          "infer_4t_ms": 833.21,
           "regions": {
             "header": 1,
             "doc_title": 1,
@@ -860,7 +970,7 @@
             "in_order": 8,
             "pairs": 8
           },
-          "infer_4t_ms": 471.85,
+          "infer_4t_ms": 637.03,
           "regions": {
             "header": 1,
             "doc_title": 1,
@@ -917,7 +1027,7 @@
             "in_order": 12,
             "pairs": 13
           },
-          "infer_4t_ms": 22.68,
+          "infer_4t_ms": 22.77,
           "regions": {
             "header": 1,
             "number": 1,
@@ -932,7 +1042,7 @@
             "in_order": 12,
             "pairs": 13
           },
-          "infer_4t_ms": 598.89,
+          "infer_4t_ms": 607.94,
           "regions": {
             "header": 2,
             "text": 26
@@ -945,7 +1055,7 @@
             "in_order": 12,
             "pairs": 13
           },
-          "infer_4t_ms": 365.43,
+          "infer_4t_ms": 397.43,
           "regions": {
             "header": 2,
             "text": 27
@@ -958,7 +1068,7 @@
             "in_order": 12,
             "pairs": 13
           },
-          "infer_4t_ms": 691.72,
+          "infer_4t_ms": 788.77,
           "regions": {
             "header": 2,
             "aside_text": 18,
@@ -972,7 +1082,7 @@
             "in_order": 13,
             "pairs": 13
           },
-          "infer_4t_ms": 473.25,
+          "infer_4t_ms": 745.17,
           "regions": {
             "header": 1,
             "aside_text": 3,
@@ -1027,7 +1137,7 @@
             "in_order": 15,
             "pairs": 15
           },
-          "infer_4t_ms": 21.81,
+          "infer_4t_ms": 23.99,
           "regions": {
             "image": 1
           }
@@ -1039,7 +1149,7 @@
             "in_order": 15,
             "pairs": 15
           },
-          "infer_4t_ms": 586.54,
+          "infer_4t_ms": 703.15,
           "regions": {
             "table": 1
           }
@@ -1051,7 +1161,7 @@
             "in_order": 15,
             "pairs": 15
           },
-          "infer_4t_ms": 355.31,
+          "infer_4t_ms": 423.79,
           "regions": {
             "table": 1
           }
@@ -1063,7 +1173,7 @@
             "in_order": 15,
             "pairs": 15
           },
-          "infer_4t_ms": 726.8,
+          "infer_4t_ms": 1136.15,
           "regions": {
             "table": 1,
             "number": 1
@@ -1076,7 +1186,7 @@
             "in_order": 15,
             "pairs": 15
           },
-          "infer_4t_ms": 466.22,
+          "infer_4t_ms": 581.22,
           "regions": {
             "table": 1
           }
@@ -1131,7 +1241,7 @@
             "in_order": 12,
             "pairs": 13
           },
-          "infer_4t_ms": 21.54,
+          "infer_4t_ms": 30.98,
           "regions": {
             "text": 2,
             "content": 1
@@ -1144,7 +1254,7 @@
             "in_order": 13,
             "pairs": 13
           },
-          "infer_4t_ms": 596.75,
+          "infer_4t_ms": 750.95,
           "regions": {
             "doc_title": 1,
             "text": 2,
@@ -1161,7 +1271,7 @@
             "in_order": 13,
             "pairs": 13
           },
-          "infer_4t_ms": 353.35,
+          "infer_4t_ms": 352.26,
           "regions": {
             "doc_title": 1,
             "text": 2,
@@ -1178,7 +1288,7 @@
             "in_order": 13,
             "pairs": 13
           },
-          "infer_4t_ms": 1279.78,
+          "infer_4t_ms": 1132.25,
           "regions": {
             "doc_title": 1,
             "text": 2,
@@ -1195,7 +1305,7 @@
             "in_order": 13,
             "pairs": 13
           },
-          "infer_4t_ms": 479.16,
+          "infer_4t_ms": 642.45,
           "regions": {
             "doc_title": 1,
             "text": 2,
@@ -1255,7 +1365,7 @@
             "in_order": 10,
             "pairs": 11
           },
-          "infer_4t_ms": 21.76,
+          "infer_4t_ms": 37.94,
           "regions": {
             "text": 9,
             "paragraph_title": 4
@@ -1268,7 +1378,7 @@
             "in_order": 10,
             "pairs": 11
           },
-          "infer_4t_ms": 595.72,
+          "infer_4t_ms": 741.64,
           "regions": {
             "paragraph_title": 4,
             "text": 5,
@@ -1282,7 +1392,7 @@
             "in_order": 10,
             "pairs": 11
           },
-          "infer_4t_ms": 345.9,
+          "infer_4t_ms": 386.66,
           "regions": {
             "paragraph_title": 4,
             "text": 5,
@@ -1296,7 +1406,7 @@
             "in_order": 11,
             "pairs": 11
           },
-          "infer_4t_ms": 1729.19,
+          "infer_4t_ms": 1417.24,
           "regions": {
             "content": 1,
             "paragraph_title": 4,
@@ -1312,7 +1422,7 @@
             "in_order": 8,
             "pairs": 11
           },
-          "infer_4t_ms": 474.53,
+          "infer_4t_ms": 698.5,
           "regions": {
             "content": 1,
             "text": 5,

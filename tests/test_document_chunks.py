@@ -588,3 +588,75 @@ def test_json_and_chunks_enforce_max_graphics() -> None:
         assert [e["text"] for e in data["pages"][0]["elements"]] == ["Vector Map"]
         chunks = doc.to_chunks([0], max_graphics=None)
         assert [c.text for c in chunks] == ["Vector Map"]
+
+
+def test_json_and_chunks_preflight_table_before_element_allocation(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_table_events(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError
+
+    with _document() as doc:
+        monkeypatch.setattr(_markdown, "_table_events", fail_table_events)
+        for call in (doc.to_json, doc.to_chunks):
+            with pytest.raises(pyropdf.LimitError) as caught:
+                call([0], max_size=16)
+            assert caught.value.code == "export_output_size"
+
+
+def test_exports_cache_tables_and_structure_content_per_page(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    orig_page_tables = _markdown._page_tables  # noqa: SLF001
+    table_calls = 0
+
+    def counting_tables(*args: object, **kwargs: object) -> object:
+        nonlocal table_calls
+        table_calls += 1
+        return orig_page_tables(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    with _document() as doc, monkeypatch.context() as patch:
+        patch.setattr(_markdown, "_page_tables", counting_tables)
+        doc.markdown(ignore_headers_footers=True)
+        # Page 0 has paths (1 table extraction), page 1 has no paths (1 empty call cached); no 3x repeats.
+        assert table_calls == 2
+        table_calls = 0
+        doc.to_chunks(ignore_headers_footers=True)
+        assert table_calls == 2
+
+    # Tagged Figure page reuses Page.content(text_runs=False) from graphic_bbox instead of calling twice.
+    pixels = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0])
+    img_hdr = "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 "
+    tagged = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 10 0 R >>",
+            2: (
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 300] "
+                "/Resources << /Font << /F1 4 0 R >> /XObject << /Im1 6 0 R >> >> >>"
+            ),
+            3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /StructParents 0 >>",
+            4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            5: _stream(
+                "BT /F1 12 Tf 40 260 Td /P << /MCID 0 >> BDC (Caption) Tj EMC ET\n"
+                "/Figure << /MCID 1 >> BDC q 50 0 0 50 40 160 cm /Im1 Do Q EMC\n"
+            ),
+            6: _stream(pixels, img_hdr),
+            10: "<< /Type /StructTreeRoot /K 11 0 R >>",
+            11: "<< /Type /StructElem /S /Document /P 10 0 R /Pg 3 0 R /K [12 0 R 13 0 R] >>",
+            12: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K 0 >>",
+            13: "<< /Type /StructElem /S /Figure /P 11 0 R /Pg 3 0 R /Alt (Chart) /K 1 >>",
+        }
+    )
+    orig_content = pyropdf.Page.content
+    content_calls = 0
+
+    def counting_content(self: pyropdf.Page, *args: object, **kwargs: object) -> pyropdf.Content:
+        nonlocal content_calls
+        content_calls += 1
+        return orig_content(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    with pyropdf.open(tagged) as doc, monkeypatch.context() as patch:
+        patch.setattr(pyropdf.Page, "content", counting_content)
+        md = doc.markdown(images=tmp_path / "tagged")
+        assert "![Chart](page-0-image-0.png)" in md
+        assert content_calls == 1
+        content_calls = 0
+        chunks = doc.to_chunks(images=tmp_path / "tagged_chunks")
+        assert "![Chart](page-0-image-0.png)" in chunks[0].text
+        assert content_calls == 1

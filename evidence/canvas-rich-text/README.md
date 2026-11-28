@@ -142,10 +142,10 @@ Notes:
 
 ## 4. Draft Python API specification
 
-See [`api-spec.md`](api-spec.md) for the complete DESIGN.md §10 specification (`TextSpan`,
-`TextAlign`, `TextDirection`, extensions to `Canvas.text()` and `Canvas.textbox()`, atomic `/Link`
-annotation emission inside the `Canvas` transaction, and open ergonomic question on inline
-stroke-only spans).
+See [`api-spec.md`](api-spec.md) for the complete DESIGN.md §10 specification (`TextSpan` with
+`render_mode`, `TextAlign`, `TextDirection`, `base_direction` preserving `Canvas.text()`/`textbox()`'s
+existing `direction: Literal["horizontal", "vertical"]`, `fallback_fonts`, and atomic `/Link`
+annotation emission inside the `Canvas` transaction).
 
 ## 5. Proposed follow-up implementation issues (once Option B is approved)
 

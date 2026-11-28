@@ -144,9 +144,12 @@ with page.draw() as canvas:
 `PAD`(기본값), 시작 또는 끝 색상만 이어가는 `PAD_START` 및 `PAD_END`, 아무것도 칠하지
 않는 `NONE`, 구간을 반복하는 `REPEAT`, 왕복 반사하는 `REFLECT`를 선택할 수 있습니다.
 동일한 함수와 셰이딩은 하나의 캔버스 안에서 한 번만 기록됩니다. `page.content()`와
-`page.paths()`는 축 방향 및 방사형 셰이딩을 색상 함수가 포함된 `ShadingPattern`으로
-읽어 들이고, `canvas.draw`는 그 채우기와 획을 유계 샘플링 근사로 다시 그립니다(다른
-셰이딩 유형과 `TilingPattern`은 다시 그리지 않습니다). 소프트 마스크 때문에 텍스트의
+`page.paths()`는 축 방향 및 방사형 셰이딩을 색상 함수가 포함된 `ShadingPattern`으로,
+타일링 패턴을 캡처된 패턴 셀이 포함된 `TilingPattern`으로 읽어 들이며, `canvas.draw`는
+그 채우기와 획을 다시 그립니다(축 방향·방사형 셰이딩은 유계 샘플링 근사로, 타일링 패턴은
+유계 `/PatternType 1` 스트림으로 출력하며 함수 및 메시 셰이딩은 다시 그리지 않습니다).
+`canvas.draw`는 또한 인라인 래스터 이미지와 간접·인라인 스텐실 이미지 마스크를
+`Image.fill` 페인트로 다시 그립니다. 소프트 마스크 때문에 텍스트의
 채우기와 획을 별도 객체로 그려야 하는 경우, 두 번째 객체에는 빈 `ActualText`를 붙여
 텍스트 추출 시 문자가 한 번만 읽히도록 합니다.
 
@@ -258,6 +261,34 @@ Identity-H 및 Identity-V 폰트, 그리고 자체 리소스를 가진 Type 3 �
 그립니다. `mhlw-doc.pdf`의 8개 런은 임베드되지 않은 비표준 폰트를 사용합니다. 코퍼스
 테스트는 나머지 페이지의 픽셀이 72 dpi에서 RGB 채널당 16레벨 이내인지 확인하며, 이러한
 제외 건수와 사유가 변하지 않는지도 검증합니다.
+
+### 텍스트 치환 {#replacing-text}
+
+`page.replace_text(old, new, *, count=None, fallback=None)`은 페이지 콘텐츠와 페이지가
+그리는 Form XObject 내부의 텍스트를 치환합니다. Type 1, TrueType, Type 3뿐만 아니라
+가로쓰기(`WMode = 0`)와 세로쓰기(`WMode = 1`) 복합 폰트(Type 0 / CID: `Identity-H`,
+`Identity-V`, 사전 정의 CMap, 임베드된 사용자 정의 CMap 스트림)를 모두 지원합니다.
+진행 축 방향의 보정 `TJ` 조정을 통해 뒤따르는 텍스트의 위치를 그대로 유지하며, 감싸는
+구조 태그(`/MCID`)를 보존하고 일치하는 `/ActualText` 마크드 콘텐츠 스팬도 글리프와 함께
+갱신합니다.
+
+서브셋화되지 않은 임베드 Type 0 글꼴에 필요한 글리프가 이미 들어 있으면 `replace_text`가
+`/W`, `/W2`, `/ToUnicode` 항목을 자동으로 확장합니다. 서브셋화된 글꼴, Type 3 글꼴의
+`/CharProcs`, 또는 글꼴 인코딩에 누락된 글리프가 있을 때는 `fallback=Font(...)`을 전달해
+후속 텍스트 정렬을 유지하면서 대체 글꼴로 누락 문자를 그릴 수 있으며, `fallback`을 지정하지
+않으면 `ValueError`가 발생하고 문서는 변경되지 않습니다.
+
+```python
+import pyropdf
+
+doc = pyropdf.Document()
+page = doc.pages.new((300, 120))
+with page.draw() as canvas:
+    canvas.text("Invoice #001 total", (20, 60), size=14)
+page.replace_text("#001", "#002")
+if "ja" in doc.fallback_fonts and (jp := doc.fallback_fonts["ja"].sans) is not None:
+    page.replace_text("total", "合計", fallback=jp)
+```
 
 ## 주석
 

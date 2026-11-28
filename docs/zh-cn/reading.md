@@ -23,6 +23,26 @@ with pyropdf.open("input.pdf") as doc:
 
 `clip` 将读取范围限定在显示坐标下的某个矩形内，原点为页面左上角。默认情况下，标记内容中的 `/ActualText` 会替换其所包围字形的文本；向 `page.text()`、`page.words()`、`page.layout()`、`page.chars()`、`page.search()` 或 `annotation.text()` 传入 `actual_text=False`，即可直接查看底层字形的原始 Unicode 值。
 
+### 混排方向与日语注音（振假名） {#mixed-orientations-and-japanese-ruby-furigana}
+
+对于同时包含横排区域或边栏（标题、图注、表格、页脚）与竖排 CJK 分栏（含多段段组版式）的页面，排序前会先按一致的书写方向划分区域：横排区域自上而下、自左向右阅读，竖排 CJK 分栏在各自区域内自上而下、自右向左阅读。
+
+日语注音（振假名）——紧贴横排汉字上方或竖排汉字右侧的小号假名，以及 Markdown 导出中的 PDF 结构 `/Ruby`（`/RB`/`/RT`/`/RP`）元素——可通过 `ruby` 选项控制：
+
+- `"omit"`（默认）：省略振假名，使正文词语在阅读、搜索和 Markdown 导出中保持完整。
+- `"parenthesize"`：将每段振假名以圆括号内联插入其对应汉字之后（例如 `東京(とうきょう)`）。
+- `"keep"`：将注音文本按普通文本保留。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    print(page.text())                       # omits furigana by default
+    print(page.text(ruby="parenthesize"))    # inline furigana, e.g. 東京(とうきょう)
+    print(page.markdown(ruby="parenthesize"))
+```
+
 ## 版面布局
 
 `page.layout()` 将文本组织为块（block）、行（line）和样式段（span），并附带字体、字号和颜色信息。
@@ -53,7 +73,7 @@ with pyropdf.open("input.pdf") as doc:
 
 ## 表格与 Markdown
 
-`page.tables()` 根据表格框线识别表格，传入 `strategy="text"` 时也可基于文本对齐关系识别。`page.markdown()` 与 `doc.markdown()` 会将页面转换为包含表格在内的 Markdown。
+`page.tables()` 根据表格框线识别表格，传入 `strategy="text"` 时也可基于文本对齐关系识别。对于无框线或部分有框线的网格，可显式传入显示空间下的 `horizontal_lines` / `vertical_lines` 辅助线，或调整 `snap_tolerance`、`join_tolerance`、`min_gutter`、`min_words_vertical` 与 `min_words_horizontal`。每个 `Table` 都会暴露检测到的 `header_rows` 和 `headers`，以及 `to_dicts()`、可选的 `to_dataframe()`（需安装 `pandas`）和 `markdown()`。`page.markdown()` 与 `doc.markdown()` 会将页面转换为包含表格在内的 Markdown。
 
 当文档带有结构标签且通过可信度检查（包含 `/MarkInfo << /Marked true >>`、无 `/Suspects`、结构树有效且对非 Artifact 页面文本覆盖率足够）时，`markdown()` 默认使用 PDF 结构树（`use_structure="auto"`）：标题（`H1`–`H6`、`H`、`Title`）、列表（`L`/`LI`/`Lbl`/`LBody`）、表格（`Table`/`THead`/`TBody`/`TFoot`/`TR`/`TH`/`TD`）、引用块、代码块、带 `/Alt` 描述的图示、`/ActualText` 替代文本及逻辑阅读顺序均取自结构树，同时自动跳过标记为 `Artifact` 的页眉和页脚。自定义角色会通过 `/RoleMap` 与 PDF 2.0 命名空间解析。传入 `expand_abbreviations=True` 可启用 `/E` 缩写展开，传入 `use_structure="always"` 可跳过可信度检查直接读取结构树，传入 `use_structure="never"` 则强制采用几何版面分析。在 `"auto"` 模式下，未加标签的页面以及包含未解析 Form XObject 标记内容的页面会自动回退至几何提取。
 
@@ -62,6 +82,7 @@ import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
     for table in doc.pages[0].tables():
+        print(table.headers, table.to_dicts())
         print(table.markdown())
     print(doc.markdown())
     print(doc.markdown(use_structure="never"))  # force geometric layout
@@ -142,7 +163,7 @@ with pyropdf.open("input.pdf") as doc:
     print(page.operations[:3])
 ```
 
-`page.paths()` 以列式 `Paths` 返回相同路径：每行对应一条路径，所有路径的线段存入独立列中，不为单条路径或线段分配 Python 对象，因此包含数十万条线段的图纸也能在接近页面渲染耗时内完成读取。`column()` 返回可供 NumPy 零拷贝读取的只读 `memoryview`，pyarrow、polars 和 DuckDB 则可通过 Arrow PyCapsule 接口直接导入整张表。逐行访问时会按需构造 `Path` 记录。`paths.clusters()`（以及 `page.content().path_clusters()`）按可配置的 `x_tolerance` 和 `y_tolerance` 在显示坐标中将邻近的描边和填充路径聚类为不可变的 `PathCluster` 记录（`bbox`、`path_indices`、`count`），默认排除铺满页面的背景矩形（`exclude_background=True`），并通过 `max_clusters` 与 `DocumentLimits` 限制结果规模与资源消耗。
+`page.paths()` 以列式 `Paths` 返回相同路径：每行对应一条路径，所有路径的线段存入独立列中，不为单条路径或线段分配 Python 对象，因此包含数十万条线段的图纸也能在接近页面渲染耗时内完成读取。`column()` 返回可供 NumPy 零拷贝读取的只读 `memoryview`，pyarrow、polars 和 DuckDB 则可通过 Arrow PyCapsule 接口直接导入整张表。逐行访问时会按需构造 `Path` 记录。`paths.clusters()`（以及 `page.content().path_clusters()`）按可配置的 `x_tolerance` 和 `y_tolerance` 将显示空间中相邻的描边与填充路径聚类为不可变的 `PathCluster` 记录（含 `bbox`、`path_indices` 与 `count`），默认排除整页背景矩形（`exclude_background=True`），并在遵循 `DocumentLimits` 的同时用 `max_clusters` 限制聚类数量。
 
 ```python
 import pyropdf
@@ -192,13 +213,21 @@ with pyropdf.open("input.pdf") as doc:
 
 安装 `ocr` 可选扩展后，`OcrEngine()` 会加载 PP-OCR 模型，`page.ocr` 返回识别出的单词列表。`page.apply_ocr` 会将这些单词添加为不可见文本层，使 `text()` 和 `search()` 能够检索到它们。
 
+两个方法均接受 `mode` 选项：
+
+- `"full"`：无论是否存在已有文本，都识别整页（或 `clip` 区域），这是 `page.ocr` 的默认值。
+- `"skip_existing"`：若页面（或 `clip` 区域）已包含可提取文本则直接跳过，这是 `page.apply_ocr` 的默认值。
+- `"hybrid"`：仅定位未被可读原生文本覆盖的光栅图像区域（忽略不可见文本、`/Artifact` 标记和微小边缘重叠），在 `DocumentLimits` 限制内合并相邻条带或密集装饰图像，仅对这些区域执行 OCR，并过滤掉与现有原生文本重复的单词。
+
 ```python
 import pyropdf
 
 engine = pyropdf.OcrEngine()
 with pyropdf.open("input.pdf") as doc:
-    words = doc.pages[0].ocr(engine=engine, dpi=150)
+    words = doc.pages[0].ocr(engine=engine, dpi=150, mode="hybrid")
     print([word.text for word in words])
+    # Or write only the missing raster text into a mixed page:
+    doc.pages[0].apply_ocr(engine=engine, dpi=150, mode="hybrid")
 ```
 
 请创建一次引擎并反复复用：加载模型是最耗时的环节。

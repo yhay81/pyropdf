@@ -53,7 +53,7 @@ with pyropdf.open("input.pdf") as doc:
 `doc.save(path)` 和 `doc.to_bytes()` 写出当前版本。
 
 - **增量保存**（`incremental=True`）仅将本次编辑写入的对象追加在原始字节之后，原始字节保持原封不动，因此覆盖原始字节的数字签名依然有效。
-- **完整保存**（默认）会重写整个文件，可通过 `compress`、`object_streams`、`prune`、`renumber` 和 `dedupe` 调整输出结果。
+- **完整保存**（默认）会重写整个文件，可通过 `compress`、`object_streams`、`prune`、`renumber`、`dedupe`、`clean`、`ascii`、`pretty` 和 `stream_filter` 调整输出结果。
 
 ```python
 import pyropdf
@@ -62,7 +62,15 @@ with pyropdf.open("input.pdf") as doc:
     doc.pages[0].rotation = 90
     doc.save("appended.pdf", incremental=True)
     doc.save("rewritten.pdf", compress=True, object_streams=True, prune=True)
+    doc.save("inspect.pdf", clean=True, ascii=True, pretty=True)
+    doc.save("filtered.pdf", stream_filter="ASCII85Decode")
 ```
+
+- `clean=True` 会在专用的保存视图中规范化每个页面的内容流和注释外观流并裁剪未引用资源，而不会修改当前打开的文档或其撤销历史。
+- `ascii=True` 仅输出可打印 ASCII 字节（省略二进制文件头注释、转义字符串与名称、将默认交叉引用设为传统表，并以 `ASCII85Decode` 封装二进制流）；`pretty=True` 会以确定性的多行缩进格式化字典与数组，便于检查与差异比对。
+- `stream_filter` 为符合条件的非图像流显式选择压缩过滤器（`"keep"`、`"none"`、`"FlateDecode"`、`"ASCII85Decode"`、`"ASCIIHexDecode"` 或 `"RunLengthDecode"`），也可传入 `{xref: filter}` 映射单独覆写指定流，其余流保持原样。
+
+`clean`、`ascii`、`pretty` 与 `stream_filter` 仅适用于完整保存，与 `incremental=True` 同时传入会被拒绝；`ascii=True` 亦不支持加密保存或线性化保存。
 
 未经编辑直接保存的文档会准确复现输入：增量保存逐字节一致，完整保存则在所有 PDF 值上保持等价。
 

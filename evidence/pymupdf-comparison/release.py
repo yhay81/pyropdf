@@ -109,11 +109,17 @@ def labeled(python: Path, engine: str, work: Path) -> tuple[dict, dict]:
             continue
         page = json.loads(out.read_text(encoding="utf-8"))["pages"][path.stem]
         raw[path.stem] = page
-        entry = {
+        if "skipped" in page:
+            scores[path.stem] = {"status": "unmeasured", "reason": str(page["skipped"]).splitlines()[0]}
+            continue
+        entry: dict = {
             "status": "ok",
             "anchors": quality._anchors(label, page["text"]),  # noqa: SLF001
             "words": quality._words(label, page["words"]),  # noqa: SLF001
         }
+        if "max_spurious_words" in label:
+            entry["spurious_words"] = len(page["words"])
+            entry["max_spurious_words"] = label["max_spurious_words"]
         if "table" in label:
             entry["table"] = quality._table(label, page["tables"])  # noqa: SLF001
         scores[path.stem] = entry

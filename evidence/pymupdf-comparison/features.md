@@ -9,8 +9,8 @@ and the [labeled text/table quality results](results/quality.md).
 
 This is an inventory of *capabilities*, not a claim of API or output parity.
 It compares PyMuPDF 2.1 (and its audited 2.0 baseline) with pyropdf `main` at
-[`9c67ea2735ab49678216b468e60e14b2e678bfcc`](https://github.com/yhay81/pyropdf/commit/9c67ea2735ab49678216b468e60e14b2e678bfcc),
-inspected 2026-11-27 (after the published `v0.4.1` release). Open PRs are not
+[`b18631bb`](https://github.com/yhay81/pyropdf/commit/b18631bb),
+inspected 2026-11-28 (after the published `v0.4.1` release). Open PRs are not
 included. #355 tracks the project goal, and [capabilities.tsv](capabilities.tsv)
 holds the machine-readable release task map aligned with this inventory.
 
@@ -49,14 +49,14 @@ trackers where appropriate. Text and layout accuracy are scored separately in
 
 | Capability | PyMuPDF 2.1 | pyropdf main | Work |
 | --- | --- | --- | --- |
-| Text, words, blocks, characters and formats | `get_text` | Available: `page.text`, `words`, `chars`, `layout`; dictionary, HTML and XML serialization; `/ActualText` opt-out, mixed horizontal/vertical & Japanese ruby handling, and Linux x86-64 speed tuning remain | #1177, #1178, #1184 |
+| Text, words, blocks, characters and formats | `get_text` | Available: `page.text`, `words`, `chars`, `layout`; dictionary, HTML and XML serialization; `/ActualText` opt-out (`actual_text=False`, #1177), mixed horizontal/vertical & Japanese ruby handling (`ruby=`, #1184), and direct PyO3/thread-local extraction optimization (#1178) | |
 | Type 3 characters without Unicode mapping | Default text extraction uses a fallback on the corpus fixture | Available (opt-in): default skips with a warning; `unmapped="type3_char_code"` recovers the Type 3 character code (#437) and `unmapped="glyph_id"` returns glyph IDs | |
 | Search and selection | `search_for`, `get_text_selection` | Available: `page.search`, `page.selection` | |
-| Tables | `find_tables` | Available: `page.tables` (including borderless multi-line rows under bordered double-rule headers, #1153); explicit line guides, tolerances, header detection and structured export remain | #253, #1186, #1192 |
-| Markdown | `to_markdown` | Available: `page.markdown`, `doc.markdown`; structure-tree-driven output, retrieval export controls and mixed orientation/ruby remain | #253, #1181, #1182, #1184 |
-| Retrieval chunks and structured document JSON | `to_chunks`, `to_json` | Available: `doc.to_json` and `doc.to_chunks`, with a character budget instead of tokens; see `evidence/document-chunks/`; provenance tracing, structure-driven output and export controls remain | #253, #853, #1181, #1182 |
-| OCR and searchable OCR layer | `get_textpage_ocr`, `Pixmap.pdfocr_tobytes` | Available: offline `page.ocr` and `page.apply_ocr` with optional `[ocr]` model data; hybrid region-selective OCR remains | #253, #1185 |
-| Vector paths and painted items | `get_drawings`, `get_texttrace` | Available: `page.content`, `page.chars`; provenance for nested painted content, stored color space/writing mode/font identity and path clustering remain | #104, #1176, #1179 |
+| Tables | `find_tables` | Available: `page.tables` (including borderless multi-line rows under bordered double-rule headers, #1153; explicit line guides, tolerances, `header_rows`/`headers`, `to_dicts()`, and `to_dataframe()`, #1186) | #253, #1192 |
+| Markdown | `to_markdown` | Available: `page.markdown`, `doc.markdown`; structure-tree-driven output (`use_structure="auto"`, #1181), retrieval export controls (`margins`, `ignore_headers_footers`, `images`, `max_graphics`, #1182), and mixed orientation/ruby (#1184) | #253, #1192 |
+| Retrieval chunks and structured document JSON | `to_chunks`, `to_json` | Available: `doc.to_json` and `doc.to_chunks` with structure-tree support (#1181), retrieval export controls (#1182), and character budget instead of tokens; see `evidence/document-chunks/`; retrieval provenance tracing remains | #253, #853 |
+| OCR and searchable OCR layer | `get_textpage_ocr`, `Pixmap.pdfocr_tobytes` | Available: offline `page.ocr` and `page.apply_ocr` with optional `[ocr]` model data and `mode="full" \| "skip_existing" \| "hybrid"` region-selective OCR (#1185) | #253, #1192 |
+| Vector paths and painted items | `get_drawings`, `get_texttrace` | Available: `page.content`, `page.chars`, `page.paths().clusters()` / `path_clusters()` (#1179), stored `Color.colorspace`/`components`, `TextRun.writing_mode`, and `FontRef` identity (#1176); provenance for nested painted content remains | #104 |
 | Image placements and data | `get_image_info`, `get_images`, `extract_image` | Available: `page.content`, `page.images`, image records, `replace`, and `remove` | |
 | Page fonts and font programs | `get_fonts`, `extract_font` | Available: `page.fonts`, `doc.font_program`; page font listings are compared with PyMuPDF on the corpus | |
 | Annotation appearance and sound | `Annot.get_pixmap`, `get_text`, `get_sound` | Available: `annotation.pixmap()` and `annotation.text()` render and read one appearance alone; `annotation.sound()` reads a sound annotation's audio and format | |
@@ -65,21 +65,21 @@ trackers where appropriate. Text and layout accuracy are scored separately in
 
 | Capability | PyMuPDF 2.1 | pyropdf main | Work |
 | --- | --- | --- | --- |
-| Raster and SVG | `get_pixmap`, `get_svg_image` | Available: `page.pixmap`, `page.svg`; gray, RGB, alpha, hinting, and opt-in glyph cache; `antialias` option remains | #1175 |
+| Raster and SVG | `get_pixmap`, `get_svg_image` | Available: `page.pixmap`, `page.svg`; gray, RGB, alpha, `antialias` (#1175), hinting, and opt-in glyph cache | |
 | Selectable text in SVG | `get_svg_image(text_as_path=False)` | Missing: `page.svg` emits text as paths | #435 |
 | CMYK raster output | `get_pixmap(colorspace=csCMYK)` | Missing: `page.pixmap` supports RGB and gray layouts; engine CMYK rasterization is tracked separately | #248, #425, #433 |
 | Pixmap conversion and basic operations | invert, gamma, tint, crop, scale, Pillow | Available: `Pixmap.invert`, `gamma`, `tint`, `crop`, `scale`, `to_gray`, `to_rgb`, alpha and Pillow conversion | |
 | Pixmap transforms, inspection and editing | `flip_rotate`, `warp`, `color_count`, `color_topusage`, `pixel`, `set_pixel`, `set_rect` | Available: `Pixmap.rotate`, `flip`, `warp`, `color_count`, `colors`, `top_color`, `pixel`, `with_pixel`, `fill`; edits return new pixmaps | |
 | Pixmap image formats | PNG, JPEG, PAM, PNM family, PS, PSD output; additional input formats | Available: `Pixmap` reads PNG, JPEG, PBM, PGM, PPM, PAM, BMP (uncompressed and run-length), GIF, TIFF, and JPEG 2000 and writes PNG, JPEG, PAM, PBM, PGM, PPM, PNM, PSD, and PostScript; JPEG XR is refused (no maintained Rust decoder), and CMYK waits for #425 | #355, #425 |
-| Rendering speed | MuPDF | Measured in `v0.4.1` on Linux x86-64 vs PyMuPDF 2.1 (`comparison-v0.4.1.zip`): 1.81× at 72 dpi and 1.54× at 144 dpi (`open` 0.26×, `save` 0.12×, `search` 0.97×, `text` 1.40×, `words` 1.68×); `v0.3.1` macOS/arm64 was 1.77× / 1.82× | #365, #715, #1178; [v0.4.1](https://github.com/yhay81/pyropdf/releases/tag/v0.4.1), [v0.3.1 macOS/arm64](releases/v0.3.1-darwin-arm64/comparison.md) |
+| Rendering speed | MuPDF | Measured in `v0.4.1` on Linux x86-64 vs PyMuPDF 2.1 (`comparison-v0.4.1.zip`): 1.81× at 72 dpi and 1.54× at 144 dpi (`open` 0.26×, `save` 0.12×, `search` 0.97×, `text` 1.40×, `words` 1.68×; post-v0.4.1 text/word optimization in #1178); `v0.3.1` macOS/arm64 was 1.77× / 1.82× | #365, #715; [v0.4.1](https://github.com/yhay81/pyropdf/releases/tag/v0.4.1), [v0.3.1 macOS/arm64](releases/v0.3.1-darwin-arm64/comparison.md) |
 
 ## Writing, annotations and forms
 
 | Capability | PyMuPDF 2.1 | pyropdf main | Work |
 | --- | --- | --- | --- |
-| Shapes, paths, images and placed pages | `Shape`, `insert_image`, `show_pdf_page` | Available: `page.draw()` canvas with paths, images, optional-content layers, tags, and `page` placement; `Canvas.draw(item)` round-trip for inline images, stencil masks, tiling patterns, soft masks and function/mesh shadings remains | #1188, #1200 |
-| Draw text and use fonts | `insert_text`, `insert_textbox`, `Font`, `insert_font` | Available: `Canvas.text` with Standard 14 fonts (#467) and embedded TrueType/OpenType/CFF faces shaped with `harfrust` and subset at save (#153, #479–#482); invisible/clip render modes, vertical writing, per-glyph fallback and rich BiDi runs remain | #249, #1187, #1198 |
-| Images to PDF | `open(image).convert_to_pdf()` | Available: `doc.pages.new_from_image` (single and multi-frame); multi-image collections and CBZ archives remain | #1189 |
+| Shapes, paths, images and placed pages | `Shape`, `insert_image`, `show_pdf_page` | Available: `page.draw()` canvas with paths, images, optional-content layers, tags, `page` placement, and `Canvas.draw(item)` round-trip for axial/radial shadings, tiling patterns, inline images, and stencil image masks (#1188); soft masks and function/mesh shadings remain | #1200 |
+| Draw text and use fonts | `insert_text`, `insert_textbox`, `Font`, `insert_font` | Available: `Canvas.text` with Standard 14 fonts (#467) and embedded TrueType/OpenType/CFF faces shaped with `harfrust` and subset at save (#153, #479–#482), invisible/clip render modes, vertical writing, and per-glyph font fallback (#1187); rich BiDi runs remain | #249, #1198 |
+| Images to PDF | `open(image).convert_to_pdf()` | Available: `doc.pages.new_from_image`, `new_from_images`, and `new_from_cbz` (#1189) | |
 | Read and edit annotations | `annots`, `Annot` | Available: `page.annotations`, including appearances, sound, and multimedia/3D/RichMedia data | |
 | Create markup annotations | `add_*_annot` | Available: `page.annotations` creates text markup, notes, shapes, lines, polygons, ink, carets, free text, stamps, and file attachments with settled appearances | |
 | Links | `insert_link`, `update_link` | Available: `page.links` | |
@@ -112,7 +112,7 @@ trackers where appropriate. Text and layout accuracy are scored separately in
 | Signature verification | Available: `doc.signatures` and `signature.verify` (integrity, byte coverage, signer, timestamps, later modifications) | |
 | Conformance-preserving edits and authoring | Available (#255 closed): PDF/A-1 through PDF/A-4 and PDF/UA-1/2 authoring, editing, and pre-save claim reports validated with veraPDF | |
 | Bounded work on untrusted input | Partial: `DocumentLimits` and `DocumentLimits.web()` enforce store and API budgets, but no untrusted-input safety claim until hayro's bounded construction ships | #15, #1197 |
-| Structure-aware reading and retrieval | Partial: structure tree read/edit exists (#822, #907); structure-driven Markdown/JSON/chunks and retrieval provenance remain | #253, #853, #1181 |
+| Structure-aware reading and retrieval | Available: structure tree read/edit (#822, #907) and structure-driven Markdown/JSON/chunks (#1181) with retrieval export controls (#1182); retrieval provenance tracing remains | #253, #853 |
 | Free-threaded Python, WebAssembly, and MIT licence | Available: native `abi3-py311`, free-threaded `cp314t`/`cp315t`, and PyEmscripten wheels under MIT | #257, #258 |
 
 ## Boundaries and evidence
