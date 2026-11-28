@@ -292,6 +292,34 @@ pub(crate) fn original_salt(file: &Index, budget: &Budget) -> Result<Option<[u8;
     inspect(file, budget).map(|(_, salt)| salt)
 }
 
+fn validate_byte_range(
+    total_len: usize,
+    a: i64,
+    b: i64,
+    c: i64,
+    value_len: usize,
+    dict_span: Option<(usize, usize)>,
+) -> Option<(usize, usize)> {
+    let a = usize::try_from(a).ok()?;
+    let b = usize::try_from(b).ok()?;
+    let c = usize::try_from(c).ok()?;
+    if a > b || b > total_len {
+        return None;
+    }
+    let gap_len = b - a;
+    if b.checked_add(c) != Some(total_len)
+        || value_len.checked_mul(2).and_then(|n| n.checked_add(2)) != Some(gap_len)
+    {
+        return None;
+    }
+    if let Some((start, len)) = dict_span
+        && (a < start || b > start.checked_add(len)?)
+    {
+        return None;
+    }
+    Some((a, b))
+}
+
 fn covered<'a>(
     file: &'a Index,
     dictionary: &Dict,
@@ -315,22 +343,14 @@ fn covered<'a>(
     else {
         return Err(invalid());
     };
-    let a = usize::try_from(*a).map_err(|_| invalid())?;
-    let b = usize::try_from(*b).map_err(|_| invalid())?;
-    let c = usize::try_from(*c).map_err(|_| invalid())?;
     let bytes = file.bytes();
+    let dict_span = dictionary
+        .lexeme()
+        .and_then(|lexeme| bytes.offset_of(lexeme).map(|start| (start, lexeme.len())));
+    let (a, b) =
+        validate_byte_range(bytes.len(), *a, *b, *c, value.len(), dict_span).ok_or_else(invalid)?;
     let gap = bytes.get(a..b).ok_or_else(invalid)?;
-    if b.checked_add(c) != Some(bytes.len())
-        || value.len().checked_mul(2).and_then(|n| n.checked_add(2)) != Some(gap.len())
-        || gap.first() != Some(&b'<')
-        || gap.last() != Some(&b'>')
-    {
-        return Err(invalid());
-    }
-    if let Some(lexeme) = dictionary.lexeme()
-        && let Some(start) = bytes.offset_of(lexeme)
-        && (a < start || b > start + lexeme.len())
-    {
+    if gap.first() != Some(&b'<') || gap.last() != Some(&b'>') {
         return Err(invalid());
     }
     for (index, (pair, byte)) in gap[1..gap.len() - 1]
@@ -349,4 +369,65 @@ fn covered<'a>(
         }
     }
     Ok([&bytes[..a], &bytes[b..]])
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verifies ISO/TS 32004 `/ByteRange` validation never overflows and always
+    /// partitions `[0..total_len]` into `[0..a]`, `[a..b]` (of exact hex-string
+    /// length `2 * value_len + 2`), and `[b..total_len]` within `dict_span`.
+    #[kani::proof]
+    fn kani_mac_byte_range_exact_partition() {
+        let total_len: usize = kani::any();
+        let a: i64 = kani::any();
+        let b: i64 = kani::any();
+        let c: i64 = kani::any();
+        let value_len: usize = kani::any();
+        let has_span: bool = kani::any();
+        let span_start: usize = kani::any();
+        let span_len: usize = kani::any();
+        let dict_span = has_span.then_some((span_start, span_len));
+
+        if let Some((ra, rb)) = validate_byte_range(total_len, a, b, c, value_len, dict_span) {
+            assert!(ra < rb);
+            assert!(rb <= total_len);
+            let gap = rb - ra;
+            assert!(gap >= 2);
+            assert_eq!(gap, value_len * 2 + 2);
+            assert_eq!(ra + gap + (total_len - rb), total_len);
+            if let Some((start, len)) = dict_span {
+                assert!(ra >= start);
+                assert!(rb <= start + len);
+            }
+        }
+    }
+
+    /// Verifies `Writer::attach`'s gap header check (`<`, `>`, even length)
+    /// guarantees safe non-panicking slicing of `gap[1..gap.len() - 1]` and
+    /// `data[start + 1..end - 1]` with zero trailing remainder in `as_chunks::<2>()`.
+    #[kani::proof]
+    fn kani_mac_attach_gap_bounds_no_panic() {
+        let data: [u8; 16] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= data.len());
+        let slice = &data[..len];
+        let start: usize = kani::any();
+        let end: usize = kani::any();
+
+        if let Some(gap) = slice.get(start..end)
+            && gap.first() == Some(&b'<')
+            && gap.last() == Some(&b'>')
+            && gap.len().is_multiple_of(2)
+        {
+            assert!(gap.len() >= 2);
+            assert!(start + 1 <= end - 1);
+            let inner = &gap[1..gap.len() - 1];
+            let (pairs, rem) = inner.as_chunks::<2>();
+            assert!(rem.is_empty());
+            assert_eq!(pairs.len() * 2 + 2, end - start);
+            assert_eq!(slice[start + 1..end - 1].len(), inner.len());
+        }
+    }
 }

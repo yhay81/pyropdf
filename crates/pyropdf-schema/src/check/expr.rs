@@ -78,7 +78,11 @@ impl<'s> Expr<'s> {
 
 fn tokens(source: &str) -> Option<Vec<Token<'_>>> {
     let bytes = source.as_bytes();
-    let mut out = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "bounded by the length of one static predicate of the generated model, never of the document"
+    )]
+    let mut out = Vec::with_capacity(bytes.len());
     let mut at = 0;
     while at < bytes.len() {
         let byte = bytes[at];
@@ -103,25 +107,7 @@ fn tokens(source: &str) -> Option<Vec<Token<'_>>> {
             b'-' => (Token::Op(Op::Sub), 1),
             b'*' => (Token::Op(Op::Mul), 1),
             _ if is_word(byte) => {
-                let mut end = at;
-                while end < bytes.len() {
-                    let next = bytes[end];
-                    // A hyphen joins names such as `Identity-H`.
-                    let joins = next == b'-'
-                        && bytes[at].is_ascii_alphabetic()
-                        && bytes.get(end + 1).is_some_and(u8::is_ascii_alphabetic);
-                    if next == b'*'
-                        && bytes[at] == b'@'
-                        && bytes[at + 1..end].iter().all(u8::is_ascii_digit)
-                    {
-                        end += 1;
-                        break;
-                    }
-                    if !is_word(next) && !joins {
-                        break;
-                    }
-                    end += 1;
-                }
+                let end = scan_word(bytes, at);
                 let word = &source[at..end];
                 let token = if word == "mod" {
                     Token::Op(Op::Mod)
@@ -144,6 +130,28 @@ fn tokens(source: &str) -> Option<Vec<Token<'_>>> {
 
 const fn is_word(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'@' | b':' | b'#' | b'\'')
+}
+
+/// Scans one word token starting at `at` (where `bytes[at]` satisfies
+/// [`is_word`]), handling hyphenated names (`Identity-H`) and `@0*` wildcards.
+fn scan_word(bytes: &[u8], at: usize) -> usize {
+    let mut end = at;
+    while end < bytes.len() {
+        let next = bytes[end];
+        // A hyphen joins names such as `Identity-H`.
+        let joins = next == b'-'
+            && bytes[at].is_ascii_alphabetic()
+            && bytes.get(end + 1).is_some_and(u8::is_ascii_alphabetic);
+        if next == b'*' && bytes[at] == b'@' && bytes[at + 1..end].iter().all(u8::is_ascii_digit) {
+            end += 1;
+            break;
+        }
+        if !is_word(next) && !joins {
+            break;
+        }
+        end += 1;
+    }
+    end
 }
 
 /// Parses one predicate, or `None` for text the parser does not know.
@@ -421,42 +429,7 @@ impl<G: Graph> Scope<'_, '_, G> {
             return Ok(left);
         }
         let right = self.eval_with(right, mode)?;
-        Ok(match op {
-            Op::And | Op::Or => match (left.truth(), right.truth()) {
-                (_, Some(value)) if value == (op == Op::Or) => Val::Bool(value),
-                (Some(_), Some(value)) => Val::Bool(value),
-                _ => Val::Unknown,
-            },
-            Op::Eq | Op::Ne => match (&left, &right) {
-                (Val::Unknown | Val::Present, _) | (_, Val::Unknown | Val::Present) => Val::Unknown,
-                (Val::Absent, _) | (_, Val::Absent) => Val::Bool(op == Op::Ne),
-                (Val::Num(a), Val::Num(b)) => Val::Bool(((a - b).abs() < 1e-9) == (op == Op::Eq)),
-                _ => Val::Bool((left == right) == (op == Op::Eq)),
-            },
-            Op::Lt | Op::Le | Op::Gt | Op::Ge => match (&left, &right) {
-                (Val::Num(a), Val::Num(b)) => Val::Bool(match op {
-                    Op::Lt => a < b,
-                    Op::Le => a <= b,
-                    Op::Gt => a > b,
-                    _ => a >= b,
-                }),
-                (Val::Absent, _) | (_, Val::Absent) => match mode {
-                    EvalMode::Predicate => Val::Bool(false),
-                    EvalMode::Constraint => Val::Unknown,
-                },
-                _ => Val::Unknown,
-            },
-            Op::Add | Op::Sub | Op::Mul | Op::Mod => match (&left, &right) {
-                (Val::Num(a), Val::Num(b)) => Val::Num(match op {
-                    Op::Add => a + b,
-                    Op::Sub => a - b,
-                    Op::Mul => a * b,
-                    _ if *b == 0.0 => return Ok(Val::Unknown),
-                    _ => a % b,
-                }),
-                _ => Val::Unknown,
-            },
-        })
+        Ok(eval_binary_val(op, &left, &right, mode))
     }
 
     fn call(&self, name: &str, args: &[Expr<'_>], mode: EvalMode) -> Result<Val, G::Error> {
@@ -464,10 +437,7 @@ impl<G: Graph> Scope<'_, '_, G> {
         Ok(match (name, args) {
             ("fn:Eval", [inner]) | ("fn:Deprecated", [_, inner]) => self.eval_with(inner, mode)?,
             ("fn:IsRequired", [inner]) => self.eval_with(inner, EvalMode::Predicate)?,
-            ("fn:Not", [inner]) => match self.eval_with(inner, mode)?.truth() {
-                Some(value) => Val::Bool(!value),
-                None => Val::Unknown,
-            },
+            ("fn:Not", [inner]) => eval_not(&self.eval_with(inner, mode)?),
             ("fn:MustBeDirect" | "fn:MustBeIndirect", []) => Val::Bool(true),
             ("fn:MustBeDirect" | "fn:MustBeIndirect", [inner]) => {
                 self.eval_with(inner, EvalMode::Predicate)?
@@ -482,19 +452,11 @@ impl<G: Graph> Scope<'_, '_, G> {
                 let Some(gate) = at.text().and_then(version) else {
                     return Ok(Val::Unknown);
                 };
-                let open = match name {
-                    "fn:SinceVersion" => self.version >= gate,
-                    "fn:BeforeVersion" => self.version < gate,
-                    _ => self.version == gate,
-                };
+                let open = version_gate_open(name, self.version, gate);
                 match rest {
                     [] => Val::Bool(open),
-                    [_] if !open => Val::Bool(mode == EvalMode::Constraint),
-                    [inner] => match self.eval_with(inner, mode)? {
-                        Val::Bool(value) => Val::Bool(value),
-                        Val::Unknown => Val::Unknown,
-                        _ => Val::Bool(true),
-                    },
+                    [_] if !open => apply_version_gate(false, None, mode),
+                    [inner] => apply_version_gate(true, Some(self.eval_with(inner, mode)?), mode),
                     _ => Val::Unknown,
                 }
             }
@@ -903,5 +865,306 @@ impl<G: Graph> Scope<'_, '_, G> {
             return false;
         };
         std::str::from_utf8(base_bytes).ok().and_then(version) == Some(wanted)
+    }
+}
+
+/// Three-valued Kleene negation for `fn:Not(...)`.
+fn eval_not(value: &Val) -> Val {
+    match value.truth() {
+        Some(flag) => Val::Bool(!flag),
+        None => Val::Unknown,
+    }
+}
+
+/// Pure binary evaluation over evaluated [`Val`] operands in `mode`.
+#[inline]
+fn eval_binary_val(op: Op, left: &Val, right: &Val, mode: EvalMode) -> Val {
+    match op {
+        Op::And | Op::Or => eval_logic_val(op, left, right),
+        Op::Eq | Op::Ne => eval_eq_val(op, left, right),
+        Op::Lt | Op::Le | Op::Gt | Op::Ge => eval_order_val(op, left, right, mode),
+        Op::Add | Op::Sub | Op::Mul | Op::Mod => eval_arith_val(op, left, right),
+    }
+}
+
+fn eval_logic_val(op: Op, left: &Val, right: &Val) -> Val {
+    match (left.truth(), right.truth()) {
+        (Some(value), _) if value == (op == Op::Or) => Val::Bool(value),
+        (_, Some(value)) if value == (op == Op::Or) => Val::Bool(value),
+        (Some(_), Some(value)) => Val::Bool(value),
+        _ => Val::Unknown,
+    }
+}
+
+fn eval_eq_val(op: Op, left: &Val, right: &Val) -> Val {
+    match (left, right) {
+        (Val::Unknown | Val::Present, _) | (_, Val::Unknown | Val::Present) => Val::Unknown,
+        (Val::Absent, _) | (_, Val::Absent) => Val::Bool(op == Op::Ne),
+        (Val::Num(a), Val::Num(b)) => Val::Bool(((a - b).abs() < 1e-9) == (op == Op::Eq)),
+        (Val::Bool(a), Val::Bool(b)) => Val::Bool((a == b) == (op == Op::Eq)),
+        (Val::Name(a), Val::Name(b)) => Val::Bool((a == b) == (op == Op::Eq)),
+        _ => Val::Bool(op == Op::Ne),
+    }
+}
+
+fn eval_order_val(op: Op, left: &Val, right: &Val, mode: EvalMode) -> Val {
+    match (left, right) {
+        (Val::Num(a), Val::Num(b)) => Val::Bool(match op {
+            Op::Lt => a < b,
+            Op::Le => a <= b,
+            Op::Gt => a > b,
+            _ => a >= b,
+        }),
+        (Val::Absent, _) | (_, Val::Absent) => match mode {
+            EvalMode::Predicate => Val::Bool(false),
+            EvalMode::Constraint => Val::Unknown,
+        },
+        _ => Val::Unknown,
+    }
+}
+
+fn eval_arith_val(op: Op, left: &Val, right: &Val) -> Val {
+    match (left, right) {
+        (Val::Num(a), Val::Num(b)) => Val::Num(match op {
+            Op::Add => a + b,
+            Op::Sub => a - b,
+            Op::Mul => a * b,
+            _ if *b == 0.0 => return Val::Unknown,
+            _ => a % b,
+        }),
+        _ => Val::Unknown,
+    }
+}
+
+/// Decides whether a version gate (`fn:SinceVersion`, `fn:BeforeVersion`,
+/// `fn:IsPDFVersion`) is open at `current`.
+fn version_gate_open(name: &str, current: Version, gate: Version) -> bool {
+    match name {
+        "fn:SinceVersion" => current >= gate,
+        "fn:BeforeVersion" => current < gate,
+        _ => current == gate,
+    }
+}
+
+/// Applies the 2-argument version-gate semantics in `Predicate` vs
+/// `Constraint` mode.
+fn apply_version_gate(open: bool, inner: Option<Val>, mode: EvalMode) -> Val {
+    if !open {
+        return Val::Bool(mode == EvalMode::Constraint);
+    }
+    match inner {
+        Some(Val::Bool(value)) => Val::Bool(value),
+        Some(Val::Unknown) => Val::Unknown,
+        _ => Val::Bool(true),
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    fn any_logic_val() -> Val {
+        let tag: u8 = kani::any();
+        kani::assume(tag < 5);
+        match tag {
+            0 => Val::Unknown,
+            1 => Val::Absent,
+            2 => Val::Present,
+            3 => Val::Bool(false),
+            _ => Val::Bool(true),
+        }
+    }
+
+    /// Compares non-`Name`, non-`Num` results without dragging `Vec<u8>` or
+    /// `f64` equality into CBMC.
+    fn assert_same_tri(a: &Val, b: &Val) {
+        let rank = |v: &Val| -> u8 {
+            match v {
+                Val::Unknown => 0,
+                Val::Absent => 1,
+                Val::Present => 2,
+                Val::Bool(false) => 3,
+                Val::Bool(true) => 4,
+                Val::Num(_) | Val::Name(_) => panic!("unexpected non-logic Val"),
+            }
+        };
+        assert_eq!(rank(a), rank(b));
+    }
+
+    /// Proves Kleene 3-valued logic laws for `eval_binary_val` (`And`, `Or`)
+    /// and `eval_not` across all truth-valued and non-boolean [`Val`] variants.
+    #[kani::proof]
+    fn kani_kleene_three_valued_logic_laws() {
+        let a = any_logic_val();
+        let b = any_logic_val();
+        let mode = if kani::any() {
+            EvalMode::Predicate
+        } else {
+            EvalMode::Constraint
+        };
+
+        // Commutativity of And and Or.
+        assert_same_tri(
+            &eval_binary_val(Op::And, &a, &b, mode),
+            &eval_binary_val(Op::And, &b, &a, mode),
+        );
+        assert_same_tri(
+            &eval_binary_val(Op::Or, &a, &b, mode),
+            &eval_binary_val(Op::Or, &b, &a, mode),
+        );
+
+        // Short-circuit absorption laws.
+        assert_same_tri(
+            &eval_binary_val(Op::And, &Val::Bool(false), &b, mode),
+            &Val::Bool(false),
+        );
+        assert_same_tri(
+            &eval_binary_val(Op::And, &a, &Val::Bool(false), mode),
+            &Val::Bool(false),
+        );
+        assert_same_tri(
+            &eval_binary_val(Op::Or, &Val::Bool(true), &b, mode),
+            &Val::Bool(true),
+        );
+        assert_same_tri(
+            &eval_binary_val(Op::Or, &a, &Val::Bool(true), mode),
+            &Val::Bool(true),
+        );
+
+        // De Morgan's laws.
+        assert_same_tri(
+            &eval_not(&eval_binary_val(Op::And, &a, &b, mode)),
+            &eval_binary_val(Op::Or, &eval_not(&a), &eval_not(&b), mode),
+        );
+        assert_same_tri(
+            &eval_not(&eval_binary_val(Op::Or, &a, &b, mode)),
+            &eval_binary_val(Op::And, &eval_not(&a), &eval_not(&b), mode),
+        );
+
+        // Double negation agrees with `Val::truth()`.
+        let expected_double = a.truth().map_or(Val::Unknown, Val::Bool);
+        assert_same_tri(&eval_not(&eval_not(&a)), &expected_double);
+    }
+
+    /// Proves equality/inequality complementarity and absent-operand ordering
+    /// semantics across `Predicate` vs `Constraint` mode (#1158).
+    #[kani::proof]
+    #[kani::unwind(2)]
+    fn kani_equality_and_absent_ordering_invariants() {
+        let a = any_logic_val();
+        let b = any_logic_val();
+
+        let eq = eval_eq_val(Op::Eq, &a, &b);
+        let ne = eval_eq_val(Op::Ne, &a, &b);
+        match (&a, &b) {
+            (Val::Unknown | Val::Present, _) | (_, Val::Unknown | Val::Present) => {
+                assert_same_tri(&eq, &Val::Unknown);
+                assert_same_tri(&ne, &Val::Unknown);
+            }
+            _ => match (eq.truth(), ne.truth()) {
+                (Some(e), Some(n)) => assert_eq!(e, !n),
+                _ => panic!("expected decided Bool for non-Unknown/Present Eq/Ne"),
+            },
+        }
+
+        // Absent ordering semantics (#1158): Predicate => false, Constraint => Unknown.
+        let pick: u8 = kani::any();
+        kani::assume(pick < 4);
+        let op = match pick {
+            0 => Op::Lt,
+            1 => Op::Le,
+            2 => Op::Gt,
+            _ => Op::Ge,
+        };
+        if matches!(&a, Val::Absent) || matches!(&b, Val::Absent) {
+            assert_same_tri(
+                &eval_order_val(op, &a, &b, EvalMode::Predicate),
+                &Val::Bool(false),
+            );
+            assert_same_tri(
+                &eval_order_val(op, &a, &b, EvalMode::Constraint),
+                &Val::Unknown,
+            );
+        } else {
+            assert_same_tri(
+                &eval_order_val(op, &a, &b, EvalMode::Predicate),
+                &Val::Unknown,
+            );
+            assert_same_tri(
+                &eval_order_val(op, &a, &b, EvalMode::Constraint),
+                &Val::Unknown,
+            );
+        }
+    }
+
+    /// Proves version-gate partition, monotonicity, and `Predicate` vs
+    /// `Constraint` vacuous-truth semantics.
+    #[kani::proof]
+    fn kani_version_gate_monotonicity() {
+        let v1 = Version {
+            major: kani::any(),
+            minor: kani::any(),
+        };
+        let v2 = Version {
+            major: kani::any(),
+            minor: kani::any(),
+        };
+        let gate = Version {
+            major: kani::any(),
+            minor: kani::any(),
+        };
+
+        let since1 = version_gate_open("fn:SinceVersion", v1, gate);
+        let before1 = version_gate_open("fn:BeforeVersion", v1, gate);
+        let exact1 = version_gate_open("fn:IsPDFVersion", v1, gate);
+        assert_ne!(since1, before1);
+        if exact1 {
+            assert!(since1 && !before1);
+        }
+
+        if v1 <= v2 {
+            let since2 = version_gate_open("fn:SinceVersion", v2, gate);
+            let before2 = version_gate_open("fn:BeforeVersion", v2, gate);
+            assert!(!since1 || since2);
+            assert!(!before2 || before1);
+        }
+
+        assert_same_tri(
+            &apply_version_gate(false, None, EvalMode::Constraint),
+            &Val::Bool(true),
+        );
+        assert_same_tri(
+            &apply_version_gate(false, None, EvalMode::Predicate),
+            &Val::Bool(false),
+        );
+    }
+
+    /// Proves `scan_word` (hyphenated names and `@0*` wildcards) always
+    /// advances strictly within `bytes` (`at < end <= bytes.len()`) without panicking.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn kani_expr_scan_word_bounds_no_panic() {
+        let raw: [u8; 6] = kani::any();
+        let len: usize = kani::any();
+        let at: usize = kani::any();
+        kani::assume(len <= raw.len() && at < len);
+        kani::assume(is_word(raw[at]));
+        let end = scan_word(&raw[..len], at);
+        assert!(end > at && end <= len);
+    }
+
+    /// Proves `version` parses `major.minor` cleanly without panicking on
+    /// arbitrary bounded ASCII strings.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    fn kani_expr_version_parse_no_panic() {
+        let raw: [u8; 4] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= raw.len());
+        for b in &raw[..len] {
+            kani::assume(b.is_ascii());
+        }
+        let text = std::str::from_utf8(&raw[..len]).expect("ASCII is valid UTF-8");
+        let _ = version(text);
     }
 }
