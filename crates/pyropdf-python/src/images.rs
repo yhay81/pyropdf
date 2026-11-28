@@ -5,7 +5,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use pyropdf_engine::bridge::Bridged;
+use pyropdf_engine::bridge::{Bridged, preflight};
 use pyropdf_engine::extract::{self, DecodedImage, Error};
 use pyropdf_engine::pixmap::images as engine_images;
 use pyropdf_store::budget::{Budget, LimitCode};
@@ -82,6 +82,7 @@ pub fn page_image(
                             "page object {number} {generation} is no longer a page of the document"
                         ))
                     })?;
+                document.preflight_page(&version, &index.pages()[at], &budget)?;
                 let bridged = document
                     .bridge
                     .get(&version, &index, &budget)
@@ -128,6 +129,7 @@ pub fn thumbnail_image(
         let image = if has_subtype {
             py.detach(
                 || -> PyResult<Option<(pyropdf_engine::pixmap::Layout, Vec<u8>)>> {
+                    document.preflight_page(&version, &index.pages()[at], &budget)?;
                     let bridged = document
                         .bridge
                         .get(&version, &index, &budget)
@@ -183,6 +185,12 @@ pub fn thumbnail_image(
                             "page object {number} {generation} is no longer a page of the document"
                         )));
                     };
+                    preflight::validate_page(
+                        &mut Reads::new(&scratch_version, &budget),
+                        &scratch_pages.pages()[scratch_at],
+                        None,
+                    )
+                    .map_err(|e| store_error(&e))?;
                     let bridged = Bridged::new(&scratch_version, &scratch_pages, &budget)
                         .map_err(|e| bridge_error(&e))?;
                     let decoded = extract::page_thumbnail(&bridged, scratch_at, &budget)

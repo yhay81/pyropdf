@@ -34,6 +34,7 @@ pub fn render_page_svg(
                         "page object {number} {generation} is no longer a page of the document"
                     ))
                 })?;
+            document.preflight_page(&version, &index.pages()[at], &budget)?;
             let bridged = document
                 .bridge
                 .get_for_render(&version, &index, &budget, annotations)

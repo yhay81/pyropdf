@@ -169,6 +169,10 @@ impl Operations {
 /// Reads the operations and operands of `data`.
 fn parse(data: &Bytes, budget: &Budget) -> Result<(Vec<Operation>, Vec<Value>)> {
     let content = data.as_slice();
+    // Pre-flight guard before `hayro-syntax::content::UntypedIter` (#1241):
+    // catches deep operand nesting (> max_object_depth / 64, before hayro's 512
+    // silent truncation) and #740 nested inline-image lookahead chains.
+    crate::bridge::preflight::validate_content_bytes(content, budget)?;
     let most = budget.limit(LimitCode::ContentOperationCount);
     let mut operations = BudgetVec::new(budget);
     let mut operands = BudgetVec::new(budget);

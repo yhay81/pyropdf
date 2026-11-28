@@ -27,8 +27,11 @@
 //! The bridge checks that hayro's page list is the store's page index, so
 //! that a page number names the same page in both.
 
+pub mod preflight;
 #[cfg(test)]
 mod tests;
+
+pub use preflight::PreflightCache;
 
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError, Weak};

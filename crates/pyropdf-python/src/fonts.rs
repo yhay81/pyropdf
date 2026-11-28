@@ -47,11 +47,22 @@ pub fn used_glyphs(
     crate::errors::boundary(|| {
         let (version, index, budget) = crate::pages::index(document)?;
         py.detach(|| {
+            for page in index.pages() {
+                document.preflight_page(&version, page, &budget)?;
+            }
             let bridged = document
                 .bridge
                 .get(&version, &index, &budget)
                 .map_err(|e| bridge_error(&e))?;
-            extract::used_glyphs(&bridged, &version, &index, &fonts, &budget).map_err(|e| match e {
+            extract::used_glyphs_with_preflight(
+                &bridged,
+                &version,
+                &index,
+                &fonts,
+                document.preflight_cache(),
+                &budget,
+            )
+            .map_err(|e| match e {
                 Error::Limit(refusal) => limit_error(&refusal),
                 Error::NoPage(_) | Error::Allocation(_) => PdfError::new_err(e.to_string()),
             })

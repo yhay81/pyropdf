@@ -13,10 +13,11 @@ use pyropdf_engine::annotations::{
     self, AnnotationError, AnnotationGeometry, AnnotationRecord, GeometryTuple, IsolatedAnnotation,
     PageAnnots, RecordTuple,
 };
-use pyropdf_engine::bridge::Bridged;
+use pyropdf_engine::bridge::{Bridged, preflight};
 use pyropdf_engine::extract;
 use pyropdf_engine::render::{self, Raster};
 use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::PageIndex;
 use pyropdf_store::value::Reference;
 use pyropdf_store::version::Transaction;
@@ -455,6 +456,12 @@ pub fn annotation_pixmap(
         let fallback = document.fallback();
         let raster = py.detach(|| -> PyResult<Raster> {
             budget.poll().map_err(|e| limit_error(&e))?;
+            preflight::validate_page(
+                &mut Reads::new(&isolated.version, &budget),
+                &isolated.pages.pages()[isolated.page_index],
+                None,
+            )
+            .map_err(|e| store_error(&e))?;
             let bridged = Arc::new(
                 Bridged::new(&isolated.version, &isolated.pages, &budget)
                     .map_err(|e| bridge_error(&e))?,
@@ -496,6 +503,12 @@ pub fn annotation_text(
             (LimitCode::TextSize, max_size),
         ])?;
         py.detach(|| {
+            preflight::validate_page(
+                &mut Reads::new(&isolated.version, &budget),
+                &isolated.pages.pages()[isolated.page_index],
+                None,
+            )
+            .map_err(|e| store_error(&e))?;
             let bridged = std::sync::Arc::new(
                 Bridged::new(&isolated.version, &isolated.pages, &budget)
                     .map_err(|e| bridge_error(&e))?,
