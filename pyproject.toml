@@ -29,6 +29,8 @@ classifiers = [
 recipients = ["asn1crypto>=1.5.1", "cryptography>=44"]
 # pylopdf's PP-OCR models, which `OcrEngine` discovers (DESIGN.md section 14).
 ocr = ["pylopdf-ocr-models>=0.1.0,<0.2"]
+# Apache-2.0 PP-DocLayout_plus-L INT8 model, which `LayoutEngine` discovers (#1199, #1244).
+layout = ["pyropdf-layout-models>=0.1.0,<0.2"]
 # pylopdf's Noto CJK faces, which render the CJK fonts that a document does
 # not embed (`Document.fallback_fonts`, DESIGN.md section 14).
 jp = ["pylopdf-fonts-jp>=0.1.1,<0.2"]
@@ -71,6 +73,8 @@ dev = [
     "ty>=0.0.107",
     # The OCR tests run the models of the `ocr` extra.
     "pylopdf-ocr-models>=0.1.0,<0.2",
+    # The layout tests run the model of the `layout` extra.
+    "pyropdf-layout-models>=0.1.0,<0.2",
     # The fallback font tests render with the faces of the CJK extras.
     "pylopdf-fonts-jp>=0.1.1,<0.2",
     "pylopdf-fonts-ko>=0.1.1,<0.2",
