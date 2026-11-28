@@ -58,7 +58,18 @@ from pyropdf._annotations import (
     Underline,
 )
 from pyropdf._attachments import Attachment, Attachments, RelatedFile
-from pyropdf._canvas import Canvas, ListNumbering, PathBuilder, PathInput, TableHeaderScope, TagRole, TextFit
+from pyropdf._canvas import (
+    Canvas,
+    ListNumbering,
+    PathBuilder,
+    PathInput,
+    TableHeaderScope,
+    TagRole,
+    TextAlign,
+    TextDirection,
+    TextFit,
+    TextSpan,
+)
 from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange, SignaturePermission
 from pyropdf._check import DefectKind, StructuralDefect, StructuralReport
 from pyropdf._chunks import Chunk, Element, ElementKind
@@ -685,10 +696,13 @@ __all__ = [
     "TableHeaderScope",
     "TagRole",
     "Target",
+    "TextAlign",
+    "TextDirection",
     "TextField",
     "TextFit",
     "TextRenderMode",
     "TextRun",
+    "TextSpan",
     "Thread",
     "ThreadAction",
     "Threads",

@@ -168,7 +168,7 @@ Draw a cubic Bézier curve, with a 1-point black stroke by default.
 
 ```python
 Canvas.text(
-    text: str,
+    text: str | Sequence[TextSpan],
     at: Sequence[float],
     *,
     font: Font | None = None,
@@ -178,80 +178,97 @@ Canvas.text(
     stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     render_mode: TextRenderMode | str | None = None,
     direction: Literal['horizontal', 'vertical'] = 'horizontal',
+    base_direction: TextDirection = 'auto',
     line_height: float | None = None,
     rotate: int = 0,
     max_text_size: int | None = 1048576,
 )
 ```
 
-Draw text whose first baseline starts at `at`.
+Draw text or styled `TextSpan` runs whose first baseline starts at `at`.
 
-Lines are split with `str.splitlines` and placed `line_height`
-times `size` apart, by default at the font's own line height.
-`rotate` turns the text clockwise about `at` by 0, 90, 180, or
-270 degrees, so that at 90 the lines run down the page and stack
-leftward; `transform` turns it by any other angle. `font`
-defaults to Helvetica. Pass `fallback_fonts`—an ordered sequence of
-`Font` faces or a document's `Document.fallback_fonts`—to
-resolve missing grapheme clusters deterministically across faces without
-any global font registry; only faces that draw at least one glyph are
-embedded. Text is filled, stroked, both, or—with
-`render_mode=TextRenderMode.INVISIBLE`—emitted invisibly (`3 Tr`) so
-it leaves no ink while remaining searchable and extractable. To clip
-subsequent drawings to glyph outlines (`4 Tr`–`7 Tr`), use
-`clip_text`. Pass `direction="vertical"` with embedded OpenType
-faces to shape and embed vertical text (`Identity-V` and `/W2`),
-where glyphs run downward from `at` and subsequent columns stack
-right-to-left. Fill and stroke accept a `LinearGradient` or
+Pass a `str` or a sequence of `TextSpan` runs to mix fonts,
+sizes, colours, render modes, underlines, strikethroughs, and inline
+`/Link` annotations on the same line. Lines break on explicit line
+separators and are spaced `line_height` times `size` apart (by
+default at the font's own line height, or the tallest run's ascent and
+descent when font sizes mix). `base_direction` sets the UAX #9
+bidirectional paragraph base direction (`"auto"`, `"ltr"`, or
+`"rtl"`); `base_direction="rtl"` cannot be combined with
+`direction="vertical"`. `rotate` turns the text clockwise about
+`at` by 0, 90, 180, or 270 degrees, so that at 90 the lines run down
+the page and stack leftward; `transform` turns it by any other
+angle. `font` defaults to Helvetica. Pass `fallback_fonts`—an
+ordered sequence of `Font` faces or a document's
+`Document.fallback_fonts`—to resolve missing grapheme clusters
+deterministically across faces without any global font registry; only
+faces that draw at least one glyph are embedded. Text is filled,
+stroked, both, or—with `render_mode=TextRenderMode.INVISIBLE`—emitted
+invisibly (`3 Tr`) so it leaves no ink while remaining searchable and
+extractable. To clip subsequent drawings to glyph outlines
+(`4 Tr`–`7 Tr`), use `clip_text`. Pass
+`direction="vertical"` with embedded OpenType faces to shape and
+embed vertical text (`Identity-V` and `/W2`), where glyphs run
+downward from `at` and subsequent columns stack right-to-left. Any
+`/Link` annotations from `TextSpan.link` commit inside the same
+canvas transaction and undo step, and are discarded if the canvas
+aborts. Fill and stroke accept a `LinearGradient` or
 `RadialGradient`, in the canvas coordinate space. If a soft mask
 requires separate fill and stroke objects, the second uses empty
 `ActualText` so extraction reads the text once. Gradient tolerances
-are those of `Canvas`. The text is limited to 1 MiB of UTF-8 and
-4,096 lines by default (`max_text_size`, `None` for trusted input),
-refused with `LimitError` code `text_input_size` or
-`text_line_count`. A colour glyph that COLR paints or a PNG strike
-holds draws in its own colours, which `fill` and `stroke` do not
-change, except for a COLR layer in the text's colour, which takes the
-fill. Any other colour glyph with no outline in an OpenType face raises
-`PdfError`, naming the character, the glyph, and the paint; see
-`Font`.
+are those of `Canvas`. The text is limited to 1 MiB of UTF-8,
+65,536 spans, and 4,096 lines by default (`max_text_size`, `None`
+for trusted input), refused with `LimitError` code
+`text_input_size`, `content_element_count`, or `text_line_count`.
+A colour glyph that COLR paints or a PNG strike holds draws in its own
+colours, which `fill` and `stroke` do not change, except for a COLR
+layer in the text's colour, which takes the fill. Any other colour
+glyph with no outline in an OpenType face raises `PdfError`,
+naming the character, the glyph, and the paint; see `Font`.
 
 ### `textbox`
 
 ```python
 Canvas.textbox(
     rect: Sequence[float],
-    text: str,
+    text: str | Sequence[TextSpan],
     *,
     font: Font | None = None,
     fallback_fonts: Sequence[Font] | FallbackFonts = (),
     size: float = 11,
-    align: Literal['left', 'center', 'right', 'justify'] = 'left',
+    align: TextAlign = 'left',
     line_height: float | None = None,
     fill: Color | Gradient | PatternPaint | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0, colorspace=None, components=None),
     stroke: Stroke | Color | Gradient | PatternPaint | None = None,
     render_mode: TextRenderMode | str | None = None,
     direction: Literal['horizontal', 'vertical'] = 'horizontal',
+    base_direction: TextDirection = 'auto',
     rotate: int = 0,
     max_text_size: int | None = 1048576,
 ) -> TextFit
 ```
 
-Wrap text inside `rect` and report how it fits.
+Wrap text or styled `TextSpan` runs inside `rect` and report how they fit.
 
-Lines break at Unicode line-break opportunities (UAX #14) and, for a
-word wider than the box, between grapheme clusters. They are placed
-as `text` places them: in horizontal mode, the first baseline one
-`Font.ascender` below the top of `rect` and later ones
-`line_height` times `size` apart, by default at the font's own
-line height, and the text fits when the descender of the last line
-does; in vertical mode (`direction="vertical"`), columns run downward
-along the box height and stack right-to-left from its right edge. When
-the text does not fit, nothing is drawn and
-`TextFit.spare_height` is the negative shortfall;
-`Font.text_height` measures the height that the text needs
-without drawing it. Tabs become single spaces. `rotate` turns the
-text clockwise inside `rect` by 0, 90, 180, or 270 degrees: at 90
+Lines break in logical order at Unicode line-break opportunities
+(UAX #14) and, for a word wider than the box, between grapheme
+clusters (UAX #29), followed by per-line UAX #9 bidirectional visual
+reordering. `align` supports physical `"left"`, `"center"`,
+`"right"`, and `"justify"`, as well as direction-aware `"start"`
+and `"end"` (left/right for LTR paragraphs, right/left for RTL).
+`base_direction` controls UAX #9 paragraph base direction
+(`"auto"`, `"ltr"`, or `"rtl"`); `base_direction="rtl"` cannot
+be combined with `direction="vertical"`. Lines are placed as
+`text` places them: in horizontal mode, the first baseline sits
+one ascent below the top of `rect` and the text fits when the last
+line's descender fits inside `rect`; in vertical mode
+(`direction="vertical"`), columns run downward along the box height
+and stack right-to-left from its right edge. When the text does not
+fit, nothing is drawn (including decorations and `TextSpan.link`
+annotations) and `TextFit.spare_height` is the negative
+shortfall; `Font.text_height` measures the height that plain text
+needs without drawing it. Tabs become single spaces. `rotate` turns
+the text clockwise inside `rect` by 0, 90, 180, or 270 degrees: at 90
 horizontal lines run down the box and stack from its right edge
 leftward, so they wrap at the box's height and fill its width, and at
 270 they run up and stack from the left edge. The `font`,
@@ -679,6 +696,28 @@ logical structure, such as page headers, footers, and decoration.
 
 Members: `PART`, `ARTICLE`, `SECTION`, `DIV`, `BLOCK_QUOTE`, `CAPTION`, `TOC`, `TOC_ITEM`, `INDEX`, `NON_STRUCT`, `PARAGRAPH`, `HEADING_1`, `HEADING_2`, `HEADING_3`, `HEADING_4`, `HEADING_5`, `HEADING_6`, `LIST`, `LIST_ITEM`, `LABEL`, `LIST_BODY`, `TABLE`, `TABLE_ROW`, `TABLE_HEADER`, `TABLE_DATA`, `TABLE_HEAD`, `TABLE_BODY`, `TABLE_FOOT`, `SPAN`, `QUOTE`, `NOTE`, `REFERENCE`, `BIB_ENTRY`, `CODE`, `FIGURE`, `FORMULA`, `ARTIFACT`, `LINK`.
 
+## `TextAlign`
+
+```python
+TextAlign: TypeAlias = Literal['left', 'center', 'right', 'justify', 'start', 'end']
+```
+
+Horizontal alignment accepted by `Canvas.textbox`: physical
+`"left"`, `"center"`, `"right"`, `"justify"`, or direction-aware
+`"start"` and `"end"` (resolved per paragraph against its UAX #9 base
+direction).
+
+## `TextDirection`
+
+```python
+TextDirection: TypeAlias = Literal['auto', 'ltr', 'rtl']
+```
+
+Paragraph base direction for UAX #9 bidirectional layout on
+`Canvas.text` and `Canvas.textbox`: `"auto"` determines the base
+direction per paragraph from its first strong directional character (UAX #9
+P2/P3), while `"ltr"` and `"rtl"` force left-to-right or right-to-left.
+
 ## `TextFit`
 
 ```python
@@ -699,3 +738,28 @@ TextFit.fits: bool
 ```
 
 Whether the text fit its box and was drawn.
+
+## `TextSpan`
+
+```python
+TextSpan(
+    *,
+    text: str,
+    font: Font | None = None,
+    size: float | None = None,
+    fill: Color | Gradient | PatternPaint | None = None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None,
+    render_mode: TextRenderMode | str | None = None,
+    underline: bool = False,
+    strikethrough: bool = False,
+    link: Target | None = None,
+)
+```
+
+One inline styled run inside `Canvas.text` or `Canvas.textbox`.
+
+Fields set to `None` inherit the enclosing call's defaults (`font`,
+`size`, `fill`, `stroke`, `render_mode`). To draw a single
+stroke-only or invisible span inside a filled paragraph, set
+`render_mode=TextRenderMode.STROKE` (with `stroke=...`) or
+`render_mode=TextRenderMode.INVISIBLE`.

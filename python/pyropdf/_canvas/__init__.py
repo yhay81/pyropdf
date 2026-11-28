@@ -8,7 +8,7 @@ from pyropdf._canvas._path import PathBuilder, PathInput
 from pyropdf._canvas._resources import _cache as _cache
 from pyropdf._canvas._resources import _Images as _Images
 from pyropdf._canvas._tags import ListNumbering, TableHeaderScope, TagRole
-from pyropdf._canvas._text import TextFit
+from pyropdf._canvas._text import TextAlign, TextDirection, TextFit, TextSpan
 from pyropdf._canvas._text import _line_count as _line_count
 from pyropdf._fonts import _max_lines as _max_lines
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE as _DEFAULT_MAX_CONTENT_SIZE
@@ -20,5 +20,8 @@ __all__ = [
     "PathInput",
     "TableHeaderScope",
     "TagRole",
+    "TextAlign",
+    "TextDirection",
     "TextFit",
+    "TextSpan",
 ]

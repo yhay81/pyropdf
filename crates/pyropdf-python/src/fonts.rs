@@ -16,6 +16,10 @@ use pyropdf_engine::fonts::colour::{Painted, Refused, refused_canvas_glyph, refu
 use pyropdf_engine::fonts::colr::{Colr, ColrError, Verdict};
 use pyropdf_engine::fonts::embed::{Face, FaceError, GlyphId, Measure};
 use pyropdf_engine::fonts::instance::InstanceError;
+use pyropdf_engine::fonts::rich_layout::{
+    self, Align as RichAlign, BaseDirection as RichBaseDirection, RichLayoutError,
+    RichLayoutOptions, SpanInput as RichSpanInput,
+};
 use pyropdf_engine::fonts::shape::{
     FallbackShapeError, FallbackShapedGlyph, FallbackSource, ShapeError, ShapedGlyph, ShapingFace,
     WritingDirection, shape_with_fallback, shape_with_fallback_cached,
@@ -304,6 +308,55 @@ type FallbackPlaced = (
     bool,
     usize,
     usize,
+);
+
+/// One styled span input passed from Python to [`layout_rich_text`]:
+/// `(text, face_index, fallback_faces, size, underline, strikethrough, link_id)`.
+type RichSpanArg = (String, usize, Vec<usize>, f64, bool, bool, Option<u32>);
+
+/// One shaped glyph returned by [`layout_rich_text`]:
+/// `(face_index, glyph_id, x_advance_units, y_advance_units, x_offset_units,
+/// y_offset_units, text_start, text_end, rtl, cluster_start, cluster_end, extra_advance_pt)`.
+type RichGlyphRecord = (
+    usize,
+    u32,
+    i32,
+    i32,
+    i32,
+    i32,
+    usize,
+    usize,
+    bool,
+    usize,
+    usize,
+    f64,
+);
+
+/// One visual run returned by [`layout_rich_text`]:
+/// `(span_index, face_index, size, x, width, rtl, glyphs)`.
+type RichRunRecord = (usize, usize, f64, f64, f64, bool, Vec<RichGlyphRecord>);
+
+/// One laid-out line returned by [`layout_rich_text`]:
+/// `(baseline_y, ascent, descent, width, is_rtl_paragraph, justified, runs)`.
+type RichLineRecord = (f64, f64, f64, f64, bool, bool, Vec<RichRunRecord>);
+
+/// One decoration rule returned by [`layout_rich_text`]:
+/// `(span_index, is_strikethrough, x0, x1, y, thickness)`.
+type RichDecorationRecord = (usize, bool, f64, f64, f64, f64);
+
+/// One hyperlink hit-box returned by [`layout_rich_text`]:
+/// `(link_id, x0, y0, x1, y1)`.
+type RichLinkRecord = (u32, f64, f64, f64, f64);
+
+/// Complete layout returned by [`layout_rich_text`]:
+/// `(full_text, lines, decorations, links, height, spare_height)`.
+type RichLayoutRecord = (
+    String,
+    Vec<RichLineRecord>,
+    Vec<RichDecorationRecord>,
+    Vec<RichLinkRecord>,
+    f64,
+    f64,
 );
 
 /// The face of `python/pyropdf/_fonts.py`'s `Font`: a Standard 14 font,
@@ -1669,6 +1722,318 @@ pub fn layout_text_fallback(
             })
         })
     })?
+}
+
+/// Lays out styled rich-text spans with UAX #9 BiDi resolution, UAX #14 +
+/// UAX #29 wrapping, mixed Standard 14 / OpenType faces and sizes, decoration
+/// rules, and hyperlink hit-boxes.
+#[pyfunction]
+#[pyo3(signature = (
+    faces,
+    spans,
+    width,
+    height,
+    base_direction,
+    align,
+    line_height=None,
+    max_lines=None,
+    max_text_size=Some(1_048_576),
+    /,
+    *,
+    check_colour=true,
+    operation=None,
+))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "styled rich-text layout geometry, direction, alignment, and budget options"
+)]
+pub fn layout_rich_text(
+    py: Python<'_>,
+    faces: Vec<PyRef<'_, _Font>>,
+    spans: Vec<RichSpanArg>,
+    width: Option<f64>,
+    height: f64,
+    base_direction: &str,
+    align: &str,
+    line_height: Option<f64>,
+    max_lines: Option<u64>,
+    max_text_size: Option<u64>,
+    check_colour: bool,
+    operation: Option<PyRef<'_, OperationBudget>>,
+) -> PyResult<RichLayoutRecord> {
+    crate::errors::boundary(|| {
+        if faces.is_empty() {
+            return Err(PyValueError::new_err("at least one font face is required"));
+        }
+        let parsed_dir = match base_direction {
+            "auto" => RichBaseDirection::Auto,
+            "ltr" => RichBaseDirection::Ltr,
+            "rtl" => RichBaseDirection::Rtl,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "base_direction must be one of auto, ltr, rtl: {other:?}"
+                )));
+            }
+        };
+        let parsed_align = match align {
+            "left" => RichAlign::Left,
+            "center" => RichAlign::Center,
+            "right" => RichAlign::Right,
+            "justify" => RichAlign::Justify,
+            "start" => RichAlign::Start,
+            "end" => RichAlign::End,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "align must be one of left, center, right, justify, start, end: {other:?}"
+                )));
+            }
+        };
+        let limits = [
+            (LimitCode::TextInputSize, max_text_size),
+            (LimitCode::TextLineCount, max_lines),
+        ];
+        let budget = match operation.as_deref() {
+            Some(operation) => {
+                operation.ensure_active()?;
+                let mut shared = operation.operation.clone();
+                for &(code, limit) in &limits {
+                    if let Some(limit) = limit {
+                        shared = shared
+                            .tightened(code, limit)
+                            .map_err(|error| limit_error(&error))?;
+                    }
+                }
+                TextBudget::shared(shared)
+            }
+            None => TextBudget {
+                budget: limits
+                    .iter()
+                    .fold(Budget::default(), |budget, &(code, limit)| {
+                        budget.with_limit(code, limit)
+                    })
+                    .share(),
+                start: None,
+            },
+        };
+        let mut kinds = BudgetVec::new(&budget);
+        kinds
+            .try_reserve_exact(faces.len())
+            .map_err(|error| limit_error(&error))?;
+        for face in &faces {
+            kinds
+                .try_push(face.kind.clone())
+                .map_err(|error| limit_error(&error))?;
+        }
+        let kinds = kinds.into_vec();
+        let options = RichLayoutOptions {
+            max_width: width,
+            max_height: height,
+            base_direction: parsed_dir,
+            align: parsed_align,
+            line_height,
+        };
+        let budget = &budget;
+        py.detach(|| {
+            let sources = fallback_sources(&kinds, budget)?;
+            let mut span_inputs = BudgetVec::new(budget);
+            span_inputs
+                .try_reserve_exact(spans.len())
+                .map_err(|error| limit_error(&error))?;
+            for (text, face_index, fallback_faces, size, underline, strikethrough, link_id) in
+                &spans
+            {
+                span_inputs
+                    .try_push(RichSpanInput {
+                        text: text.as_str(),
+                        face_index: *face_index,
+                        fallback_faces: fallback_faces.as_slice(),
+                        size: *size,
+                        underline: *underline,
+                        strikethrough: *strikethrough,
+                        link_id: *link_id,
+                    })
+                    .map_err(|error| limit_error(&error))?;
+            }
+            let layout = rich_layout::layout_rich_text(&sources, &span_inputs, options, budget)
+                .map_err(|error| rich_layout_error(&kinds, &error))?;
+
+            if check_colour && (width.is_none() || layout.fits()) {
+                for (face_index, kind) in kinds.iter().enumerate() {
+                    let Kind::Embedded(face) = kind else {
+                        continue;
+                    };
+                    let mut per_face = BudgetVec::new(budget);
+                    for line in &layout.lines {
+                        for run in &line.runs {
+                            for glyph in run.glyphs.iter().filter(|g| g.face_index == face_index) {
+                                per_face
+                                    .try_push(ShapedGlyph {
+                                        glyph: glyph.glyph_id,
+                                        x_advance: glyph.x_advance_units,
+                                        y_advance: glyph.y_advance_units,
+                                        x_offset: glyph.x_offset_units,
+                                        y_offset: glyph.y_offset_units,
+                                        cluster: glyph.cluster.clone(),
+                                        text: glyph.text.clone(),
+                                        rtl: glyph.rtl,
+                                    })
+                                    .map_err(|error| limit_error(&error))?;
+                            }
+                        }
+                    }
+                    if per_face.is_empty() {
+                        continue;
+                    }
+                    let font = face.font();
+                    let bitmaps = Bitmaps::read(&font).map_err(|error| shape_error(&error))?;
+                    let refused = Colr::of_face(face, |colr| {
+                        let painted = Painted {
+                            colr,
+                            bitmaps: &bitmaps,
+                        };
+                        refused_canvas_glyph(face, &layout.text, &per_face, painted, budget)
+                    })
+                    .map_err(|error| shape_error(&error))?;
+                    if let Some(refused) = refused {
+                        return Err(colour_refused(face, &refused));
+                    }
+                }
+            }
+
+            // Map UTF-8 byte offsets in `layout.text` to Python character indices.
+            let mut characters = BudgetVec::new(budget);
+            characters
+                .try_reserve_exact(layout.text.len().saturating_add(1))
+                .map_err(|error| limit_error(&error))?;
+            for _ in 0..=layout.text.len() {
+                characters
+                    .try_push(0usize)
+                    .map_err(|error| limit_error(&error))?;
+            }
+            let mut total_chars = 0usize;
+            for (index, (at, character)) in layout.text.char_indices().enumerate() {
+                characters[at..at + character.len_utf8()].fill(index);
+                total_chars = index + 1;
+            }
+            characters[layout.text.len()] = total_chars;
+
+            let mut out_lines = BudgetVec::new(budget);
+            out_lines
+                .try_reserve_exact(layout.lines.len())
+                .map_err(|error| limit_error(&error))?;
+            for line in &layout.lines {
+                let mut out_runs = BudgetVec::new(budget);
+                out_runs
+                    .try_reserve_exact(line.runs.len())
+                    .map_err(|error| limit_error(&error))?;
+                for run in &line.runs {
+                    let mut out_glyphs = BudgetVec::new(budget);
+                    out_glyphs
+                        .try_reserve_exact(run.glyphs.len())
+                        .map_err(|error| limit_error(&error))?;
+                    for glyph in &run.glyphs {
+                        out_glyphs
+                            .try_push((
+                                glyph.face_index,
+                                glyph.glyph_id,
+                                glyph.x_advance_units,
+                                glyph.y_advance_units,
+                                glyph.x_offset_units,
+                                glyph.y_offset_units,
+                                characters[glyph.text.start],
+                                characters[glyph.text.end],
+                                glyph.rtl,
+                                characters[glyph.cluster.start],
+                                characters[glyph.cluster.end],
+                                glyph.extra_advance,
+                            ))
+                            .map_err(|error| limit_error(&error))?;
+                    }
+                    out_runs
+                        .try_push((
+                            run.span_index,
+                            run.face_index,
+                            run.size,
+                            run.x,
+                            run.width,
+                            run.rtl,
+                            out_glyphs.into_vec(),
+                        ))
+                        .map_err(|error| limit_error(&error))?;
+                }
+                out_lines
+                    .try_push((
+                        line.baseline_y,
+                        line.ascent,
+                        line.descent,
+                        line.width,
+                        line.is_rtl_paragraph,
+                        line.justified,
+                        out_runs.into_vec(),
+                    ))
+                    .map_err(|error| limit_error(&error))?;
+            }
+
+            let mut out_decs = BudgetVec::new(budget);
+            out_decs
+                .try_reserve_exact(layout.decorations.len())
+                .map_err(|error| limit_error(&error))?;
+            for dec in &layout.decorations {
+                out_decs
+                    .try_push((
+                        dec.span_index,
+                        dec.is_strikethrough,
+                        dec.x0,
+                        dec.x1,
+                        dec.y,
+                        dec.thickness,
+                    ))
+                    .map_err(|error| limit_error(&error))?;
+            }
+
+            let mut out_links = BudgetVec::new(budget);
+            out_links
+                .try_reserve_exact(layout.links.len())
+                .map_err(|error| limit_error(&error))?;
+            for link in &layout.links {
+                out_links
+                    .try_push((link.link_id, link.x0, link.y0, link.x1, link.y1))
+                    .map_err(|error| limit_error(&error))?;
+            }
+
+            Ok((
+                layout.text,
+                out_lines.into_vec(),
+                out_decs.into_vec(),
+                out_links.into_vec(),
+                layout.height,
+                layout.spare_height,
+            ))
+        })
+    })?
+}
+
+fn rich_layout_error(faces: &[Kind], error: &RichLayoutError) -> PyErr {
+    match error {
+        RichLayoutError::InvalidGeometry => PyValueError::new_err(error.to_string()),
+        RichLayoutError::NotWinAnsi(_) => PyValueError::new_err(
+            "Standard 14 fonts can only print WinAnsi (Latin-1-equivalent) characters; load an OpenType face with Font.from_file() for other text",
+        ),
+        RichLayoutError::MissingGlyph(character) => {
+            if let [Kind::Embedded(face)] = faces {
+                embedded_missing(face, *character)
+            } else {
+                PdfError::new_err(format!(
+                    "none of the configured fonts contain a glyph for U+{:04X} ({character:?})",
+                    u32::from(*character)
+                ))
+            }
+        }
+        RichLayoutError::Narrow | RichLayoutError::BreakContext | RichLayoutError::Font(_) => {
+            PdfError::new_err(error.to_string())
+        }
+        RichLayoutError::Limit(refusal) => limit_error(refusal),
+    }
 }
 
 /// A font file of an installed font package, which rendering reads the

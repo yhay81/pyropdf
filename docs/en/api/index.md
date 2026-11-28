@@ -100,7 +100,10 @@ method and property of its classes with its full description.
 - [`PathInput`](drawing.md#pathinput): Geometry accepted by `Canvas.path` and `Canvas.clip`: a `PathBuilder`, a `Path`, or segments.
 - [`TableHeaderScope`](drawing.md#tableheaderscope): What a table header cell heads (ISO 32000-1 section 14.8.5.7), by its PDF name.
 - [`TagRole`](drawing.md#tagrole): A structure type (ISO 32000-1 section 14.8.4), by its PDF name.
+- [`TextAlign`](drawing.md#textalign): Horizontal alignment accepted by `Canvas.textbox`: physical `"left"`, `"center"`, `"right"`, `"justify"`, or direction-aware `"start"` and `"end"` (resolved per paragraph against its UAX #9 base direction).
+- [`TextDirection`](drawing.md#textdirection): Paragraph base direction for UAX #9 bidirectional layout on `Canvas.text` and `Canvas.textbox`: `"auto"` determines the base direction per paragraph from its first strong directional character (UAX #9 P2/P3), while `"ltr"` and `"rtl"` force left-to-right or right-to-left.
 - [`TextFit`](drawing.md#textfit): How text fits a `Canvas.textbox`: the height left below its last line.
+- [`TextSpan`](drawing.md#textspan): One inline styled run inside `Canvas.text` or `Canvas.textbox`.
 
 ## [Text and content](text-and-content.md)
 

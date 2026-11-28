@@ -7,30 +7,49 @@ import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import accumulate, groupby
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pyropdf import _core
 from pyropdf._canvas._path import _TURNS, _fmt, _number, _numbers, _paint, _stroke
 from pyropdf._content import ShadingPattern, TextRenderMode, TilingPattern
+from pyropdf._errors import LimitError
 from pyropdf._fallback_fonts import FallbackFonts
 from pyropdf._fonts import Font, _max_lines, _textbox_text, _utf16
+from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Name
+from pyropdf._targets import Destination, Target, _target_to_core
 
 if TYPE_CHECKING:
-    from typing import TypeAlias
-
     from pyropdf._content import Color, Gradient, PatternPaint, Stroke
     from pyropdf._geometry import Rect
     from pyropdf._objects import Objects
+    from pyropdf._page import Page
 
     _PlacedLine: TypeAlias = tuple[str, float, float, float]
     _TextPaint: TypeAlias = tuple[Color | Gradient | PatternPaint | None, Stroke | None, int]
     _TextboxLayout: TypeAlias = tuple[tuple[Font, ...], float, _TextPaint, list[_PlacedLine]]
+    _RichSpanArg: TypeAlias = tuple[str, int, list[int], float, bool, bool, int | None]
 
-#: The alignments of :meth:`Canvas.textbox`, in the order of the core's codes.
-_ALIGNMENTS = ("left", "center", "right", "justify")
+TextAlign: TypeAlias = Literal["left", "center", "right", "justify", "start", "end"]
+TextAlign.__doc__ = """Horizontal alignment accepted by :meth:`Canvas.textbox`: physical
+``"left"``, ``"center"``, ``"right"``, ``"justify"``, or direction-aware
+``"start"`` and ``"end"`` (resolved per paragraph against its UAX #9 base
+direction)."""
+
+TextDirection: TypeAlias = Literal["auto", "ltr", "rtl"]
+TextDirection.__doc__ = """Paragraph base direction for UAX #9 bidirectional layout on
+:meth:`Canvas.text` and :meth:`Canvas.textbox`: ``"auto"`` determines the base
+direction per paragraph from its first strong directional character (UAX #9
+P2/P3), while ``"ltr"`` and ``"rtl"`` force left-to-right or right-to-left."""
+
+#: The alignments of :meth:`Canvas.textbox`.
+_ALIGNMENTS = ("left", "center", "right", "justify", "start", "end")
+#: The UAX #9 paragraph base directions accepted by :meth:`Canvas.text` and :meth:`Canvas.textbox`.
+_BASE_DIRECTIONS = ("auto", "ltr", "rtl")
 #: The text progression directions accepted by :meth:`Canvas.text` and :meth:`Canvas.textbox`.
 _DIRECTIONS = ("horizontal", "vertical")
+#: Maximum number of :class:`TextSpan` entries allowed by default in one rich-text call.
+_MAX_TEXT_SPANS = 65_536
 #: The Standard 14 fonts that draw their own built-in encoding.
 _SYMBOLIC = frozenset({"Symbol", "ZapfDingbats"})
 # The line boundaries of str.splitlines.
@@ -38,7 +57,13 @@ _LINE_SEPARATORS = ("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2
 # A bound on the memory of one str object beyond its characters, and of a list slot.
 _STR_OVERHEAD = sys.getsizeof("") + 8
 #: A glyph that fallback shaping placed, as ``_core.shape_text_fallback`` returns it.
-_FallbackShapedGlyph = tuple[int, int, int, int, int, int, int, int, bool, int, int]
+_FallbackShapedGlyph: TypeAlias = tuple[int, int, int, int, int, int, int, int, bool, int, int]
+#: A glyph that rich layout placed, carrying an optional per-glyph justification extra advance in points.
+_RichShapedGlyph: TypeAlias = tuple[int, int, int, int, int, int, int, int, bool, int, int, float]
+#: Either a fallback-shaped glyph (11-tuple) or a rich-layout glyph (12-tuple).
+_AnyShapedGlyph: TypeAlias = _FallbackShapedGlyph | _RichShapedGlyph
+#: Strong RTL or directional embedding/isolate bidi classes that benefit from paragraph-level BiDi layout.
+_RTL_BIDI_CLASSES = frozenset({"R", "AL", "RLE", "RLO", "RLI"})
 #: How far, in thousandths of the em, the last glyph of ``/ActualText`` may end
 #: from its cluster's end: readers look for a word gap from about a tenth.
 _CLUSTER_END_TOLERANCE = 50
@@ -77,6 +102,244 @@ def _direction(value: object) -> Literal["horizontal", "vertical"]:
         return "vertical"
     msg = f"direction must be one of {', '.join(_DIRECTIONS)}: {value!r}"
     raise ValueError(msg)
+
+
+def _base_direction(value: object) -> TextDirection:
+    """Return ``"auto"``, ``"ltr"``, or ``"rtl"``."""
+    if not isinstance(value, str):
+        msg = f"base_direction must be 'auto', 'ltr', or 'rtl', not {type(value).__name__}"
+        raise TypeError(msg)
+    if value == "auto":
+        return "auto"
+    if value == "ltr":
+        return "ltr"
+    if value == "rtl":
+        return "rtl"
+    msg = f"base_direction must be one of {', '.join(_BASE_DIRECTIONS)}: {value!r}"
+    raise ValueError(msg)
+
+
+def _align(value: object) -> TextAlign:
+    """Return a checked :data:`TextAlign` value."""
+    if not isinstance(value, str):
+        msg = f"align must be a str, not {type(value).__name__}"
+        raise TypeError(msg)
+    if value == "left":
+        return "left"
+    if value == "center":
+        return "center"
+    if value == "right":
+        return "right"
+    if value == "justify":
+        return "justify"
+    if value == "start":
+        return "start"
+    if value == "end":
+        return "end"
+    msg = f"align must be one of {', '.join(_ALIGNMENTS)}: {value!r}"
+    raise ValueError(msg)
+
+
+def _has_rtl(text: str) -> bool:
+    """Return whether ``text`` contains strong RTL or directional override/isolate characters."""
+    return any(unicodedata.bidirectional(character) in _RTL_BIDI_CLASSES for character in text)
+
+
+def _validate_span_style(span: TextSpan) -> None:
+    """Validate optional paint, stroke, render mode, and decoration flags on a :class:`TextSpan`."""
+    if span.fill is not None:
+        filled = _paint(span.fill, "fill")
+        if isinstance(filled, (ShadingPattern, TilingPattern)):
+            msg = f"text needs a Color or a gradient in place of a {type(filled).__name__}"
+            raise TypeError(msg)
+    if span.stroke is not None:
+        stroked = _stroke(span.stroke)
+        if stroked is not None and isinstance(stroked.paint, (ShadingPattern, TilingPattern)):
+            msg = f"text needs a Color or a gradient in place of a {type(stroked.paint).__name__}"
+            raise TypeError(msg)
+    if span.render_mode is not None:
+        object.__setattr__(span, "render_mode", _render_mode(span.render_mode))
+    if type(span.underline) is not bool:
+        msg = f"underline must be a bool, not {type(span.underline).__name__}"
+        raise TypeError(msg)
+    if type(span.strikethrough) is not bool:
+        msg = f"strikethrough must be a bool, not {type(span.strikethrough).__name__}"
+        raise TypeError(msg)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TextSpan:
+    """One inline styled run inside :meth:`Canvas.text` or :meth:`Canvas.textbox`.
+
+    Fields set to ``None`` inherit the enclosing call's defaults (``font``,
+    ``size``, ``fill``, ``stroke``, ``render_mode``). To draw a single
+    stroke-only or invisible span inside a filled paragraph, set
+    ``render_mode=TextRenderMode.STROKE`` (with ``stroke=...``) or
+    ``render_mode=TextRenderMode.INVISIBLE``.
+    """
+
+    text: str
+    font: Font | None = None
+    size: float | None = None
+    fill: Color | Gradient | PatternPaint | None = None
+    stroke: Stroke | Color | Gradient | PatternPaint | None = None
+    render_mode: TextRenderMode | str | None = None
+    underline: bool = False
+    strikethrough: bool = False
+    link: Target | None = None
+
+    def __post_init__(self) -> None:
+        """Validate every field eagerly on construction."""
+        if not isinstance(self.text, str):
+            msg = f"text must be a str, not {type(self.text).__name__}"
+            raise TypeError(msg)
+        if self.font is not None and not isinstance(self.font, Font):
+            msg = f"font must be a pyropdf.Font or None, not {type(self.font).__name__}"
+            raise TypeError(msg)
+        if self.size is not None:
+            object.__setattr__(self, "size", _size(self.size))
+        _validate_span_style(self)
+        if self.link is not None:
+            # Validate target shape and non-empty strings; page-count bounds are checked when drawn on a page.
+            page_bound = self.link.page + 1 if isinstance(self.link, Destination) else 1
+            _target_to_core(self.link, page_bound)
+
+
+TextSpan.__module__ = "pyropdf"
+
+
+def _normalize_span_text(text: str, *, textbox: bool) -> str:
+    """Normalize line separators (and tabs for ``textbox``) inside one span."""
+    normalized = text.replace("\r\n", "\n")
+    if textbox:
+        return normalized.replace("\r", "\n").replace("\t", " ")
+    for separator in _LINE_SEPARATORS:
+        if separator != "\n" and separator in normalized:
+            normalized = normalized.replace(separator, "\n")
+    return normalized
+
+
+def _coerce_span_sequence(spans_input: str | Sequence[TextSpan], *, limit: int | None) -> Sequence[TextSpan]:
+    """Coerce ``str | Sequence[TextSpan]`` to a validated sequence bounded by span count."""
+    if isinstance(spans_input, str):
+        return (TextSpan(text=spans_input),)
+    if isinstance(spans_input, (bytes, bytearray, memoryview)) or not isinstance(spans_input, Sequence):
+        msg = f"text must be a str or a sequence of TextSpan, not {type(spans_input).__name__}"
+        raise TypeError(msg)
+    span_limit = None if limit is None else min(_MAX_TEXT_SPANS, limit)
+    if span_limit is not None and len(spans_input) > span_limit:
+        code = "content_element_count"
+        msg = f"the text has {len(spans_input)} spans, over the limit of {span_limit}"
+        raise LimitError(code, msg)
+    for item in spans_input:
+        if not isinstance(item, TextSpan):
+            msg = f"text spans must be TextSpan instances, not {type(item).__name__}"
+            raise TypeError(msg)
+    return spans_input
+
+
+def _validate_span_sequence(
+    spans_input: str | Sequence[TextSpan],
+    *,
+    limit: int | None,
+    textbox: bool,
+) -> tuple[Sequence[TextSpan], list[str], int]:
+    """Validate span container, count bound, UTF-8 byte bound, and normalize span text."""
+    spans = _coerce_span_sequence(spans_input, limit=limit)
+    normalized_texts: list[str] = []
+    total_bytes = 0
+    for span in spans:
+        text = _normalize_span_text(span.text, textbox=textbox)
+        total_bytes += len(text.encode("utf-8"))
+        if limit is not None and total_bytes > limit:
+            code = "text_input_size"
+            msg = f"the text exceeds the {limit}-byte UTF-8 limit"
+            raise LimitError(code, msg)
+        normalized_texts.append(text)
+
+    if not textbox:
+        for index in range(len(normalized_texts) - 1, -1, -1):
+            if normalized_texts[index]:
+                normalized_texts[index] = normalized_texts[index].removesuffix("\n")
+                break
+    return spans, normalized_texts, total_bytes
+
+
+def _face_dedup_key(face: Font) -> object:
+    """Return a hashable deduplication key for a Standard 14 or embedded :class:`Font`."""
+    if face._font.standard_name is not None:  # noqa: SLF001
+        return ("standard", face._font.standard_name)  # noqa: SLF001
+    return ("embedded", face._key())  # noqa: SLF001
+
+
+def _prepare_rich_spans(  # noqa: PLR0913 - mirrors Canvas.text/textbox style defaults.
+    spans_input: str | Sequence[TextSpan],
+    *,
+    page: Page,
+    font: Font | None,
+    fallback_fonts: Sequence[Font] | FallbackFonts,
+    size: float,
+    fill: Color | Gradient | PatternPaint | None,
+    stroke: Stroke | Color | Gradient | PatternPaint | None,
+    render_mode: TextRenderMode | None,
+    max_text_size: int | None,
+    textbox: bool,
+) -> tuple[tuple[Font, ...], list[_RichSpanArg], list[_TextPaint], list[Target], int]:
+    """Validate and resolve a rich-text span sequence into core layout inputs.
+
+    Returns ``(unique_faces, span_args, span_paints, link_targets, total_utf8_bytes)``.
+    """
+    from pyropdf._links import _link_target  # noqa: PLC0415 - avoids circular import with _links.
+
+    _validate_optional_positive_int("max_text_size", max_text_size)
+    limit = max_text_size
+    default_font = Font.standard("Helvetica") if font is None else font
+    if not isinstance(default_font, Font):
+        msg = f"font must be a pyropdf.Font, not {type(default_font).__name__}"
+        raise TypeError(msg)
+    font_size = _size(size)
+    spans, normalized_texts, total_bytes = _validate_span_sequence(spans_input, limit=limit, textbox=textbox)
+
+    unique_faces: list[Font] = []
+    face_index_by_key: dict[object, int] = {}
+
+    def intern_face(face: Font) -> int:
+        key = _face_dedup_key(face)
+        known = face_index_by_key.get(key)
+        if known is None:
+            known = len(unique_faces)
+            face_index_by_key[key] = known
+            unique_faces.append(face)
+        return known
+
+    default_chain = _resolve_fonts(default_font, fallback_fonts, direction="horizontal")
+    for face in default_chain:
+        intern_face(face)
+
+    span_args: list[_RichSpanArg] = []
+    span_paints: list[_TextPaint] = []
+    link_targets: list[Target] = []
+
+    for span, text in zip(spans, normalized_texts, strict=True):
+        chain = (
+            default_chain if span.font is None else _resolve_fonts(span.font, fallback_fonts, direction="horizontal")
+        )
+        primary_idx = intern_face(chain[0])
+        fallback_idxs = [intern_face(face) for face in chain[1:]]
+        span_size = font_size if span.size is None else span.size
+        eff_fill = fill if span.fill is None else span.fill
+        eff_stroke = stroke if span.stroke is None else span.stroke
+        eff_mode = render_mode if span.render_mode is None else _render_mode(span.render_mode)
+        checked_paint = _text_paint(eff_fill, eff_stroke, render_mode=eff_mode)
+        link_id: int | None = None
+        if span.link is not None:
+            _link_target(span.link, page)
+            link_id = len(link_targets)
+            link_targets.append(span.link)
+        span_paints.append(checked_paint)
+        span_args.append((text, primary_idx, fallback_idxs, span_size, span.underline, span.strikethrough, link_id))
+
+    return tuple(unique_faces), span_args, span_paints, link_targets, total_bytes
 
 
 def _render_mode(value: object) -> TextRenderMode | None:
@@ -347,9 +610,8 @@ def _layout_textbox(  # noqa: PLR0913 - the text style options.
     """Lay out a text box once the memory of its normalized text is charged."""
     fill, stroke = paint
     normalized = _textbox_text(text, max_text_size)
-    if align not in _ALIGNMENTS:
-        msg = f"align must be one of {', '.join(_ALIGNMENTS)}: {align!r}"
-        raise ValueError(msg)
+    checked_align = _align(align)
+    physical_align = {"start": "left", "end": "right"}.get(checked_align, checked_align)
     vertical = direction == "vertical"
     horizontal_span = rotation in (0, 180)
     if vertical:
@@ -396,7 +658,7 @@ def _layout_textbox(  # noqa: PLR0913 - the text style options.
         box,
         lines,
         along_extent=along_extent,
-        align=align,
+        align=physical_align,
         first_offset=ascent * font_size,
         leading=leading,
         vertical=vertical,
@@ -481,7 +743,7 @@ class _GlyphRun:
     def show(
         self,
         line: str,
-        glyphs: list[_FallbackShapedGlyph],
+        glyphs: Sequence[_AnyShapedGlyph],
         spacing: float,
         *,
         origin: tuple[float, float] = (0.0, 0.0),
@@ -494,43 +756,47 @@ class _GlyphRun:
         self.line_origin = origin
         self.line_turn = turn
         self.needs_tm = False
-        for (start, end), cluster in groupby(glyphs, key=lambda glyph: glyph[9:]):
+        for (start, end), cluster in groupby(glyphs, key=lambda glyph: glyph[9:11]):
             self._show_cluster(line, line[start:end], list(cluster), spacing)
         self.flush()
         if self.rise_pt:
             self.ops.append(b"0 Ts")
         return b"\n".join(self.ops)
 
-    def _reads_as(self, text: str, cluster: list[_FallbackShapedGlyph]) -> bool:
+    def _reads_as(self, text: str, cluster: Sequence[_AnyShapedGlyph]) -> bool:
         """Return whether the CMap's texts of a cluster's glyphs read as its text, in canonical order of its marks."""
         texts = [self.mapped.get((glyph[0], glyph[1]), "") for glyph in cluster if glyph[1]]
         if cluster[0][8]:
             texts.reverse()
         return not texts or unicodedata.normalize("NFD", "".join(texts)) == unicodedata.normalize("NFD", text)
 
-    def _show_cluster(self, line: str, text: str, cluster: list[_FallbackShapedGlyph], spacing: float) -> None:
+    def _apply_horizontal_spacing(self, line: str, start: int, end: int, spacing: float, extra_pt: float) -> None:
+        if extra_pt:
+            self.pending -= extra_pt * 1000 / self.size
+        elif spacing and line[start:end] == " ":
+            self.pending -= spacing * 1000 / self.size
+
+    def _show_cluster(
+        self,
+        line: str,
+        text: str,
+        cluster: Sequence[_AnyShapedGlyph],
+        spacing: float,
+    ) -> None:
         spanned = not self._reads_as(text, cluster)
-        if self.vertical:
-            adv_idx = 3
-            lead = (
-                next((index for index, glyph in enumerate(cluster) if glyph[1] and glyph[adv_idx]), 0) if spanned else 0
-            )
-            order = [lead, *(index for index in range(len(cluster)) if index != lead)]
-            pens = list(accumulate((glyph[3] * self.scales[glyph[0]] for glyph in cluster), initial=0.0))
-        else:
-            adv_idx = 2
-            lead = (
-                next((index for index, glyph in enumerate(cluster) if glyph[1] and glyph[adv_idx]), 0) if spanned else 0
-            )
-            order = [lead, *(index for index in range(len(cluster)) if index != lead)]
-            pens = list(accumulate((glyph[2] * self.scales[glyph[0]] for glyph in cluster), initial=0.0))
+        adv_idx = 3 if self.vertical else 2
+        lead = next((index for index, glyph in enumerate(cluster) if glyph[1] and glyph[adv_idx]), 0) if spanned else 0
+        order = [lead, *(index for index in range(len(cluster)) if index != lead)]
+        pens = list(accumulate((glyph[adv_idx] * self.scales[glyph[0]] for glyph in cluster), initial=0.0))
         ends_span = spanned and sum(1 for glyph in cluster if glyph[1]) > 1
         if spanned:
             self.flush()
             self.ops.append(b"/Span <</ActualText <FEFF" + _utf16(text) + b">>> BDC")
         at = 0.0
         for index in order:
-            face_idx, glyph, _x_adv, _y_adv, x_offset, y_offset, start, end, *_ = cluster[index]
+            entry = cluster[index]
+            face_idx, glyph, _x_adv, _y_adv, x_offset, y_offset, start, end = entry[:8]
+            extra_pt = entry[11] if len(entry) > 11 else 0.0  # noqa: PLR2004 - optional rich extra advance.
             self.pending -= pens[index] - at
             at = pens[index]
             if not glyph:
@@ -556,8 +822,7 @@ class _GlyphRun:
                 self._show_horizontal_glyph(
                     key, offset, rise_pt, follow if abs(follow) > _CLUSTER_END_TOLERANCE else 0.0
                 )
-                if spacing and line[start:end] == " ":
-                    self.pending -= spacing * 1000 / self.size
+                self._apply_horizontal_spacing(line, start, end, spacing, extra_pt)
         self.pending -= pens[-1] - at
         if self.vertical:
             self.pen_y += pens[-1]
