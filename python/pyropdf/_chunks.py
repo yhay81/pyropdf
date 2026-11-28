@@ -315,9 +315,7 @@ def _geometric_page_elements(  # noqa: PLR0913 - extracts one geometric page's e
         _, width, height = page._geometry()  # noqa: SLF001
         return (width, height), []
     layout, words = _markdown._fallback_or_clipped_layout(page, data, body_clip, body_empty=False)  # noqa: SLF001
-    tables = _markdown._page_tables(  # noqa: SLF001
-        page, config.table_strategy, clip=body_clip, has_paths=page_gfx.has_paths
-    )
+    tables = graphics.tables(page, config.table_strategy, clip=body_clip)
     table_bboxes = [(t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1) for t in tables]
     y_min, y_max = _markdown._band_bounds(layout["height"], body_clip)  # noqa: SLF001
     layout, words = hf_rule.filter_layout(layout, words, y_min, y_max, table_bboxes)
@@ -351,6 +349,7 @@ def _pages_elements(
         config.images, memory_limit=pages[0].document.limits.max_memory_size
     )
     graphics = _markdown._GraphicsCache(max_graphics=config.max_graphics, need_images=True)  # noqa: SLF001
+    graphics.seed_from_structure(structure_pages)
     hf_rule = _markdown._detect_headers_footers(pages, config, graphics, structure_pages)  # noqa: SLF001
     levels = _markdown._collect_geometric_heading_levels(  # noqa: SLF001
         pages, config, graphics, hf_rule, structure_pages
@@ -424,7 +423,18 @@ class _PageReader:
         self.lines: list[tuple[str, tuple[float, float, float, float]]] = []
 
     def read(self, tables: list[Table], words: list[Word] | None) -> list[Element]:
-        rendered = _markdown._table_output(self.layout, tables, max_size=None, remaining_size=None)  # noqa: SLF001
+        remaining = None if self.budget.max_size is None else max(0, self.budget.max_size - self.budget.used)
+        try:
+            rendered = _markdown._table_output(  # noqa: SLF001
+                self.layout,
+                tables,
+                max_size=self.budget.max_size,
+                remaining_size=remaining,
+            )
+        except LimitError as error:
+            if error.code == "markdown_output_size":
+                self.budget.fail()
+            raise
         events, memberships, residuals = _markdown._table_events(self.layout, rendered, words)  # noqa: SLF001
         position = 0
         for block in self.layout["blocks"]:

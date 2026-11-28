@@ -1564,3 +1564,200 @@ def test_markdown_structure_ruby_honors_rb_rt_and_rp_tags() -> None:
             assert doc.markdown(use_structure=mode) == "東京から大阪へ"
             assert doc.markdown(use_structure=mode, ruby="parenthesize") == "東京(とうきょう)から大阪（おおさか）へ"
             assert doc.markdown(use_structure=mode, ruby="keep") == "東京とうきょうから大阪（おおさか）へ"
+
+
+def test_markdown_undescribed_figure_with_text_falls_back_instead_of_dropping_text() -> None:
+    stream = (
+        "BT /F1 12 Tf 40 340 Td /P << /MCID 0 >> BDC (Intro) Tj EMC ET\n"
+        "BT /F1 12 Tf 40 280 Td /Figure << /MCID 1 >> BDC (Important chart label text that must not vanish) Tj EMC ET\n"
+    )
+    objects: dict[int, bytes | str] = {
+        1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 10 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 400 400] /Resources << /Font << /F1 4 0 R >> >> >>",
+        3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /StructParents 0 >>",
+        4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        5: _stream_obj(stream),
+        10: "<< /Type /StructTreeRoot /K 11 0 R >>",
+        11: "<< /Type /StructElem /S /Document /P 10 0 R /Pg 3 0 R /K [12 0 R 13 0 R] >>",
+        12: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K 0 >>",
+        13: "<< /Type /StructElem /S /Figure /P 11 0 R /Pg 3 0 R /K 1 >>",
+    }
+    with pyropdf.open(build_raw_pdf(objects)) as doc:
+        # Undescribed Figure with substantial painted text fails trustworthiness and falls back to geometric text.
+        auto_md = doc.markdown(use_structure="auto")
+        assert "Intro" in auto_md
+        assert "Important chart label text that must not vanish" in auto_md
+        # Explicit /Alt replaces the painted text and passes trustworthiness.
+        doc.structure[0].children[1].alt = "Sales chart"
+        assert doc.markdown(use_structure="auto") == "Intro\n\n![Sales chart]()"
+
+
+def test_markdown_nested_blockquote_multipage_table_selection_and_multiline_heading() -> None:
+    objects: dict[int, bytes | str] = {
+        1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 10 0 R >>",
+        2: (
+            "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 /MediaBox [0 0 400 400] "
+            "/Resources << /Font << /F1 4 0 R >> >> >>"
+        ),
+        3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /StructParents 0 >>",
+        4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        5: _stream_obj(
+            "BT /F1 16 Tf 40 360 Td /H1 << /MCID 0 >> BDC (Heading) Tj EMC ET\n"
+            "BT /F1 11 Tf 40 320 Td /BlockQuote << /MCID 1 >> BDC (Opening quote.) Tj EMC ET\n"
+            "BT /F1 11 Tf 40 290 Td /P << /MCID 2 >> BDC (Nested quote.) Tj EMC ET\n"
+            "BT /F1 11 Tf 40 240 Td /TH << /MCID 3 >> BDC (Name) Tj EMC "
+            "100 0 Td /TH << /MCID 4 >> BDC (Qty) Tj EMC ET\n"
+        ),
+        6: "<< /Type /Page /Parent 2 0 R /Contents 7 0 R /StructParents 1 >>",
+        7: _stream_obj(
+            "BT /F1 11 Tf 40 340 Td /TD << /MCID 0 >> BDC (Bolt) Tj EMC 100 0 Td /TD << /MCID 1 >> BDC (12) Tj EMC ET\n"
+        ),
+        10: "<< /Type /StructTreeRoot /K 11 0 R >>",
+        11: "<< /Type /StructElem /S /Document /P 10 0 R /Pg 3 0 R /K [12 0 R 13 0 R 16 0 R] >>",
+        12: "<< /Type /StructElem /S /H1 /P 11 0 R /Pg 3 0 R /ActualText (Chapter 1\\nOverview) /K 0 >>",
+        13: "<< /Type /StructElem /S /BlockQuote /P 11 0 R /Pg 3 0 R /K [1 14 0 R] >>",
+        14: "<< /Type /StructElem /S /Div /P 13 0 R /Pg 3 0 R /K [15 0 R] >>",
+        15: "<< /Type /StructElem /S /P /P 14 0 R /Pg 3 0 R /K 2 >>",
+        16: "<< /Type /StructElem /S /Table /P 11 0 R /Pg 3 0 R /K [17 0 R 20 0 R] >>",
+        17: "<< /Type /StructElem /S /TR /P 16 0 R /Pg 3 0 R /K [18 0 R 19 0 R] >>",
+        18: "<< /Type /StructElem /S /TH /P 17 0 R /Pg 3 0 R /K 3 >>",
+        19: "<< /Type /StructElem /S /TH /P 17 0 R /Pg 3 0 R /K 4 >>",
+        20: "<< /Type /StructElem /S /TR /P 16 0 R /Pg 6 0 R /K [21 0 R 22 0 R] >>",
+        21: "<< /Type /StructElem /S /TD /P 20 0 R /Pg 6 0 R /K 0 >>",
+        22: "<< /Type /StructElem /S /TD /P 20 0 R /Pg 6 0 R /K 1 >>",
+    }
+    with pyropdf.open(build_raw_pdf(objects)) as doc:
+        full_md = doc.markdown()
+        assert full_md == (
+            "# Chapter 1 Overview\n\n"
+            "> Opening quote.\n\n"
+            "> Nested quote.\n\n"
+            "| Name | Qty |\n"
+            "| --- | --- |\n"
+            "| Bolt | 12 |"
+        )
+        # Selecting only page 1 keeps the page-1 table row instead of dropping the table.
+        page1_md = doc.markdown([1])
+        assert "| Bolt | 12 |" in page1_md
+
+
+def test_markdown_subtree_mcid_scan_enforces_global_depth_limit() -> None:
+    objects: dict[int, bytes | str] = {
+        1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 10 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 400 400] /Resources << /Font << /F1 4 0 R >> >> >>",
+        3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /StructParents 0 >>",
+        4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        5: _stream_obj("BT /F1 12 Tf 40 340 Td /Artifact << /MCID 0 >> BDC (Header) Tj EMC ET"),
+        10: "<< /Type /StructTreeRoot /K 11 0 R >>",
+    }
+    # 240 nested Divs -> Artifact -> 25 nested Divs exceeds _MAX_STRUCTURE_DEPTH (256) globally.
+    for i in range(11, 251):
+        parent = 10 if i == 11 else i - 1
+        objects[i] = f"<< /Type /StructElem /S /Div /P {parent} 0 R /Pg 3 0 R /K {i + 1} 0 R >>"
+    objects[251] = "<< /Type /StructElem /S /Artifact /P 250 0 R /Pg 3 0 R /K 252 0 R >>"
+    for i in range(252, 276):
+        objects[i] = f"<< /Type /StructElem /S /Div /P {i - 1} 0 R /Pg 3 0 R /K {i + 1} 0 R >>"
+    objects[276] = "<< /Type /StructElem /S /Span /P 275 0 R /Pg 3 0 R /K 0 >>"
+
+    with pyropdf.open(build_raw_pdf(objects)) as doc:
+        with pytest.raises(pyropdf.LimitError) as caught:
+            doc.markdown(use_structure="always")
+        assert caught.value.code == "structure_tree_count"
+
+
+def test_markdown_image_ordered_after_table_on_table_owned_line() -> None:
+    from pyropdf import _markdown  # noqa: PLC0415
+
+    layout = {
+        "width": 400.0,
+        "height": 400.0,
+        "blocks": [
+            {
+                "bbox": (40.0, 115.0, 240.0, 130.0),
+                "lines": [
+                    {
+                        "bbox": (40.0, 115.0, 240.0, 130.0),
+                        "dir": (1.0, 0.0),
+                        "wmode": 0,
+                        "spans": [{"bbox": (40.0, 115.0, 240.0, 130.0), "size": 10.0, "flags": 0, "text": "Cell"}],
+                    }
+                ],
+            }
+        ],
+    }
+    tables = [((40.0, 100.0, 240.0, 140.0), "| A |\n| --- |\n| B |")]
+    images = [
+        ((40.0, 80.0, 80.0, 95.0), "![](above.png)"),
+        ((40.0, 110.0, 80.0, 114.0), "![](below.png)"),
+    ]
+    md = _markdown.page_to_markdown(layout, {}, tables, None, images=images)
+    assert md == "![](above.png)\n\n| A |\n| --- |\n| B |\n\n![](below.png)"
+
+
+def test_markdown_ignore_headers_footers_nfkc_fullwidth_and_false_positive_guards() -> None:
+    from pyropdf import _markdown  # noqa: PLC0415
+
+    # NFKC normalizes fullwidth spaces, dashes, digits, and Unicode Roman numerals.
+    assert _markdown._normalize_band_text("－ １ －") == "- # -"  # noqa: SLF001
+    assert _markdown._normalize_band_text("Ｐａｇｅ　２　ｏｆ　１０") == "page # of #"  # noqa: SLF001
+    assert _markdown._normalize_band_text("Ⅰ") == "#"  # noqa: SLF001
+    assert _markdown._normalize_band_text("Ⅳ") == "#"  # noqa: SLF001
+    assert _markdown._normalize_band_text("ii.") == "#."  # noqa: SLF001
+    # Words like "Mix" (1009) or "Di" (501) are not normalized as small Roman page numbers.
+    assert _markdown._normalize_band_text("Topic - Mix") == "topic - mix"  # noqa: SLF001
+    assert _markdown._normalize_band_text("Topic - Di") == "topic - di"  # noqa: SLF001
+    # Blocks taller than the 15% edge band are excluded from running header/footer matching.
+    assert _markdown._band_for_bbox((0.0, 10.0, 300.0, 90.0), 0.0, 400.0) is None  # noqa: SLF001
+    assert _markdown._band_for_bbox((0.0, 10.0, 300.0, 25.0), 0.0, 400.0) == "top"  # noqa: SLF001
+
+    # End-to-end check: unique titles ending with Mix/Di/Cl in the top band are preserved;
+    # dotted Roman footers (i., ii., iii.) are suppressed.
+    pages = [
+        (
+            f"BT /F1 10 Tf 40 380 Td (Topic - {label}) Tj ET\n"
+            f"BT /F1 11 Tf 40 200 Td (Body {idx}.) Tj ET\n"
+            f"BT /F1 9 Tf 180 20 Td ({roman}.) Tj ET\n"
+        )
+        for idx, (label, roman) in enumerate((("Mix", "i"), ("Di", "ii"), ("Cl", "iii")), start=1)
+    ]
+    with pyropdf.open(_positioned_pdf(pages)) as doc:
+        cleaned = doc.markdown(ignore_headers_footers=True)
+        for label in ("Topic - Mix", "Topic - Di", "Topic - Cl"):
+            assert label in cleaned
+        assert "ii." not in cleaned
+
+
+def test_markdown_image_export_budget_code_consistent_for_png_and_jpeg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pyropdf import _markdown  # noqa: PLC0415
+
+    # Both PNG and JPEG exceeding the cumulative export image budget raise export_output_size.
+    monkeypatch.setattr(_markdown, "_DEFAULT_MAX_IMAGE_EXPORT_SIZE", 32)
+    with pyropdf.open(_dual_image_pdf()) as doc:
+        png_fail = tmp_path / "png_fail"
+        with pytest.raises(pyropdf.LimitError) as png_err:
+            doc.markdown(images=png_fail)
+        assert png_err.value.code == "export_output_size"
+        assert not png_fail.exists()
+
+    jpeg_only = _positioned_pdf(
+        ["BT /F1 11 Tf 40 300 Td (Photo) Tj ET\nq 40 0 0 40 40 180 cm /Im1 Do Q\n"],
+        extra_objects={
+            4: (
+                b"<< /Type /XObject /Subtype /Image /Width 4 /Height 4 "
+                b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "
+                + str(len(_sample_jpeg_bytes())).encode()
+                + b" >>\nstream\n"
+                + _sample_jpeg_bytes()
+                + b"\nendstream"
+            )
+        },
+        resources="<< /Font << /F1 3 0 R >> /XObject << /Im1 4 0 R >> >>",
+    )
+    with pyropdf.open(jpeg_only) as doc:
+        jpg_fail = tmp_path / "jpg_fail"
+        with pytest.raises(pyropdf.LimitError) as jpg_err:
+            doc.markdown(images=jpg_fail)
+        assert jpg_err.value.code == "export_output_size"
+        assert not jpg_fail.exists()
