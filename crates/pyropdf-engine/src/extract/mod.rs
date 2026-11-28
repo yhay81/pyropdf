@@ -46,6 +46,11 @@ pub use model::{
     SampledShadingTuple, StateTuple, StoredColorTuple, StrokeTuple, TextRunTuple, TilingCellOp,
     WRITING_HORIZONTAL, WRITING_VERTICAL, sample_shading_pattern,
 };
+pub use provenance::{
+    AnnotationOrigin, DrawKind, InvocationFrame, ItemKind, ItemSignature, PageProvenance,
+    PaintedProvenance, PrimarySignatures, Source, collect_primary_signatures, page_provenance,
+    page_provenance_with_primary,
+};
 pub use reads::read_page;
 pub use text::{
     BlockTuple, CharTuple, LineTuple, PageLayout, QuadTuple, RubyMode, SearchHits, SpanStyleTuple,
