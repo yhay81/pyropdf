@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -59,3 +61,71 @@ class ComparisonFixture(unittest.TestCase):
         assert measured["open"] == {"status": "ok", "samples_ms": [5]}
         assert measured["text"] == {"status": "failed", "reason": "worker interrupted"}
         assert measured["save"]["status"] == "unmeasured"
+
+    def test_skipped_ocr_label_is_recorded_unmeasured_and_negative_control_tracks_spurious(self) -> None:
+        """A checked OCR page skipped due to missing traineddata must not score as 0/N failures."""
+        max_spurious = 8
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ocr_label = root / "scan-p1.json"
+            ocr_label.write_text(
+                json.dumps(
+                    {
+                        "document": "scan.pdf",
+                        "page": 1,
+                        "mode": "ocr",
+                        "checked": True,
+                        "anchors": ["A"],
+                        "words": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            neg_label = root / "neg-p1.json"
+            neg_label.write_text(
+                json.dumps(
+                    {
+                        "document": "neg.pdf",
+                        "page": 1,
+                        "mode": "ocr",
+                        "checked": True,
+                        "anchors": [],
+                        "words": [],
+                        "max_spurious_words": max_spurious,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            work = root / "work"
+            work.mkdir()
+
+            def fake_observe(
+                _py: Path,
+                _script: Path,
+                _cmd: str,
+                _eng: str,
+                out: Path,
+                label_path: Path,
+            ) -> tuple[str, None]:
+                stem = Path(label_path).stem
+                if stem == "scan-p1":
+                    payload = {
+                        "pages": {
+                            "scan-p1": {"text": "", "words": [], "tables": [], "skipped": "Tesseract missing jpn"}
+                        }
+                    }
+                else:
+                    payload = {"pages": {"neg-p1": {"text": "", "words": [["x", 0, 0, 1, 1]], "tables": []}}}
+                Path(out).write_text(json.dumps(payload), encoding="utf-8")
+                return "", None
+
+            with (
+                patch.object(release.quality, "LABELS", [ocr_label, neg_label]),
+                patch.object(release, "observe", side_effect=fake_observe),
+            ):
+                scores, _ = release.labeled(Path("python"), "pymupdf", work)
+
+            assert scores["scan-p1"] == {"status": "unmeasured", "reason": "Tesseract missing jpn"}
+            assert scores["neg-p1"]["status"] == "ok"
+            assert scores["neg-p1"]["spurious_words"] == 1
+            assert scores["neg-p1"]["max_spurious_words"] == max_spurious

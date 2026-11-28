@@ -53,7 +53,7 @@ with pyropdf.open("input.pdf") as doc:
 `doc.save(path)`와 `doc.to_bytes()`는 현재 버전을 기록합니다.
 
 - **증분 저장**(`incremental=True`)은 편집으로 기록된 객체만 원본 바이트 뒤에 덧붙입니다. 원본 바이트는 그대로 유지되므로 원본 바이트에 적용된 전자 서명이 유효하게 남습니다.
-- **전체 저장**(기본값)은 파일 전체를 새로 작성합니다. `compress`, `object_streams`, `prune`, `renumber`, `dedupe` 옵션으로 출력을 제어할 수 있습니다.
+- **전체 저장**(기본값)은 파일 전체를 새로 작성합니다. `compress`, `object_streams`, `prune`, `renumber`, `dedupe`, `clean`, `ascii`, `pretty`, `stream_filter` 옵션으로 출력을 제어할 수 있습니다.
 
 ```python
 import pyropdf
@@ -62,7 +62,15 @@ with pyropdf.open("input.pdf") as doc:
     doc.pages[0].rotation = 90
     doc.save("appended.pdf", incremental=True)
     doc.save("rewritten.pdf", compress=True, object_streams=True, prune=True)
+    doc.save("inspect.pdf", clean=True, ascii=True, pretty=True)
+    doc.save("filtered.pdf", stream_filter="ASCII85Decode")
 ```
+
+- `clean=True`는 전용 저장 뷰에서 각 페이지의 콘텐츠 스트림과 주석 외관 스트림을 정규화하고 참조되지 않는 리소스를 정리하며, 열려 있는 문서나 실행 취소 히스토리는 변경하지 않습니다.
+- `ascii=True`는 출력 가능한 ASCII 바이트만 내보내며(바이너리 헤더 주석 생략, 문자열·이름 이스케이프, 기본 상호 참조를 클래식 테이블로 설정, 바이너리 스트림을 `ASCII85Decode`로 감싸기), `pretty=True`는 검사와 diff 비교를 위해 딕셔너리와 배열을 결정론적인 여러 줄 들여쓰기로 서식화합니다.
+- `stream_filter`는 대상 비이미지 스트림에 적용할 필터(`"keep"`, `"none"`, `"FlateDecode"`, `"ASCII85Decode"`, `"ASCIIHexDecode"`, `"RunLengthDecode"`)를 명시하거나 `{xref: filter}` 매핑으로 특정 스트림만 재정의하고 나머지 스트림은 그대로 유지합니다.
+
+`clean`, `ascii`, `pretty`, `stream_filter`는 전체 저장 전용이며 `incremental=True`와 함께 사용하면 거부됩니다. 또한 `ascii=True`는 암호화 저장이나 선형화 저장과 함께 사용할 수 없습니다.
 
 편집 없이 저장한 문서는 입력을 그대로 재현합니다. 증분 저장은 바이트 단위까지 일치하며, 전체 저장은 모든 값이 일치합니다.
 
