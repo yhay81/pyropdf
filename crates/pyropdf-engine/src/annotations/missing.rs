@@ -27,9 +27,28 @@ pub fn synthesized(
     pages: &PageIndex,
     budget: &Budget,
 ) -> Result<Vec<(Reference, Value)>> {
+    synthesized_excluding(
+        version,
+        pages,
+        &HashSet::new(),
+        version.next_number(),
+        budget,
+    )
+}
+
+/// Like [`synthesized`], skipping annotations in `excluded` (such as ones
+/// hidden by optional content) and allocating new appearance streams starting
+/// at `start_next`.
+pub(crate) fn synthesized_excluding(
+    version: &Version,
+    pages: &PageIndex,
+    excluded: &HashSet<Reference>,
+    start_next: u64,
+    budget: &Budget,
+) -> Result<Vec<(Reference, Value)>> {
     let mut objects = BudgetVec::new(budget);
     let mut visited = HashSet::new();
-    let mut next = version.next_number();
+    let mut next = start_next;
     for page in pages.pages() {
         budget.poll()?;
         let reader = Reader::on_page(version, budget, page.user_unit());
@@ -45,7 +64,7 @@ pub fn synthesized(
             let &Value::Reference(reference) = item else {
                 continue;
             };
-            if !try_insert_set(&mut visited, reference, budget)? {
+            if excluded.contains(&reference) || !try_insert_set(&mut visited, reference, budget)? {
                 continue;
             }
             let Some((dict, form)) = plan(&reader, reference)? else {

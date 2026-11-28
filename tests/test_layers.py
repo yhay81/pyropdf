@@ -525,3 +525,212 @@ def test_matching_usage_views_share_the_document_read_budget() -> None:
     assert limited.layers.usage_applications(group, event="View") == ()
     regular = pyropdf.open(data)
     assert len(regular.layers.usage_applications(regular.layers[0], event="Print")) == 80
+
+
+@pytest.mark.spec("optional-content", "interpret")
+@pytest.mark.parametrize("placement", ["direct", "indirect", "annotation"])
+@pytest.mark.parametrize(("first_on", "second_on"), [(True, True), (True, False), (False, False)])
+def test_expression_and_annotation_engine_visibility(placement: str, *, first_on: bool, second_on: bool) -> None:
+    with layer_document()[0] as doc:
+        page = doc.pages[0].obj
+        first, second = doc.layers[:2]
+        group = doc.objects[first.xref]
+        other = doc.objects[second.xref]
+        font = page["Resources"]["Font"]["F1"]
+        paint = b"1 0 0 rg 5 5 20 15 re f BT /F1 12 Tf 30 12 Td (Layer) Tj ET"
+        anchor = b"BT /F1 10 Tf 3 75 Td (Page) Tj ET"
+        if placement == "annotation":
+            appearance = doc.objects.add_stream(
+                paint,
+                {
+                    "Type": Name("XObject"),
+                    "Subtype": Name("Form"),
+                    "BBox": [0, 0, 100, 30],
+                    "Resources": {"Font": {"F1": font}},
+                },
+            )
+            annotation = doc.objects.add(
+                {
+                    "Type": Name("Annot"),
+                    "Subtype": Name("Stamp"),
+                    "Rect": [0, 0, 100, 30],
+                    "OC": group,
+                    "AP": {"N": doc.objects[appearance]},
+                    "F": 4,
+                }
+            )
+            page["Annots"] = [doc.objects[annotation]]
+            page["Contents"].write(anchor)
+            visible = first_on
+        else:
+            expression = {"Type": Name("OCMD"), "VE": [Name("And"), group, [Name("Not"), other]]}
+            page["Resources"]["Properties"]["Expr"] = (
+                expression if placement == "direct" else doc.objects[doc.objects.add(expression)]
+            )
+            page["Contents"].write(anchor + b" /OC /Expr BDC " + paint + b" EMC")
+            visible = first_on and not second_on
+        doc.layers.switch(first.xref, on=first_on)
+        doc.layers.switch(second.xref, on=second_on)
+
+        with pyropdf.open(doc.to_bytes()) as reopened:
+            for version in (doc, reopened):
+                view = version.pages[0]
+                membership = (
+                    view.obj["Annots"][0]["OC"]
+                    if placement == "annotation"
+                    else view.obj["Resources"]["Properties"]["Expr"]
+                )
+                assert version.layers.visible(membership) is visible
+                assert (view.text().split(), view.pixmap().pixel(10, 90)) == (
+                    (["Page", "Layer"], (255, 0, 0)) if visible else (["Page"], (255, 255, 255))
+                )
+
+
+def test_direct_ocmd_policy_and_xobject_ve_and_synthesized_annotation_oc() -> None:
+    with layer_document()[0] as doc:
+        page = doc.pages[0].obj
+        first, second = doc.layers[:2]
+        group = doc.objects[first.xref]
+        other = doc.objects[second.xref]
+        font = page["Resources"]["Font"]["F1"]
+
+        # Direct OCMD using /OCGs + /P (no /VE) inside /Resources /Properties.
+        page["Resources"]["Properties"]["DirPolicy"] = {
+            "Type": Name("OCMD"),
+            "OCGs": [group, other],
+            "P": Name("AllOn"),
+        }
+        # Form XObject with /OC carrying a /VE that overrides /OCGs.
+        form = doc.objects.add_stream(
+            b"0 1 0 rg 40 40 20 20 re f BT /F1 12 Tf 40 65 Td (FormVE) Tj ET",
+            {
+                "Type": Name("XObject"),
+                "Subtype": Name("Form"),
+                "BBox": [0, 0, 100, 100],
+                "Resources": {"Font": {"F1": font}},
+                "OC": {
+                    "Type": Name("OCMD"),
+                    "OCGs": [group],
+                    "P": Name("AllOn"),
+                    "VE": [Name("Not"), other],
+                },
+            },
+        )
+        page["Resources"]["XObject"]["FmVE"] = doc.objects[form]
+        page["Contents"].write(
+            b"BT /F1 10 Tf 3 85 Td (Base) Tj ET "
+            b"/OC /DirPolicy BDC 1 0 0 rg 5 40 20 20 re f BT /F1 10 Tf 5 65 Td (DirectP) Tj ET EMC "
+            b"/FmVE Do"
+        )
+
+        # Annotation without /AP (triggers synthesized appearance) guarded by /OC.
+        synth_annot = doc.objects.add(
+            {
+                "Type": Name("Annot"),
+                "Subtype": Name("Highlight"),
+                "Rect": [5, 5, 35, 25],
+                "QuadPoints": [5, 25, 35, 25, 5, 5, 35, 5],
+                "C": [1, 1, 0],
+                "OC": other,
+                "F": 4,
+            }
+        )
+        page["Annots"] = [doc.objects[synth_annot]]
+
+        # Initially both groups ON: DirPolicy visible, FormVE hidden (Not other), synth_annot visible.
+        view = doc.pages[0]
+        assert view.text().split() == ["Base", "DirectP"]
+        assert view.pixmap().pixel(15, 50) == (255, 0, 0)
+        assert view.pixmap().pixel(50, 50) == (255, 255, 255)
+        assert view.pixmap().pixel(20, 85) != (255, 255, 255)
+
+        # Turn `other` OFF: DirPolicy hidden, FormVE visible, synth_annot hidden; stored /F untouched.
+        svg_before = view.svg()
+        doc.layers.switch(second.xref, on=False)
+        assert view.text().split() == ["Base", "FormVE"]
+        assert view.pixmap().pixel(15, 50) == (255, 255, 255)
+        assert view.pixmap().pixel(50, 50) == (0, 255, 0)
+        assert view.pixmap().pixel(20, 85) == (255, 255, 255)
+        assert doc.objects[synth_annot]["F"] == 4
+        assert view.svg() != svg_before
+
+        # Undo restores previous visibility immediately.
+        doc.history.undo()
+        assert view.text().split() == ["Base", "DirectP"]
+        assert view.pixmap().pixel(15, 50) == (255, 0, 0)
+        assert view.pixmap().pixel(50, 50) == (255, 255, 255)
+        assert view.pixmap().pixel(20, 85) != (255, 255, 255)
+        assert view.svg() == svg_before
+
+
+def test_indirect_oc_properties_direct_annotation_and_encrypted_ve() -> None:
+    with layer_document()[0] as doc:
+        page = doc.pages[0].obj
+        first, second = doc.layers[:2]
+        group = doc.objects[first.xref]
+        other = doc.objects[second.xref]
+        font = page["Resources"]["Font"]["F1"]
+
+        # Store /OCProperties, /D, and /OFF as indirect objects to exercise indirect patching.
+        off_xref = doc.objects.add([other])
+        d_xref = doc.objects.add({"BaseState": Name("ON"), "OFF": doc.objects[off_xref]})
+        oc_props_xref = doc.objects.add({"OCGs": [group, other], "D": doc.objects[d_xref]})
+        doc.catalog["OCProperties"] = doc.objects[oc_props_xref]
+
+        # Direct annotation dictionary inside /Annots with /OC = other (OFF).
+        ap = doc.objects.add_stream(
+            b"0 0 1 rg 0 0 80 20 re f BT /F1 12 Tf 2 5 Td (DirAnnot) Tj ET",
+            {
+                "Type": Name("XObject"),
+                "Subtype": Name("Form"),
+                "BBox": [0, 0, 80, 20],
+                "Resources": {"Font": {"F1": font}},
+            },
+        )
+        page["Annots"] = [
+            {
+                "Type": Name("Annot"),
+                "Subtype": Name("Stamp"),
+                "Rect": [5, 5, 85, 25],
+                "OC": other,
+                "AP": {"N": doc.objects[ap]},
+                "F": 4,
+            }
+        ]
+        # Indirect OCMD with /VE [/And group other] -> hidden.
+        ve_xref = doc.objects.add({"Type": Name("OCMD"), "VE": [Name("And"), group, other]})
+        page["Resources"]["Properties"]["Both"] = doc.objects[ve_xref]
+        page["Contents"].write(
+            b"BT /F1 10 Tf 3 75 Td (Keep) Tj ET "
+            b"/OC /Both BDC 1 0 0 rg 40 40 20 20 re f BT /F1 10 Tf 40 65 Td (Drop) Tj ET EMC"
+        )
+
+        # Save encrypted (AES-256) and verify bridge lowering works on encrypted documents too.
+        user_pw = "layer-user"
+        owner_pw = "layer-owner"
+        encrypted = doc.to_bytes(encryption=pyropdf.Encryption(user_password=user_pw, owner_password=owner_pw))
+
+    with pyropdf.open(encrypted, password=user_pw) as reopened:
+        view = reopened.pages[0]
+        assert view.text().split() == ["Keep"]
+        assert view.pixmap().pixel(15, 85) == (255, 255, 255)
+        assert view.pixmap().pixel(50, 50) == (255, 255, 255)
+        reopened.layers.switch(reopened.layers[1].xref, on=True)
+        assert view.text().split() == ["Keep", "Drop", "DirAnnot"]
+        assert view.pixmap().pixel(15, 85) == (0, 0, 255)
+        assert view.pixmap().pixel(50, 50) == (255, 0, 0)
+
+
+def test_engine_refuses_cyclic_and_overdeep_visibility_expressions() -> None:
+    with layer_document()[0] as doc:
+        first = doc.objects[doc.layers[0].xref]
+        cycle_xref = doc.objects.add([Name("Not"), first])
+        cycle = doc.objects[cycle_xref]
+        cycle.append(cycle)
+        doc.pages[0].obj["Resources"]["Properties"]["Cyclic"] = {"Type": Name("OCMD"), "VE": cycle}
+        with pytest.raises(pyropdf.LimitError) as caught:
+            doc.pages[0].text()
+        assert caught.value.code == "optional_content_expression"
+        with pytest.raises(pyropdf.LimitError) as caught_pix:
+            doc.pages[0].pixmap()
+        assert caught_pix.value.code == "optional_content_expression"

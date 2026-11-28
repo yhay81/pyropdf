@@ -365,10 +365,10 @@ def test_work_index_accounts_for_all_unfinished_cells_in_both_directions() -> No
     page = (ROOT / COVERAGE).read_text(encoding="utf-8")
     for tracker in range(245, 257):
         assert f"### {tracker} " in page
-    upstream = features()["optional-content"]["interpret"]
-    assert upstream["issue"] == upstream["upstream"] == 372
+    upstream = features()["images"]["interpret"]
+    assert upstream["issue"] == upstream["upstream"] == 947
     assert families[upstream["family"]]["kind"] == "upstream"
-    edited = features()["optional-content"]["edit"]
+    edited = features()["images"]["edit"]
     assert edited["status"] == "done"
     assert "issue" not in edited
 
@@ -386,10 +386,10 @@ def test_an_unassigned_cell_prevents_generation(tmp_path: Path) -> None:
 def test_an_engine_cell_cannot_be_assigned_to_an_unrelated_local_task(tmp_path: Path) -> None:
     root = copy_root(tmp_path)
     path = root / FEATURES.with_name("families.toml")
-    path.write_text(path.read_text(encoding="utf-8").replace("issue = 372", "issue = 373"), encoding="utf-8")
+    path.write_text(path.read_text(encoding="utf-8").replace("issue = 947", "issue = 373"), encoding="utf-8")
     result = generate(root, "--check")
     assert result.returncode == 1
-    assert "optional-content.interpret needs its declared upstream interpretation task" in result.stderr
+    assert "images.interpret needs its declared upstream interpretation task" in result.stderr
 
 
 @pytest.mark.parametrize(

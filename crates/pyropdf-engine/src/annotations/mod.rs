@@ -194,6 +194,7 @@ pub use geometry::{
     NOTE_ICONS, RECT_SUBTYPES, Rect, STAMP_ICONS, TEXT_KEYS, annotation_geometry, border_style,
     rgb,
 };
+pub(crate) use missing::synthesized_excluding;
 pub use missing::{synthesized, synthesized_for};
 pub use popup::{annotation_open, annotation_popup, annotation_reply};
 pub use read::{

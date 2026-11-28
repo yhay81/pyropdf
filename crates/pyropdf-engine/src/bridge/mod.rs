@@ -27,6 +27,7 @@
 //! The bridge checks that hayro's page list is the store's page index, so
 //! that a page number names the same page in both.
 
+mod ocg;
 pub mod preflight;
 #[cfg(test)]
 mod tests;
@@ -200,11 +201,19 @@ impl Bridged {
         if let Some(file) = version.base().file() {
             budget.check(LimitCode::InterpretationSize, file.bytes().len() as u64)?;
         }
-        let extra = if appearances {
-            crate::annotations::synthesized(version, pages, budget)?
+        let lowered = ocg::lower(version, pages, budget)?;
+        let synthesized = if appearances {
+            crate::annotations::synthesized_excluding(
+                version,
+                pages,
+                &lowered.hidden_annots,
+                lowered.next_number,
+                budget,
+            )?
         } else {
             Vec::new()
         };
+        let extra = merge_extra(lowered.objects, synthesized, budget)?;
         let (bytes, update) = match (handler, version.base().file()) {
             (Some(_), Some(file))
                 if bridge.is_none()
@@ -725,4 +734,35 @@ fn insert(dict: &mut Dict, key: Name, value: Value) {
         reason = "the trailer copies the entries of the version's trailer, which the store holds, and five constant keys"
     )]
     dict.insert(key, value);
+}
+
+/// Merges sorted OCG-lowered and synthesized-appearance stand-in objects into
+/// one sorted vector with unique object numbers.
+fn merge_extra(
+    mut lowered: Vec<(Reference, Value)>,
+    mut synthesized: Vec<(Reference, Value)>,
+    budget: &Budget,
+) -> Result<Vec<(Reference, Value)>> {
+    if lowered.is_empty() {
+        return Ok(synthesized);
+    }
+    if synthesized.is_empty() {
+        return Ok(lowered);
+    }
+    let mut merged: BudgetVec<'_, (Reference, Value)> = BudgetVec::new(budget);
+    merged.try_reserve_exact(lowered.len().saturating_add(synthesized.len()))?;
+    for entry in lowered.drain(..) {
+        merged.try_push(entry)?;
+    }
+    let lowered_len = merged.len();
+    for entry in synthesized.drain(..) {
+        if merged.as_slice()[..lowered_len]
+            .binary_search_by_key(&entry.0.number(), |(r, _)| r.number())
+            .is_err()
+        {
+            merged.try_push(entry)?;
+        }
+    }
+    merged.sort_unstable_by_key(|(reference, _)| reference.number());
+    Ok(merged.into_vec())
 }
