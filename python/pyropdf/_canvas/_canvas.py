@@ -59,13 +59,21 @@ from pyropdf._canvas._resources import (
 from pyropdf._canvas._tags import _Group, _Scope, _tag_scope, _write_structure
 from pyropdf._canvas._text import (
     _TR_INVISIBLE,
+    TextAlign,
+    TextDirection,
+    TextFit,
+    TextSpan,
+    _align,
+    _base_direction,
     _canvas_font,
     _direction,
     _GlyphRun,
+    _has_rtl,
     _layout_textbox,
     _line_count,
     _line_height,
     _lines_size,
+    _prepare_rich_spans,
     _render_mode,
     _resolve_fonts,
     _shown_winansi,
@@ -111,20 +119,21 @@ from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, _real
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable
+    from collections.abc import Callable, Generator, Iterable
     from contextlib import AbstractContextManager
     from types import TracebackType
     from typing import Self, TypeAlias
 
     from pyropdf._canvas._path import PathInput
     from pyropdf._canvas._tags import ListNumbering, TableHeaderScope, TagRole, _Element
-    from pyropdf._canvas._text import TextFit, _FallbackShapedGlyph, _TextPaint
+    from pyropdf._canvas._text import _FallbackShapedGlyph, _RichShapedGlyph, _TextPaint
     from pyropdf._content import Segment
     from pyropdf._core import Pixmap
     from pyropdf._document import Document
     from pyropdf._fallback_fonts import FallbackFonts
     from pyropdf._fonts import Font
     from pyropdf._page import Page
+    from pyropdf._targets import Target
 
     # How text draws a glyph in a Type 3 font: its name, advance, and strike, from ``_Font.colour_glyphs``.
     _ColourGlyph: TypeAlias = tuple[str, float, int | None]
@@ -208,6 +217,7 @@ class Canvas:
         "_gstates",
         "_inline_xobjects",
         "_layers",
+        "_links",
         "_marked",
         "_masks",
         "_matrices",
@@ -242,6 +252,8 @@ class Canvas:
         self._underlay = bool(underlay)
         # One buffer per open opacity group; the first is the page's content.
         self._layers: list[tuple[list[bytes], _Group | None]] = [([], None)]
+        # Link annotations queued by TextSpan.link, committed atomically with the canvas.
+        self._links: list[tuple[Rect, Target]] = []
         self._depth = 0
         self._points = 0
         # The canvas's operation, while its with block runs; the bytes its
@@ -321,7 +333,7 @@ class Canvas:
         self._closed = True
         core = self._page.document._core()  # noqa: SLF001
         operation = self._active
-        keep = exc_type is None and bool(self._layers[0][0])
+        keep = exc_type is None and (bool(self._layers[0][0]) or bool(self._links))
         try:
             if keep and self._depth:
                 msg = "a canvas scope is still open"
@@ -334,6 +346,7 @@ class Canvas:
             raise
         finally:
             self._layers = [([], None)]
+            self._links.clear()
             self._tiling_cells.clear()
         if keep:
             _core.end_transaction(core, True)  # noqa: FBT003 - the core's flag
@@ -926,6 +939,8 @@ class Canvas:
         else:
             streams = [*existing, drawn]
         page.obj["Contents"] = streams
+        for link_rect, link_target in self._links:
+            page.links.add(link_rect, link_target)
 
     # Paths.
 
@@ -1068,7 +1083,7 @@ class Canvas:
 
     def text(  # noqa: PLR0913 - the text style options.
         self,
-        text: str,
+        text: str | Sequence[TextSpan],
         at: Sequence[float],
         *,
         font: Font | None = None,
@@ -1078,49 +1093,98 @@ class Canvas:
         stroke: Stroke | Color | Gradient | PatternPaint | None = None,
         render_mode: TextRenderMode | str | None = None,
         direction: Literal["horizontal", "vertical"] = "horizontal",
+        base_direction: TextDirection = "auto",
         line_height: float | None = None,
         rotate: int = 0,
         max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
     ) -> None:
-        """Draw text whose first baseline starts at ``at``.
+        """Draw text or styled :class:`TextSpan` runs whose first baseline starts at ``at``.
 
-        Lines are split with :meth:`str.splitlines` and placed ``line_height``
-        times ``size`` apart, by default at the font's own line height.
-        ``rotate`` turns the text clockwise about ``at`` by 0, 90, 180, or
-        270 degrees, so that at 90 the lines run down the page and stack
-        leftward; :meth:`transform` turns it by any other angle. ``font``
-        defaults to Helvetica. Pass ``fallback_fonts``—an ordered sequence of
-        :class:`Font` faces or a document's :attr:`Document.fallback_fonts`—to
-        resolve missing grapheme clusters deterministically across faces without
-        any global font registry; only faces that draw at least one glyph are
-        embedded. Text is filled, stroked, both, or—with
-        ``render_mode=TextRenderMode.INVISIBLE``—emitted invisibly (``3 Tr``) so
-        it leaves no ink while remaining searchable and extractable. To clip
-        subsequent drawings to glyph outlines (``4 Tr``–``7 Tr``), use
-        :meth:`clip_text`. Pass ``direction="vertical"`` with embedded OpenType
-        faces to shape and embed vertical text (``Identity-V`` and ``/W2``),
-        where glyphs run downward from ``at`` and subsequent columns stack
-        right-to-left. Fill and stroke accept a :class:`LinearGradient` or
+        Pass a ``str`` or a sequence of :class:`TextSpan` runs to mix fonts,
+        sizes, colours, render modes, underlines, strikethroughs, and inline
+        ``/Link`` annotations on the same line. Lines break on explicit line
+        separators and are spaced ``line_height`` times ``size`` apart (by
+        default at the font's own line height, or the tallest run's ascent and
+        descent when font sizes mix). ``base_direction`` sets the UAX #9
+        bidirectional paragraph base direction (``"auto"``, ``"ltr"``, or
+        ``"rtl"``); ``base_direction="rtl"`` cannot be combined with
+        ``direction="vertical"``. ``rotate`` turns the text clockwise about
+        ``at`` by 0, 90, 180, or 270 degrees, so that at 90 the lines run down
+        the page and stack leftward; :meth:`transform` turns it by any other
+        angle. ``font`` defaults to Helvetica. Pass ``fallback_fonts``—an
+        ordered sequence of :class:`Font` faces or a document's
+        :attr:`Document.fallback_fonts`—to resolve missing grapheme clusters
+        deterministically across faces without any global font registry; only
+        faces that draw at least one glyph are embedded. Text is filled,
+        stroked, both, or—with ``render_mode=TextRenderMode.INVISIBLE``—emitted
+        invisibly (``3 Tr``) so it leaves no ink while remaining searchable and
+        extractable. To clip subsequent drawings to glyph outlines
+        (``4 Tr``–``7 Tr``), use :meth:`clip_text`. Pass
+        ``direction="vertical"`` with embedded OpenType faces to shape and
+        embed vertical text (``Identity-V`` and ``/W2``), where glyphs run
+        downward from ``at`` and subsequent columns stack right-to-left. Any
+        ``/Link`` annotations from :attr:`TextSpan.link` commit inside the same
+        canvas transaction and undo step, and are discarded if the canvas
+        aborts. Fill and stroke accept a :class:`LinearGradient` or
         :class:`RadialGradient`, in the canvas coordinate space. If a soft mask
         requires separate fill and stroke objects, the second uses empty
         ``ActualText`` so extraction reads the text once. Gradient tolerances
-        are those of :class:`Canvas`. The text is limited to 1 MiB of UTF-8 and
-        4,096 lines by default (``max_text_size``, ``None`` for trusted input),
-        refused with :class:`LimitError` code ``text_input_size`` or
-        ``text_line_count``. A colour glyph that COLR paints or a PNG strike
-        holds draws in its own colours, which ``fill`` and ``stroke`` do not
-        change, except for a COLR layer in the text's colour, which takes the
-        fill. Any other colour glyph with no outline in an OpenType face raises
-        :class:`PdfError`, naming the character, the glyph, and the paint; see
-        :class:`Font`.
+        are those of :class:`Canvas`. The text is limited to 1 MiB of UTF-8,
+        65,536 spans, and 4,096 lines by default (``max_text_size``, ``None``
+        for trusted input), refused with :class:`LimitError` code
+        ``text_input_size``, ``content_element_count``, or ``text_line_count``.
+        A colour glyph that COLR paints or a PNG strike holds draws in its own
+        colours, which ``fill`` and ``stroke`` do not change, except for a COLR
+        layer in the text's colour, which takes the fill. Any other colour
+        glyph with no outline in an OpenType face raises :class:`PdfError`,
+        naming the character, the glyph, and the paint; see :class:`Font`.
         """
         self._check_open()
+        checked_direction = _direction(direction)
+        checked_base_dir = _base_direction(base_direction)
+        if checked_direction == "vertical" and checked_base_dir == "rtl":
+            msg = "base_direction='rtl' cannot be combined with direction='vertical'"
+            raise ValueError(msg)
+        if not isinstance(text, str):
+            if checked_direction == "vertical":
+                msg = "TextSpan sequences are only supported with direction='horizontal'"
+                raise ValueError(msg)
+            self._draw_rich_text(
+                text,
+                at,
+                font=font,
+                fallback_fonts=fallback_fonts,
+                size=size,
+                fill=fill,
+                stroke=stroke,
+                render_mode=_render_mode(render_mode),
+                base_direction=checked_base_dir,
+                line_height=line_height,
+                rotate=rotate,
+                max_text_size=max_text_size,
+            )
+            return
+        if checked_direction == "horizontal" and checked_base_dir != "auto":
+            self._draw_rich_text(
+                text,
+                at,
+                font=font,
+                fallback_fonts=fallback_fonts,
+                size=size,
+                fill=fill,
+                stroke=stroke,
+                render_mode=_render_mode(render_mode),
+                base_direction=checked_base_dir,
+                line_height=line_height,
+                rotate=rotate,
+                max_text_size=max_text_size,
+            )
+            return
         checked = _text_input(text, max_text_size)
         rotation = _quarter_turn(rotate)
         origin = _point(at, "at")
         font_size = _size(size)
         checked_mode = _render_mode(render_mode)
-        checked_direction = _direction(direction)
         checked_paint = _text_paint(fill, stroke, render_mode=checked_mode)
         spacing = _line_height(line_height)
         faces = _resolve_fonts(font, fallback_fonts, direction=checked_direction)
@@ -1159,35 +1223,42 @@ class Canvas:
     def textbox(  # noqa: PLR0913 - the text style options.
         self,
         rect: Sequence[float],
-        text: str,
+        text: str | Sequence[TextSpan],
         *,
         font: Font | None = None,
         fallback_fonts: Sequence[Font] | FallbackFonts = (),
         size: float = 11,
-        align: Literal["left", "center", "right", "justify"] = "left",
+        align: TextAlign = "left",
         line_height: float | None = None,
         fill: Color | Gradient | PatternPaint | None = _BLACK,
         stroke: Stroke | Color | Gradient | PatternPaint | None = None,
         render_mode: TextRenderMode | str | None = None,
         direction: Literal["horizontal", "vertical"] = "horizontal",
+        base_direction: TextDirection = "auto",
         rotate: int = 0,
         max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
     ) -> TextFit:
-        """Wrap text inside ``rect`` and report how it fits.
+        """Wrap text or styled :class:`TextSpan` runs inside ``rect`` and report how they fit.
 
-        Lines break at Unicode line-break opportunities (UAX #14) and, for a
-        word wider than the box, between grapheme clusters. They are placed
-        as :meth:`text` places them: in horizontal mode, the first baseline one
-        :attr:`Font.ascender` below the top of ``rect`` and later ones
-        ``line_height`` times ``size`` apart, by default at the font's own
-        line height, and the text fits when the descender of the last line
-        does; in vertical mode (``direction="vertical"``), columns run downward
-        along the box height and stack right-to-left from its right edge. When
-        the text does not fit, nothing is drawn and
-        :attr:`TextFit.spare_height` is the negative shortfall;
-        :meth:`Font.text_height` measures the height that the text needs
-        without drawing it. Tabs become single spaces. ``rotate`` turns the
-        text clockwise inside ``rect`` by 0, 90, 180, or 270 degrees: at 90
+        Lines break in logical order at Unicode line-break opportunities
+        (UAX #14) and, for a word wider than the box, between grapheme
+        clusters (UAX #29), followed by per-line UAX #9 bidirectional visual
+        reordering. ``align`` supports physical ``"left"``, ``"center"``,
+        ``"right"``, and ``"justify"``, as well as direction-aware ``"start"``
+        and ``"end"`` (left/right for LTR paragraphs, right/left for RTL).
+        ``base_direction`` controls UAX #9 paragraph base direction
+        (``"auto"``, ``"ltr"``, or ``"rtl"``); ``base_direction="rtl"`` cannot
+        be combined with ``direction="vertical"``. Lines are placed as
+        :meth:`text` places them: in horizontal mode, the first baseline sits
+        one ascent below the top of ``rect`` and the text fits when the last
+        line's descender fits inside ``rect``; in vertical mode
+        (``direction="vertical"``), columns run downward along the box height
+        and stack right-to-left from its right edge. When the text does not
+        fit, nothing is drawn (including decorations and :attr:`TextSpan.link`
+        annotations) and :attr:`TextFit.spare_height` is the negative
+        shortfall; :meth:`Font.text_height` measures the height that plain text
+        needs without drawing it. Tabs become single spaces. ``rotate`` turns
+        the text clockwise inside ``rect`` by 0, 90, 180, or 270 degrees: at 90
         horizontal lines run down the box and stack from its right edge
         leftward, so they wrap at the box's height and fill its width, and at
         270 they run up and stack from the left edge. The ``font``,
@@ -1201,6 +1272,48 @@ class Canvas:
         rotation = _quarter_turn(rotate)
         checked_mode = _render_mode(render_mode)
         checked_direction = _direction(direction)
+        checked_base_dir = _base_direction(base_direction)
+        checked_align = _align(align)
+        if checked_direction == "vertical" and checked_base_dir == "rtl":
+            msg = "base_direction='rtl' cannot be combined with direction='vertical'"
+            raise ValueError(msg)
+        if not isinstance(text, str):
+            if checked_direction == "vertical":
+                msg = "TextSpan sequences are only supported with direction='horizontal'"
+                raise ValueError(msg)
+            return self._draw_rich_textbox(
+                box,
+                text,
+                font=font,
+                fallback_fonts=fallback_fonts,
+                size=size,
+                align=checked_align,
+                line_height=line_height,
+                fill=fill,
+                stroke=stroke,
+                render_mode=checked_mode,
+                base_direction=checked_base_dir,
+                rotation=rotation,
+                max_text_size=max_text_size,
+            )
+        if checked_direction == "horizontal" and (
+            checked_base_dir != "auto" or checked_align in ("start", "end") or _has_rtl(text)
+        ):
+            return self._draw_rich_textbox(
+                box,
+                text,
+                font=font,
+                fallback_fonts=fallback_fonts,
+                size=size,
+                align=checked_align,
+                line_height=line_height,
+                fill=fill,
+                stroke=stroke,
+                render_mode=checked_mode,
+                base_direction=checked_base_dir,
+                rotation=rotation,
+                max_text_size=max_text_size,
+            )
         with self._scratch(2 * sys.getsizeof(_text_input(text, max_text_size))):
             fit, layout = _layout_textbox(
                 box,
@@ -1208,7 +1321,7 @@ class Canvas:
                 font=font,
                 fallback_fonts=fallback_fonts,
                 size=size,
-                align=align,
+                align=checked_align,
                 line_height=line_height,
                 paint=(fill, stroke),
                 render_mode=checked_mode,
@@ -1224,6 +1337,390 @@ class Canvas:
                     paint,
                 )
             return fit
+
+    def _to_display(self, x: float, y: float) -> tuple[float, float]:
+        """Map a point from the current canvas drawing space into page display coordinates."""
+        matrix = self._matrix
+        for scope, saved in zip(reversed(self._scopes), reversed(self._matrices), strict=True):
+            if scope is None:
+                matrix = matrix * saved
+        return (matrix.a * x + matrix.c * y + matrix.e, matrix.b * x + matrix.d * y + matrix.f)
+
+    def _draw_rich_text(  # noqa: PLR0913 - mirrors Canvas.text options.
+        self,
+        text: str | Sequence[TextSpan],
+        at: Sequence[float],
+        *,
+        font: Font | None,
+        fallback_fonts: Sequence[Font] | FallbackFonts,
+        size: float,
+        fill: Color | Gradient | PatternPaint | None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None,
+        render_mode: TextRenderMode | None,
+        base_direction: TextDirection,
+        line_height: float | None,
+        rotate: int,
+        max_text_size: int | None,
+    ) -> None:
+        rotation = _quarter_turn(rotate)
+        origin = _point(at, "at")
+        spacing = _line_height(line_height)
+        unique_faces, span_args, span_paints, link_targets, total_bytes = _prepare_rich_spans(
+            text,
+            page=self._page,
+            font=font,
+            fallback_fonts=fallback_fonts,
+            size=size,
+            fill=fill,
+            stroke=stroke,
+            render_mode=render_mode,
+            max_text_size=max_text_size,
+            textbox=False,
+        )
+        if not span_args or total_bytes == 0:
+            return
+        any_visible = any(mode != _TR_INVISIBLE for _, _, mode in span_paints)
+        with self._scratch(2 * total_bytes + len(span_args) * 128):
+            full_text, lines, decorations, links, _height, _spare = _core.layout_rich_text(
+                [face._font for face in unique_faces],  # noqa: SLF001
+                span_args,
+                None,
+                0.0,
+                base_direction,
+                "left",
+                spacing,
+                _max_lines(max_text_size),
+                max_text_size,
+                check_colour=any_visible,
+                operation=self._operation,
+            )
+            if not any(line[6] for line in lines):
+                return
+            first_baseline = lines[0][0]
+            cos, sin = _TURNS[rotation]
+
+            def to_canvas(lx: float, ly: float) -> tuple[float, float]:
+                dy = ly - first_baseline
+                return (origin.x + lx * cos - dy * sin, origin.y + lx * sin + dy * cos)
+
+            self._emit_rich_layout(
+                faces=unique_faces,
+                full_text=full_text,
+                lines=lines,
+                decorations=decorations,
+                links=links,
+                span_paints=span_paints,
+                link_targets=link_targets,
+                rotation=rotation,
+                to_canvas=to_canvas,
+            )
+
+    def _draw_rich_textbox(  # noqa: PLR0913 - mirrors Canvas.textbox options.
+        self,
+        box: Rect,
+        text: str | Sequence[TextSpan],
+        *,
+        font: Font | None,
+        fallback_fonts: Sequence[Font] | FallbackFonts,
+        size: float,
+        align: TextAlign,
+        line_height: float | None,
+        fill: Color | Gradient | PatternPaint | None,
+        stroke: Stroke | Color | Gradient | PatternPaint | None,
+        render_mode: TextRenderMode | None,
+        base_direction: TextDirection,
+        rotation: int,
+        max_text_size: int | None,
+    ) -> TextFit:
+        spacing = _line_height(line_height)
+        along_extent, stack_extent = (
+            (box.x1 - box.x0, box.y1 - box.y0) if rotation in (0, 180) else (box.y1 - box.y0, box.x1 - box.x0)
+        )
+        unique_faces, span_args, span_paints, link_targets, total_bytes = _prepare_rich_spans(
+            text,
+            page=self._page,
+            font=font,
+            fallback_fonts=fallback_fonts,
+            size=size,
+            fill=fill,
+            stroke=stroke,
+            render_mode=render_mode,
+            max_text_size=max_text_size,
+            textbox=True,
+        )
+        if not span_args or total_bytes == 0:
+            return TextFit(spare_height=stack_extent)
+        any_visible = any(mode != _TR_INVISIBLE for _, _, mode in span_paints)
+        with self._scratch(2 * total_bytes + len(span_args) * 128):
+            full_text, lines, decorations, links, _height, spare_height = _core.layout_rich_text(
+                [face._font for face in unique_faces],  # noqa: SLF001
+                span_args,
+                along_extent,
+                stack_extent,
+                base_direction,
+                align,
+                spacing,
+                _max_lines(max_text_size),
+                max_text_size,
+                check_colour=any_visible,
+                operation=self._operation,
+            )
+            fit = TextFit(spare_height=spare_height)
+            if not fit.fits or not any(line[6] for line in lines):
+                return fit
+            cos, sin = _TURNS[rotation]
+            corner = {0: (box.x0, box.y0), 90: (box.x1, box.y0), 180: (box.x1, box.y1), 270: (box.x0, box.y1)}[rotation]
+
+            def to_canvas(lx: float, ly: float) -> tuple[float, float]:
+                return (corner[0] + lx * cos - ly * sin, corner[1] + lx * sin + ly * cos)
+
+            self._emit_rich_layout(
+                faces=unique_faces,
+                full_text=full_text,
+                lines=lines,
+                decorations=decorations,
+                links=links,
+                span_paints=span_paints,
+                link_targets=link_targets,
+                rotation=rotation,
+                to_canvas=to_canvas,
+            )
+            return fit
+
+    def _prepare_rich_face_tables(
+        self,
+        faces: tuple[Font, ...],
+        full_text: str,
+        lines: list[
+            tuple[
+                float,
+                float,
+                float,
+                float,
+                bool,
+                bool,
+                list[tuple[int, int, float, float, float, bool, list[_RichShapedGlyph]]],
+            ]
+        ],
+        span_paints: list[_TextPaint],
+    ) -> (
+        tuple[
+            list[float],
+            dict[tuple[int, int], float],
+            dict[tuple[int, int], str],
+            dict[tuple[int, int], tuple[bytes, bytes]],
+            frozenset[tuple[int, int]],
+        ]
+        | None
+    ):
+        """Register every face drawn by rich-text ``lines`` and collect its glyph metrics."""
+        per_face_drawn: dict[int, list[tuple[int, str]]] = {}
+        per_face_max_size: dict[int, float] = {}
+        per_face_visible: dict[int, bool] = {}
+
+        for _baseline_y, _ascent, _descent, _width, _is_rtl, _justified, runs in lines:
+            for span_index, _primary_face, run_size, _x, _run_w, _rtl, glyphs in runs:
+                visible = span_paints[span_index][2] != _TR_INVISIBLE
+                for glyph in glyphs:
+                    if not glyph[1]:
+                        continue
+                    face_idx = glyph[0]
+                    per_face_drawn.setdefault(face_idx, []).append(
+                        (glyph[1], full_text[glyph[6] : glyph[7]] or _NO_TEXT)
+                    )
+                    per_face_max_size[face_idx] = max(per_face_max_size.get(face_idx, 0.0), run_size)
+                    if visible:
+                        per_face_visible[face_idx] = True
+
+        if not per_face_drawn:
+            return None
+
+        operation = self._operation
+        per_face_ids: dict[int, list[int]] = {}
+        per_face_colour: dict[int, dict[int, _ColourGlyph | None]] = {}
+        for face_idx, drawn in per_face_drawn.items():
+            face = faces[face_idx]
+            if face._font.standard_name is not None:  # noqa: SLF001
+                continue
+            ids = sorted({glyph for glyph, _ in drawn})
+            per_face_ids[face_idx] = ids
+            per_face_colour[face_idx] = (
+                dict(
+                    zip(
+                        ids,
+                        face._font.colour_glyphs(ids, per_face_max_size[face_idx], operation=operation),  # noqa: SLF001
+                        strict=True,
+                    )
+                )
+                if per_face_visible.get(face_idx, False)
+                else dict.fromkeys(ids, None)
+            )
+
+        widths, _v_origins, per_face_v_metrics = self._collect_glyph_metrics(
+            faces, per_face_drawn, per_face_ids, vertical=False
+        )
+        codes, mapped, type3_keys = self._register_drawn_faces(
+            faces,
+            per_face_drawn,
+            per_face_colour,
+            vertical=False,
+            per_face_v_metrics=per_face_v_metrics,
+        )
+        scales = [1000.0 / face._font.units_per_em for face in faces]  # noqa: SLF001
+        return scales, widths, mapped, codes, type3_keys
+
+    def _emit_rich_run(  # noqa: PLR0913 - visual run geometry, paint, and glyph tables.
+        self,
+        *,
+        full_text: str,
+        glyphs: list[_RichShapedGlyph],
+        run_size: float,
+        box_bounds: tuple[float, float, float, float],
+        baseline_y: float,
+        paint: _TextPaint,
+        turn: tuple[int, int],
+        to_canvas: Callable[[float, float], tuple[float, float]],
+        tables: tuple[
+            list[float],
+            dict[tuple[int, int], float],
+            dict[tuple[int, int], str],
+            dict[tuple[int, int], tuple[bytes, bytes]],
+            frozenset[tuple[int, int]],
+        ],
+    ) -> None:
+        """Emit one painted visual run of rich text."""
+        scales, widths, mapped, codes, type3_keys = tables
+        fill_paint, stroke_paint, tr_mode = paint
+        cos, sin = turn
+        run_x, run_width, line_ascent, line_descent = box_bounds
+        rx, ry = to_canvas(run_x, baseline_y)
+        emitter = _GlyphRun(
+            run_size,
+            scales,
+            widths,
+            mapped,
+            codes,
+            vertical=False,
+            type3_keys=type3_keys,
+        )
+        ops = emitter.show(full_text, glyphs, 0.0, origin=(rx, ry), turn=turn)
+        shown_text = (
+            b"BT\n" + _numbers(cos, sin, sin, -cos, _number(rx, "at"), _number(ry, "at")) + b" Tm\n" + ops + b"\nET"
+        )
+        if tr_mode == _TR_INVISIBLE:
+            with self._scratch(2 * len(shown_text) + 256):
+                self._emit(b"q\n3 Tr\n" + shown_text + b"\nQ")
+            return
+        needs_bounds = isinstance(fill_paint, (LinearGradient, RadialGradient)) or (
+            stroke_paint is not None and isinstance(stroke_paint.paint, (LinearGradient, RadialGradient))
+        )
+        segments: list[Segment] = (
+            [
+                MoveTo(Point(*to_canvas(cx, cy)))
+                for cx in (run_x, run_x + run_width)
+                for cy in (baseline_y - line_ascent, baseline_y + line_descent)
+            ]
+            if needs_bounds
+            else []
+        )
+        filling = None if fill_paint is None else self._setting(fill_paint, segments, None)
+        stroking = (
+            None
+            if stroke_paint is None
+            else self._setting(cast("Color | Gradient | PatternPaint", stroke_paint.paint), segments, stroke_paint)
+        )
+        split = filling is not None and stroking is not None and (filling.mask is not None or stroking.mask is not None)
+        passes = ((filling, None, 0), (None, stroking, 1)) if split else ((filling, stroking, tr_mode),)
+        with self._scratch(4 * len(shown_text) + 1024):
+            painted = [
+                self._paint_text(
+                    shown_text,
+                    (filled, stroked, stroke_paint),
+                    tr_mode=mode,
+                    duplicate=bool(index),
+                )
+                for index, (filled, stroked, mode) in enumerate(passes)
+            ]
+            self._emit(b"\n".join(painted))
+
+    def _emit_rich_decorations(
+        self,
+        decorations: list[tuple[int, bool, float, float, float, float]],
+        span_paints: list[_TextPaint],
+        *,
+        strikethrough: bool,
+        to_canvas: Callable[[float, float], tuple[float, float]],
+    ) -> None:
+        """Emit either underline or strikethrough vector rules for visible spans."""
+        for span_index, is_strike, x0, x1, y, thickness in decorations:
+            if is_strike != strikethrough:
+                continue
+            fill_paint, stroke_paint, tr_mode = span_paints[span_index]
+            if tr_mode == _TR_INVISIBLE:
+                continue
+            dec_paint = fill_paint if fill_paint is not None else cast("Stroke", stroke_paint).paint
+            self.line(to_canvas(x0, y), to_canvas(x1, y), stroke=Stroke(paint=dec_paint, width=thickness))
+
+    def _emit_rich_layout(  # noqa: PLR0913 - keyword-only rich layout outputs from _core.layout_rich_text.
+        self,
+        *,
+        faces: tuple[Font, ...],
+        full_text: str,
+        lines: list[
+            tuple[
+                float,
+                float,
+                float,
+                float,
+                bool,
+                bool,
+                list[tuple[int, int, float, float, float, bool, list[_RichShapedGlyph]]],
+            ]
+        ],
+        decorations: list[tuple[int, bool, float, float, float, float]],
+        links: list[tuple[int, float, float, float, float]],
+        span_paints: list[_TextPaint],
+        link_targets: list[Target],
+        rotation: int,
+        to_canvas: Callable[[float, float], tuple[float, float]],
+    ) -> None:
+        """Emit rich-text lines, per-run paints, underline/strikethrough paths, and queued ``/Link``s."""
+        tables = self._prepare_rich_face_tables(faces, full_text, lines, span_paints)
+        if tables is None:
+            return
+        turn = _TURNS[rotation]
+
+        # 1. Underlines beneath glyphs.
+        self._emit_rich_decorations(decorations, span_paints, strikethrough=False, to_canvas=to_canvas)
+
+        # 2. Text runs in visual order, painted per span.
+        for baseline_y, line_ascent, line_descent, _line_w, _is_rtl, _justified, runs in lines:
+            for span_index, _primary_face, run_size, run_x, run_width, _rtl, glyphs in runs:
+                if not glyphs:
+                    continue
+                self._emit_rich_run(
+                    full_text=full_text,
+                    glyphs=glyphs,
+                    run_size=run_size,
+                    box_bounds=(run_x, run_width, line_ascent, line_descent),
+                    baseline_y=baseline_y,
+                    paint=span_paints[span_index],
+                    turn=turn,
+                    to_canvas=to_canvas,
+                    tables=tables,
+                )
+
+        # 3. Strikethrough rules across glyphs.
+        self._emit_rich_decorations(decorations, span_paints, strikethrough=True, to_canvas=to_canvas)
+
+        # 4. Queue /Link annotations in page display space (committed atomically in _commit).
+        for link_id, lx0, ly0, lx1, ly1 in links:
+            display_corners = [
+                self._to_display(*to_canvas(cx, cy)) for cx, cy in ((lx0, ly0), (lx1, ly0), (lx1, ly1), (lx0, ly1))
+            ]
+            xs = [pt[0] for pt in display_corners]
+            ys = [pt[1] for pt in display_corners]
+            self._links.append((Rect(min(xs), min(ys), max(xs), max(ys)), link_targets[link_id]))
 
     def clip_text(  # noqa: PLR0913 - the text style options.
         self,

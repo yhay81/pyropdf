@@ -556,6 +556,48 @@ def layout_text_fallback(
     *,
     operation: _OperationBudget | None = None,
 ) -> tuple[list[tuple[str, float, bool]], float, float, float, float]: ...
+def layout_rich_text(
+    faces: list[_Font],
+    spans: list[tuple[str, int, list[int], float, bool, bool, int | None]],
+    width: float | None,
+    height: float,
+    base_direction: str,
+    align: str,
+    line_height: float | None = None,
+    max_lines: int | None = None,
+    max_text_size: int | None = 1048576,
+    /,
+    *,
+    check_colour: bool = True,
+    operation: _OperationBudget | None = None,
+) -> tuple[
+    str,
+    list[
+        tuple[
+            float,
+            float,
+            float,
+            float,
+            bool,
+            bool,
+            list[
+                tuple[
+                    int,
+                    int,
+                    float,
+                    float,
+                    float,
+                    bool,
+                    list[tuple[int, int, int, int, int, int, int, int, bool, int, int, float]],
+                ]
+            ],
+        ]
+    ],
+    list[tuple[int, bool, float, float, float, float]],
+    list[tuple[int, float, float, float, float]],
+    float,
+    float,
+]: ...
 def type3_codes(
     document: _Document, fonts: list[int], units_per_em: int, names: list[str], /
 ) -> list[tuple[int, int] | None]: ...
