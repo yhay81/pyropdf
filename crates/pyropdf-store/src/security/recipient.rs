@@ -1,10 +1,7 @@
 //! ISO 32000-2 §7.6.5. The credential provider opens CMS envelopes. The
 //! store selects the crypt filter, derives its key, and applies its rules.
 
-use std::sync::{
-    Arc, OnceLock,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, OnceLock};
 
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
@@ -12,6 +9,7 @@ use sha2::{Digest, Sha256};
 use super::filters::{Filters, IDENTITY, Key, selected};
 use super::{Access, Handler, Method, PasswordEncryption, copy, crypto, integer};
 use crate::budget::{Budget, BudgetVec, LimitCode};
+use crate::sync::atomic::{AtomicBool, Ordering};
 use crate::value::{Array, Dict, Name, PdfString, StringForm, Value};
 use crate::{Error, Password, Result};
 

@@ -22,10 +22,11 @@ pub use dependencies::ReadDependencies;
 
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Weak};
 
 use crate::budget::{Budget, BudgetVec};
+use crate::sync::atomic::{AtomicU64, Ordering};
+use crate::sync::{Mutex, MutexGuard, PoisonError};
 use crate::value::Dict;
 use crate::version::table::Table as SparseTable;
 use crate::version::{ChangeSet, Object, Version};
@@ -304,7 +305,7 @@ impl<K: Eq + Hash + Clone, V> Memo<K, V> {
         self.lock().map.clear();
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Table<K, V>> {
+    fn lock(&self) -> MutexGuard<'_, Table<K, V>> {
         self.entries.lock().unwrap_or_else(PoisonError::into_inner)
     }
 

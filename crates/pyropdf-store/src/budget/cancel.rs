@@ -1,16 +1,23 @@
 //! Cancellation of running operations (DESIGN.md section 9).
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering::Relaxed;
+
+use crate::sync::atomic::AtomicBool;
+use crate::sync::atomic::Ordering::Relaxed;
 
 /// A flag that stops the operations whose budgets hold it.
 ///
 /// Clones share one flag, so another thread can cancel an operation while it
 /// runs. The operation refuses with `cancelled` at its next charge, check, or
 /// poll. Cancelling cannot be undone.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct CancellationToken(Arc<AtomicBool>);
+
+impl Default for CancellationToken {
+    fn default() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+}
 
 impl CancellationToken {
     /// Returns a token that is not cancelled.

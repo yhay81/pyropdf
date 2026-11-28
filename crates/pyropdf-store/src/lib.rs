@@ -20,9 +20,13 @@ pub mod refs;
 pub mod save;
 pub mod security;
 pub mod settle;
+mod sync;
 pub mod tree;
 pub mod value;
 pub mod version;
 pub mod write;
+
+#[cfg(all(test, loom))]
+mod loom_tests;
 
 pub use error::{Error, ErrorKind, LimitExceeded, Password, Result};

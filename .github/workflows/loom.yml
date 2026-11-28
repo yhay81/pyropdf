@@ -1,0 +1,54 @@
+# Loom exhaustive concurrency model checking for pyropdf-store's
+# synchronization primitives and the document lifecycle lock protocol
+# (DESIGN.md sections 4.1, 4.6, 5, and 9, #1249).
+name: Loom
+
+on:
+  pull_request:
+    paths:
+      - "crates/pyropdf-store/**"
+      - "crates/pyropdf-python/src/document.rs"
+      - "crates/pyropdf-python/src/history.rs"
+      - ".github/workflows/loom.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/pyropdf-store/**"
+      - "crates/pyropdf-python/src/document.rs"
+      - "crates/pyropdf-python/src/history.rs"
+      - ".github/workflows/loom.yml"
+  schedule:
+    # Mondays at 05:17 UTC.
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: loom-${{ github.ref }}
+  # A push to a pull request supersedes its earlier run; every run on main finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  loom:
+    name: Loom
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the toolchain of rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: loom
+          cache-bin: false
+      - name: Run Loom concurrency model checks
+        env:
+          RUSTFLAGS: "--cfg loom"
+        run: >-
+          cargo test --locked -p pyropdf-store --lib --release
+          -- loom_tests

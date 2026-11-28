@@ -42,5 +42,9 @@ weezl = "0.1.12"
 # Property tests of the store's invariants (DESIGN.md F9).
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 
+# Exhaustive concurrency model checking under `RUSTFLAGS="--cfg loom"` (#1249).
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7.3"
+
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(loom)'] }
