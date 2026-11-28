@@ -11,6 +11,8 @@ from test_replace_text import HELVETICA, assert_same_box, build_raw_pdf, stream
 
 import pyropdf
 from pyropdf import Font, Name, Operation, Operations, String
+from pyropdf._fonts import _MAX_MAPPED_UNITS, _NO_TEXT
+from pyropdf._text_edit import _extend_tounicode, _number_tree_get
 
 ROOT = Path(__file__).resolve().parent.parent
 JP_FONT_PATH = ROOT / "crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf"
@@ -638,3 +640,493 @@ def test_replace_text_validates_fallback_argument_and_missing_fallback_glyph() -
     with pytest.raises(ValueError, match="fallback font"):
         page.replace_text("PDF", "🦀", fallback=_hebrew_ttf())
     assert doc.to_bytes() == snap
+
+
+# ── Hardening regressions (#1234) ──────────────────────────────────────────
+
+
+BITMAP_ONLY_TTF_PATH = ROOT / "crates/pyropdf-engine/src/fonts/testdata/colour-bitmaps-sbix-only.ttf"
+
+
+def test_non_identity_cid_keyed_cff_refuses_extension_and_accepts_fallback() -> None:
+    """An un-subsetted CID-keyed OpenType CFF with non-identity CFF charset must not mis-encode raw GIDs."""
+    raw_otf = JP_FONT_PATH.read_bytes()
+    doc = pyropdf.Document()
+    page = doc.pages.new((300, 120))
+    # Embed the raw (non-identity CFF charset) OTF directly as CIDFontType0 / OpenType.
+    prog_xref = doc.objects.add_stream(raw_otf, {"Subtype": Name("OpenType")})
+    fd_xref = doc.objects.add(
+        {
+            "Type": Name("FontDescriptor"),
+            "FontName": Name("NotoSansJP-Regular"),
+            "Flags": 4,
+            "FontBBox": [0, -200, 1000, 900],
+            "ItalicAngle": 0,
+            "Ascent": 880,
+            "Descent": -120,
+            "CapHeight": 733,
+            "StemV": 80,
+            "FontFile3": doc.objects[prog_xref],
+        }
+    )
+    cid_xref = doc.objects.add(
+        {
+            "Type": Name("Font"),
+            "Subtype": Name("CIDFontType0"),
+            "BaseFont": Name("NotoSansJP-Regular"),
+            "CIDSystemInfo": {"Registry": "Adobe", "Ordering": "Japan1", "Supplement": 6},
+            "FontDescriptor": doc.objects[fd_xref],
+            "DW": 1000,
+        }
+    )
+    # Map CID 1 to 'A' in ToUnicode only; '日' is absent and must NOT be extended with raw GID.
+    tu_bytes = (
+        b"/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
+        b"1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n"
+        b"1 beginbfchar\n<0001> <0041>\nendbfchar\nendcmap\nend\nend\n"
+    )
+    tu_xref = doc.objects.add_stream(tu_bytes, {})
+    font_xref = doc.objects.add(
+        {
+            "Type": Name("Font"),
+            "Subtype": Name("Type0"),
+            "BaseFont": Name("NotoSansJP-Regular"),
+            "Encoding": Name("Identity-H"),
+            "DescendantFonts": [doc.objects[cid_xref]],
+            "ToUnicode": doc.objects[tu_xref],
+        }
+    )
+    page.obj["Resources"] = {"Font": {"F1": doc.objects[font_xref]}}
+    page.operations = Operations(
+        [
+            Operation("BT"),
+            Operation("Tf", (Name("F1"), 18)),
+            Operation("Td", (20, 60)),
+            Operation("Tj", (String(b"\x00\x01"),)),
+            Operation("ET"),
+        ]
+    )
+    snap = doc.to_bytes()
+    with pytest.raises(ValueError, match="no code for"):
+        page.replace_text("A", "日")
+    assert doc.to_bytes() == snap
+
+    assert page.replace_text("A", "日", fallback=_jp_font()) == 1
+    assert "日" in page.text()
+
+
+def test_fallback_restores_inherited_and_shadowed_form_font() -> None:
+    """Fallback inside a Form XObject that inherits or shadows /F1 must restore the original font."""
+    jp = _jp_font()
+    courier = "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>"
+    # Form X1 shadows /F1 with Courier, but draws (Hello PDF tail) BEFORE any Tf (so it inherits Helvetica).
+    # Form X2 has an empty /Font dict and also inherits Helvetica from the page.
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 360 160] "
+                "/Resources << /Font << /F1 3 0 R >> /XObject << /X1 6 0 R /X2 7 0 R >> >> >>",
+                3: HELVETICA,
+                4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+                5: stream("BT /F1 16 Tf 20 100 Td ET q 1 0 0 1 20 100 cm /X1 Do Q q 1 0 0 1 20 40 cm /X2 Do Q"),
+                6: stream(
+                    "BT (Hello PDF tail) Tj ET",
+                    "/Type /XObject /Subtype /Form /BBox [0 -10 300 40] /Resources << /Font << /F1 8 0 R >> >> ",
+                ),
+                7: stream(
+                    "BT (More PDF end) Tj ET",
+                    "/Type /XObject /Subtype /Form /BBox [0 -10 300 40] /Resources << /Font << >> >> ",
+                ),
+                8: courier,
+            }
+        )
+    )
+    page = doc.pages[0]
+    assert page.replace_text("PDF", "日本語", fallback=jp) == 2
+    text = page.text()
+    assert "Hello 日本語 tail" in text
+    assert "More 日本語 end" in text
+
+    # Verify both copied Forms registered an F_orig_* entry pointing to Helvetica (NOT Courier /F1).
+    xobjects = page.obj["Resources"]["XObject"]
+    for form_name in ("X1_1", "X2_1"):
+        form = xobjects[form_name]
+        fonts = form["Resources"]["Font"]
+        orig_names = [k for k in fonts if str(k).startswith("F_orig_")]
+        assert orig_names, f"{form_name} should register F_orig_* for inherited font"
+        assert fonts[orig_names[0]]["BaseFont"] == Name("Helvetica")
+        form_ops = [op for op in Operations.parse(form.read()) if isinstance(op, Operation) and op.operator == "Tf"]
+        assert any(op.operands[0] == Name(orig_names[0]) for op in form_ops)
+
+    # Verify characters after the fallback ("tail", "end") are drawn with Helvetica (not monospaced Courier).
+    reopened = pyropdf.open(doc.to_bytes())
+    tail_spans = [
+        span
+        for block in reopened.pages[0].layout().blocks
+        for line in block.lines
+        for span in line.spans
+        if "tail" in span.text or "end" in span.text
+    ]
+    assert tail_spans
+    assert all(not span.is_monospaced for span in tail_spans)
+
+
+def test_many_occurrences_large_type0_respects_decompression_budget() -> None:
+    """Replacing many occurrences in a compressed un-subsetted Type 0 font decompresses the program only once."""
+    jp = _jp_font()
+    doc = pyropdf.Document()
+    page = doc.pages.new((300, 400))
+    with page.draw() as canvas:
+        for i in range(40):
+            canvas.text("日本語", (20, 20 + i * 8), font=jp, size=8)
+    # Save with recompression (streams are FlateDecode-compressed) and reopen with a tight budget.
+    # 40 occurrences * program size would blow past 128 KiB if decompressed per match.
+    saved = doc.to_bytes(compress=True)
+    reopened = pyropdf.open(saved, limits=pyropdf.DocumentLimits(max_total_decompressed_size=128 * 1024))
+    assert reopened.pages[0].replace_text("日本", "語日") == 40
+    assert reopened.pages[0].text().count("語日語") == 40
+
+    # Also verify live un-subsetted document with tight decompression budget.
+    live_doc = pyropdf.Document(limits=pyropdf.DocumentLimits(max_total_decompressed_size=128 * 1024))
+    live_page = live_doc.pages.new((300, 400))
+    with live_page.draw() as canvas:
+        for i in range(40):
+            canvas.text("日本語", (20, 20 + i * 8), font=jp, size=8)
+    assert live_page.replace_text("日本", "かな") == 40
+    assert live_page.text().count("かな語") == 40
+
+
+def test_extend_tounicode_whitespace_hex_no_clobber_and_compact_w() -> None:
+    """Extending an editable Type 0 font preserves hex whitespace, shared-GID mappings, and compact /W ranges."""
+    jp = _jp_font()
+    doc = pyropdf.Document()
+    page = doc.pages.new((320, 120))
+    with page.draw() as canvas:
+        canvas.text("日本語", (20, 60), font=jp, size=18)
+
+    # Locate the embedded Type 0 font written by canvas.
+    fonts_dict = page.obj["Resources"]["Font"]
+    t0 = next(iter(fonts_dict.values()))
+    desc = t0["DescendantFonts"][0]
+    tu = t0["ToUnicode"]
+
+    # Rewrite /ToUnicode with whitespace inside hex strings and a comment, plus a compact /W range.
+    orig_tu = tu.read()
+    spaced_tu = orig_tu.replace(b"beginbfchar\n", b"beginbfchar\n% comment\n").replace(b"<00", b"<00 ")
+    tu.write(spaced_tu)
+    existing_w = list(desc["W"])
+    desc["W"] = [10000, 50000, 500, *existing_w]
+
+    assert page.replace_text("日本語", "かな") == 1
+    assert "かな" in page.text()
+    # Compact range [10000, 50000, 500] must be preserved verbatim, not expanded into 40,001 entries.
+    updated_w = list(desc["W"])
+    assert updated_w[:3] == [10000, 50000, 500]
+    assert len(updated_w) < 100
+
+    # Unit check on _extend_tounicode: never overwrite non-_NO_TEXT, upgrade _NO_TEXT, enforce _MAX_MAPPED_UNITS.
+    tu_stream = doc.objects[doc.objects.add_stream(b"", {})]
+    existing_map = {1: "A", 2: _NO_TEXT}
+    too_long = "X" * (_MAX_MAPPED_UNITS + 1)
+    _extend_tounicode(
+        tu_stream,
+        existing_map,
+        {
+            1: (500.0, None, "B"),  # must NOT clobber "A"
+            2: (500.0, None, "C"),  # MUST upgrade _NO_TEXT -> "C"
+            3: (500.0, None, too_long),  # MUST skip > _MAX_MAPPED_UNITS
+            4: (500.0, None, "D"),  # MUST add "D"
+        },
+    )
+    written = tu_stream.read()
+    assert b"<0001> <0041>" in written
+    assert b"<0001> <0042>" not in written
+    assert b"<0002> <0043>" in written
+    assert b"<0003>" not in written
+    assert b"<0004> <0044>" in written
+
+
+def test_rtl_fallback_from_unsubsetted_latin_preserves_logical_order() -> None:
+    """RTL replacement falling back from an un-subsetted Latin font must not double-reverse."""
+    ttf = _latin_ttf()
+    hebrew = _hebrew_ttf()
+
+    # Pure RTL line: visual glyphs must be drawn right-to-left (םולש left-to-right) so
+    # both visual rendering and logical page.text() round-trip to "שלום".
+    doc = pyropdf.Document()
+    page = doc.pages.new((320, 120))
+    with page.draw() as canvas:
+        canvas.text("AVA", (20, 60), font=ttf, size=20)
+    assert page.replace_text("AVA", "שלום", fallback=hebrew) == 1
+    assert page.text().strip() == "שלום"
+    visual_chars = sorted(_char_boxes(page), key=lambda item: item[1].x0)
+    assert [ch for ch, _ in visual_chars] == ["ם", "ו", "ל", "ש"]
+    reopened = pyropdf.open(doc.to_bytes())
+    assert reopened.pages[0].text().strip() == "שלום"
+
+    # Mixed line with trailing Latin text: Hebrew glyphs stay in visual RTL order and tail stays aligned.
+    doc_mix = pyropdf.Document()
+    page_mix = doc_mix.pages.new((320, 120))
+    with page_mix.draw() as canvas:
+        canvas.text("AVA VA", (20, 60), font=ttf, size=20)
+    before_tail = _char_boxes(page_mix)[-1][1]
+    assert page_mix.replace_text("AVA", "שלום", fallback=hebrew) == 1
+    assert_same_box(before_tail, _char_boxes(page_mix)[-1][1])
+    mix_visual = sorted(_char_boxes(page_mix), key=lambda item: item[1].x0)
+    assert [ch for ch, _ in mix_visual[:4]] == ["ם", "ו", "ל", "ש"]
+
+
+def test_actual_text_named_properties_with_array_stream_and_leading_quote_ops() -> None:
+    """/ActualText named /Properties with Array/Stream and leading quote ops must preserve semantics."""
+    # 1. Named /Properties containing Array + nested Dict.
+    doc_arr = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 360 120] "
+                "/Resources << /Font << /F1 3 0 R >> /Properties << /P1 6 0 R >> >> >>",
+                3: HELVETICA,
+                4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+                5: stream("BT /F1 18 Tf 20 60 Td /Span /P1 BDC (Hello PDF) Tj EMC ET"),
+                6: "<< /MCID 4 /ActualText (Hello PDF) /BBox [0 0 100 20] /Extra << /Nums [1 2] >> >>",
+            }
+        )
+    )
+    page_arr = doc_arr.pages[0]
+    assert page_arr.replace_text("PDF", "World") == 1
+    assert "Hello World" in page_arr.text()
+    bdc = next(op for op in page_arr.operations if isinstance(op, Operation) and op.operator == "BDC")
+    assert bdc.operands[1]["MCID"] == 4
+    assert bdc.operands[1]["BBox"] == (0, 0, 100, 20)
+    assert bdc.operands[1]["Extra"]["Nums"] == (1, 2)
+
+    # 2. Named /Properties containing a Stream -> must allocate a new /Properties entry instead of inlining.
+    doc_stm = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 360 120] "
+                "/Resources << /Font << /F1 3 0 R >> /Properties << /P1 6 0 R >> >> >>",
+                3: HELVETICA,
+                4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+                5: stream("BT /F1 18 Tf 20 60 Td /Span /P1 BDC (Hello PDF) Tj EMC ET"),
+                6: "<< /ActualText (Hello PDF) /Meta 7 0 R >>",
+                7: stream("metadata"),
+            }
+        )
+    )
+    page_stm = doc_stm.pages[0]
+    assert page_stm.replace_text("PDF", "World") == 1
+    assert "Hello World" in page_stm.text()
+    bdc_stm = next(op for op in page_stm.operations if isinstance(op, Operation) and op.operator == "BDC")
+    assert isinstance(bdc_stm.operands[1], Name)
+    assert bdc_stm.operands[1] == Name("P1_1")
+
+    # 3. Leading `'` and `"` at index 0 inside `/ActualText` span preserve T* / Tw / Tc.
+    doc_q = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 360 160] "
+                "/Resources << /Font << /F1 3 0 R >> >> >>",
+                3: HELVETICA,
+                4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+                5: stream(
+                    "BT /F1 16 Tf 20 TL 20 120 Td (Top) Tj "
+                    "/Span << /ActualText (Line1) >> BDC (Line1) ' EMC "
+                    '/Span << /ActualText (Line2) >> BDC 1.5 0.5 (Line2) " EMC ET'
+                ),
+            }
+        )
+    )
+    page_q = doc_q.pages[0]
+    assert page_q.replace_text("Line1", "Row1") == 1
+    assert page_q.replace_text("Line2", "Row2") == 1
+    ops = [op.operator for op in page_q.operations if isinstance(op, Operation)]
+    assert ops.count("T*") == 2
+    assert "Tw" in ops
+    assert "Tc" in ops
+    assert "Row1" in page_q.text()
+    assert "Row2" in page_q.text()
+
+
+def _make_tagged_form(doc: pyropdf.Document) -> pyropdf.Stream:
+    form_xref = doc.objects.add_stream(
+        b"/P << /MCID 0 >> BDC BT /F1 16 Tf 0 0 Td (Hello PDF) Tj ET EMC",
+        {
+            "Type": Name("XObject"),
+            "Subtype": Name("Form"),
+            "BBox": [0, -10, 260, 40],
+            "Resources": {
+                "Font": {
+                    "F1": {
+                        "Type": Name("Font"),
+                        "Subtype": Name("Type1"),
+                        "BaseFont": Name("Helvetica"),
+                        "Encoding": Name("WinAnsiEncoding"),
+                    }
+                }
+            },
+            "StructParents": 0,
+        },
+    )
+    return doc.objects[form_xref]
+
+
+def _attach_structure_for_form(
+    doc: pyropdf.Document, form_ref: pyropdf.Stream, pages: list[pyropdf.Page]
+) -> pyropdf.Dictionary:
+    elem_xref = doc.objects.add(
+        {
+            "Type": Name("StructElem"),
+            "S": Name("P"),
+            "K": [{"Type": Name("MCR"), "Pg": pg.obj, "Stm": form_ref, "MCID": 0} for pg in pages],
+        }
+    )
+    elem_ref = doc.objects[elem_xref]
+    pt_xref = doc.objects.add({"Nums": [0, [elem_ref]]})
+    sr_xref = doc.objects.add(
+        {
+            "Type": Name("StructTreeRoot"),
+            "K": [elem_ref],
+            "ParentTree": doc.objects[pt_xref],
+            "ParentTreeNextKey": 1,
+        }
+    )
+    elem_ref["P"] = doc.objects[sr_xref]
+    doc.catalog["StructTreeRoot"] = doc.objects[sr_xref]
+    doc.catalog["MarkInfo"] = {"Marked": True}
+    return elem_ref
+
+
+def test_parent_tree_dag_bound_and_shared_tagged_form() -> None:
+    """/ParentTree DAGs stay bounded, and shared tagged Forms allocate distinct /StructParents."""
+    # 1. 32-level binary DAG in /ParentTree without /Limits (would do 2^32 visits if unbounded).
+    dag_doc = pyropdf.Document()
+    leaf_xref = dag_doc.objects.add({"Nums": [999, {"S": Name("P")}]})
+    cur = leaf_xref
+    for _ in range(31):
+        child = dag_doc.objects[cur]
+        cur = dag_doc.objects.add({"Kids": [child, child]})
+    root_node = dag_doc.objects[cur]
+    assert _number_tree_get(root_node, 12345) is None
+    assert _number_tree_get(root_node, 999) is not None
+
+    # 2. Shared tagged Form XObject across Page 0 and Page 1: editing Page 0 allocates a fresh /StructParents.
+    doc = pyropdf.Document()
+    p0 = doc.pages.new((300, 120))
+    p1 = doc.pages.new((300, 120))
+    form_ref = _make_tagged_form(doc)
+    elem_ref = _attach_structure_for_form(doc, form_ref, [p0, p1])
+    for pg in (p0, p1):
+        pg.obj["Resources"] = {"XObject": {"X1": form_ref}}
+        pg.operations = Operations(
+            [
+                Operation("q"),
+                Operation("cm", (1, 0, 0, 1, 20, 60)),
+                Operation("Do", (Name("X1"),)),
+                Operation("Q"),
+            ]
+        )
+
+    assert p0.replace_text("PDF", "World") == 1
+    p0_form = p0.obj["Resources"]["XObject"]["X1_1"]
+    p1_form = p1.obj["Resources"]["XObject"]["X1"]
+    assert p0_form.xref != p1_form.xref
+    assert p0_form["StructParents"] != p1_form["StructParents"]
+    by_page = {m["Pg"].xref: m["Stm"].xref for m in elem_ref["K"]}
+    assert by_page[p0.obj.xref] == p0_form.xref
+    assert by_page[p1.obj.xref] == p1_form.xref
+    assert pyropdf.open(doc.to_bytes()).check().defects == ()
+
+
+def test_repeated_tagged_form_full_and_partial_edits() -> None:
+    """Repeated tagged Forms drawn twice on one page keep distinct /StructParents for full and count=1 edits."""
+    for count in (None, 1):
+        doc_rep = pyropdf.Document()
+        pr = doc_rep.pages.new((300, 160))
+        f_ref = _make_tagged_form(doc_rep)
+        e_ref = _attach_structure_for_form(doc_rep, f_ref, [pr])
+        pr.obj["Resources"] = {"XObject": {"X1": f_ref}}
+        pr.operations = Operations(
+            [
+                Operation("q"),
+                Operation("cm", (1, 0, 0, 1, 20, 100)),
+                Operation("Do", (Name("X1"),)),
+                Operation("Q"),
+                Operation("q"),
+                Operation("cm", (1, 0, 0, 1, 20, 40)),
+                Operation("Do", (Name("X1"),)),
+                Operation("Q"),
+            ]
+        )
+
+        expected_replaced = 2 if count is None else 1
+        assert pr.replace_text("PDF", "World", count=count) == expected_replaced
+        xobjects = pr.obj["Resources"]["XObject"]
+        if count is None:
+            x1_1, x1_2 = xobjects["X1_1"], xobjects["X1_2"]
+            assert x1_1["StructParents"] != x1_2["StructParents"]
+            stm_xrefs = {m["Stm"].xref for m in e_ref["K"]}
+            assert stm_xrefs == {x1_1.xref, x1_2.xref}
+            assert f_ref.xref not in stm_xrefs
+        else:
+            x1_1 = xobjects["X1_1"]
+            assert x1_1["StructParents"] != f_ref["StructParents"]
+            stm_xrefs = {m["Stm"].xref for m in e_ref["K"]}
+            assert stm_xrefs == {f_ref.xref, x1_1.xref}
+        assert pyropdf.open(doc_rep.to_bytes()).check().defects == ()
+
+
+def test_fallback_rejects_control_chars_and_bitmap_only_fonts() -> None:
+    """Control chars (gid 0) and bitmap-only fallback fonts must raise ValueError cleanly without mutating the doc."""
+    doc = pyropdf.Document()
+    page = doc.pages.new((240, 100))
+    page.obj["Resources"] = {
+        "Font": {"F1": {"Type": Name("Font"), "Subtype": Name("Type1"), "BaseFont": Name("Helvetica")}}
+    }
+    page.operations = Operations(
+        [
+            Operation("BT"),
+            Operation("Tf", (Name("F1"), 14)),
+            Operation("Td", (20, 50)),
+            Operation("Tj", (String(b"Hello PDF"),)),
+            Operation("ET"),
+        ]
+    )
+    snap = doc.to_bytes()
+
+    # Control characters produce gid == 0 in harfrust and must be refused instead of emitting .notdef.
+    with pytest.raises(ValueError, match="fallback font"):
+        page.replace_text("PDF", "\x01", fallback=_jp_font())
+    assert doc.to_bytes() == snap
+
+    with pytest.raises(ValueError, match="fallback font"):
+        page.replace_text("PDF", "\n", fallback=_jp_font())
+    assert doc.to_bytes() == snap
+
+    # Bitmap-only colour font has no outlines and must raise ValueError cleanly.
+    bitmap_font = Font.from_file(BITMAP_ONLY_TTF_PATH)
+    with pytest.raises(ValueError, match="outlines"):
+        page.replace_text("PDF", "😀", fallback=bitmap_font)
+    assert doc.to_bytes() == snap
+
+
+def test_malformed_double_quote_operator_arity() -> None:
+    """A malformed `"` operator with fewer than 3 operands must not raise IndexError."""
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 240 120] "
+                "/Resources << /Font << /F1 3 0 R >> >> >>",
+                3: HELVETICA,
+                4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+                5: stream('BT /F1 14 Tf 16 TL 20 80 Td (Hello PDF) " ET'),
+            }
+        )
+    )
+    page = doc.pages[0]
+    assert page.replace_text("PDF", "World") == 1
+    assert "Hello World" in page.text()

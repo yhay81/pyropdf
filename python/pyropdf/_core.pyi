@@ -583,6 +583,7 @@ def type0_encode(
         bool,
         list[tuple[bool, bytes, str, float, float]],
         list[tuple[int, float, tuple[float, float, float] | None, str]],
+        list[tuple[int, str]],
     ]
     | None
 ): ...
