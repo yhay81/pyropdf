@@ -31,12 +31,17 @@
 mod tests;
 
 use std::fmt;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use crate::display::Display;
 use hayro::hayro_syntax::Pdf;
+use hayro::hayro_syntax::object::{
+    Dict as SyntaxDict, FromBytes, MaybeRef, Object as SyntaxObject,
+};
 use hayro::hayro_syntax::page::Page;
+use hayro::hayro_syntax::reader::{Reader as SyntaxReader, ReaderContext, ReaderExt};
 use pyropdf_store::Password;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::index::Location;
@@ -636,27 +641,65 @@ fn base_row(
             // stream that does not decode, is absent to the store.
             match file.object_stream(stream, budget) {
                 Ok(Some(objects)) if objects.mismatched().binary_search(&number).is_err() => {
-                    if file.is_repaired() {
+                    if file.is_repaired() && objects.requires_materialization() {
                         let reference = Reference::new(number, generation);
-                        if let Some(bytes) = base.object(reference, budget)? {
-                            return object(
-                                out,
-                                reference,
-                                Body::Serialized(&bytes),
-                                handler,
-                                version,
-                            );
+                        let Some(bytes) = base.object(reference, budget)? else {
+                            return Ok(row(0, 0, 0));
+                        };
+                        let Some(sliced) = member_extent(&bytes) else {
+                            return Ok(row(0, 0, 0));
+                        };
+                        if handler.is_some() {
+                            match Value::parse(&sliced, budget) {
+                                Ok(value) => {
+                                    return object(
+                                        out,
+                                        reference,
+                                        Body::Value(&value),
+                                        handler,
+                                        version,
+                                    );
+                                }
+                                Err(error) if error.limit().is_some() => return Err(error.into()),
+                                Err(_) => return Ok(row(0, 0, 0)),
+                            }
                         }
-                        row(0, 0, 0)
-                    } else {
-                        row(2, u64::from(stream), index)
+                        return object(out, reference, Body::Serialized(&sliced), None, version);
                     }
+                    row(2, u64::from(stream), index)
                 }
                 Err(error) if error.limit().is_some() => return Err(error.into()),
                 _ => row(0, 0, 0),
             }
         }
     })
+}
+
+/// Slices the decoded suffix of an object-stream member down to the single PDF
+/// value it begins with, matching `pyropdf_store::save::raw`'s extent rule for
+/// non-stream values. Returns `None` if the member does not begin with a
+/// complete value.
+fn member_extent(bytes: &Bytes) -> Option<Bytes> {
+    panic::catch_unwind(AssertUnwindSafe(|| {
+        let mut reader = SyntaxReader::new(bytes);
+        reader.skip_white_spaces_and_comments();
+        let start = reader.offset();
+        if reader.peek_bytes(2) == Some(b"<<") {
+            let dict = SyntaxDict::from_bytes(&bytes[start..])?;
+            if !dict.data().ends_with(b">>") {
+                return None;
+            }
+            return bytes.slice(start..start + dict.data().len());
+        }
+        reader.read_with_context::<MaybeRef<SyntaxObject<'_>>>(&ReaderContext::dummy())?;
+        let end = bytes[..reader.offset()]
+            .iter()
+            .rposition(|byte| !matches!(byte, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' '))
+            .map_or(0, |at| at + 1);
+        (end > start).then(|| bytes.slice(start..end)).flatten()
+    }))
+    .ok()
+    .flatten()
 }
 
 fn header(out: &mut BudgetVec<'_, u8>, number: u32, generation: u16) -> Result<()> {

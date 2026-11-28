@@ -217,3 +217,74 @@ impl Iterator for Tokens<'_> {
         }
     }
 }
+
+/// Tracks literal-string parenthesis nesting (`(...)` with `\` escapes) and
+/// PDF comments (`%...\r|\n` outside strings) across byte ranges during repair
+/// recovery.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct StringState {
+    pub(super) depth: usize,
+    escaped: bool,
+    in_comment: bool,
+    /// Whether a standalone `endobj` token appeared while `depth > 0`.
+    pub(super) saw_endobj_in_string: bool,
+}
+
+impl StringState {
+    /// Advances the state across `bytes[start..end]`, optionally stopping right
+    /// after the closing `)` that returns `depth` to `0`.
+    pub(super) fn feed(
+        &mut self,
+        bytes: &[u8],
+        start: usize,
+        end: usize,
+        stop_at_close: bool,
+    ) -> usize {
+        let limit = end.min(bytes.len());
+        let mut pos = start;
+        while pos < limit {
+            let byte = bytes[pos];
+            if self.in_comment {
+                if byte == b'\n' || byte == b'\r' {
+                    self.in_comment = false;
+                }
+                pos += 1;
+            } else if self.depth > 0 {
+                if self.escaped {
+                    self.escaped = false;
+                    pos += 1;
+                } else if byte == b'\\' {
+                    self.escaped = true;
+                    pos += 1;
+                } else if byte == b'(' {
+                    self.depth += 1;
+                    pos += 1;
+                } else if byte == b')' {
+                    self.depth -= 1;
+                    pos += 1;
+                    if self.depth == 0 && stop_at_close {
+                        return pos;
+                    }
+                } else {
+                    if byte == b'e'
+                        && (pos == 0 || !is_regular(bytes[pos - 1]))
+                        && keyword(bytes, pos, b"endobj").is_some()
+                    {
+                        self.saw_endobj_in_string = true;
+                    }
+                    pos += 1;
+                }
+            } else if byte == b'%' {
+                self.in_comment = true;
+                pos += 1;
+            } else if byte == b'(' {
+                self.depth = 1;
+                self.saw_endobj_in_string = false;
+                pos += 1;
+            } else {
+                pos += 1;
+            }
+        }
+        pos
+    }
+}
