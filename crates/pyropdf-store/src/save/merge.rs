@@ -5,6 +5,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 use std::sync::Arc;
 
+use super::recode::{StreamFilter, StreamPolicy};
 use super::{Result, Row};
 use crate::ErrorKind;
 use crate::budget::{Budget, BudgetVec};
@@ -101,7 +102,12 @@ pub(super) struct Plan<'b> {
 /// page, an annotation, a field, a structure element, or a layer never
 /// merges, though references to it still count when its referrers are
 /// compared. An object that does not parse never merges either.
-pub(super) fn plan<'b>(version: &Version, rows: &[Row], budget: &'b Budget) -> Result<Plan<'b>> {
+pub(super) fn plan<'b>(
+    version: &Version,
+    rows: &[Row],
+    policy: &StreamPolicy<'_>,
+    budget: &'b Budget,
+) -> Result<Plan<'b>> {
     let mut numbers = BudgetVec::new(budget);
     let mut generations = BudgetVec::new(budget);
     let mut values = BudgetVec::new(budget);
@@ -160,7 +166,8 @@ pub(super) fn plan<'b>(version: &Version, rows: &[Row], budget: &'b Budget) -> R
             continue;
         };
         let node = group[0];
-        let hash = hash(value, &node_of, &class_of, &mut walk)?;
+        let filter_override = stream_filter_override(value, numbers[node], policy);
+        let hash = hash(value, filter_override, &node_of, &class_of, &mut walk)?;
         // The slot comes from the low bits of the hash.
         #[expect(clippy::cast_possible_truncation, reason = "the table masks the hash")]
         let mut slot = hash as usize & (size - 1);
@@ -174,10 +181,14 @@ pub(super) fn plan<'b>(version: &Version, rows: &[Row], budget: &'b Budget) -> R
                 break class;
             }
             if hashes[class] == hash {
-                let other = values[first[class]]
+                let other_node = first[class];
+                let other = values[other_node]
                     .as_deref()
                     .expect("a merging class has a value");
-                if equal(value, other, &node_of, &class_of, &mut pairs)? {
+                let other_override = stream_filter_override(other, numbers[other_node], policy);
+                if filter_override == other_override
+                    && equal(value, other, &node_of, &class_of, &mut pairs)?
+                {
                     break class;
                 }
             }
@@ -391,15 +402,41 @@ impl<'b> Graph<'b> {
     }
 }
 
+/// Returns the explicit stream-filter override for `number` when `value` is a
+/// stream, so identical streams with different overrides never merge.
+fn stream_filter_override(
+    value: &Value,
+    number: u32,
+    policy: &StreamPolicy<'_>,
+) -> Option<StreamFilter> {
+    matches!(value, Value::Stream(_))
+        .then(|| policy.override_for(number))
+        .flatten()
+}
+
 /// Hashes `value` with each reference replaced by the class of its node, or
-/// by its number and generation when it names no node.
+/// by its number and generation when it names no node, and mixes in any
+/// explicit stream-filter override.
 fn hash<'v>(
     value: &'v Value,
+    filter_override: Option<StreamFilter>,
     node: &dyn Fn(&Reference) -> Option<usize>,
     class_of: &[usize],
     walk: &mut BudgetVec<'_, &'v Value>,
 ) -> Result<u64> {
     let mut hasher = DefaultHasher::new();
+    match filter_override {
+        None => hasher.write_u8(0),
+        Some(StreamFilter::Keep) => hasher.write_u8(1),
+        Some(StreamFilter::None) => hasher.write_u8(2),
+        Some(StreamFilter::Flate(level)) => {
+            hasher.write_u8(3);
+            hasher.write_u8(level);
+        }
+        Some(StreamFilter::Ascii85) => hasher.write_u8(4),
+        Some(StreamFilter::AsciiHex) => hasher.write_u8(5),
+        Some(StreamFilter::RunLength) => hasher.write_u8(6),
+    }
     walk.clear();
     walk.try_push(value)?;
     while let Some(value) = walk.pop() {

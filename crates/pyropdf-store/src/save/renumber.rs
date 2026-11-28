@@ -7,7 +7,8 @@ use super::recode::StreamPolicy;
 use super::{Format, Result, Row, raw, recode};
 use crate::Error as StoreError;
 use crate::budget::{Budget, BudgetVec};
-use crate::value::{Bytes, Reference, Value};
+use crate::security::Handler;
+use crate::value::{Reference, Value};
 use crate::version::{Slot, Version};
 
 /// The references of a save that renumbers or merges objects: the
@@ -214,20 +215,26 @@ impl<'a> Renumbering<'a> {
         Ok(value)
     }
 
-    /// Returns the plain bytes of the object `reference` of `version` with
+    /// Returns the serialized bytes of the object `reference` of `version` with
     /// its references renumbered, its stream recoded as `policy` and `format`
-    /// ask, and formatted per `format`. The value is read from the object's
-    /// bytes, so that it grows through `budget`.
-    pub(super) fn bytes(
+    /// ask, encrypted when `encrypt` is given, and formatted once per `format`.
+    /// Returned in a [`BudgetVec`] so per-object serialization memory releases
+    /// on drop.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "internal save helper passing renumbering, policy, format, encryption, and budget"
+    )]
+    pub(super) fn bytes<'b>(
         &self,
         version: &Version,
         reference: Reference,
         policy: &StreamPolicy<'_>,
         format: Format,
         clear: bool,
-        budget: &Budget,
-    ) -> Result<Bytes> {
-        self.read(version, reference, policy, format, clear, budget)
+        encrypt: Option<(&Handler, Reference)>,
+        budget: &'b Budget,
+    ) -> Result<BudgetVec<'b, u8>> {
+        self.read(version, reference, policy, format, clear, encrypt, budget)
             .map_err(|error| {
                 error.context(format!(
                     "saving object {} {}",
@@ -237,15 +244,20 @@ impl<'a> Renumbering<'a> {
             })
     }
 
-    fn read(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "internal save helper passing renumbering, policy, format, encryption, and budget"
+    )]
+    fn read<'b>(
         &self,
         version: &Version,
         reference: Reference,
         policy: &StreamPolicy<'_>,
         format: Format,
         clear: bool,
-        budget: &Budget,
-    ) -> Result<Bytes> {
+        encrypt: Option<(&Handler, Reference)>,
+        budget: &'b Budget,
+    ) -> Result<BudgetVec<'b, u8>> {
         let base = version.base();
         let source = match version.slot(reference.number()) {
             Some(Slot::Written(object)) => object.bytes().clone(),
@@ -264,27 +276,14 @@ impl<'a> Renumbering<'a> {
             version.check_stream_filters(&value, budget)?;
         }
         self.rewrite(&mut value, budget)?;
-        let mut plain = BudgetVec::new(budget);
-        format.write_value(&mut plain, &value)?;
-        if (!policy.is_keep(reference.number()) || format.ascii)
-            && let Some(recoded) = recode::apply(
-                &value,
-                reference.number(),
-                policy,
-                format.ascii,
-                &|r, b| self.lookup(version, r, b),
-                budget,
-            )?
-        {
-            let mut bytes = BudgetVec::new(budget);
-            format.write_value(&mut bytes, &recoded)?;
-            // `compress=True` replaces the data only where it is shorter
-            // (unless `ascii=True` required ASCII85 wrapping).
-            let must_keep = !policy.requires_shorter(reference.number()) || format.ascii;
-            if must_keep || bytes.len() < plain.len() {
-                plain = bytes;
-            }
-        }
-        Ok(Bytes::new(plain.into_vec()))
+        recode::write_formatted(
+            &value,
+            reference.number(),
+            policy,
+            format,
+            encrypt.map(|(handler, target)| (handler, reference, target)),
+            &|r, b| self.lookup(version, r, b),
+            budget,
+        )
     }
 }

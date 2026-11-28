@@ -1115,3 +1115,363 @@ def test_new_full_save_options_validation_and_refusals() -> None:
         doc.to_bytes(stream_filter={1: "DCTDecode"})  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError, match="values"):
         doc.to_bytes(stream_filter={1: 42})  # ty: ignore[invalid-argument-type]
+
+
+def _load_recipient_credential(label: str) -> pyropdf.RecipientCredential:
+    from cryptography import x509  # noqa: PLC0415
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa  # noqa: PLC0415
+
+    recipients_dir = ENCRYPTED / "recipients"
+    key = serialization.load_der_private_key((recipients_dir / f"recipient-{label}.key").read_bytes(), None)
+    assert isinstance(key, (rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey))
+    cert = x509.load_der_x509_certificate((recipients_dir / f"recipient-{label}.cer").read_bytes())
+    return pyropdf.RecipientCredential(certificate=cert, private_key=key)
+
+
+def test_pretty_save_with_encryption_preserves_multiline_formatting() -> None:
+    doc = pyropdf.open(build_pdf(["Encrypted Pretty"]))
+    doc.catalog["SecretNote"] = "hidden-pretty-secret"
+
+    # Password Encryption (plain, renumber, object_streams).
+    pwd_enc = Encryption(user_password="reader", owner_password="owner")
+    for kwargs in (
+        {"pretty": True},
+        {"pretty": True, "renumber": True},
+        {"pretty": True, "object_streams": True},
+    ):
+        saved = doc.to_bytes(encryption=pwd_enc, **kwargs)  # ty: ignore[invalid-argument-type]
+        assert b"hidden-pretty-secret" not in saved
+        expected_key = b"\n  /Type /ObjStm" if kwargs.get("object_streams") else b"\n  /Type /Catalog"
+        assert expected_key in saved
+        assert b"\n  /Filter /Standard" in saved
+        reopened = pyropdf.open(saved, password="reader")
+        assert not reopened.is_repaired
+        assert bytes(reopened.catalog["SecretNote"]) == b"hidden-pretty-secret"
+        assert reopened.pages[0].text().strip() == "Encrypted Pretty"
+
+    # RecipientEncryption with pretty=True (new and Encryption.KEEP).
+    owner = _load_recipient_credential("owner")
+    recip_enc = pyropdf.RecipientEncryption(recipients={owner.certificate: None})
+    for kwargs in ({"pretty": True}, {"pretty": True, "renumber": True}):
+        saved = doc.to_bytes(encryption=recip_enc, **kwargs)  # ty: ignore[invalid-argument-type]
+        assert b"hidden-pretty-secret" not in saved
+        assert b"\n  /Type /Catalog" in saved
+        assert b"\n  /Filter /Adobe.PubSec" in saved
+        reopened = pyropdf.open(saved, credential=owner)
+        assert not reopened.is_repaired
+        assert bytes(reopened.catalog["SecretNote"]) == b"hidden-pretty-secret"
+        assert reopened.pages[0].text().strip() == "Encrypted Pretty"
+
+    recip_doc = pyropdf.open(ENCRYPTED / "recipients" / "pyhanko-recipients.pdf", credential=owner)
+    recip_keep = recip_doc.to_bytes(encryption=Encryption.KEEP, pretty=True)
+    assert b"\n  /Type /Catalog" in recip_keep
+    assert b"\n  /Filter /Adobe.PubSec" in recip_keep
+    recip_reopened = pyropdf.open(recip_keep, credential=owner)
+    assert not recip_reopened.is_repaired
+    assert len(recip_reopened.pages) == len(recip_doc.pages)
+
+    # Encryption.KEEP with pretty=True (untouched, edited, renumbered, and object_streams).
+    for fixture in ("user-aes-256.pdf", "user-r4-rc4-128.pdf", "user-aes-256-object-streams.pdf"):
+        enc_doc = pyropdf.open(ENCRYPTED / fixture, password="userpw")
+        expected_text = [page.text() for page in enc_doc.pages]
+        for edit, kwargs in (
+            (False, {"pretty": True}),
+            (True, {"pretty": True}),
+            (False, {"pretty": True, "renumber": True}),
+            (False, {"pretty": True, "object_streams": True}),
+        ):
+            if edit:
+                enc_doc.catalog["KeepSecret"] = "kept-pretty-secret"
+            saved = enc_doc.to_bytes(encryption=Encryption.KEEP, **kwargs)  # ty: ignore[invalid-argument-type]
+            if edit:
+                assert b"kept-pretty-secret" not in saved
+            expected_key = b"\n  /Type /ObjStm" if kwargs.get("object_streams") else b"\n  /Type /Catalog"
+            assert expected_key in saved
+            reopened = pyropdf.open(saved, password="userpw")
+            assert not reopened.is_repaired
+            assert [page.text() for page in reopened.pages] == expected_text
+            if edit:
+                assert bytes(reopened.catalog["KeepSecret"]) == b"kept-pretty-secret"
+
+
+def test_ascii_save_edge_cases_external_stream_header_filters_and_crypt() -> None:
+    binary_bytes = b"\x00\x01\x80\xfe\xffXYZ"
+    # Build a raw PDF exercising external /F stream, /Filter null, /Filter [] + /DecodeParms, and /Filter /Crypt.
+    tmp = pyropdf.Document()
+    flate_xref = tmp.objects.add_stream(binary_bytes, filter="FlateDecode")
+    flate_raw = tmp.objects[flate_xref].read(decode=False)
+
+    raw = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Streams [4 0 R 5 0 R 6 0 R 7 0 R 8 0 R] >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 100 100] >>",
+            3: "<< /Type /Page /Parent 2 0 R >>",
+            4: (
+                b"<< /F (external.bin) /FFilter /FlateDecode /FDecodeParms << /Columns 4 >> /Length 4 >>\n"
+                b"stream\n\xff\xfe\xfd\xfc\nendstream"
+            ),
+            5: (
+                f"<< /Filter null /DecodeParms << /Columns 2 >> /Length {len(binary_bytes)} >>\nstream\n".encode()
+                + binary_bytes
+                + b"\nendstream"
+            ),
+            6: (
+                f"<< /Filter [] /DecodeParms << /Columns 2 >> /Length {len(binary_bytes)} >>\nstream\n".encode()
+                + binary_bytes
+                + b"\nendstream"
+            ),
+            7: (
+                b"<< /Filter /Crypt /DecodeParms << /Type /CryptFilterDecodeParms /Name /Identity >> "
+                + f"/Length {len(binary_bytes)} >>\nstream\n".encode()
+                + binary_bytes
+                + b"\nendstream"
+            ),
+            8: (
+                b"<< /Filter [/Crypt /FlateDecode] "
+                b"/DecodeParms [<< /Type /CryptFilterDecodeParms /Name /Identity >> null] "
+                + f"/Length {len(flate_raw)} >>\nstream\n".encode()
+                + flate_raw
+                + b"\nendstream"
+            ),
+        }
+    )
+    # Also verify malformed header %PDF-1.\xff falls back to %PDF-1.7.
+    malformed_header = b"%PDF-1.\xff" + raw[8:]
+    doc = pyropdf.open(malformed_header)
+    ascii_pdf = doc.to_bytes(ascii=True)
+    assert ascii_pdf.startswith(b"%PDF-1.7\n")
+    assert _is_printable_ascii(ascii_pdf)
+
+    reopened = pyropdf.open(ascii_pdf)
+    assert not reopened.is_repaired
+    # 4: external /F stream strips ignored binary inline bytes while keeping /F, /FFilter, /FDecodeParms.
+    ext = reopened.objects[4]
+    assert bytes(ext["F"]) == b"external.bin"
+    assert str(ext["FFilter"]) == "FlateDecode"
+    assert ext["FDecodeParms"]["Columns"] == 4
+    assert "Filter" not in ext
+    assert ext.read(decode=False) == b""
+
+    # 5 & 6: /Filter null and /Filter [] become /ASCII85Decode without stale /DecodeParms.
+    for xref in (5, 6):
+        s = reopened.objects[xref]
+        assert _filters(s) == ["ASCII85Decode"]
+        assert "DecodeParms" not in s
+        assert s.read() == binary_bytes
+
+    # 7 & 8: /Crypt stays first ahead of /ASCII85Decode.
+    s7 = reopened.objects[7]
+    assert _filters(s7) == ["Crypt", "ASCII85Decode"]
+    assert s7.read() == binary_bytes
+    s8 = reopened.objects[8]
+    assert _filters(s8) == ["Crypt", "ASCII85Decode", "FlateDecode"]
+    assert s8.read() == binary_bytes
+
+    # Non-Identity /Crypt on an unencrypted binary stream is refused cleanly.
+    bad_crypt = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /S 4 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 100 100] >>",
+            3: "<< /Type /Page /Parent 2 0 R >>",
+            4: (
+                b"<< /Filter /Crypt /DecodeParms << /Name /CustomCF >> "
+                + f"/Length {len(binary_bytes)} >>\nstream\n".encode()
+                + binary_bytes
+                + b"\nendstream"
+            ),
+        }
+    )
+    with pytest.raises(pyropdf.MalformedPdfError, match="Crypt"):
+        pyropdf.open(bad_crypt).to_bytes(ascii=True)
+
+
+def test_streaming_save_releases_per_object_memory_budget(tmp_path: Path) -> None:
+    builder = pyropdf.open(build_pdf(["Streaming"]))
+    payload = bytes((i * 37 + 13) & 0xFF for i in range(16_384))
+    stream_xrefs = [builder.objects.add_stream(payload, filter=None) for _ in range(24)]
+    builder.catalog["Many"] = [builder.objects[x] for x in stream_xrefs]
+    source_bytes = builder.to_bytes()
+
+    # 24 streams * 16 KiB = ~393 KiB raw (~500-786 KiB ASCII85/ASCIIHex encoded),
+    # while max_memory_size=200_000 only permits single-object peak memory.
+    tight = pyropdf.open(source_bytes, limits=pyropdf.DocumentLimits(max_memory_size=200_000))
+    for name, kwargs in (
+        ("ascii.pdf", {"ascii": True}),
+        ("ascii_pretty.pdf", {"ascii": True, "pretty": True}),
+        ("hex.pdf", {"stream_filter": "ASCIIHexDecode"}),
+        ("flate.pdf", {"stream_filter": "FlateDecode"}),
+        ("renum.pdf", {"ascii": True, "renumber": True}),
+    ):
+        target = tmp_path / name
+        tight.save(target, **kwargs)  # ty: ignore[invalid-argument-type]
+        reopened = pyropdf.open(target)
+        assert not reopened.is_repaired
+        assert len(reopened.catalog["Many"]) == 24
+        assert reopened.catalog["Many"][0].read() == payload
+        assert reopened.catalog["Many"][-1].read() == payload
+
+
+def test_empty_compressed_streams_and_blank_cleaned_pages_recode() -> None:
+    doc = pyropdf.open(build_pdf(["Valid"]))
+    s_flate = doc.objects.add_stream(b"", filter="FlateDecode")
+    s_a85 = doc.objects.add_stream(b"", filter="ASCII85Decode")
+    s_hex = doc.objects.add_stream(b"", filter="ASCIIHexDecode")
+    s_rle = doc.objects.add_stream(b"", filter="RunLengthDecode")
+    doc.catalog["EmptyStreams"] = [doc.objects[x] for x in (s_flate, s_a85, s_hex, s_rle)]
+
+    decompressed = pyropdf.open(doc.to_bytes(decompress=True))
+    for x in (s_flate, s_a85, s_hex, s_rle):
+        assert _filters(decompressed.objects[x]) == []
+        assert decompressed.objects[x].read(decode=False) == b""
+
+    hexed = pyropdf.open(doc.to_bytes(stream_filter="ASCIIHexDecode"))
+    for x in (s_flate, s_a85, s_hex, s_rle):
+        assert _filters(hexed.objects[x]) == ["ASCIIHexDecode"]
+        assert hexed.objects[x].read() == b""
+
+    # Blank page cleaned by clean=True produces an empty Flate stream that stream_filter/decompress recodes.
+    blank_doc = pyropdf.Document()
+    page = blank_doc.pages.new(size=(200, 200))
+    blank_stream = blank_doc.objects.add_stream(b"% empty page\nq Q\nBT ET\n", filter=None)
+    page.obj["Contents"] = blank_doc.objects[blank_stream]
+
+    cleaned_hex = pyropdf.open(blank_doc.to_bytes(clean=True, stream_filter="ASCIIHexDecode"))
+    assert _filters(cleaned_hex.pages[0].obj["Contents"]) == ["ASCIIHexDecode"]
+    assert cleaned_hex.pages[0].obj["Contents"].read() == b""
+
+    cleaned_decomp = pyropdf.open(blank_doc.to_bytes(clean=True, decompress=True))
+    assert _filters(cleaned_decomp.pages[0].obj["Contents"]) == []
+    assert cleaned_decomp.pages[0].obj["Contents"].read(decode=False) == b""
+
+
+def test_clean_preserves_and_remaps_per_stream_filters_and_complex_pages() -> None:
+    # 1. Single unshared /Contents stream: rewritten in place so content_xref stays intact.
+    doc = pyropdf.open(_dirty_content_pdf())
+    content_xref = doc.pages[0].obj["Contents"].xref
+    assert content_xref is not None
+    before_objects = sorted(doc.objects)
+    for prune in (False, True):
+        saved = doc.to_bytes(clean=True, prune=prune, stream_filter={content_xref: "ASCIIHexDecode"})
+        reopened = pyropdf.open(saved)
+        assert not reopened.is_repaired
+        reopened_contents = reopened.pages[0].obj["Contents"]
+        assert reopened_contents.xref == content_xref
+        assert _filters(reopened_contents) == ["ASCIIHexDecode"]
+        assert reopened.pages[0].text().strip() == "CleanMe"
+        assert b"% comment" not in reopened_contents.read()
+    assert sorted(doc.objects) == before_objects
+
+    # 2. Multi-stream /Contents array: collapsed stream receives the remapped stream_filter override.
+    part1 = b"% part 1\nq\nBT /F1 12 Tf\n"
+    part2 = (
+        b"20 150 Td (MultiClean) Tj ET\n"
+        b"/Span /MC1 BDC EMC\n"
+        b"q 10 0 0 10 50 50 cm BI /W 1 /H 1 /CS /CS1 /BPC 8 ID \x00 EI Q\n"
+    )
+    multi = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 200] /Resources 8 0 R >>",
+                3: "<< /Type /Page /Parent 2 0 R /Contents [4 0 R 5 0 R] >>",
+                4: f"<< /Length {len(part1)} >>\nstream\n".encode() + part1 + b"\nendstream",
+                5: f"<< /Length {len(part2)} >>\nstream\n".encode() + part2 + b"\nendstream",
+                8: (
+                    "<< /Font << /F1 9 0 R /FUnused 10 0 R >> "
+                    "/ColorSpace << /CS1 [/Indexed /DeviceRGB 0 <ff0000>] /CSUnused /DeviceGray >> "
+                    "/Properties << /MC1 << /MCID 0 >> /MCUnused << /MCID 1 >> >> >>"
+                ),
+                9: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                10: "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>",
+            }
+        )
+    )
+    for prune in (False, True):
+        saved = multi.to_bytes(clean=True, prune=prune, stream_filter={4: "ASCIIHexDecode"})
+        reopened = pyropdf.open(saved)
+        assert not reopened.is_repaired
+        page = reopened.pages[0]
+        assert _filters(page.obj["Contents"]) == ["ASCIIHexDecode"]
+        assert page.text().strip() == "MultiClean"
+        # Inherited resources pruned while keeping used Font, inline-image ColorSpace, and /MCID Properties.
+        assert set(page.obj["Resources"]["Font"]) == {"F1"}
+        assert set(page.obj["Resources"]["ColorSpace"]) == {"CS1"}
+        assert set(page.obj["Resources"]["Properties"]) == {"MC1"}
+    # Live document's inherited resources and multi-stream /Contents remain completely untouched.
+    assert "Resources" not in multi.pages[0].obj
+    assert len(multi.pages[0].obj["Contents"]) == 2
+
+    # 3. Shared /Contents stream referenced by two pages: remapped to both new streams.
+    shared_body = b"% shared\nq Q\nBT /F1 12 Tf 20 100 Td (Shared) Tj ET\n"
+    shared = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 200] >>",
+                3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Resources << /Font << /F1 6 0 R >> >> >>",
+                4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Resources << /Font << /F1 6 0 R >> >> >>",
+                5: f"<< /Length {len(shared_body)} >>\nstream\n".encode() + shared_body + b"\nendstream",
+                6: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            }
+        )
+    )
+    shared_saved = pyropdf.open(shared.to_bytes(clean=True, prune=True, stream_filter={5: "ASCIIHexDecode"}))
+    for page in shared_saved.pages:
+        assert _filters(page.obj["Contents"]) == ["ASCIIHexDecode"]
+        assert page.text().strip() == "Shared"
+
+
+def test_dedupe_respects_per_stream_filter_overrides() -> None:
+    doc = pyropdf.open(build_pdf(["DedupeFilter"]))
+    payload = b"Duplicate stream payload for dedupe test!\n" * 6
+    s1 = doc.objects.add_stream(payload, filter=None)
+    s2 = doc.objects.add_stream(payload, filter=None)
+    doc.catalog["Pair"] = [doc.objects[s1], doc.objects[s2]]
+
+    # Override on higher xref only: must not merge or drop override.
+    hi = pyropdf.open(doc.to_bytes(prune=True, dedupe=True, stream_filter={s2: "ASCIIHexDecode"}))
+    a, b = hi.catalog["Pair"]
+    assert a.xref != b.xref
+    assert _filters(a) == []
+    assert _filters(b) == ["ASCIIHexDecode"]
+    assert a.read() == b.read() == payload
+
+    # Override on lower xref only: must not leak onto higher xref.
+    lo = pyropdf.open(doc.to_bytes(prune=True, dedupe=True, stream_filter={s1: "ASCIIHexDecode"}))
+    a, b = lo.catalog["Pair"]
+    assert a.xref != b.xref
+    assert _filters(a) == ["ASCIIHexDecode"]
+    assert _filters(b) == []
+
+    # Same override on both: streams merge into lower xref with override intact.
+    both = pyropdf.open(
+        doc.to_bytes(prune=True, dedupe=True, stream_filter={s1: "ASCIIHexDecode", s2: "ASCIIHexDecode"})
+    )
+    a, b = both.catalog["Pair"]
+    assert a.xref == b.xref
+    assert _filters(a) == ["ASCIIHexDecode"]
+    assert a.read() == payload
+
+
+def test_compress_with_ascii_keeps_shorter_printable_ascii_stream() -> None:
+    doc = pyropdf.open(build_pdf(["CompressAscii"]))
+    short_ascii = b"0 0 m 10 10 l S\n" * 3
+    long_ascii = b"0 0 m 10 10 l S\n" * 100
+    incompressible_binary = bytes((i * 173 + 0x81) & 0xFF for i in range(64))
+    s_short = doc.objects.add_stream(short_ascii, filter=None)
+    s_long = doc.objects.add_stream(long_ascii, filter=None)
+    s_bin = doc.objects.add_stream(incompressible_binary, filter=None)
+    doc.catalog["Targets"] = [doc.objects[s_short], doc.objects[s_long], doc.objects[s_bin]]
+
+    for renumber in (False, True):
+        saved = doc.to_bytes(compress=True, ascii=True, renumber=renumber)
+        assert _is_printable_ascii(saved)
+        reopened = pyropdf.open(saved)
+        out_short, out_long, out_bin = reopened.catalog["Targets"]
+        assert _filters(out_short) == []
+        assert out_short.read(decode=False) == short_ascii
+        assert _filters(out_long) == ["ASCII85Decode", "FlateDecode"]
+        assert out_long.read() == long_ascii
+        assert _filters(out_bin) == ["ASCII85Decode"]
+        assert out_bin.read() == incompressible_binary

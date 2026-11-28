@@ -70,7 +70,7 @@ with pyropdf.open("input.pdf") as doc:
 - `ascii=True`는 출력 가능한 ASCII 바이트만 내보내며(바이너리 헤더 주석 생략, 문자열·이름 이스케이프, 기본 상호 참조를 클래식 테이블로 설정, 바이너리 스트림을 `ASCII85Decode`로 감싸기), `pretty=True`는 검사와 diff 비교를 위해 딕셔너리와 배열을 결정론적인 여러 줄 들여쓰기로 서식화합니다.
 - `stream_filter`는 대상 비이미지 스트림에 적용할 필터(`"keep"`, `"none"`, `"FlateDecode"`, `"ASCII85Decode"`, `"ASCIIHexDecode"`, `"RunLengthDecode"`)를 명시하거나 `{xref: filter}` 매핑으로 특정 스트림만 재정의하고 나머지 스트림은 그대로 유지합니다.
 
-`clean`, `ascii`, `pretty`, `stream_filter`는 전체 저장 전용이며 `incremental=True`와 함께 사용하면 거부됩니다. 또한 `ascii=True`는 암호화 저장이나 선형화 저장과 함께 사용할 수 없습니다.
+`clean`, `ascii`, `pretty`, `stream_filter`는 전체 저장 전용이며 `incremental=True`와 함께 사용하면 거부됩니다. `ascii=True`는 암호화 저장에서 거부되며, `ascii=True`와 `pretty=True`는 모두 선형화 저장(`linearize=True`)에서 거부됩니다.
 
 편집 없이 저장한 문서는 입력을 그대로 재현합니다. 증분 저장은 바이트 단위까지 일치하며, 전체 저장은 모든 값이 일치합니다.
 

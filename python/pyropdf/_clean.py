@@ -144,18 +144,94 @@ def _collect_page_appearances(
         )
 
 
-def clean_document(document: Document, *, annotations: bool = True) -> None:
-    """Clean every page's content and annotation appearance streams in one transaction."""
+def _page_content_xrefs(contents: object) -> list[int]:
+    """Return the indirect object numbers of all streams referenced by a page's ``/Contents``."""
+    if isinstance(contents, Stream):
+        return [contents.xref] if contents.xref is not None else []
+    if isinstance(contents, Array):
+        return [item.xref for item in contents if isinstance(item, Stream) and item.xref is not None]
+    return []
+
+
+def _content_stream_refs(document: Document, budget: _core._OperationBudget) -> dict[int, int]:
+    """Count references to each content stream xref across all pages' ``/Contents``."""
+    counts: dict[int, int] = {}
+    for page in list(document.pages):
+        budget.poll()
+        for xref in _page_content_xrefs(page.obj.get("Contents")):
+            counts[xref] = counts.get(xref, 0) + 1
+    return counts
+
+
+def _inline_cleanable_stream(
+    contents: object,
+    unshared_xrefs: set[int],
+) -> tuple[Stream, bool] | None:
+    """Return ``(stream, collapse_array)`` when ``contents`` is one unshared inline stream."""
+    if isinstance(contents, Stream):
+        stream, collapse_array = contents, False
+    elif isinstance(contents, Array) and len(contents) == 1 and isinstance(contents[0], Stream):
+        stream, collapse_array = contents[0], True
+    else:
+        return None
+    xref = stream.xref
+    if xref is None or xref not in unshared_xrefs or "F" in stream:
+        return None
+    return stream, collapse_array
+
+
+def _apply_page_contents(
+    page: Page,
+    update_contents: Operations,
+    unshared_xrefs: set[int],
+    remap: dict[int, list[int]],
+    budget: _core._OperationBudget,
+) -> None:
+    """Write ``update_contents`` to ``page``, preserving an unshared xref or recording remaps."""
+    old_contents = page.obj.get("Contents")
+    inline = _inline_cleanable_stream(old_contents, unshared_xrefs)
+    if inline is not None:
+        stream, collapse_array = inline
+        data = _bytes(update_contents, budget)
+        stream.write(data)
+        if "DL" in stream:
+            del stream["DL"]
+        if collapse_array:
+            page.obj["Contents"] = stream
+        return
+    old_xrefs = _page_content_xrefs(old_contents)
+    page.operations = update_contents
+    new_contents = page.obj.get("Contents")
+    if isinstance(new_contents, Stream) and new_contents.xref is not None:
+        new_xref = new_contents.xref
+        for old_xref in old_xrefs:
+            targets = remap.setdefault(old_xref, [])
+            if new_xref not in targets:
+                targets.append(new_xref)
+
+
+def clean_document(document: Document, *, annotations: bool = True) -> dict[int, list[int]]:
+    """Clean every page's content and annotation appearance streams in one transaction.
+
+    Unshared single-stream page contents are rewritten in place so their object
+    numbers stay intact; when multi-stream or shared contents are replaced by a
+    new stream, returns ``{old_xref: [new_xref, ...]}`` so callers can remap
+    per-stream save options such as ``stream_filter``.
+    """
+    remap: dict[int, list[int]] = {}
 
     def run(budget: _core._OperationBudget) -> None:
         page_edits, appearance_edits = _collect_document_edits(document, annotations=annotations, budget=budget)
         if not page_edits and not appearance_edits:
             return
+        content_refs = _content_stream_refs(document, budget)
+        appearance_xrefs = {stream.xref for stream, _, _ in appearance_edits if stream.xref is not None}
+        unshared_xrefs = {xref for xref, count in content_refs.items() if count == 1} - appearance_xrefs
         with document.transaction("clean contents"):
             for page, update_contents, resources in page_edits:
                 budget.poll()
                 if update_contents is not None:
-                    page.operations = update_contents
+                    _apply_page_contents(page, update_contents, unshared_xrefs, remap, budget)
                 if resources is not None:
                     page.obj["Resources"] = resources
             for stream, stream_bytes, stream_resources in appearance_edits:
@@ -165,6 +241,7 @@ def clean_document(document: Document, *, annotations: bool = True) -> None:
                     stream["Resources"] = stream_resources
 
     _core.read_operation(document._core(), run)  # noqa: SLF001
+    return remap
 
 
 def _poll(budget: _core._OperationBudget | None, index: int = 0) -> None:

@@ -70,7 +70,7 @@ with pyropdf.open("input.pdf") as doc:
 - `ascii=True` 仅输出可打印 ASCII 字节（省略二进制文件头注释、转义字符串与名称、将默认交叉引用设为传统表，并以 `ASCII85Decode` 封装二进制流）；`pretty=True` 会以确定性的多行缩进格式化字典与数组，便于检查与差异比对。
 - `stream_filter` 为符合条件的非图像流显式选择压缩过滤器（`"keep"`、`"none"`、`"FlateDecode"`、`"ASCII85Decode"`、`"ASCIIHexDecode"` 或 `"RunLengthDecode"`），也可传入 `{xref: filter}` 映射单独覆写指定流，其余流保持原样。
 
-`clean`、`ascii`、`pretty` 与 `stream_filter` 仅适用于完整保存，与 `incremental=True` 同时传入会被拒绝；`ascii=True` 亦不支持加密保存或线性化保存。
+`clean`、`ascii`、`pretty` 与 `stream_filter` 仅适用于完整保存，与 `incremental=True` 同时传入会被拒绝；`ascii=True` 不支持加密保存，且 `ascii=True` 与 `pretty=True` 均不支持线性化保存（`linearize=True`）。
 
 未经编辑直接保存的文档会准确复现输入：增量保存逐字节一致，完整保存则在所有 PDF 值上保持等价。
 

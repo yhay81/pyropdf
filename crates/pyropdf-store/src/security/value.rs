@@ -74,21 +74,22 @@ pub fn encrypt_bytes(
         &|_, _| Ok(None),
         budget,
     )
+    .map(|out| Bytes::new(out.into_vec()))
 }
 
-pub(crate) fn encrypt_bytes_as(
+pub(crate) fn encrypt_bytes_as<'b>(
     handler: &Handler,
     source: Reference,
     target: Reference,
     bytes: &Bytes,
     lookup: &FilterLookup<'_>,
-    budget: &Budget,
-) -> Result<Bytes> {
+    budget: &'b Budget,
+) -> Result<BudgetVec<'b, u8>> {
     let value = Value::parse(bytes, budget)?;
     let value = encrypt_value_with(handler, (source, target), &value, lookup, budget)?;
     let mut out = BudgetVec::new(budget);
     write::value(&mut out, &value)?;
-    Ok(Bytes::new(out.into_vec()))
+    Ok(out)
 }
 
 fn transform(
