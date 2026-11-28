@@ -15,6 +15,7 @@ pub mod colr;
 pub mod compact;
 pub mod embed;
 pub mod instance;
+pub mod rich_layout;
 pub mod settle;
 mod sfnt;
 pub mod shape;

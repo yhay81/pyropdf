@@ -22,7 +22,7 @@ pub const MAX_BREAK_CONTEXT: usize = 1_024;
 const RUN_ENDS: usize = 2;
 
 /// Polls the operation's deadline and cancellation.
-pub(super) type Poll<'p> = dyn FnMut() -> Result<(), LimitExceeded> + 'p;
+pub(crate) type Poll<'p> = dyn FnMut() -> Result<(), LimitExceeded> + 'p;
 
 /// Returns the end of the step of `text` from `start`: `step` bytes on,
 /// moved forward to a character boundary.
@@ -32,7 +32,7 @@ fn step_end(text: &str, start: usize, step: usize) -> usize {
 
 /// Returns the offset of the first byte from `start` that `matches`, which
 /// only ASCII bytes may match.
-pub(super) fn find_ascii(
+pub(crate) fn find_ascii(
     text: &str,
     start: usize,
     matches: impl Fn(u8) -> bool,
@@ -52,7 +52,7 @@ pub(super) fn find_ascii(
 }
 
 /// Returns `text` without the whitespace at its end.
-pub(super) fn trim_end<'t>(text: &'t str, poll: &mut Poll<'_>) -> Result<&'t str, LimitExceeded> {
+pub(crate) fn trim_end<'t>(text: &'t str, poll: &mut Poll<'_>) -> Result<&'t str, LimitExceeded> {
     for (index, (offset, character)) in text.char_indices().rev().enumerate() {
         if index > 0 && index % STEP == 0 {
             poll()?;
@@ -75,7 +75,7 @@ pub(super) fn trim_end<'t>(text: &'t str, poll: &mut Poll<'_>) -> Result<&'t str
 /// it keeps only its ends, which decide the breaks that follow it. A context
 /// still longer than [`MAX_BREAK_CONTEXT`] characters is refused rather than
 /// read whole.
-pub(super) fn break_ends<'b>(
+pub(crate) fn break_ends<'b>(
     text: &str,
     budget: &'b Budget,
     poll: &mut Poll<'_>,
@@ -192,7 +192,7 @@ fn push_run_end(out: &mut String, run: usize, tail: &[char; RUN_ENDS]) -> usize 
 /// indicators that it has already counted, and loses their parity. Its look
 /// back for a conjunct or an emoji sequence asks for the text before a
 /// chunk instead of reading past it, and gets that text a step at a time.
-pub(super) fn grapheme_ends(
+pub(crate) fn grapheme_ends(
     text: &str,
     poll: &mut Poll<'_>,
     mut found: impl FnMut(usize) -> Result<(), LimitExceeded>,

@@ -188,6 +188,11 @@ impl ShapingFace {
         self.font.units_per_em()
     }
 
+    /// Returns the underlying harfrust font for rich layout shaping.
+    pub(super) fn harf_font(&self) -> &Font {
+        &self.font
+    }
+
     /// Returns the glyphs of `text` in visual order (horizontal writing).
     ///
     /// The text's characters and the glyphs count against
@@ -719,7 +724,7 @@ fn push_run(
     clippy::disallowed_methods,
     reason = "one range per glyph of a cluster, 64 at most, checked below"
 )]
-fn own_characters(
+pub(super) fn own_characters(
     shaper: &ShaperFont<'_, '_>,
     text: &str,
     cluster: Range<usize>,
@@ -752,7 +757,7 @@ fn own_characters(
 /// Splits `text[run]` into script runs in logical order. Common and
 /// inherited characters join the run before them, or the first run when
 /// they lead.
-fn script_runs(
+pub(super) fn script_runs(
     text: &str,
     run: Range<usize>,
     scripts: &mut BudgetVec<'_, (Range<usize>, Option<Script>)>,
