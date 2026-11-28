@@ -2456,6 +2456,47 @@ impl ItemKinds {
     }
 }
 
+/// Hash key for interning stored PDF colors without heap allocation for the
+/// standard 1-to-4 component color spaces (`DeviceGray`, `DeviceRGB`,
+/// `DeviceCMYK`, `CalGray`, `CalRGB`, `Lab`, `Indexed`, `Separation`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum StoredColorKey {
+    Inline { space: u8, len: u8, bits: [u32; 4] },
+    Heap { space: u8, bits: Vec<u32> },
+}
+
+impl StoredColorKey {
+    fn from_components(space: u8, components: &[f32]) -> Result<Self, Error> {
+        let norm_bits =
+            |value: f32| -> u32 { if value == 0.0 { 0.0_f32 } else { value }.to_bits() };
+        if components.len() <= 4 {
+            let mut bits = [0u32; 4];
+            for (slot, &value) in bits.iter_mut().zip(components) {
+                *slot = norm_bits(value);
+            }
+            return Ok(Self::Inline {
+                space,
+                len: components.len() as u8,
+                bits,
+            });
+        }
+        let mut bits = with_capacity(components.len(), "stored color key")?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the exact capacity reserved above"
+        )]
+        bits.extend(components.iter().map(|&value| norm_bits(value)));
+        Ok(Self::Heap { space, bits })
+    }
+
+    fn heap_bytes(&self) -> usize {
+        match self {
+            Self::Inline { .. } => 0,
+            Self::Heap { bits, .. } => bits.len().saturating_mul(std::mem::size_of::<u32>()),
+        }
+    }
+}
+
 pub(crate) struct ContentCollector<'a, 'b, 'c, S> {
     sink: S,
     /// The items to record; with none, the collector only feeds the sink.
@@ -2468,7 +2509,7 @@ pub(crate) struct ContentCollector<'a, 'b, 'c, S> {
     pattern_indexes: HashMap<(u128, bool), i32>,
     /// The index of each unique stored PDF color `(space_code, f32 bit patterns)`
     /// in [`PathTable::stored_colors`].
-    stored_color_indexes: HashMap<(u8, Vec<u32>), i32>,
+    stored_color_indexes: HashMap<StoredColorKey, i32>,
     /// The segments of the path being recorded, in a buffer that is reused.
     segments: Segments,
     /// The segments of the fill path that a stroke may complete.
@@ -2740,27 +2781,25 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
 
     /// Interns a path color's stored PDF color space and original component
     /// values in [`PathTable::stored_colors`], charging new entries to
-    /// `LimitCode::MemorySize`.
+    /// `LimitCode::MemorySize`. Uses an inline stack key for 1-to-4 component
+    /// color spaces so steady-state lookups allocate nothing on the heap.
     #[expect(
         clippy::disallowed_methods,
         reason = "interned stored color is bounded by path count (content_element_count) and \
                   charged to memory_size before allocation"
     )]
     fn intern_stored_color(&mut self, space: u8, components: &[f32]) -> Result<i32, Error> {
-        let mut bits = with_capacity(components.len(), "stored color key")?;
-        bits.extend(components.iter().map(|&value| value.to_bits()));
-        let key = (space, bits);
+        let key = StoredColorKey::from_components(space, components)?;
         if let Some(&index) = self.stored_color_indexes.get(&key) {
             return Ok(index);
         }
         let stored_components = copy_color_components(components, self.budget)?;
-        let key_bytes = key
-            .1
-            .len()
-            .saturating_mul(std::mem::size_of::<u32>())
+        let entry_bytes = key
+            .heap_bytes()
+            .saturating_add(std::mem::size_of::<StoredColorKey>())
             .saturating_add(std::mem::size_of::<StoredColorTuple>());
         self.budget
-            .charge(LimitCode::MemorySize, key_bytes as u64)?;
+            .charge(LimitCode::MemorySize, entry_bytes as u64)?;
         let index = offset(self.paths.stored_colors.len())?;
         self.stored_color_indexes.try_reserve(1).map_err(|error| {
             Error::Allocation(format!("failed to grow the stored color index: {error}"))
@@ -3433,6 +3472,8 @@ impl<'a, 'b, 'c, S: ContentSink> ContentCollector<'a, 'b, 'c, S> {
             {
                 let entry = &mut self.fonts[*index as usize];
                 if entry.0.is_empty() && !face_name.is_empty() {
+                    self.budget
+                        .charge(LimitCode::MemorySize, face_name.len() as u64)?;
                     entry.0 = face_name;
                 }
                 entry.2 = weight;
@@ -3578,6 +3619,7 @@ fn font_dict_is_embedded(dict: &Dict<'_>, subtype: &str) -> bool {
 fn font_dict_identity(
     font_dict: Option<&Dict<'_>>,
     page_xref: &XRef,
+    needs_base_name: bool,
     budget: &Budget,
 ) -> Result<(Option<u32>, String, String, bool), Error> {
     let Some(dict) = font_dict else {
@@ -3594,15 +3636,19 @@ fn font_dict_identity(
     let subtype_name = dict.get::<Name<'_>>(b"Subtype");
     let subtype_str = subtype_name.as_ref().map_or("", Name::as_str);
     let subtype = fallible_string(subtype_str, "font subtype", budget)?;
-    let base_font = dict.get::<Name<'_>>(b"BaseFont").or_else(|| {
-        (subtype_str == "Type3")
-            .then(|| dict.get::<Name<'_>>(b"Name"))
-            .flatten()
-    });
-    let base_str = base_font
-        .as_ref()
-        .map_or("", |name| strip_subset_prefix(name.as_str()));
-    let base_name = fallible_string(base_str, "font base name", budget)?;
+    let base_name = if needs_base_name {
+        let base_font = dict.get::<Name<'_>>(b"BaseFont").or_else(|| {
+            (subtype_str == "Type3")
+                .then(|| dict.get::<Name<'_>>(b"Name"))
+                .flatten()
+        });
+        let base_str = base_font
+            .as_ref()
+            .map_or("", |name| strip_subset_prefix(name.as_str()));
+        fallible_string(base_str, "font base name", budget)?
+    } else {
+        String::new()
+    };
     let is_embedded = font_dict_is_embedded(dict, subtype_str);
     Ok((xref, subtype, base_name, is_embedded))
 }
@@ -3628,11 +3674,13 @@ fn outline_font_tuple(
     page_xref: &XRef,
     budget: &Budget,
 ) -> Result<FontTuple, Error> {
-    let (xref, subtype, base_name, is_embedded) = font_dict_identity(font_dict, page_xref, budget)?;
     let (program_name, weight, is_italic, is_serif, is_monospace) = face_font_metrics(glyph);
+    let (xref, subtype, base_name, is_embedded) =
+        font_dict_identity(font_dict, page_xref, program_name.is_empty(), budget)?;
     let name = if program_name.is_empty() {
         base_name
     } else {
+        budget.charge(LimitCode::MemorySize, program_name.len() as u64)?;
         program_name
     };
     Ok((
@@ -3654,7 +3702,7 @@ fn type3_font_tuple(
     page_xref: &XRef,
     budget: &Budget,
 ) -> Result<FontTuple, Error> {
-    let (xref, subtype, base_name, _) = font_dict_identity(font_dict, page_xref, budget)?;
+    let (xref, subtype, base_name, _) = font_dict_identity(font_dict, page_xref, true, budget)?;
     Ok((
         base_name, true, None, false, false, false, xref, subtype, false,
     ))
@@ -4198,5 +4246,27 @@ mod tests {
             err,
             Error::Limit(refusal) if refusal.code() == LimitCode::ContentElementCount
         ));
+    }
+
+    #[test]
+    fn stored_color_key_uses_inline_storage_and_normalizes_negative_zero() {
+        let pos = StoredColorKey::from_components(COLOR_SPACE_DEVICE_CMYK, &[0.0, 0.25, 0.5, 1.0])
+            .unwrap();
+        let neg = StoredColorKey::from_components(COLOR_SPACE_DEVICE_CMYK, &[-0.0, 0.25, 0.5, 1.0])
+            .unwrap();
+        assert_eq!(pos, neg);
+        assert_eq!(pos.heap_bytes(), 0);
+        assert!(matches!(pos, StoredColorKey::Inline { len: 4, .. }));
+
+        // 5-component DeviceN color spills cleanly to heap storage.
+        let devn =
+            StoredColorKey::from_components(COLOR_SPACE_DEVICE_N, &[-0.0, 0.2, 0.4, 0.6, 0.8])
+                .unwrap();
+        let devn_pos =
+            StoredColorKey::from_components(COLOR_SPACE_DEVICE_N, &[0.0, 0.2, 0.4, 0.6, 0.8])
+                .unwrap();
+        assert_eq!(devn, devn_pos);
+        assert_eq!(devn.heap_bytes(), 5 * std::mem::size_of::<u32>());
+        assert!(matches!(devn, StoredColorKey::Heap { .. }));
     }
 }

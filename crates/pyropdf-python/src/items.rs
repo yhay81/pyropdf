@@ -119,14 +119,9 @@ pub fn page_paths(
 /// unpickled `Content` objects without a backing `PathColumns`) with the GIL
 /// released under default operational limits.
 #[pyfunction]
-#[expect(
-    clippy::type_complexity,
-    reason = "compact geometry tuple crossing into Rust for constructed Content"
-)]
 pub fn cluster_path_boxes(
     py: Python<'_>,
-    boxes: Vec<(f64, f64, f64, f64, bool, bool, f64, bool)>,
-    page_size: Option<(f64, f64)>,
+    boxes: Vec<(f64, f64, f64, f64, bool, bool, f64)>,
     x_tolerance: f64,
     y_tolerance: f64,
     exclude_background: bool,
@@ -145,18 +140,18 @@ pub fn cluster_path_boxes(
             inputs
                 .try_reserve_exact(boxes.len())
                 .map_err(|refusal| limit_error(&refusal))?;
-            for (x0, y0, x1, y1, has_fill, has_stroke, stroke_width, is_rect) in boxes {
+            for (x0, y0, x1, y1, has_fill, has_stroke, stroke_width) in boxes {
                 inputs
                     .try_push(extract::ClusterInput {
                         bbox: (x0, y0, x1, y1),
                         has_fill,
                         has_stroke,
                         stroke_width,
-                        is_rect,
+                        is_rect: false,
                     })
                     .map_err(|refusal| limit_error(&refusal))?;
             }
-            extract::cluster_path_inputs(inputs.as_slice(), page_size, options, &budget).map_err(
+            extract::cluster_path_inputs(inputs.as_slice(), None, options, &budget).map_err(
                 |error| match error {
                     Error::Limit(refusal) => limit_error(&refusal),
                     other => PdfError::new_err(other.to_string()),
