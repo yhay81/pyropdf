@@ -27,14 +27,16 @@ class Colorspace(enum.StrEnum):
     """One gray component per pixel."""
     RGB = "rgb"
     """Red, green, and blue components per pixel."""
+    CMYK = "cmyk"
+    """Cyan, magenta, yellow, and black ink components per pixel."""
 
 
-def _render_gray(colorspace: Colorspace | str) -> bool:
-    """Return whether ``colorspace`` asks for gray samples."""
+def _render_colorspace(colorspace: Colorspace | str) -> Colorspace:
+    """Validate and return the requested :class:`Colorspace`."""
     try:
-        return Colorspace(colorspace) is Colorspace.GRAY
+        return Colorspace(colorspace)
     except ValueError:
-        msg = f"colorspace must be 'gray' or 'rgb': {colorspace!r}"
+        msg = f"colorspace must be 'gray', 'rgb', or 'cmyk': {colorspace!r}"
         raise ValueError(msg) from None
 
 
@@ -45,8 +47,14 @@ def _validate_bool(name: str, value: object) -> None:
         raise TypeError(msg)
 
 
-def _validate_encoding(format: str, quality: int, *, alpha: bool) -> None:  # noqa: A002 - the public name.
-    """Refuse an unknown format, a quality outside 1 through 100, and JPEG with alpha."""
+def _validate_encoding(
+    format: str,  # noqa: A002 - the public name.
+    quality: int,
+    *,
+    alpha: bool,
+    colorspace: Colorspace = Colorspace.RGB,
+) -> None:
+    """Refuse an unknown format, invalid quality, JPEG with alpha, and PNG with CMYK."""
     if format not in ("png", "jpeg"):
         msg = f"format must be 'png' or 'jpeg': {format!r}"
         raise ValueError(msg)
@@ -58,6 +66,9 @@ def _validate_encoding(format: str, quality: int, *, alpha: bool) -> None:  # no
         raise ValueError(msg)
     if format == "jpeg" and alpha:
         msg = "JPEG has no alpha channel; render without alpha or write PNG"
+        raise ValueError(msg)
+    if format == "png" and colorspace is Colorspace.CMYK:
+        msg = "PNG does not support CMYK; render as RGB or gray, or write JPEG"
         raise ValueError(msg)
 
 

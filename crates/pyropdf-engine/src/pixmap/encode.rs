@@ -10,7 +10,7 @@ use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::save::deflate;
 
-use super::{Layout, codecs, device_samples};
+use super::{Colorspace, Layout, codecs, device_samples};
 
 /// Metres per inch, for PNG's pixels per metre.
 const METRES_PER_INCH: f64 = 0.0254;
@@ -38,11 +38,17 @@ pub enum Encoding {
 }
 
 impl Encoding {
-    /// Reads `format` at `quality` for samples in gray or RGB, with or
-    /// without alpha: PNG, PAM, and PSD hold every kind; JPEG, PNM, and
-    /// PostScript hold no alpha; PBM and PGM hold only gray, and PPM only
-    /// RGB.
-    pub fn parse(format: &str, quality: u8, gray: bool, alpha: bool) -> Result<Self, String> {
+    /// Reads `format` at `quality` for samples in gray, RGB, or CMYK, with or
+    /// without alpha: PNG holds gray and RGB with or without alpha (not CMYK);
+    /// PAM and PSD hold every colorspace with or without alpha; JPEG and
+    /// PostScript hold gray, RGB, or CMYK without alpha; PBM and PGM hold only
+    /// gray, PPM only RGB, and PNM gray or RGB without alpha.
+    pub fn parse(
+        format: &str,
+        quality: u8,
+        colorspace: Colorspace,
+        alpha: bool,
+    ) -> Result<Self, String> {
         let encoding = match format {
             "png" => Self::Png,
             "jpeg" => Self::Jpeg(quality),
@@ -60,12 +66,25 @@ impl Encoding {
                 encoding.name()
             ));
         }
-        if !gray && matches!(format, "pbm" | "pgm") {
+        if colorspace == Colorspace::Cmyk {
+            if matches!(encoding, Self::Png) {
+                return Err(
+                    "PNG does not support CMYK samples; convert to RGB or gray, or write JPEG, PAM, PSD, or PostScript"
+                        .to_owned(),
+                );
+            }
+            if matches!(encoding, Self::Pbm | Self::Pnm) {
+                return Err(format!(
+                    "{name} does not support CMYK samples; convert to RGB or gray, or write JPEG, PAM, PSD, or PostScript"
+                ));
+            }
+        }
+        if colorspace != Colorspace::Gray && matches!(format, "pbm" | "pgm") {
             return Err(format!(
                 "{name} holds gray samples; convert the pixmap to gray or write PPM"
             ));
         }
-        if gray && format == "ppm" {
+        if colorspace != Colorspace::Rgb && format == "ppm" {
             return Err("PPM holds RGB samples; convert the pixmap to RGB or write PGM".to_owned());
         }
         Ok(encoding)
@@ -286,10 +305,10 @@ fn encode_other(
                 ),
                 unit: PixelDensityUnit::Inches,
             });
-            let color = if layout.gray {
-                ColorType::Luma
-            } else {
-                ColorType::Rgb
+            let color = match layout.colorspace {
+                Colorspace::Gray => ColorType::Luma,
+                Colorspace::Rgb => ColorType::Rgb,
+                Colorspace::Cmyk => ColorType::Cmyk,
             };
             encoder
                 .encode(data, side(layout.width)?, side(layout.height)?, color)
@@ -346,11 +365,16 @@ pub fn encode_png(
         })?
         .ok_or_else(|| EncodeError::Other("the image data could not be compressed".into()))?;
     drop(filtered);
-    let color = match (layout.gray, layout.alpha) {
-        (true, false) => 0,
-        (true, true) => 4,
-        (false, false) => 2,
-        (false, true) => 6,
+    let color = match (layout.colorspace, layout.alpha) {
+        (Colorspace::Gray, false) => 0,
+        (Colorspace::Gray, true) => 4,
+        (Colorspace::Rgb, false) => 2,
+        (Colorspace::Rgb, true) => 6,
+        (Colorspace::Cmyk, _) => {
+            return Err(EncodeError::Other(
+                "PNG does not support CMYK samples".to_owned(),
+            ));
+        }
     };
     let mut header = Vec::with_capacity(13);
     header.extend_from_slice(&layout.width.to_be_bytes());

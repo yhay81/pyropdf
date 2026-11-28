@@ -270,7 +270,7 @@ Content.pixmap(
     clip: Sequence[float] | None = None,
     alpha: bool = False,
     background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
-    colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
+    colorspace: Colorspace | Literal['gray', 'rgb', 'cmyk'] = Colorspace.RGB,
     hinting: bool = False,
     glyph_cache: bool = False,
     antialias: bool = True,

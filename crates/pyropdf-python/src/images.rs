@@ -96,7 +96,13 @@ pub fn page_image(
             },
         )?;
         Ok(image.map(|(layout, data)| {
-            Pixmap::from_samples(layout.width, layout.height, layout.gray, layout.alpha, data)
+            Pixmap::from_samples(
+                layout.width,
+                layout.height,
+                layout.colorspace,
+                layout.alpha,
+                data,
+            )
         }))
     })?
 }
@@ -202,7 +208,13 @@ pub fn thumbnail_image(
             )?
         };
         Ok(image.map(|(layout, data)| {
-            Pixmap::from_samples(layout.width, layout.height, layout.gray, layout.alpha, data)
+            Pixmap::from_samples(
+                layout.width,
+                layout.height,
+                layout.colorspace,
+                layout.alpha,
+                data,
+            )
         }))
     })?
 }

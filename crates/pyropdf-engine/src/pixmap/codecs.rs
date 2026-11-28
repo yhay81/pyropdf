@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec};
 
-use super::{DecodeError, Decoded, Layout, MAX_PIXELS, check_size};
+use super::{Colorspace, DecodeError, Decoded, Layout, MAX_PIXELS, check_size};
 
 /// The resolution of formats that state none.
 const DEFAULT_RESOLUTION: (u32, u32) = (96, 96);
@@ -111,7 +111,7 @@ pub(super) fn decode_pnm(data: &[u8]) -> Result<Decoded, String> {
     let layout = Layout {
         width,
         height,
-        gray: colors == 1,
+        colorspace: Colorspace::from_gray(colors == 1),
         alpha: false,
     };
     let count = width as usize * height as usize * colors;
@@ -263,7 +263,7 @@ fn decode_pam(data: &[u8]) -> Result<Decoded, String> {
     let layout = Layout {
         width,
         height,
-        gray,
+        colorspace: Colorspace::from_gray(gray),
         alpha,
     };
     let count = width as usize * height as usize * layout.channels();
@@ -418,7 +418,7 @@ pub(super) fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
         let layout = Layout {
             width,
             height,
-            gray: false,
+            colorspace: Colorspace::Rgb,
             alpha: alpha.is_some(),
         };
         let mut samples = Vec::with_capacity(width_us * height_us * layout.channels());
@@ -452,7 +452,7 @@ pub(super) fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
             layout: Layout {
                 width,
                 height,
-                gray: false,
+                colorspace: Colorspace::Rgb,
                 alpha: false,
             },
             data: samples,
@@ -479,7 +479,7 @@ pub(super) fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
     let layout = Layout {
         width,
         height,
-        gray,
+        colorspace: Colorspace::from_gray(gray),
         alpha: false,
     };
     let mut samples = Vec::with_capacity(width_us * height_us * layout.colors());
@@ -658,7 +658,7 @@ pub(super) fn decode_gif(data: &[u8]) -> Result<Decoded, String> {
         layout: Layout {
             width,
             height,
-            gray: false,
+            colorspace: Colorspace::Rgb,
             alpha,
         },
         data,
@@ -810,7 +810,7 @@ pub(super) fn decode_tiff(data: &[u8], budget: &Budget) -> Result<Decoded, Decod
         layout: Layout {
             width,
             height,
-            gray,
+            colorspace: Colorspace::from_gray(gray),
             alpha,
         },
         data: samples,
@@ -944,7 +944,7 @@ pub(super) fn decode_jpx(data: &[u8]) -> Result<Decoded, String> {
     let layout = Layout {
         width,
         height,
-        gray,
+        colorspace: Colorspace::from_gray(gray),
         alpha,
     };
     if samples.len() != width as usize * height as usize * layout.channels() {
@@ -965,11 +965,13 @@ pub(super) fn is_jxr(data: &[u8]) -> bool {
 
 /// Writes PAM: the samples as they are, with their alpha.
 pub(super) fn write_pam(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result<()> {
-    let tuple = match (layout.gray, layout.alpha) {
-        (true, false) => "GRAYSCALE",
-        (true, true) => "GRAYSCALE_ALPHA",
-        (false, false) => "RGB",
-        (false, true) => "RGB_ALPHA",
+    let tuple = match (layout.colorspace, layout.alpha) {
+        (Colorspace::Gray, false) => "GRAYSCALE",
+        (Colorspace::Gray, true) => "GRAYSCALE_ALPHA",
+        (Colorspace::Rgb, false) => "RGB",
+        (Colorspace::Rgb, true) => "RGB_ALPHA",
+        (Colorspace::Cmyk, false) => "CMYK",
+        (Colorspace::Cmyk, true) => "CMYK_ALPHA",
     };
     write!(
         out,
@@ -983,7 +985,7 @@ pub(super) fn write_pam(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io:
 
 /// Writes raw PGM for gray or PPM for RGB samples without alpha.
 pub(super) fn write_pnm(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result<()> {
-    let kind = if layout.gray { 5 } else { 6 };
+    let kind = if layout.colorspace.is_gray() { 5 } else { 6 };
     write!(out, "P{kind}\n{} {}\n255\n", layout.width, layout.height)?;
     out.write_all(data)
 }
@@ -1033,7 +1035,12 @@ pub(super) fn write_psd(
     out.write_all(&layout.height.to_be_bytes())?;
     out.write_all(&layout.width.to_be_bytes())?;
     out.write_all(&8_u16.to_be_bytes())?;
-    out.write_all(&(if layout.gray { 1_u16 } else { 3 }).to_be_bytes())?;
+    let mode: u16 = match layout.colorspace {
+        Colorspace::Gray => 1,
+        Colorspace::Rgb => 3,
+        Colorspace::Cmyk => 4,
+    };
+    out.write_all(&mode.to_be_bytes())?;
     // No color mode data; one ResolutionInfo resource in pixels per inch.
     out.write_all(&0_u32.to_be_bytes())?;
     out.write_all(&28_u32.to_be_bytes())?;
@@ -1043,15 +1050,21 @@ pub(super) fn write_psd(
         out.write_all(&(dpi.clamp(1, 65_535) << 16).to_be_bytes())?;
         out.write_all(&[0, 1, 0, 1])?;
     }
-    // No layers, then raw planar samples.
+    // No layers, then raw planar samples. Photoshop stores CMYK ink planes
+    // inverted (`255 - ink`), while any trailing alpha plane is straight.
     out.write_all(&0_u32.to_be_bytes())?;
     out.write_all(&0_u16.to_be_bytes())?;
     let width = layout.width as usize;
     let mut plane = vec![0; width];
     for channel in 0..channels {
+        let invert_cmyk = layout.colorspace == Colorspace::Cmyk && channel < 4;
         for line in data.chunks_exact(width * channels) {
             for (sample, pixel) in plane.iter_mut().zip(line.chunks_exact(channels)) {
-                *sample = pixel[channel];
+                *sample = if invert_cmyk {
+                    255 - pixel[channel]
+                } else {
+                    pixel[channel]
+                };
             }
             out.write_all(&plane)?;
         }
@@ -1059,7 +1072,7 @@ pub(super) fn write_psd(
     Ok(())
 }
 
-/// Writes a one-page PostScript Level 2 document of gray or RGB samples
+/// Writes a one-page PostScript Level 2 document of gray, RGB, or CMYK samples
 /// without alpha, the page sized to the image at its resolution, and the
 /// samples in ASCII85.
 #[expect(
@@ -1075,10 +1088,10 @@ pub(super) fn write_ps(
     let (width, height) = (layout.width, layout.height);
     let points = |pixels: u32, dpi: u32| f64::from(pixels) * 72.0 / f64::from(dpi);
     let (x, y) = (points(width, resolution.0), points(height, resolution.1));
-    let (space, decode) = if layout.gray {
-        ("DeviceGray", "0 1")
-    } else {
-        ("DeviceRGB", "0 1 0 1 0 1")
+    let (space, decode) = match layout.colorspace {
+        Colorspace::Gray => ("DeviceGray", "0 1"),
+        Colorspace::Rgb => ("DeviceRGB", "0 1 0 1 0 1"),
+        Colorspace::Cmyk => ("DeviceCMYK", "0 1 0 1 0 1 0 1"),
     };
     write!(
         out,

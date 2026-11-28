@@ -882,6 +882,8 @@ def _write_page_thumbnail(page: Page, pixmap: Pixmap) -> None:
         raise TypeError(msg)
     _ = page.index
     opaque = pixmap.without_alpha() if pixmap.alpha else pixmap
+    if opaque.colorspace is Colorspace.CMYK:
+        opaque = opaque.to_rgb()
     samples = bytes(memoryview(opaque))
     colorspace = Name("DeviceGray" if opaque.colorspace is Colorspace.GRAY else "DeviceRGB")
     thumb_dict: dict[str, object] = {

@@ -75,7 +75,7 @@ impl _LayoutEngine {
                 .as_ref()
                 .map_or_else(|| Budget::default().share(), |document| document.budget());
             drop(document);
-            let (pixels, layout) = pixmap.layout_raster();
+            let (pixels, layout) = pixmap.layout_raster()?;
             drop(pixmap);
             py.detach(|| self.engine.detect(&pixels, layout, min_confidence, &budget))
                 .map_err(layout_error)

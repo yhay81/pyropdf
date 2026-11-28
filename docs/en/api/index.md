@@ -175,7 +175,7 @@ method and property of its classes with its full description.
 ## [Rendering](rendering.md)
 
 - [`Colorspace`](rendering.md#colorspace): The color space of a `Pixmap`'s samples.
-- [`Pixmap`](rendering.md#pixmap): A rendered page: immutable pixels, row by row from the top, RGB or gray, each with or without straight alpha, 8 bits per channel.
+- [`Pixmap`](rendering.md#pixmap): A rendered page: immutable pixels, row by row from the top, gray, RGB, or CMYK, each with or without straight alpha, 8 bits per channel.
 
 ## [Annotations](annotations.md)
 

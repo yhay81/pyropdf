@@ -423,7 +423,7 @@ Annotation.pixmap(
     matrix: Sequence[float] | None = None,
     alpha: bool = False,
     background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
-    colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
+    colorspace: Colorspace | Literal['gray', 'rgb', 'cmyk'] = Colorspace.RGB,
     antialias: bool = True,
 ) -> Pixmap
 ```

@@ -122,7 +122,7 @@ from pyropdf._outline import Outline, OutlineEntry, _write_outline
 from pyropdf._page import _clip_box, _ExportPage, _render_scale
 from pyropdf._page_labels import PageLabelRange, _read_page_labels, _write_page_labels
 from pyropdf._pages import Pages, _page_entries, _resolve
-from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _validate_encoding
+from pyropdf._pixmap import Colorspace, _render_background, _render_colorspace, _validate_encoding
 from pyropdf._profiles import pdfa_claim as _pdfa_claim
 from pyropdf._profiles import profiles as _profiles
 from pyropdf._recolor import RecolorReport, RecolorTarget, recolor
@@ -1600,7 +1600,7 @@ class Document:
         alpha: bool = False,
         background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
         annotations: bool = True,
-        colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
+        colorspace: Colorspace | Literal["gray", "rgb", "cmyk"] = Colorspace.RGB,
         hinting: bool = False,
         glyph_cache: bool = False,
         antialias: bool = True,
@@ -1641,8 +1641,8 @@ class Document:
         _validate_bool("hinting", hinting)
         _validate_bool("glyph_cache", glyph_cache)
         _validate_bool("antialias", antialias)
-        gray = _render_gray(colorspace)
-        _validate_encoding(format, quality, alpha=alpha)
+        cs = _render_colorspace(colorspace)
+        _validate_encoding(format, quality, alpha=alpha, colorspace=cs)
         if workers is None:
             workers = min(_DEFAULT_RENDER_WORKERS, os.cpu_count() or 1)
         elif isinstance(workers, bool) or not isinstance(workers, int):
@@ -1660,7 +1660,7 @@ class Document:
             linear,
             fit_box,
             alpha,
-            gray,
+            cs.value,
             rgba,
             annotations,
             hinting,
