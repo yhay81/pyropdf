@@ -54,9 +54,14 @@ Python worker process.
 1. Every container and decoded stream is charged to the operation's F6 `Budget` and polls deadline
    and cancellation (`Budget::poll`).
 2. `Reads` records the exact object read-set, enabling F4 `Memo` caching per immutable `Version`
-   (0.00 ms on subsequent `text()` / `pixmap()` / `content()` calls on an unedited page).
+   (0.00 ms on subsequent `text()` / `pixmap()` / `content()` calls on an unedited page). Cross-object
+   memoization (`CheckedCache`) stores the **maximum entry depth** already proven safe for each
+   indirect object (`HashMap<u32, usize>` via `try_insert_map`), not a boolean visited flag, so a
+   shared DAG subgraph validated shallowly cannot bypass depth bounds when re-entered deeper.
 3. Content streams are scanned by an iterative byte-level scanner *before* `hayro-syntax::content::UntypedIter`
-   runs, closing `#740` and content-operand silent truncation (`#1666`) without allocating `Value` trees.
+   runs, closing `#740` (with whitespace boundary checks on both sides of `EI`) and content-operand
+   silent truncation (`#1666`) without allocating `Value` trees. Image XObjects also walk `/SMask`
+   and `/Mask` stream `/ColorSpace` entries iteratively.
 4. Bounds match upstream hayro & Acrobat: `MAX_COLOR_SPACE_DEPTH = 32`, `MAX_FUNCTION_DEPTH = 32`,
    `MAX_TYPE4_BRACES = 256`, `MAX_STREAM_DEPTH = 50` (with cycle refusal),
    `MAX_CONTENT_OPERAND_DEPTH = 64`, `MAX_INLINE_LOOKAHEAD_CHAIN = 8`.
@@ -75,16 +80,16 @@ Full per-document and per-page measurements: [`results/macos-arm64.md`](results/
 
 | Metric | Measured |
 | --- | ---: |
-| Synthetic adversarial cases refused (13 / 13) | **0.011 – 0.727 ms** |
+| Synthetic adversarial cases refused (15 / 15, incl. DAG depth-bypass & Image `/SMask`) | **0.017 – 6.962 ms** |
 | False positives on 15-document corpus (156 pages) | **0 / 156** |
-| Corpus `render::raster` (72 dpi) total | **530.22 ms** |
-| Corpus `extract::page_text` total | **196.59 ms** |
-| Pre-flight guard cold total (empty cache per page) | **5.97 ms** (**1.13%** of render, **3.04%** of text) |
-| Pre-flight guard cached total (shared `CheckedCache` across version) | **5.59 ms** (**1.06%** of render) |
-| Per-page guard median / p90 / max (cold) | **0.029 ms** / **0.043 ms** / **0.482 ms** (`f1040` p.1, 78 streams) |
-| Peak F6 `Budget` memory charged across corpus | **577.4 KiB** (`f1040`; median doc < 32 KiB) |
+| Corpus `render::raster` (72 dpi) total | **593.90 ms** |
+| Corpus `extract::page_text` total (post-#1213 perf) | **104.06 ms** |
+| Pre-flight guard cold total (empty cache per page) | **6.05 ms** (**1.02%** of render, **5.81%** of text) |
+| Pre-flight guard cached total (shared depth-aware `CheckedCache`) | **5.77 ms** (**0.97%** of render) |
+| Per-page guard median / p90 / max (cold) | **0.029 ms** / **0.042 ms** / **0.514 ms** (`f1040` p.1, 78 streams) |
+| Peak F6 `Budget` memory charged across corpus | **578.2 KiB** (`f1040`; median doc < 32 KiB) |
 | Max depths observed on corpus (vs guard bounds) | CS **2**/32, Fn **1**/32, Type4 **0**/256, Stream **4**/50, OpDepth **2**/64 |
-| Prototype size (`src/guard.rs`) | **1,172 non-comment LOC** (1,319 total lines; single isolated module vs ~2,500 LOC in pylopdf) |
+| Prototype size (`src/guard.rs`) | **1,256 non-comment LOC** (1,414 total lines; single isolated module vs ~2,500 LOC in pylopdf) |
 
 ## 4. Decision options & recommendation
 
