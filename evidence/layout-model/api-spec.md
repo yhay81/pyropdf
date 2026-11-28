@@ -172,36 +172,42 @@ class Page:
 
 ### Opt-in enrichment of `markdown()`, `to_json()`, and `to_chunks()`
 
-Existing methods remain **fast and deterministic by default** (`layout_engine=None` / `use_layout=False`):
+Existing methods remain **fast and deterministic by default** (`layout_engine=None` / `use_layout=False`),
+preserving every current retrieval export option on `main` (`use_structure`, `expand_abbreviations`,
+`ruby`, `margins`, `ignore_headers_footers`, `images`, `max_graphics`, `max_size`):
 
 ```python
 # Page.markdown / Document.markdown / Document.to_json / Document.to_chunks
 ...,
 use_structure: Literal["auto", "always", "never"] = "auto",
+ignore_headers_footers: bool = False,
 use_layout: bool = False,
 layout_engine: LayoutEngine | None = None,
 ```
 
-#### Composition rules with `use_structure` (#1181) and geometric layout
+#### Composition rules with `use_structure` (#1181), retrieval controls (#1212), ruby (#1184), and hybrid OCR (#1185)
 
 1. **Tagged PDFs take priority**: When `use_structure="always"` or (`use_structure="auto"` and the
    structure tree passes trustworthiness checks), structure-tree roles drive export and the ML
    detector is **not** invoked (saving ~370 ms/page and ~415 MiB RSS).
 2. **Untagged text PDFs (semantic enrichment, not blind replacement)**: When `use_layout=True` (or
    a `LayoutEngine` is passed) on an untagged page:
-   - **Preserve pyropdf's native geometric reading order** (`129/129` pairs on the 11-page corpus)
-     instead of overwriting it with coarse detector boxes (`122/129`).
+   - **Preserve pyropdf's native geometric reading order** (`140/140` anchor pairs on the 12-page
+     labeled corpus) instead of overwriting it with coarse detector boxes.
    - Use `doc_title` / `paragraph_title` regions to emit Markdown headings even when font sizes are
      uniform (fixes 0 -> 9 Japanese headings on `mhlw-doc`).
-   - Tag `header` / `footer` / `page_number` / `footnote` / `toc` regions cleanly in `Element`
-     metadata (`to_json()` / `to_chunks()`) and suppress or demote running headers/footers in
-     Markdown when requested.
+   - Composes directly with **`ignore_headers_footers=True`** (#1212): geometric repeated-line
+     detection requires multiple pages, whereas ML `header` / `footer` / `page_number` regions
+     enable single-page running-chrome suppression too.
+   - Preserves `ruby` (#1184) and `margins` / `images` / `max_graphics` (#1212) controls unchanged.
    - Cross-check ML `table` boxes with geometric line/text table extraction (avoiding `pymupdf-layout`'s
      3/7 false-positive table regressions and preventing dense forms like `f1040` from collapsing
      into broken Markdown tables).
-3. **Image-only scanned PDFs (paired with `Page.ocr`)**: When a page has zero embedded text,
-   `Page.regions()` supplies page segmentation (e.g., 12 regions on vertical Japanese scan
-   `bunka-kokugo-series-019-p4.pdf`) so callers can run region-aware OCR or reading-order sorting.
+3. **Image-only & mixed scanned PDFs (paired with `Page.ocr`)**: Complements
+   `Page.ocr(mode="hybrid")` (#1185), which targets placed raster-image regions on mixed pages. On
+   full-page scans with zero embedded text (e.g., vertical Japanese `bunka-kokugo-series-019-p4.pdf`),
+   `Page.regions()` supplies semantic page segmentation (12 regions: `doc_title`, `paragraph_title`,
+   10 `text`) so callers can run region-aware OCR and heading/reading-order assembly.
 
 ### Open Ergonomic Choice for the Owner
 

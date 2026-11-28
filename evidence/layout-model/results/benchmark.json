@@ -5,14 +5,14 @@
     "rten_format"
   ],
   "pyropdf_heuristic_baseline": {
-    "mean_layout_ms": 5.52,
-    "mean_markdown_ms": 13.4,
-    "mean_render_150dpi_ms": 9.8
+    "mean_layout_ms": 4.49,
+    "mean_markdown_ms": 51.63,
+    "mean_render_150dpi_ms": 9.13
   },
   "pymupdf_layout_baseline": {
     "version": "pymupdf 2.2 + pymupdf-layout 2.2 + pymupdf4llm 2.2",
-    "mean_json_ms": 357.6,
-    "mean_md_ms": 344.6,
+    "mean_json_ms": 345.1,
+    "mean_md_ms": 335.0,
     "peak_rss_mib": 1224.83
   },
   "provenance": [
@@ -74,14 +74,21 @@
       "raw_rten_bytes": 4958804,
       "zip9_wheel_bytes": 4462692,
       "fits_pypi_100mib": true,
-      "load_1t_ms": 6.24,
-      "load_4t_ms": 4.26,
-      "mean_pre_ms": 1.78,
-      "mean_infer_1t_ms": 68.13,
-      "mean_infer_4t_ms": 21.93,
-      "median_infer_4t_ms": 21.81,
-      "peak_rss_1t_bytes": 53968896,
-      "peak_rss_4t_bytes": 59768832,
+      "load_1t_ms": 18.14,
+      "load_4t_ms": 4.49,
+      "mean_pre_ms": 1.87,
+      "mean_infer_1t_ms": 74.29,
+      "mean_infer_4t_ms": 26.17,
+      "median_infer_4t_ms": 23.99,
+      "peak_rss_1t_bytes": 57442304,
+      "peak_rss_4t_bytes": 60276736,
+      "ort_fidelity": {
+        "ort": 17,
+        "rten": 17,
+        "matched": 17,
+        "max_score_diff": 5e-05,
+        "max_box_diff_px": 0.005
+      },
       "sha256_rten": "bc5bb04ade924a47"
     },
     {
@@ -92,14 +99,21 @@
       "raw_rten_bytes": 129947280,
       "zip9_wheel_bytes": 117725490,
       "fits_pypi_100mib": false,
-      "load_1t_ms": 53.11,
-      "load_4t_ms": 53.49,
-      "mean_pre_ms": 4.95,
-      "mean_infer_1t_ms": 2984.98,
-      "mean_infer_4t_ms": 656.9,
-      "median_infer_4t_ms": 596.77,
-      "peak_rss_1t_bytes": 569786368,
-      "peak_rss_4t_bytes": 576864256,
+      "load_1t_ms": 53.91,
+      "load_4t_ms": 43.41,
+      "mean_pre_ms": 5.93,
+      "mean_infer_1t_ms": 2207.65,
+      "mean_infer_4t_ms": 699.66,
+      "median_infer_4t_ms": 703.15,
+      "peak_rss_1t_bytes": 569098240,
+      "peak_rss_4t_bytes": 577257472,
+      "ort_fidelity": {
+        "ort": 20,
+        "rten": 20,
+        "matched": 20,
+        "max_score_diff": 5e-05,
+        "max_box_diff_px": 0.005
+      },
       "sha256_rten": "22a978d24b8d7baf"
     },
     {
@@ -110,14 +124,21 @@
       "raw_rten_bytes": 34425280,
       "zip9_wheel_bytes": 24219396,
       "fits_pypi_100mib": true,
-      "load_1t_ms": 23.95,
-      "load_4t_ms": 18.37,
-      "mean_pre_ms": 5.0,
-      "mean_infer_1t_ms": 987.7,
-      "mean_infer_4t_ms": 369.91,
-      "median_infer_4t_ms": 362.24,
-      "peak_rss_1t_bytes": 427163648,
-      "peak_rss_4t_bytes": 435027968,
+      "load_1t_ms": 22.11,
+      "load_4t_ms": 21.52,
+      "mean_pre_ms": 4.99,
+      "mean_infer_1t_ms": 1030.95,
+      "mean_infer_4t_ms": 372.31,
+      "median_infer_4t_ms": 359.24,
+      "peak_rss_1t_bytes": 430800896,
+      "peak_rss_4t_bytes": 432177152,
+      "ort_fidelity": {
+        "ort": 21,
+        "rten": 21,
+        "matched": 21,
+        "max_score_diff": 0.01489,
+        "max_box_diff_px": 0.726
+      },
       "sha256_rten": "9f41f26cfae97491"
     },
     {
@@ -128,14 +149,21 @@
       "raw_rten_bytes": 130726000,
       "zip9_wheel_bytes": 117920142,
       "fits_pypi_100mib": false,
-      "load_1t_ms": 37.27,
-      "load_4t_ms": 43.12,
-      "mean_pre_ms": 5.41,
-      "mean_infer_1t_ms": 2379.7,
-      "mean_infer_4t_ms": 856.72,
-      "median_infer_4t_ms": 706.33,
-      "peak_rss_1t_bytes": 962723840,
-      "peak_rss_4t_bytes": 1028014080,
+      "load_1t_ms": 43.3,
+      "load_4t_ms": 48.45,
+      "mean_pre_ms": 5.02,
+      "mean_infer_1t_ms": 2536.49,
+      "mean_infer_4t_ms": 916.14,
+      "median_infer_4t_ms": 833.21,
+      "peak_rss_1t_bytes": 1018953728,
+      "peak_rss_4t_bytes": 1024802816,
+      "ort_fidelity": {
+        "ort": 20,
+        "rten": 20,
+        "matched": 20,
+        "max_score_diff": 7e-05,
+        "max_box_diff_px": 0.005
+      },
       "sha256_rten": "2dfaf96a29b709dd"
     },
     {
@@ -146,14 +174,21 @@
       "raw_rten_bytes": 56809984,
       "zip9_wheel_bytes": 44996244,
       "fits_pypi_100mib": true,
-      "load_1t_ms": 38.54,
-      "load_4t_ms": 23.65,
-      "mean_pre_ms": 4.94,
-      "mean_infer_1t_ms": 1422.83,
-      "mean_infer_4t_ms": 484.13,
-      "median_infer_4t_ms": 474.62,
-      "peak_rss_1t_bytes": 976764928,
-      "peak_rss_4t_bytes": 988102656,
+      "load_1t_ms": 30.72,
+      "load_4t_ms": 25.39,
+      "mean_pre_ms": 5.73,
+      "mean_infer_1t_ms": 1577.79,
+      "mean_infer_4t_ms": 718.08,
+      "median_infer_4t_ms": 720.19,
+      "peak_rss_1t_bytes": 981172224,
+      "peak_rss_4t_bytes": 986284032,
+      "ort_fidelity": {
+        "ort": 18,
+        "rten": 19,
+        "matched": 17,
+        "max_score_diff": 0.08053,
+        "max_box_diff_px": 5.263
+      },
       "sha256_rten": "6fe2e5eb257c76b8"
     }
   ]
