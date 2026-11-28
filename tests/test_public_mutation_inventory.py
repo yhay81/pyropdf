@@ -808,7 +808,7 @@ READ_ONLY = {
     "Outline": "walk entries",
     "OutlineItem": "to_entry",
     "Page": (
-        "images fonts pixmap ocr svg content paths text words layout chars search selection markdown tables "
+        "images fonts pixmap ocr regions svg content paths text words layout chars search selection markdown tables "
         "uses_transparency"
     ),
     "PageImage": "pixmap stored",
@@ -845,6 +845,7 @@ EXTERNAL = {
     "Document": "unlock save close __enter__ __exit__ fallback_fonts= del:fallback_fonts",
     "FallbackFonts": "__setitem__ __delitem__",
     "History": "max_size= clear",
+    "LayoutEngine": "detect",
     "OcrEngine": "recognize",
     "Pixmap": "save",
 }

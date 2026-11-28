@@ -8,6 +8,7 @@ from pyropdf._core import (
     DocumentClosedError,
     EncryptedDocumentError,
     InternalError,
+    LayoutError,
     LimitError,
     MalformedPdfError,
     OcrError,
@@ -67,6 +68,7 @@ for _public in (
     StalePageError,
     DocumentClosedError,
     OcrError,
+    LayoutError,
     PyropdfWarning,
 ):
     _public.__module__ = "pyropdf"
@@ -75,6 +77,7 @@ __all__ = [
     "DocumentClosedError",
     "EncryptedDocumentError",
     "InternalError",
+    "LayoutError",
     "LimitError",
     "MalformedPdfError",
     "OcrError",

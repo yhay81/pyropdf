@@ -664,6 +664,111 @@ character with its box, origin, and text, and marks inferred spaces
 with `synthetic="1"`; a layout without characters gives each span's
 text.
 
+## `LayoutEngine`
+
+```python
+LayoutEngine(
+    model_path: str | os.PathLike[str] | None = None,
+    *,
+    labels: Sequence[str] | None = None,
+    threads: int | None = None,
+    max_concurrent: int = 1,
+    max_model_size: int | None = 67108864,
+)
+```
+
+Pure-Rust RTen document layout detector.
+
+Loads a pre-converted `.rten` model (by default discovered from
+`pyropdf-layout-models` via `pyropdf[layout]`). Thread-safe and
+reusable across documents and threads.
+
+### `threads`
+
+```python
+LayoutEngine.threads: int
+```
+
+Number of RTen inference threads configured on this engine.
+
+### `max_concurrent`
+
+```python
+LayoutEngine.max_concurrent: int
+```
+
+Maximum concurrent render-and-detect calls admitted by this engine.
+
+### `max_model_size`
+
+```python
+LayoutEngine.max_model_size: int | None
+```
+
+Maximum `.rten` model file size in bytes, or `None` when unbounded.
+
+### `detect`
+
+```python
+LayoutEngine.detect(
+    pixmap: Pixmap,
+    *,
+    min_confidence: float = 0.5,
+) -> list[LayoutRegion]
+```
+
+Detect semantic layout regions in any `Pixmap`.
+
+Boxes are returned in the pixmap's pixel coordinates with top-left
+origin. Transparent pixels are composited over white. Refuses rasters
+larger than 512 MiB in RGBA or more than 1,024 retained regions with
+`LimitError`. To detect regions on a page in display space, use
+`Page.regions`.
+
+## `LayoutKind`
+
+```python
+LayoutKind: TypeAlias = Literal[
+    'title',
+    'heading',
+    'text',
+    'table',
+    'figure',
+    'caption',
+    'header',
+    'footer',
+    'footnote',
+    'formula',
+    'code',
+    'toc',
+    'reference',
+    'page_number',
+    'abstract',
+    'aside',
+]
+```
+
+Normalized semantic role of one detected document layout region.
+
+## `LayoutRegion`
+
+```python
+LayoutRegion(
+    *,
+    kind: LayoutKind,
+    label: str,
+    bbox: Rect,
+    confidence: float,
+    reading_order: int | None = None,
+)
+```
+
+One detected semantic layout region on a page or pixmap.
+
+`Page.regions` returns `bbox` in the page's display space (points,
+top-left origin, matching `Page.layout` and `Page.ocr`).
+`LayoutEngine.detect` returns `bbox` in pixmap pixels (top-left origin).
+
 ## `Line`
 
 ```python

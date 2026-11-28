@@ -198,6 +198,17 @@ impl Pixmap {
         (Arc::clone(&self.data), layout)
     }
 
+    /// Returns the samples and their layout, which layout detection reads.
+    pub fn layout_raster(&self) -> (Arc<Vec<u8>>, pyropdf_engine::layout::RasterLayout) {
+        let layout = pyropdf_engine::layout::RasterLayout {
+            width: self.width as usize,
+            height: self.height as usize,
+            gray: self.gray,
+            alpha: self.alpha,
+        };
+        (Arc::clone(&self.data), layout)
+    }
+
     fn encode(
         &self,
         out: &mut dyn Write,

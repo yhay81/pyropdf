@@ -128,6 +128,9 @@ method and property of its classes with its full description.
 - [`Image`](text-and-content.md#image): An image painted on the page.
 - [`ImageMask`](text-and-content.md#imagemask): The kind of mask that an image dictionary names.
 - [`Layout`](text-and-content.md#layout): The text of a page as blocks, lines, spans, and, on request, characters.
+- [`LayoutEngine`](text-and-content.md#layoutengine): Pure-Rust RTen document layout detector.
+- [`LayoutKind`](text-and-content.md#layoutkind): Normalized semantic role of one detected document layout region.
+- [`LayoutRegion`](text-and-content.md#layoutregion): One detected semantic layout region on a page or pixmap.
 - [`Line`](text-and-content.md#line): A line of a `Block`.
 - [`LinearGradient`](text-and-content.md#lineargradient): A paint for a `Canvas` that changes color along a straight line.
 - [`LineCap`](text-and-content.md#linecap): The shape at the open ends of a stroke.
@@ -410,6 +413,7 @@ method and property of its classes with its full description.
 - [`DocumentLimits`](limits-and-errors.md#documentlimits): Optional budgets for opening and reading PDFs.
 - [`EncryptedDocumentError`](limits-and-errors.md#encrypteddocumenterror): An operation on an encrypted document that needs a password.
 - [`InternalError`](limits-and-errors.md#internalerror): A Rust panic in pyropdf or an engine. The message retains the panic; please report this library defect.
+- [`LayoutError`](limits-and-errors.md#layouterror): Model loading, validation, or inference failure in `LayoutEngine`.
 - [`LIMIT_CODES`](limits-and-errors.md#limit_codes): Each code and when an operation reaches it, in the order of the registry.
 - [`LimitCode`](limits-and-errors.md#limitcode): A stable code that `LimitError.code` carries.
 - [`LimitError`](limits-and-errors.md#limiterror): A refusal by a limit, whose `code` names the limit.

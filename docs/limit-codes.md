@@ -35,6 +35,9 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `ocr_text_size` | 32 MiB | OCR recognition produces more than 32 MiB of UTF-8 text before confidence filtering. |
 | `ocr_model_size` | 64 MiB | The detector, recognizer, and dictionary that `OcrEngine` loads hold more bytes together than its `max_model_size`. |
 | `ocr_dictionary_entries` | 65,536 entries | The dictionary that `OcrEngine` loads has more lines than the limit. |
+| `layout_model_size` | 64 MiB | The model file that `LayoutEngine` loads is larger than its `max_model_size`. |
+| `layout_raster_size` | 512 MiB | The raster expanded to RGBA for layout detection exceeds 512 MiB. |
+| `layout_detection_count` | 1,024 regions | Layout detection retains more than 1,024 regions on one page. |
 | `stream_data_size` | 64 MiB | Reading a stream returns more bytes than the call's `max_size`. |
 | `object_value_depth` | 32 levels | A value written to the document nests arrays and dictionaries deeper than its limit. |
 | `markdown_output_size` | 64 MiB | The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`. |

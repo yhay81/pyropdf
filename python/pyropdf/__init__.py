@@ -131,6 +131,7 @@ from pyropdf._errors import (
     DocumentClosedError,
     EncryptedDocumentError,
     InternalError,
+    LayoutError,
     LimitError,
     MalformedPdfError,
     OcrError,
@@ -179,6 +180,7 @@ from pyropdf._interchange import (
     PieceInfo,
 )
 from pyropdf._layers import Layer, LayerConfig, LayerMembership, Layers, VisibilityPolicy
+from pyropdf._layout import LayoutEngine, LayoutKind, LayoutRegion
 from pyropdf._limit_codes import LimitCode
 from pyropdf._limits import LIMIT_CODES, CancellationToken, DocumentLimits
 from pyropdf._links import Destinations, Link, Links
@@ -511,6 +513,10 @@ __all__ = [
     "LayerStateTransition",
     "Layers",
     "Layout",
+    "LayoutEngine",
+    "LayoutError",
+    "LayoutKind",
+    "LayoutRegion",
     "LegalAttestation",
     "LimitCode",
     "LimitError",

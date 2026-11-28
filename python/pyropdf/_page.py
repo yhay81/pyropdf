@@ -24,6 +24,13 @@ from pyropdf._interchange import (
     _delete_piece_info,
     _replace_piece_info,
 )
+from pyropdf._layout import (
+    LayoutEngine,
+    LayoutRegion,
+    _default_layout_engine,
+    _validate_layout_confidence,
+    _validate_layout_dpi,
+)
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._links import Links
 from pyropdf._measurement import (
@@ -858,6 +865,35 @@ class Page:
             overlap=overlap,
             min_confidence=min_confidence,
             rotation=rotation,
+            clip=clip_rect,
+        )
+
+    def regions(
+        self,
+        *,
+        engine: LayoutEngine | None = None,
+        dpi: float = 150,
+        min_confidence: float = 0.5,
+        clip: Sequence[float] | None = None,
+    ) -> list[LayoutRegion]:
+        """Render the page at ``dpi`` and detect semantic layout regions in display space.
+
+        The default engine is loaded lazily from ``pyropdf[layout]`` and reused.
+        Pass an explicit :class:`LayoutEngine` to control the model or its
+        lifetime. ``clip`` detects regions inside one display-space box while
+        returning region coordinates in full-page display space.
+        """
+        resolved_dpi = _validate_layout_dpi(dpi)
+        resolved_confidence = _validate_layout_confidence(min_confidence)
+        clip_rect = None if clip is None else _clip_box(clip)
+        if engine is not None and not isinstance(engine, LayoutEngine):
+            msg = f"engine must be a LayoutEngine or None: {engine!r}"
+            raise TypeError(msg)
+        resolved_engine = _default_layout_engine() if engine is None else engine
+        return resolved_engine._detect_page(  # noqa: SLF001
+            self,
+            dpi=resolved_dpi,
+            min_confidence=resolved_confidence,
             clip=clip_rect,
         )
 
