@@ -1023,9 +1023,12 @@ Page.markdown(
     expand_abbreviations: bool = False,
     ruby: RubyMode = 'omit',
     margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
+    ignore_headers_footers: bool = False,
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
     max_graphics: int | None = 65536,
     max_size: int | None = 67108864,
+    use_layout: bool = False,
+    layout_engine: LayoutEngine | None = None,
 ) -> str
 ```
 
@@ -1034,7 +1037,8 @@ Return the current version of the page as Markdown.
 This is `Document.markdown` of this page alone, using the
 document's structure tree when enabled and trustworthy, or inferring
 heading sizes from this page when falling back to geometric extraction.
-`ruby`, `margins`, `images`, and `max_graphics` work as on
+`ruby`, `margins`, `ignore_headers_footers`, `images`,
+`max_graphics`, `use_layout`, and `layout_engine` work as on
 `Document.markdown`.
 
 ### `tables`

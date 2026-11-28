@@ -172,6 +172,7 @@ if TYPE_CHECKING:
     from pyropdf._chunks import Chunk
     from pyropdf._fallback_fonts import FallbackFont, _FontPackage
     from pyropdf._fonts import Font
+    from pyropdf._layout import LayoutEngine
     from pyropdf._markdown import ExportedImage
     from pyropdf._page import Page
     from pyropdf._profiles import Profiles
@@ -1742,6 +1743,8 @@ class Document:
         images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
         max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
         max_size: int | None = _markdown._DEFAULT_MAX_MARKDOWN_SIZE,  # noqa: SLF001
+        use_layout: bool = False,
+        layout_engine: LayoutEngine | None = None,
     ) -> str:
         """Return the given pages of the current version as Markdown, joined in their order.
 
@@ -1773,6 +1776,15 @@ class Document:
         follows its gutters, vertical CJK columns read top to bottom and right
         to left, and pages mixing horizontal bands or sidebars with vertical
         CJK columns segment into coherent orientation regions.
+
+        ``use_layout=True`` (or passing a :class:`LayoutEngine` via
+        ``layout_engine``) enables opt-in ML layout semantic enrichment on
+        untagged pages while preserving native geometric reading order and
+        table extraction: ``title`` regions promote to ``#`` and ``heading``
+        regions promote to ``##`` even when font sizes are uniform, and
+        ``header`` / ``footer`` / ``page_number`` regions are suppressed when
+        ``ignore_headers_footers=True`` (including on single-page selections).
+        Tagged pages driven by ``use_structure`` skip ML inference.
 
         ``ruby`` controls Japanese ruby (furigana) annotations in both
         structure ``/Ruby`` elements and geometric extraction (see
@@ -1817,6 +1829,8 @@ class Document:
             ignore_headers_footers=ignore_headers_footers,
             images=images,
             max_graphics=max_graphics,
+            use_layout=use_layout,
+            layout_engine=layout_engine,
         )
         with self._export_view(pages) as export_pages:
             return _markdown.pages_markdown(
@@ -1830,6 +1844,8 @@ class Document:
                 ignore_headers_footers=ignore_headers_footers,
                 images=images,
                 max_graphics=max_graphics,
+                use_layout=use_layout,
+                layout_engine=layout_engine,
             )
 
     def to_json(  # noqa: PLR0913 - keyword-only retrieval export options.
@@ -1845,6 +1861,8 @@ class Document:
         images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
         max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
         max_size: int | None = _chunks._DEFAULT_MAX_EXPORT_SIZE,  # noqa: SLF001
+        use_layout: bool = False,
+        layout_engine: LayoutEngine | None = None,
     ) -> str:
         """Return the given pages of the current version as JSON: each page's size and its elements.
 
@@ -1856,11 +1874,11 @@ class Document:
         table, image, block quote, or code block in reading order with its
         page index and its box in display space. Structure-tree extraction,
         ``use_structure``, ``expand_abbreviations``, ``ruby``, ``margins``,
-        ``ignore_headers_footers``, ``images``, ``max_graphics``, ``pages``,
-        and ``table_strategy`` are as for :meth:`markdown`. More than
-        ``max_size`` bytes of UTF-8 element text raise :class:`LimitError`
-        with code ``export_output_size`` without a partial result;
-        ``max_size=None`` lifts the limit.
+        ``ignore_headers_footers``, ``images``, ``max_graphics``,
+        ``use_layout``, ``layout_engine``, ``pages``, and ``table_strategy``
+        are as for :meth:`markdown`. More than ``max_size`` bytes of UTF-8
+        element text raise :class:`LimitError` with code ``export_output_size``
+        without a partial result; ``max_size=None`` lifts the limit.
         """
         _chunks.validate_options(
             table_strategy,
@@ -1872,6 +1890,8 @@ class Document:
             ignore_headers_footers=ignore_headers_footers,
             images=images,
             max_graphics=max_graphics,
+            use_layout=use_layout,
+            layout_engine=layout_engine,
         )
         with self._export_view(pages) as export_pages:
             return _chunks.export_json(
@@ -1885,6 +1905,8 @@ class Document:
                 ignore_headers_footers=ignore_headers_footers,
                 images=images,
                 max_graphics=max_graphics,
+                use_layout=use_layout,
+                layout_engine=layout_engine,
             )
 
     def to_chunks(  # noqa: PLR0913 - keyword-only retrieval export options.
@@ -1901,6 +1923,8 @@ class Document:
         images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
         max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
         max_size: int | None = _chunks._DEFAULT_MAX_EXPORT_SIZE,  # noqa: SLF001
+        use_layout: bool = False,
+        layout_engine: LayoutEngine | None = None,
     ) -> list[Chunk]:
         """Return the elements of :meth:`to_json` grouped into retrieval chunks of at most ``max_chars`` characters.
 
@@ -1917,7 +1941,8 @@ class Document:
         metadata, and :meth:`Chunk.to_dict` gives JSON-safe values. ``pages``,
         ``table_strategy``, ``use_structure``, ``expand_abbreviations``,
         ``ruby``, ``margins``, ``ignore_headers_footers``, ``images``,
-        ``max_graphics``, and ``max_size`` are as for :meth:`to_json`.
+        ``max_graphics``, ``use_layout``, ``layout_engine``, and ``max_size``
+        are as for :meth:`to_json`.
         """
         _chunks.validate_max_chars(max_chars)
         _chunks.validate_options(
@@ -1930,6 +1955,8 @@ class Document:
             ignore_headers_footers=ignore_headers_footers,
             images=images,
             max_graphics=max_graphics,
+            use_layout=use_layout,
+            layout_engine=layout_engine,
         )
         with self._export_view(pages) as export_pages:
             return _chunks.export_chunks(
@@ -1944,6 +1971,8 @@ class Document:
                 ignore_headers_footers=ignore_headers_footers,
                 images=images,
                 max_graphics=max_graphics,
+                use_layout=use_layout,
+                layout_engine=layout_engine,
             )
 
     def flatten(self, *, annotations: bool = True, widgets: bool = True) -> None:

@@ -1225,6 +1225,8 @@ Document.markdown(
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
     max_graphics: int | None = 65536,
     max_size: int | None = 67108864,
+    use_layout: bool = False,
+    layout_engine: LayoutEngine | None = None,
 ) -> str
 ```
 
@@ -1258,6 +1260,15 @@ bold and italic of embedded fonts become emphasis. Multicolumn text
 follows its gutters, vertical CJK columns read top to bottom and right
 to left, and pages mixing horizontal bands or sidebars with vertical
 CJK columns segment into coherent orientation regions.
+
+`use_layout=True` (or passing a `LayoutEngine` via
+`layout_engine`) enables opt-in ML layout semantic enrichment on
+untagged pages while preserving native geometric reading order and
+table extraction: `title` regions promote to `#` and `heading`
+regions promote to `##` even when font sizes are uniform, and
+`header` / `footer` / `page_number` regions are suppressed when
+`ignore_headers_footers=True` (including on single-page selections).
+Tagged pages driven by `use_structure` skip ML inference.
 
 `ruby` controls Japanese ruby (furigana) annotations in both
 structure `/Ruby` elements and geometric extraction (see
@@ -1307,6 +1318,8 @@ Document.to_json(
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
     max_graphics: int | None = 65536,
     max_size: int | None = 67108864,
+    use_layout: bool = False,
+    layout_engine: LayoutEngine | None = None,
 ) -> str
 ```
 
@@ -1320,11 +1333,11 @@ The document is `{"pages": [...]}`, each page `{"index",
 table, image, block quote, or code block in reading order with its
 page index and its box in display space. Structure-tree extraction,
 `use_structure`, `expand_abbreviations`, `ruby`, `margins`,
-`ignore_headers_footers`, `images`, `max_graphics`, `pages`,
-and `table_strategy` are as for `markdown`. More than
-`max_size` bytes of UTF-8 element text raise `LimitError`
-with code `export_output_size` without a partial result;
-`max_size=None` lifts the limit.
+`ignore_headers_footers`, `images`, `max_graphics`,
+`use_layout`, `layout_engine`, `pages`, and `table_strategy`
+are as for `markdown`. More than `max_size` bytes of UTF-8
+element text raise `LimitError` with code `export_output_size`
+without a partial result; `max_size=None` lifts the limit.
 
 ### `to_chunks`
 
@@ -1342,6 +1355,8 @@ Document.to_chunks(
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
     max_graphics: int | None = 65536,
     max_size: int | None = 67108864,
+    use_layout: bool = False,
+    layout_engine: LayoutEngine | None = None,
 ) -> list[Chunk]
 ```
 
@@ -1360,7 +1375,8 @@ any structure `alt_text`, `language`, or exported `image`
 metadata, and `Chunk.to_dict` gives JSON-safe values. `pages`,
 `table_strategy`, `use_structure`, `expand_abbreviations`,
 `ruby`, `margins`, `ignore_headers_footers`, `images`,
-`max_graphics`, and `max_size` are as for `to_json`.
+`max_graphics`, `use_layout`, `layout_engine`, and `max_size`
+are as for `to_json`.
 
 ### `flatten`
 
