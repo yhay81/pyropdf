@@ -986,6 +986,25 @@ def test_path_clustering_rotated_and_cropped_pages_and_background_exclusion() ->
     assert len(diag_clusters) == 1
     assert diag_clusters[0].path_indices == (0,)
 
+    # Two parallel header+footer rules in one stroked path and an open 3-sided stroked bracket
+    # visit all four bbox corners but do NOT draw all four perimeter sides, so both stay kept.
+    header_footer_page = page_with("1 w 0 0 m 200 0 l 0 100 m 200 100 l S")
+    assert len(header_footer_page.paths().clusters(exclude_background=True)) == 1
+    bracket_page = page_with("1 w 0 0 m 0 100 l 200 100 l 200 0 l S")
+    assert len(bracket_page.paths().clusters(exclude_background=True)) == 1
+    # By contrast, an open 3-edge filled path implicitly closes the 4th side and IS excluded.
+    unclosed_fill_page = page_with("1 1 1 rg 0 0 m 0 100 l 200 100 l 200 0 l f")
+    assert unclosed_fill_page.paths().clusters(exclude_background=True) == []
+    # And a closed 4-edge stroked full-page border IS excluded.
+    closed_border_page = page_with("1 w 0 0 200 100 re S")
+    assert closed_border_page.paths().clusters(exclude_background=True) == []
+
+    # Extreme finite tolerances never collide with internal empty sentinels or merge Y-disjoint paths.
+    disjoint_y_page = page_with("0 0 0 rg 10 10 20 10 re f 150 70 20 10 re f")
+    disjoint_clusters = disjoint_y_page.paths().clusters(x_tolerance=1e308, y_tolerance=0.0)
+    assert len(disjoint_clusters) == 2
+    assert [c.path_indices for c in disjoint_clusters] == [(1,), (0,)]
+
 
 def test_path_clustering_validation_limits_and_near_linear_scaling() -> None:
     # Build a page with 4,000 paths arranged in 40 disjoint clusters of 100 overlapping paths each.

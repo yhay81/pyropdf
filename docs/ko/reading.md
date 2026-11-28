@@ -142,7 +142,7 @@ with pyropdf.open("input.pdf") as doc:
     print(page.operations[:3])
 ```
 
-`page.paths()`는 같은 경로들을 `Paths` 컬럼 형태로 반환합니다. 경로 하나가 한 행에 해당하고 각 경로의 세그먼트도 별도의 컬럼에 담기며, 경로나 세그먼트마다 Python 객체를 만들지 않으므로 수십만 개의 선이 있는 도면도 페이지를 렌더링하는 것과 비슷한 시간 안에 읽을 수 있습니다. `column()`은 NumPy가 복사 없이 읽을 수 있는 읽기 전용 `memoryview`를 반환하며, pyarrow, polars, DuckDB는 Arrow PyCapsule 인터페이스를 통해 테이블 전체를 바로 가져올 수 있습니다. 개별 행은 필요할 때 `Path` 레코드로 생성됩니다.
+`page.paths()`는 같은 경로들을 `Paths` 컬럼 형태로 반환합니다. 경로 하나가 한 행에 해당하고 각 경로의 세그먼트도 별도의 컬럼에 담기며, 경로나 세그먼트마다 Python 객체를 만들지 않으므로 수십만 개의 선이 있는 도면도 페이지를 렌더링하는 것과 비슷한 시간 안에 읽을 수 있습니다. `column()`은 NumPy가 복사 없이 읽을 수 있는 읽기 전용 `memoryview`를 반환하며, pyarrow, polars, DuckDB는 Arrow PyCapsule 인터페이스를 통해 테이블 전체를 바로 가져올 수 있습니다. 개별 행은 필요할 때 `Path` 레코드로 생성됩니다. `paths.clusters()`(및 `page.content().path_clusters()`)는 지정한 `x_tolerance`와 `y_tolerance` 안에서 인접한 선·채우기 경로를 표시 좌표계의 불변 `PathCluster` 레코드(`bbox`, `path_indices`, `count`)로 묶으며, 기본값(`exclude_background=True`)으로 페이지 전체를 덮는 배경 사각형을 제외하고 `max_clusters` 및 `DocumentLimits`를 준수합니다.
 
 ```python
 import pyropdf
@@ -153,6 +153,8 @@ with pyropdf.open("input.pdf") as doc:
     # numpy.asarray(paths.column("stroke_red")) reads the same buffer.
     red = paths.column("stroke_red")
     print([path.bbox for path, value in zip(paths, red) if value == 1])
+    for cluster in paths.clusters(x_tolerance=3.0, y_tolerance=3.0):
+        print(cluster.bbox, cluster.count)
 ```
 
 `page.chars()`(및 `page.layout(chars=True).chars`) 역시 글리프마다 Python 객체를 만들지 않는 동일한 컬럼형 `Chars` 구조로 문자를 노출합니다. `chars.names`는 글리프 상자(`x0`, `y0`, `x1`, `y1`), 기준선 원점(`origin_x`, `origin_y`), UTF-8 텍스트 버퍼(`text_offsets`, `text_data`), 레이아웃 인덱스(`block`, `line`, `span`), `is_synthetic`, 콘텐츠 출처(`stream`, `operation`, 없을 때는 `0`) 컬럼 이름을 나열합니다. `chars.column(name)`은 NumPy가 복사 없이 읽는 읽기 전용 `memoryview`를 반환하고, `chars[start:stop]`은 복사 없이 슬라이스합니다. pyarrow, polars, DuckDB는 Arrow PyCapsule 인터페이스(`__arrow_c_schema__`와 `__arrow_c_array__`, 단일 UTF-8 `text` 필드와 nullable `stream`·`operation` 포함)로 테이블 전체를 Arrow 구조체 배열로 가져오며, 인덱싱이나 순회 시 필요에 따라 `Char` 레코드를 생성합니다.

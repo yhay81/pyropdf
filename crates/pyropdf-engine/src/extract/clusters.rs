@@ -73,7 +73,11 @@ pub fn cluster_path_table(
 ) -> Result<Vec<PathClusterTuple>, Error> {
     validate_options(&options)?;
     let count = stop.saturating_sub(start);
-    let page_size = (table.page_size.0 > 0.0 && table.page_size.1 > 0.0).then_some(table.page_size);
+    let page_size = (table.page_size.0.is_finite()
+        && table.page_size.1.is_finite()
+        && table.page_size.0 > 0.0
+        && table.page_size.1 > 0.0)
+        .then_some(table.page_size);
 
     let mut boxes = BudgetVec::new(budget);
     let mut members = BudgetVec::new(budget);
@@ -93,7 +97,9 @@ pub fn cluster_path_table(
             continue;
         };
         if options.exclude_background
-            && is_full_page_background(painted, page_size, || row_is_axis_aligned_rect(table, row))
+            && is_full_page_background(painted, page_size, || {
+                row_is_axis_aligned_rect(table, row, has_fill)
+            })
         {
             continue;
         }
@@ -224,26 +230,66 @@ fn is_full_page_background(
     is_rect()
 }
 
-/// Returns whether `row` of `table` consists solely of axis-aligned straight
-/// edges visiting all four corners of its geometry bounding box.
-fn row_is_axis_aligned_rect(table: &PathTable, row: usize) -> bool {
+/// Perimeter-side bit flags for [`row_is_axis_aligned_rect`].
+const EDGE_TOP: u8 = 1 << 0;
+const EDGE_BOTTOM: u8 = 1 << 1;
+const EDGE_LEFT: u8 = 1 << 2;
+const EDGE_RIGHT: u8 = 1 << 3;
+const ALL_RECT_EDGES: u8 = EDGE_TOP | EDGE_BOTTOM | EDGE_LEFT | EDGE_RIGHT;
+
+/// Returns whether `row` of `table` draws all four axis-aligned perimeter
+/// sides of its geometry bounding box with straight segments and corner
+/// vertices only.
+///
+/// Per ISO 32000-2 §8.5.3.3, fill operators implicitly close open subpaths
+/// whereas stroke-only operators do not, so implicit closure from the end of a
+/// subpath back to its `m` start is counted only when `has_fill` is `true`.
+/// This prevents multi-subpath parallel rules (such as a header + footer line)
+/// or open 3-sided stroked brackets from being misclassified as full-page
+/// background rectangles.
+fn row_is_axis_aligned_rect(table: &PathTable, row: usize, has_fill: bool) -> bool {
     let (bx0, by0, bx1, by1) = (table.x0[row], table.y0[row], table.x1[row], table.y1[row]);
     if !(bx1 > bx0 && by1 > by0) {
         return false;
     }
     let eps = 1e-3_f64.max(1e-6 * (bx1 - bx0).max(by1 - by0));
-    let corner_bit = |x: f64, y: f64| -> Option<u8> {
-        let left = (x - bx0).abs() <= eps;
-        let right = (x - bx1).abs() <= eps;
-        let top = (y - by0).abs() <= eps;
-        let bottom = (y - by1).abs() <= eps;
-        if !(left || right) || !(top || bottom) {
-            return None;
+    let is_corner = |x: f64, y: f64| -> bool {
+        let on_x = (x - bx0).abs() <= eps || (x - bx1).abs() <= eps;
+        let on_y = (y - by0).abs() <= eps || (y - by1).abs() <= eps;
+        on_x && on_y
+    };
+    let record_edge = |cx: f64, cy: f64, tx: f64, ty: f64, edges: &mut u8| -> bool {
+        let dx = (tx - cx).abs();
+        let dy = (ty - cy).abs();
+        if dx <= eps && dy <= eps {
+            return true;
         }
-        Some(1u8 << ((u8::from(right) << 1) | u8::from(bottom)))
+        if dx > eps && dy > eps {
+            return false;
+        }
+        if dy <= eps {
+            if (ty - by0).abs() <= eps {
+                *edges |= EDGE_TOP;
+                true
+            } else if (ty - by1).abs() <= eps {
+                *edges |= EDGE_BOTTOM;
+                true
+            } else {
+                false
+            }
+        } else if (tx - bx0).abs() <= eps {
+            *edges |= EDGE_LEFT;
+            true
+        } else if (tx - bx1).abs() <= eps {
+            *edges |= EDGE_RIGHT;
+            true
+        } else {
+            false
+        }
     };
 
-    let mut corners = 0u8;
+    let mut edges = 0u8;
+    let mut subpath_start: Option<(f64, f64)> = None;
     let mut current: Option<(f64, f64)> = None;
     for seg in table.segments_of(row) {
         let verb = table.verb[seg];
@@ -251,29 +297,40 @@ fn row_is_axis_aligned_rect(table: &PathTable, row: usize) -> bool {
         let ty = table.to_y[seg];
         match verb {
             b'm' => {
-                let Some(bit) = corner_bit(tx, ty) else {
+                if has_fill
+                    && let (Some((sx, sy)), Some((cx, cy))) = (subpath_start, current)
+                    && !record_edge(cx, cy, sx, sy, &mut edges)
+                {
                     return false;
-                };
-                corners |= bit;
+                }
+                if !is_corner(tx, ty) {
+                    return false;
+                }
+                subpath_start = Some((tx, ty));
                 current = Some((tx, ty));
             }
             b'l' | b'h' => {
-                let Some(bit) = corner_bit(tx, ty) else {
+                if !is_corner(tx, ty) {
                     return false;
-                };
+                }
                 let Some((cx, cy)) = current else {
                     return false;
                 };
-                if (tx - cx).abs() > eps && (ty - cy).abs() > eps {
+                if !record_edge(cx, cy, tx, ty, &mut edges) {
                     return false;
                 }
-                corners |= bit;
                 current = Some((tx, ty));
             }
             _ => return false,
         }
     }
-    corners == 0b1111
+    if has_fill
+        && let (Some((sx, sy)), Some((cx, cy))) = (subpath_start, current)
+        && !record_edge(cx, cy, sx, sy, &mut edges)
+    {
+        return false;
+    }
+    edges == ALL_RECT_EDGES
 }
 
 /// Normalizes `-0.0` to `+0.0` so coordinate compression treats both identically.
@@ -309,7 +366,9 @@ fn cluster_prepared(
     drop(boxes);
 
     // Passes 2+: merge clusters whose union bounding boxes now reach each other
-    // until convergence. Each pass reduces the cluster count or terminates.
+    // until convergence. Remap through a compact `O(k0)` `origin_map` allocated
+    // lazily on the first merge, applying it to `box_cluster` once at the end.
+    let mut origin_map: Option<BudgetVec<'_, u32>> = None;
     while cluster_boxes.len() > 1 {
         let prev_count = cluster_boxes.len();
         let mut c_dsu = sweep_union(
@@ -323,10 +382,28 @@ fn cluster_prepared(
         if next_boxes.len() == prev_count {
             break;
         }
-        for cluster_id in box_cluster.as_mut_slice() {
-            *cluster_id = remap[*cluster_id as usize];
+        if let Some(map) = origin_map.as_mut() {
+            budget.charge(LimitCode::InterpretationFuel, map.len() as u64)?;
+            for (step, slot) in map.as_mut_slice().iter_mut().enumerate() {
+                if (step & POLL_MASK) == 0 {
+                    budget.poll()?;
+                }
+                *slot = remap[*slot as usize];
+            }
+        } else {
+            origin_map = Some(remap);
         }
         cluster_boxes = next_boxes;
+    }
+
+    if let Some(map) = origin_map {
+        budget.charge(LimitCode::InterpretationFuel, box_cluster.len() as u64)?;
+        for (step, cluster_id) in box_cluster.as_mut_slice().iter_mut().enumerate() {
+            if (step & POLL_MASK) == 0 {
+                budget.poll()?;
+            }
+            *cluster_id = map[*cluster_id as usize];
+        }
     }
 
     let cluster_count = cluster_boxes.len();
@@ -360,6 +437,9 @@ fn cluster_prepared(
     drop(counts);
 
     for (pos, &member) in members.as_slice().iter().enumerate() {
+        if (pos & POLL_MASK) == 0 {
+            budget.poll()?;
+        }
         let cluster_id = box_cluster[pos] as usize;
         groups[cluster_id].try_push(member)?;
     }
@@ -751,7 +831,9 @@ fn sweep_union<'b>(
         let Ok(ry) = ys.binary_search_by(|v| v.total_cmp(&y_hi)) else {
             continue;
         };
-        let reach = x0 - x_tolerance;
+        // Clamp above `f64::NEG_INFINITY` so extreme finite tolerances never
+        // collide with `Node::EMPTY`'s sentinel value.
+        let reach = (x0 - x_tolerance).max(-f64::MAX);
         tree.insert(1, 0, root_r, ly, ry, id, reach, x1, &mut dsu, 0);
     }
 
@@ -1028,5 +1110,48 @@ mod tests {
             err,
             Error::Limit(ref refusal) if refusal.code() == LimitCode::Cancelled
         ));
+    }
+
+    #[test]
+    fn extreme_finite_tolerance_never_collides_with_empty_sentinel() {
+        // `x0 - x_tolerance` overflows to `-inf` for `-1e308 - 1e308`, which
+        // must remain clamped above `Node::EMPTY`'s `f64::NEG_INFINITY` so
+        // Y-disjoint boxes are never falsely merged with `cover_id = 0`.
+        let boxes = vec![
+            (-1.0e308, 0.0, -1.0e308 + 1.0e300, 10.0),
+            (-1.0e308, 100.0, -1.0e308 + 1.0e300, 110.0),
+            (10.0, 200.0, 20.0, 210.0),
+            (500.0, 100.0, 510.0, 110.0),
+        ];
+        let budget = Budget::default();
+        let got = run_inputs(&boxes, 1.0e308, 0.0, &budget).unwrap();
+        // Box 1 and box 3 share Y=[100, 110] and are within x_tolerance=1e308;
+        // boxes 0 and 2 are disjoint in Y and must stay separate.
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0].1, vec![0]);
+        assert_eq!(got[1].1, vec![1, 3]);
+        assert_eq!(got[2].1, vec![2]);
+    }
+
+    #[test]
+    fn multi_pass_staircase_merges_transitively_via_origin_map() {
+        // Three passes: L1 (0,1) encloses 2; adding 2 extends bbox right to
+        // reach L2 (3,4) which encloses 5; separate box 6 stays isolated.
+        let boxes = vec![
+            (0.0, 0.0, 2.0, 50.0),     // 0: L1 vertical
+            (0.0, 48.0, 40.0, 50.0),   // 1: L1 horizontal
+            (35.0, 10.0, 60.0, 20.0),  // 2: inside L1 bbox, extends right to x=60
+            (62.0, 10.0, 64.0, 60.0),  // 3: L2 vertical (within 3pt of box 2)
+            (62.0, 58.0, 110.0, 60.0), // 4: L2 horizontal
+            (90.0, 20.0, 100.0, 30.0), // 5: inside L2 bbox
+            (200.0, 0.0, 220.0, 20.0), // 6: isolated
+        ];
+        let budget = Budget::default();
+        let got = run_inputs(&boxes, 3.0, 3.0, &budget).unwrap();
+        let expected = brute_force_clusters(&boxes, 3.0, 3.0);
+        assert_eq!(got, expected);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].1, vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(got[1].1, vec![6]);
     }
 }

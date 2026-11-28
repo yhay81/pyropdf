@@ -904,12 +904,11 @@ class Content(_ContentOrigin, Sequence[ContentItem]):
                     item.fill is not None,
                     item.stroke is not None,
                     0.0 if item.stroke is None else item.stroke.width,
-                    _path_is_axis_aligned_rect(item),
                 )
                 for item in self.items
                 if isinstance(item, Path)
             ]
-            raw = _core.cluster_path_boxes(boxes, None, xt, yt, exclude_background, max_clusters)
+            raw = _core.cluster_path_boxes(boxes, xt, yt, exclude_background, max_clusters)
         return [PathCluster(bbox=_rect(bbox), path_indices=tuple(indices)) for bbox, indices in raw]
 
 
@@ -1154,10 +1153,6 @@ class Paths(Sequence[Path]):
 _PATH_ROWS_PER_READ = 4096
 
 
-#: Bitmask with all four corners of an axis-aligned rectangle visited.
-_ALL_RECT_CORNERS = 0b1111
-
-
 def _validate_cluster_options(
     *,
     x_tolerance: float,
@@ -1175,45 +1170,6 @@ def _validate_cluster_options(
         raise TypeError(msg)
     _validate_optional_positive_int("max_clusters", max_clusters)
     return float(x_tolerance), float(y_tolerance)
-
-
-def _rect_corner_bit(x: float, y: float, bbox: Rect, eps: float) -> int | None:
-    """Return the bit for ``(x, y)`` if it sits on a corner of ``bbox`` within ``eps``."""
-    left, right = abs(x - bbox.x0) <= eps, abs(x - bbox.x1) <= eps
-    top, bottom = abs(y - bbox.y0) <= eps, abs(y - bbox.y1) <= eps
-    if not (left or right) or not (top or bottom):
-        return None
-    return 1 << ((int(right) << 1) | int(bottom))
-
-
-def _path_is_axis_aligned_rect(path: Path) -> bool:
-    """Return whether ``path`` consists of axis-aligned straight edges visiting all four bbox corners."""
-    bbox = path.bbox
-    if not (bbox.x1 > bbox.x0 and bbox.y1 > bbox.y0):
-        return False
-    eps = max(1e-3, 1e-6 * max(bbox.x1 - bbox.x0, bbox.y1 - bbox.y0))
-    corners = 0
-    start: tuple[float, float] | None = None
-    current: tuple[float, float] | None = None
-    for segment in path.segments:
-        if isinstance(segment, MoveTo):
-            bit = _rect_corner_bit(segment.to.x, segment.to.y, bbox, eps)
-            if bit is None:
-                return False
-            corners |= bit
-            start = current = (segment.to.x, segment.to.y)
-        elif isinstance(segment, LineTo | ClosePath):
-            target = start if isinstance(segment, ClosePath) else (segment.to.x, segment.to.y)
-            if current is None or target is None:
-                return False
-            bit = _rect_corner_bit(target[0], target[1], bbox, eps)
-            if bit is None or (abs(target[0] - current[0]) > eps and abs(target[1] - current[1]) > eps):
-                return False
-            corners |= bit
-            current = target
-        else:
-            return False
-    return corners == _ALL_RECT_CORNERS
 
 
 _BLEND_MODES = tuple(BlendMode)

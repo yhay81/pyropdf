@@ -142,7 +142,7 @@ with pyropdf.open("input.pdf") as doc:
     print(page.operations[:3])
 ```
 
-`page.paths()` 以列式 `Paths` 返回相同路径：每行对应一条路径，所有路径的线段存入独立列中，不为单条路径或线段分配 Python 对象，因此包含数十万条线段的图纸也能在接近页面渲染耗时内完成读取。`column()` 返回可供 NumPy 零拷贝读取的只读 `memoryview`，pyarrow、polars 和 DuckDB 则可通过 Arrow PyCapsule 接口直接导入整张表。逐行访问时会按需构造 `Path` 记录。
+`page.paths()` 以列式 `Paths` 返回相同路径：每行对应一条路径，所有路径的线段存入独立列中，不为单条路径或线段分配 Python 对象，因此包含数十万条线段的图纸也能在接近页面渲染耗时内完成读取。`column()` 返回可供 NumPy 零拷贝读取的只读 `memoryview`，pyarrow、polars 和 DuckDB 则可通过 Arrow PyCapsule 接口直接导入整张表。逐行访问时会按需构造 `Path` 记录。`paths.clusters()`（以及 `page.content().path_clusters()`）按可配置的 `x_tolerance` 和 `y_tolerance` 在显示坐标中将邻近的描边和填充路径聚类为不可变的 `PathCluster` 记录（`bbox`、`path_indices`、`count`），默认排除铺满页面的背景矩形（`exclude_background=True`），并通过 `max_clusters` 与 `DocumentLimits` 限制结果规模与资源消耗。
 
 ```python
 import pyropdf
@@ -153,6 +153,8 @@ with pyropdf.open("input.pdf") as doc:
     # numpy.asarray(paths.column("stroke_red")) reads the same buffer.
     red = paths.column("stroke_red")
     print([path.bbox for path, value in zip(paths, red) if value == 1])
+    for cluster in paths.clusters(x_tolerance=3.0, y_tolerance=3.0):
+        print(cluster.bbox, cluster.count)
 ```
 
 `page.chars()`（以及 `page.layout(chars=True).chars`）同样以列式 `Chars` 形式暴露字符，不为单个字形创建 Python 对象。`chars.names` 列出全部列名：字形边界框（`x0`、`y0`、`x1`、`y1`）、基线原点（`origin_x`、`origin_y`）、UTF-8 文本缓冲区（`text_offsets`、`text_data`）、版面索引（`block`、`line`、`span`）、`is_synthetic` 以及内容来源（`stream`、`operation`，缺失时为 `0`）。`chars.column(name)` 返回可供 NumPy 零拷贝读取的只读 `memoryview`，`chars[start:stop]` 支持零拷贝切片，pyarrow、polars 和 DuckDB 可通过 Arrow PyCapsule 接口（`__arrow_c_schema__` 与 `__arrow_c_array__`，含单个 `text` UTF-8 字段以及可空的 `stream` 和 `operation`）将其导入为 Arrow struct 数组；索引或迭代时按需生成 `Char` 记录。

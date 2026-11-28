@@ -916,8 +916,7 @@ def page_paths(
     /,
 ) -> PathColumns: ...
 def cluster_path_boxes(
-    boxes: list[tuple[float, float, float, float, bool, bool, float, bool]],
-    page_size: tuple[float, float] | None,
+    boxes: list[tuple[float, float, float, float, bool, bool, float]],
     x_tolerance: float,
     y_tolerance: float,
     exclude_background: bool,
