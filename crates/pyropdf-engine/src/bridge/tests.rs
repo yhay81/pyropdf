@@ -856,3 +856,369 @@ fn synthesis_counts_generated_appearances_against_the_shared_budget() {
     );
     assert!(!version.has_changes());
 }
+
+#[test]
+fn ocg_lowering_is_noop_without_oc_properties() {
+    let document = three_pages();
+    let version = document.current();
+    let budget = Budget::default();
+    let pages = page_index(&version);
+    let lowered = ocg::lower(&version, &pages, &budget).unwrap();
+    assert!(lowered.objects.is_empty());
+    assert!(lowered.hidden_annots.is_empty());
+    assert_eq!(lowered.next_number, version.next_number());
+}
+
+#[test]
+fn ocg_lowering_handles_ve_direct_ocmd_and_annotation_oc_without_mutating_version() {
+    use pyropdf_store::value::{PdfString, Reference};
+
+    let budget = Budget::default();
+    let mut base = MemoryBase::new([(Name::from("Root"), reference(1))].into_iter().collect());
+    let mut put = |number: u32, value: Value| {
+        let mut out = BudgetVec::new(&budget);
+        write::value(&mut out, &value).unwrap();
+        base.insert(Reference::new(number, 0), Bytes::new(out.into_vec()));
+    };
+    let catalog = Reference::new(1, 0);
+    let pages = Reference::new(2, 0);
+    let page = Reference::new(3, 0);
+    let content_ref = Reference::new(4, 0);
+    let ocg_on = Reference::new(5, 0);
+    let ocg_off = Reference::new(6, 0);
+    let ocmd_ve_hidden = Reference::new(7, 0);
+    let ocmd_ve_visible = Reference::new(8, 0);
+    let form_xobj = Reference::new(9, 0);
+    let annot_ap = Reference::new(10, 0);
+    let annot_hidden = Reference::new(11, 0);
+    let annot_visible = Reference::new(12, 0);
+
+    // Two OCGs: ocg_on is ON, ocg_off is OFF.
+    let mut g1 = Dict::new();
+    g1.insert(Name::from("Type"), Value::Name(Name::from("OCG")));
+    g1.insert(
+        Name::from("Name"),
+        Value::String(PdfString::literal(b"On".as_slice())),
+    );
+    put(ocg_on.number(), Value::Dict(g1));
+
+    let mut g2 = Dict::new();
+    g2.insert(Name::from("Type"), Value::Name(Name::from("OCG")));
+    g2.insert(
+        Name::from("Name"),
+        Value::String(PdfString::literal(b"Off".as_slice())),
+    );
+    put(ocg_off.number(), Value::Dict(g2));
+
+    // Indirect OCMD with /VE [/And ocg_on ocg_off] -> hidden (even though /OCGs says ocg_on AllOn).
+    let mut hidden_ocmd = Dict::new();
+    hidden_ocmd.insert(Name::from("Type"), Value::Name(Name::from("OCMD")));
+    hidden_ocmd.insert(
+        Name::from("OCGs"),
+        Value::Array(Array::from(vec![Value::Reference(ocg_on)])),
+    );
+    hidden_ocmd.insert(Name::from("P"), Value::Name(Name::from("AllOn")));
+    hidden_ocmd.insert(
+        Name::from("VE"),
+        Value::Array(Array::from(vec![
+            Value::Name(Name::from("And")),
+            Value::Reference(ocg_on),
+            Value::Reference(ocg_off),
+        ])),
+    );
+    put(ocmd_ve_hidden.number(), Value::Dict(hidden_ocmd));
+
+    // Indirect OCMD with /VE [/And ocg_on [/Not ocg_off]] -> visible.
+    let mut visible_ocmd = Dict::new();
+    visible_ocmd.insert(Name::from("Type"), Value::Name(Name::from("OCMD")));
+    visible_ocmd.insert(
+        Name::from("VE"),
+        Value::Array(Array::from(vec![
+            Value::Name(Name::from("And")),
+            Value::Reference(ocg_on),
+            Value::Array(Array::from(vec![
+                Value::Name(Name::from("Not")),
+                Value::Reference(ocg_off),
+            ])),
+        ])),
+    );
+    put(ocmd_ve_visible.number(), Value::Dict(visible_ocmd));
+
+    // Form XObject with direct /OC containing hidden /VE painting green at (60..80, 60..80).
+    let mut form_oc = Dict::new();
+    form_oc.insert(Name::from("Type"), Value::Name(Name::from("OCMD")));
+    form_oc.insert(
+        Name::from("VE"),
+        Value::Array(Array::from(vec![
+            Value::Name(Name::from("Not")),
+            Value::Reference(ocg_on),
+        ])),
+    );
+    let mut form_dict = Dict::new();
+    form_dict.insert(Name::from("Type"), Value::Name(Name::from("XObject")));
+    form_dict.insert(Name::from("Subtype"), Value::Name(Name::from("Form")));
+    form_dict.insert(
+        Name::from("BBox"),
+        Value::Array(Array::from(vec![
+            0.into(),
+            0.into(),
+            100.into(),
+            100.into(),
+        ])),
+    );
+    form_dict.insert(Name::from("OC"), Value::Dict(form_oc));
+    let form_stream = Stream::new(form_dict, Bytes::new(b"0 1 0 rg 60 60 20 20 re f".to_vec()));
+    put(form_xobj.number(), Value::from(form_stream));
+
+    // Annotation appearance painting blue in its rect.
+    let mut ap_dict = Dict::new();
+    ap_dict.insert(Name::from("Type"), Value::Name(Name::from("XObject")));
+    ap_dict.insert(Name::from("Subtype"), Value::Name(Name::from("Form")));
+    ap_dict.insert(
+        Name::from("BBox"),
+        Value::Array(Array::from(vec![0.into(), 0.into(), 20.into(), 20.into()])),
+    );
+    let ap_stream = Stream::new(ap_dict, Bytes::new(b"0 0 1 rg 0 0 20 20 re f".to_vec()));
+    put(annot_ap.number(), Value::from(ap_stream));
+
+    let make_annot = |rect: [i64; 4], oc: Reference| {
+        let mut ap = Dict::new();
+        ap.insert(Name::from("N"), Value::Reference(annot_ap));
+        let mut a = Dict::new();
+        a.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
+        a.insert(Name::from("Subtype"), Value::Name(Name::from("Stamp")));
+        a.insert(
+            Name::from("Rect"),
+            Value::Array(Array::from(
+                rect.into_iter().map(Value::Integer).collect::<Vec<_>>(),
+            )),
+        );
+        a.insert(Name::from("AP"), Value::Dict(ap));
+        a.insert(Name::from("OC"), Value::Reference(oc));
+        a.insert(Name::from("F"), Value::Integer(4));
+        Value::Dict(a)
+    };
+    put(annot_hidden.number(), make_annot([10, 10, 30, 30], ocg_off));
+    put(
+        annot_visible.number(),
+        make_annot([40, 10, 60, 30], ocmd_ve_visible),
+    );
+
+    // Direct OCMD inside /Properties with hidden /VE painting red at (10..30, 60..80).
+    let mut direct_hidden = Dict::new();
+    direct_hidden.insert(Name::from("Type"), Value::Name(Name::from("OCMD")));
+    direct_hidden.insert(
+        Name::from("VE"),
+        Value::Array(Array::from(vec![
+            Value::Name(Name::from("And")),
+            Value::Reference(ocg_on),
+            Value::Reference(ocg_off),
+        ])),
+    );
+
+    // Page content draws:
+    // - hidden indirect OCMD red square at (10..30, 40..60)
+    // - visible indirect OCMD red square at (40..60, 40..60)
+    // - hidden direct OCMD red square at (10..30, 60..80)
+    // - hidden Form XObject green square at (60..80, 60..80)
+    let stream_bytes = b"/OC /HidInd BDC 1 0 0 rg 10 40 20 20 re f EMC \
+        /OC /VisInd BDC 1 0 0 rg 40 40 20 20 re f EMC \
+        /OC /HidDir BDC 1 0 0 rg 10 60 20 20 re f EMC \
+        /Fm1 Do";
+    put(
+        content_ref.number(),
+        Value::from(Stream::new(Dict::new(), Bytes::new(stream_bytes.to_vec()))),
+    );
+
+    let mut props = Dict::new();
+    props.insert(Name::from("HidInd"), Value::Reference(ocmd_ve_hidden));
+    props.insert(Name::from("VisInd"), Value::Reference(ocmd_ve_visible));
+    props.insert(Name::from("HidDir"), Value::Dict(direct_hidden));
+
+    let mut xobjs = Dict::new();
+    xobjs.insert(Name::from("Fm1"), Value::Reference(form_xobj));
+
+    let mut resources = Dict::new();
+    resources.insert(Name::from("Properties"), Value::Dict(props));
+    resources.insert(Name::from("XObject"), Value::Dict(xobjs));
+
+    let mut page_dict = Dict::new();
+    page_dict.insert(Name::from("Type"), Value::Name(Name::from("Page")));
+    page_dict.insert(Name::from("Parent"), Value::Reference(pages));
+    page_dict.insert(
+        Name::from("MediaBox"),
+        Value::Array(Array::from(vec![
+            0.into(),
+            0.into(),
+            100.into(),
+            100.into(),
+        ])),
+    );
+    page_dict.insert(Name::from("Resources"), Value::Dict(resources));
+    page_dict.insert(Name::from("Contents"), Value::Reference(content_ref));
+    page_dict.insert(
+        Name::from("Annots"),
+        Value::Array(Array::from(vec![
+            Value::Reference(annot_hidden),
+            Value::Reference(annot_visible),
+        ])),
+    );
+    put(page.number(), Value::Dict(page_dict));
+
+    let mut pages_dict = Dict::new();
+    pages_dict.insert(Name::from("Type"), Value::Name(Name::from("Pages")));
+    pages_dict.insert(
+        Name::from("Kids"),
+        Value::Array(Array::from(vec![Value::Reference(page)])),
+    );
+    pages_dict.insert(Name::from("Count"), Value::Integer(1));
+    put(pages.number(), Value::Dict(pages_dict));
+
+    let mut default_cfg = Dict::new();
+    default_cfg.insert(Name::from("BaseState"), Value::Name(Name::from("ON")));
+    default_cfg.insert(
+        Name::from("OFF"),
+        Value::Array(Array::from(vec![Value::Reference(ocg_off)])),
+    );
+    let mut oc_props = Dict::new();
+    oc_props.insert(
+        Name::from("OCGs"),
+        Value::Array(Array::from(vec![
+            Value::Reference(ocg_on),
+            Value::Reference(ocg_off),
+        ])),
+    );
+    oc_props.insert(Name::from("D"), Value::Dict(default_cfg));
+
+    let mut cat = Dict::new();
+    cat.insert(Name::from("Type"), Value::Name(Name::from("Catalog")));
+    cat.insert(Name::from("Pages"), Value::Reference(pages));
+    cat.insert(Name::from("OCProperties"), Value::Dict(oc_props));
+    put(catalog.number(), Value::Dict(cat));
+
+    let document = Document::new(Arc::new(base), None);
+    let version = document.current();
+
+    let index = page_index(&version);
+    let bridged = Bridged::with_appearances(&version, &index, &budget).unwrap();
+    let raster = render::page(&bridged, 0, 1.0).unwrap();
+    let pixel = |x: usize, pdf_y: usize| -> [u8; 4] {
+        // Raster origin is top-left on a 100x100 page over transparent background.
+        let y = 99 - pdf_y;
+        let offset = (y * usize::from(raster.width) + x) * 4;
+        [
+            raster.data[offset],
+            raster.data[offset + 1],
+            raster.data[offset + 2],
+            raster.data[offset + 3],
+        ]
+    };
+
+    assert_eq!(pixel(20, 50), [0, 0, 0, 0], "hidden indirect /VE");
+    assert_eq!(pixel(50, 50), [255, 0, 0, 255], "visible indirect /VE");
+    assert_eq!(pixel(20, 70), [0, 0, 0, 0], "hidden direct /VE");
+    assert_eq!(pixel(70, 70), [0, 0, 0, 0], "hidden Form XObject /OC");
+    assert_eq!(pixel(20, 20), [0, 0, 0, 0], "hidden annotation /OC");
+    assert_eq!(
+        pixel(50, 20),
+        [0, 0, 255, 255],
+        "visible annotation /VE /OC"
+    );
+
+    // Store version objects stay completely untouched.
+    let stored_annot = version
+        .get(annot_hidden.number(), &budget)
+        .unwrap()
+        .unwrap();
+    let Value::Dict(stored_dict) = stored_annot.value().as_ref() else {
+        panic!("expected dict");
+    };
+    assert_eq!(stored_dict.get("F"), Some(&Value::Integer(4)));
+}
+
+#[test]
+fn ocg_lowering_refuses_cyclic_ve_with_optional_content_expression_limit() {
+    use pyropdf_store::budget::LimitCode;
+
+    let budget = Budget::default();
+    let mut base = MemoryBase::new([(Name::from("Root"), reference(1))].into_iter().collect());
+    let mut put = |number: u32, value: Value| {
+        let mut out = BudgetVec::new(&budget);
+        write::value(&mut out, &value).unwrap();
+        base.insert(Reference::new(number, 0), Bytes::new(out.into_vec()));
+    };
+    let catalog = Reference::new(1, 0);
+    let pages = Reference::new(2, 0);
+    let page = Reference::new(3, 0);
+    let ocg = Reference::new(4, 0);
+    let cycle = Reference::new(5, 0);
+    let ocmd = Reference::new(6, 0);
+
+    let mut g = Dict::new();
+    g.insert(Name::from("Type"), Value::Name(Name::from("OCG")));
+    put(ocg.number(), Value::Dict(g));
+    put(
+        cycle.number(),
+        Value::Array(Array::from(vec![
+            Value::Name(Name::from("Not")),
+            Value::Reference(cycle),
+        ])),
+    );
+    let mut ocmd_dict = Dict::new();
+    ocmd_dict.insert(Name::from("Type"), Value::Name(Name::from("OCMD")));
+    ocmd_dict.insert(Name::from("VE"), Value::Reference(cycle));
+    put(ocmd.number(), Value::Dict(ocmd_dict));
+
+    let mut props = Dict::new();
+    props.insert(Name::from("C"), Value::Reference(ocmd));
+    let mut resources = Dict::new();
+    resources.insert(Name::from("Properties"), Value::Dict(props));
+    let mut page_dict = Dict::new();
+    page_dict.insert(Name::from("Type"), Value::Name(Name::from("Page")));
+    page_dict.insert(Name::from("Parent"), Value::Reference(pages));
+    page_dict.insert(
+        Name::from("MediaBox"),
+        Value::Array(Array::from(vec![
+            0.into(),
+            0.into(),
+            100.into(),
+            100.into(),
+        ])),
+    );
+    page_dict.insert(Name::from("Resources"), Value::Dict(resources));
+    put(page.number(), Value::Dict(page_dict));
+
+    let mut pages_dict = Dict::new();
+    pages_dict.insert(Name::from("Type"), Value::Name(Name::from("Pages")));
+    pages_dict.insert(
+        Name::from("Kids"),
+        Value::Array(Array::from(vec![Value::Reference(page)])),
+    );
+    pages_dict.insert(Name::from("Count"), Value::Integer(1));
+    put(pages.number(), Value::Dict(pages_dict));
+
+    let mut oc_props = Dict::new();
+    oc_props.insert(
+        Name::from("OCGs"),
+        Value::Array(Array::from(vec![Value::Reference(ocg)])),
+    );
+    let mut cat = Dict::new();
+    cat.insert(Name::from("Type"), Value::Name(Name::from("Catalog")));
+    cat.insert(Name::from("Pages"), Value::Reference(pages));
+    cat.insert(Name::from("OCProperties"), Value::Dict(oc_props));
+    put(catalog.number(), Value::Dict(cat));
+
+    let document = Document::new(Arc::new(base), None);
+    let version = document.current();
+
+    let err = Bridged::new(&version, &page_index(&version), &budget).unwrap_err();
+    match err {
+        Error::Store(store_err) => {
+            assert_eq!(
+                store_err.limit().unwrap().code(),
+                LimitCode::OptionalContentExpression
+            );
+        }
+        other => panic!("expected optional_content_expression limit, got {other:?}"),
+    }
+}

@@ -637,7 +637,6 @@ objects = ["Reference"]
 clause = "8.11"
 description = "Optional content groups, memberships, configurations, and their usage."
 objects = ["OptContentGroup", "OptContentMembership", "OptContentConfig", "OptContentProperties", "OptContentUsage", "OptContentUsageApplication"]
-interpret = { status = "engine", upstream = 372 }
 
 [features.text-state]
 clause = "9.3"

@@ -23,18 +23,6 @@ features = ["device-color-conversion"]
 dimensions = ["edit"]
 behavior = "Evaluate filtered sampled or calculator streams, nested stitching and calculator procedures with released construction and execution budgets."
 
-[families.optional-content-engine]
-tracker = 248
-issue = 372
-title = "hayro: evaluate optional content visibility expressions and annotation /OC"
-parent = 355
-kind = "upstream"
-features = [
-    "optional-content",
-]
-dimensions = ["interpret"]
-behavior = "Adopt engine evaluation of visibility expressions and annotation OC. Track the upstream issue directly. #373 owns local adoption."
-
 [families.transparency-group-engine]
 tracker = 248
 issue = 1024
