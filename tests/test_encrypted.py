@@ -564,6 +564,62 @@ def test_public_key_algorithms_and_filter_selection(fixture: str, expected: str)
                     assert reopened.objects[4]["FixtureValue"] == b"edited"
 
 
+@pytest.mark.parametrize("fixture", ["recipients-aes128", "s3", "s4", "v2", "recipients"])
+def test_recipient_engine_reference_pages(fixture: str) -> None:
+    source = (RECIPIENT_ASSETS / f"pyhanko-{fixture}.pdf").read_bytes()
+    with pyropdf.open(source) as doc:
+        with pytest.raises(pyropdf.EncryptedDocumentError):
+            _ = doc.pages[0]
+        assert doc.unlock(recipient("owner")) is Access.OWNER
+
+        def check_page(expected: str, *, rotated: bool) -> bytes:
+            # The authorized plaintext copy is the test oracle for the object-source bridge.
+            with pyropdf.open(doc.to_bytes()) as reference:
+                page = reference.pages[0]
+                pixmap = page.pixmap()
+                assert (pixmap.width, pixmap.height) == ((40, 50) if rotated else (50, 40))
+                assert pixmap.pixel(6, 6) == ((0, 0, 0) if rotated else (255, 255, 255))
+                assert pixmap.pixel(5, 33) == ((255, 255, 255) if rotated else (0, 0, 0))
+                if expected:
+                    with pytest.raises(pyropdf.LimitError):
+                        page.text(max_glyphs=1)
+                assert page.text() == expected
+                rendered = pixmap.to_bytes()
+                # AESV3 already goes through the public bridge. Pre-V5 needs the source API in #14.
+                if fixture == "recipients":
+                    assert doc.pages[0].pixmap().to_bytes() == rendered
+                    assert doc.pages[0].text() == expected
+                return rendered
+
+        original = check_page("", rotated=False)
+        doc.pages[0].rotation = 90
+        rotated = check_page("", rotated=True)
+        assert original != rotated
+        doc.objects[4]["Resources"] = {
+            "Font": {
+                "F1": {
+                    "Type": pyropdf.Name("Font"),
+                    "Subtype": pyropdf.Name("Type1"),
+                    "BaseFont": pyropdf.Name("Helvetica"),
+                }
+            }
+        }
+        doc.objects[3].write(RECIPIENT_STREAM + b"BT /F1 7 Tf 3 23 Td (Source) Tj ET\n", filter=None)
+        assert check_page("Source\n", rotated=True) != rotated
+        assert doc.objects[4]["FixtureValue"] == RECIPIENT_STRING
+        if fixture in {"recipients-aes128", "recipients"}:
+            metadata = doc.catalog["Metadata"]
+            header = f"{metadata.xref} {metadata.generation} obj\n".encode()
+            ciphertext = source.split(header, 1)[1].split(b"\nendobj", 1)[0]
+            assert ciphertext
+            assert b"<x:xmpmeta" not in ciphertext
+            for incremental in (False, True):
+                saved = doc.to_bytes(incremental=incremental, encryption=Encryption.KEEP)
+                assert ciphertext in saved
+                with pyropdf.open(saved, credential=recipient("owner")) as reopened:
+                    assert reopened.catalog["Metadata"].read() == metadata.read()
+
+
 def test_public_key_changing_encryption_requires_authorized_recipient(tmp_path: Path) -> None:
     with pyropdf.open(RECIPIENT_ASSETS / "pyhanko-recipients.pdf", credential=recipient("editor")) as doc:
         doc.objects[4]["FixtureValue"] = b"keep my edit"
