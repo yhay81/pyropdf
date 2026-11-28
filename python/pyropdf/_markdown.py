@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pyropdf._content import Path as _ContentPath
 from pyropdf._errors import LimitError
 from pyropdf._images import PageImage
+from pyropdf._layout import LayoutEngine, _default_layout_engine
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Stream
 from pyropdf._text import (
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from pyropdf._geometry import Rect
+    from pyropdf._layout import LayoutRegion
     from pyropdf._page import Page
     from pyropdf._structure_reading import PageStructureData, StructureBlock
     from pyropdf._tables import Table
@@ -618,9 +620,13 @@ class _MarkdownBuilder:
     def __init__(self, max_size: int | None) -> None:
         self.entries: list[tuple[str, str]] = []
         self.paragraph: list[str] = []
+        self.heading_lines: list[str] = []
+        self.heading_level: int | None = None
+        self.heading_region: int | None = None
         self.max_size = max_size
         self.output_size = 0
         self.paragraph_size = 0
+        self.heading_size = 0
 
     def _check_size(self, size: int) -> None:
         if self.max_size is not None and size > self.max_size:
@@ -650,6 +656,38 @@ class _MarkdownBuilder:
         self.paragraph.append(text)
         self.paragraph_size += text_size
 
+    def flush_heading(self) -> None:
+        """Append and clear a pending multi-line ML heading."""
+        if not self.heading_lines or self.heading_level is None:
+            return
+        text = "#" * self.heading_level + " " + _join_lines(self.heading_lines)
+        self._append_entry("h", text, text_size=self.heading_size)
+        self.heading_lines.clear()
+        self.heading_level = None
+        self.heading_region = None
+        self.heading_size = 0
+
+    def append_ml_heading(self, level: int, region_index: int, text: str) -> None:
+        """Append one line of an ML-promoted heading, joining consecutive lines from one region."""
+        if not text:
+            return
+        self.flush_paragraph()
+        if self.heading_lines and (self.heading_region != region_index or self.heading_level != level):
+            self.flush_heading()
+        if self.max_size is None:
+            text_size = 0
+        elif not self.heading_lines:
+            text_size = level + 1 + utf8_size(text)
+        else:
+            join_gap = 0 if _joins_pair_without_space(self.heading_lines[-1], text) else 1
+            text_size = join_gap + utf8_size(text)
+        pending_separator = 2 if self.entries else 0
+        self._check_size(self.output_size + pending_separator + self.heading_size + text_size)
+        self.heading_level = level
+        self.heading_region = region_index
+        self.heading_lines.append(text)
+        self.heading_size += text_size
+
     def flush_paragraph(self) -> None:
         """Append and clear a pending paragraph."""
         if not self.paragraph:
@@ -661,6 +699,7 @@ class _MarkdownBuilder:
 
     def append_classified(self, kind: str, text: str) -> None:
         """Append one classified line, retaining paragraph joining rules."""
+        self.flush_heading()
         if kind == "p":
             self._append_paragraph_line(text)
         elif kind:
@@ -671,6 +710,7 @@ class _MarkdownBuilder:
         """Append one complete block without merging it into an earlier paragraph."""
         if not text:
             return
+        self.flush_heading()
         self.flush_paragraph()
         self._append_entry(kind, text)
 
@@ -680,6 +720,7 @@ class _MarkdownBuilder:
         table_indices: list[int],
     ) -> None:
         """Append non-empty table renderings for one reading-order event."""
+        self.flush_heading()
         self.flush_paragraph()
         for table_index in table_indices:
             markdown = table_data[table_index][1]
@@ -688,6 +729,7 @@ class _MarkdownBuilder:
 
     def render(self) -> str:
         """Return the completed page after charging all pending text."""
+        self.flush_heading()
         self.flush_paragraph()
         return _join_entries(self.entries)
 
@@ -762,7 +804,21 @@ def _emit_table_line(  # noqa: PLR0913 - emits one table-owned line with ordered
     builder.append_classified(kind, text)
 
 
-def page_to_markdown(  # noqa: PLR0913 - page conversion with optional tables, words, images, and budget.
+def _effective_heading_level(
+    line: TextLine,
+    levels: dict[float, int],
+    ml_level: int | None,
+) -> int | None:
+    """Resolve one line's heading level from geometric font sizes and optional ML role."""
+    geo_level = levels.get(_line_size(line))
+    if ml_level is None:
+        return geo_level
+    if ml_level == 1:
+        return 1
+    return geo_level if geo_level is not None else ml_level
+
+
+def page_to_markdown(  # noqa: PLR0913 - page conversion with optional tables, words, images, ML headings, and budget.
     layout: TextPageDict,
     levels: dict[float, int],
     tables: list[_MarkdownTable] | None = None,
@@ -770,6 +826,7 @@ def page_to_markdown(  # noqa: PLR0913 - page conversion with optional tables, w
     max_size: int | None = None,
     *,
     images: list[_MarkdownImage] | None = None,
+    ml_headings: dict[tuple[int, int], tuple[int, int]] | None = None,
 ) -> str:
     """Convert one page while bounding retained Markdown entries and output."""
     table_data = [] if tables is None else tables
@@ -777,8 +834,8 @@ def page_to_markdown(  # noqa: PLR0913 - page conversion with optional tables, w
     image_events = _image_events(layout, images) if images else {}
     builder = _MarkdownBuilder(max_size)
     line_position = 0
-    for block in layout["blocks"]:
-        for line in block["lines"]:
+    for block_index, block in enumerate(layout["blocks"]):
+        for line_index, line in enumerate(block["lines"]):
             pending_tables = table_events.get(line_position, [])
             pending_images = image_events.get(line_position, [])
             if table_memberships[line_position]:
@@ -795,6 +852,16 @@ def page_to_markdown(  # noqa: PLR0913 - page conversion with optional tables, w
                 continue
             if pending_tables or pending_images:
                 _emit_ordered_media(builder, table_data, pending_tables, pending_images)
+            ml_override = None if ml_headings is None else ml_headings.get((block_index, line_index))
+            if ml_override is not None:
+                ml_level, region_index = ml_override
+                text = _line_text(line)
+                if text:
+                    resolved = _effective_heading_level(line, levels, ml_level)
+                    assert resolved is not None  # noqa: S101
+                    builder.append_ml_heading(resolved, region_index, text)
+                line_position += 1
+                continue
             kind, text = _classify_line(line, levels)
             if not kind:
                 line_position += 1
@@ -826,6 +893,14 @@ _MAX_BAND_CANDIDATES_PER_PAGE = 64
 _MAX_HEADER_FOOTER_KEYS = 8192
 #: Maximum non-empty page table results cached across passes (F6 memory bound).
 _MAX_CACHED_TABLE_PAGES = 256
+#: Maximum pages whose ML layout regions are cached across export passes (F6 memory bound).
+_MAX_CACHED_LAYOUT_PAGES = 256
+#: ML layout roles suppressed when ``ignore_headers_footers=True``.
+_ML_CHROME_KINDS = frozenset({"header", "footer", "page_number"})
+#: ML layout roles promoted to Markdown headings when geometric sizes do not already classify them.
+_ML_HEADING_KINDS: dict[str, int] = {"title": 1, "heading": 2}
+#: Minimum fraction of a line's area covered by an ML region to match when its center is slightly outside.
+_ML_LINE_COVERAGE_THRESHOLD = 0.5
 _FLOAT32_MAX = 3.4028234663852886e38
 _MARGIN_PAIR_LEN = 2
 _MARGIN_QUAD_LEN = 4
@@ -884,6 +959,8 @@ class _ExportConfig:
     ignore_headers_footers: bool = False
     images: Path | Callable[[ExportedImage], object] | None = None
     max_graphics: int | None = _DEFAULT_MAX_GRAPHICS
+    use_layout: bool = False
+    layout_engine: LayoutEngine | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1609,6 +1686,120 @@ def _fallback_or_clipped_layout(
     return _page_layout_clipped(page, body_clip, body_empty=body_empty, ruby=ruby)
 
 
+class _LayoutCache:
+    """Lazily run and cache ML layout detection at most once per untagged page."""
+
+    __slots__ = ("_active", "_engine", "_regions")
+
+    def __init__(self, config: _ExportConfig) -> None:
+        self._active = config.use_layout or config.layout_engine is not None
+        self._engine: LayoutEngine | None = config.layout_engine
+        self._regions: dict[int, tuple[LayoutRegion, ...]] = {}
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    def regions(self, page: Page, layout: TextPageDict | None = None) -> tuple[LayoutRegion, ...]:
+        """Return detected ML layout regions for ``page``, skipping empty-text pages."""
+        if not self._active:
+            return ()
+        if layout is not None and not any(block["lines"] for block in layout["blocks"]):
+            return ()
+        cached = self._regions.get(page.index)
+        if cached is not None:
+            return cached
+        if self._engine is None:
+            self._engine = _default_layout_engine()
+        found = tuple(page.regions(engine=self._engine))
+        if len(self._regions) < _MAX_CACHED_LAYOUT_PAGES:
+            self._regions[page.index] = found
+        return found
+
+
+def _best_ml_region(line: TextLine, regions: Sequence[LayoutRegion]) -> tuple[int, LayoutRegion] | None:
+    """Return ``(region_index, region)`` best covering ``line``, or ``None``."""
+    lx0, ly0, lx1, ly1 = line["bbox"]
+    line_area = max(0.0, lx1 - lx0) * max(0.0, ly1 - ly0)
+    center_x = (lx0 + lx1) * 0.5
+    center_y = (ly0 + ly1) * 0.5
+    best: tuple[int, LayoutRegion] | None = None
+    best_rank: tuple[float, float, float] | None = None
+    for index, region in enumerate(regions):
+        box = region.bbox
+        inter_w = max(0.0, min(lx1, box.x1) - max(lx0, box.x0))
+        inter_h = max(0.0, min(ly1, box.y1) - max(ly0, box.y0))
+        if inter_w <= 0.0 or inter_h <= 0.0:
+            continue
+        coverage = (inter_w * inter_h) / line_area if line_area > 0.0 else 0.0
+        center_inside = box.x0 <= center_x <= box.x1 and box.y0 <= center_y <= box.y1
+        if not center_inside and coverage < _ML_LINE_COVERAGE_THRESHOLD:
+            continue
+        rank = (round(coverage, 2), region.confidence, -(box.width * box.height))
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best = (index, region)
+    return best
+
+
+def _filter_layout_by_ml_chrome(
+    layout: TextPageDict,
+    words: list[Word],
+    regions: Sequence[LayoutRegion],
+    table_bboxes: Sequence[_BBox],
+) -> tuple[TextPageDict, list[Word]]:
+    """Drop non-table lines classified by ML layout as header, footer, or page number."""
+    if not regions or not any(region.kind in _ML_CHROME_KINDS for region in regions):
+        return layout, words
+    kept_blocks: list[dict[str, Any]] = []
+    index_map: dict[tuple[int, int], tuple[int, int]] = {}
+    changed = False
+    for old_b, block in enumerate(layout["blocks"]):
+        kept_lines: list[TextLine] = []
+        for old_l, line in enumerate(block["lines"]):
+            inside_table = any(_line_inside_bbox(line, tb) for tb in table_bboxes)
+            matched = None if inside_table else _best_ml_region(line, regions)
+            if matched is not None and matched[1].kind in _ML_CHROME_KINDS:
+                changed = True
+                continue
+            index_map[(old_b, old_l)] = (len(kept_blocks), len(kept_lines))
+            kept_lines.append(line)
+        if kept_lines:
+            kept_blocks.append({**block, "lines": kept_lines})
+    if not changed:
+        return layout, words
+    new_layout: TextPageDict = {**layout, "blocks": kept_blocks}
+    remapped_words = [
+        replace(word, block=mapped[0], line=mapped[1])
+        for word in words
+        if (mapped := index_map.get((word.block, word.line))) is not None
+    ]
+    return new_layout, remapped_words
+
+
+def _ml_line_headings(
+    layout: TextPageDict,
+    regions: Sequence[LayoutRegion],
+    table_bboxes: Sequence[_BBox],
+) -> dict[tuple[int, int], tuple[int, int]]:
+    """Map ``(block_index, line_index)`` to ``(heading_level, region_index)`` for ML title/heading regions."""
+    if not regions or not any(region.kind in _ML_HEADING_KINDS for region in regions):
+        return {}
+    overrides: dict[tuple[int, int], tuple[int, int]] = {}
+    for block_index, block in enumerate(layout["blocks"]):
+        for line_index, line in enumerate(block["lines"]):
+            if any(_line_inside_bbox(line, tb) for tb in table_bboxes):
+                continue
+            matched = _best_ml_region(line, regions)
+            if matched is None:
+                continue
+            region_index, region = matched
+            level = _ML_HEADING_KINDS.get(region.kind)
+            if level is not None:
+                overrides[(block_index, line_index)] = (level, region_index)
+    return overrides
+
+
 def validate_options(  # noqa: PLR0913 - validates all shared retrieval export options.
     table_strategy: object,
     max_size: object,
@@ -1620,6 +1811,8 @@ def validate_options(  # noqa: PLR0913 - validates all shared retrieval export o
     ignore_headers_footers: object = False,
     images: object = None,
     max_graphics: object = _DEFAULT_MAX_GRAPHICS,
+    use_layout: object = False,
+    layout_engine: object = None,
 ) -> None:
     """Refuse options that a Markdown or structured export conversion does not take."""
     if table_strategy not in {"lines", "text", None}:
@@ -1634,6 +1827,12 @@ def validate_options(  # noqa: PLR0913 - validates all shared retrieval export o
     _validate_ruby(ruby)
     if not isinstance(ignore_headers_footers, bool):
         msg = f"ignore_headers_footers must be True or False: {ignore_headers_footers!r}"
+        raise TypeError(msg)
+    if not isinstance(use_layout, bool):
+        msg = f"use_layout must be True or False: {use_layout!r}"
+        raise TypeError(msg)
+    if layout_engine is not None and not isinstance(layout_engine, LayoutEngine):
+        msg = f"layout_engine must be a LayoutEngine or None: {layout_engine!r}"
         raise TypeError(msg)
     _validate_optional_positive_int("max_size", max_size)
     _validate_optional_positive_int("max_graphics", max_graphics)
@@ -1652,6 +1851,8 @@ def _make_config(  # noqa: PLR0913 - constructs internal normalized export confi
     ignore_headers_footers: bool,
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None,
     max_graphics: int | None,
+    use_layout: bool = False,
+    layout_engine: LayoutEngine | None = None,
 ) -> _ExportConfig:
     return _ExportConfig(
         table_strategy=table_strategy,
@@ -1663,6 +1864,8 @@ def _make_config(  # noqa: PLR0913 - constructs internal normalized export confi
         ignore_headers_footers=ignore_headers_footers,
         images=normalize_images(images),
         max_graphics=max_graphics,
+        use_layout=use_layout,
+        layout_engine=layout_engine,
     )
 
 
@@ -1725,6 +1928,7 @@ def _render_geometric_page(  # noqa: PLR0913 - renders one geometric page with c
     levels: dict[float, int],
     data: PageStructureData | None,
     page_budget: int | None,
+    layout_cache: _LayoutCache | None = None,
 ) -> str:
     body_clip, body_empty = _page_body_clip(page, config.margins)
     page_gfx = graphics.inspect(page)
@@ -1735,6 +1939,13 @@ def _render_geometric_page(  # noqa: PLR0913 - renders one geometric page with c
     table_bboxes = [(t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1) for t in tables]
     y_min, y_max = _band_bounds(layout["height"], body_clip)
     layout, words = hf_rule.filter_layout(layout, words, y_min, y_max, table_bboxes)
+    ml_headings: dict[tuple[int, int], tuple[int, int]] | None = None
+    if layout_cache is not None and layout_cache.active:
+        ml_regions = layout_cache.regions(page, layout)
+        if config.ignore_headers_footers and ml_regions:
+            layout, words = _filter_layout_by_ml_chrome(layout, words, ml_regions, table_bboxes)
+        if ml_regions:
+            ml_headings = _ml_line_headings(layout, ml_regions, table_bboxes) or None
     markdown_tables = _table_output(layout, tables, max_size=config.max_size, remaining_size=page_budget)
     kept_images = _filter_images_by_margins(page_gfx.images, body_clip, body_empty=False)
     image_links = _export_geometric_images(kept_images, exporter)
@@ -1746,17 +1957,20 @@ def _render_geometric_page(  # noqa: PLR0913 - renders one geometric page with c
             words if tables else None,
             max_size=None if page_budget is None else max(0, page_budget),
             images=image_links or None,
+            ml_headings=ml_headings,
         )
     except MarkdownOutputLimitError:
         raise markdown_output_limit_error(config.max_size or 0) from None
 
 
-def _collect_geometric_heading_levels(
+def _collect_geometric_heading_levels(  # noqa: PLR0913 - gathers heading sizes across geometric pages.
     pages: Sequence[Page],
     config: _ExportConfig,
     graphics: _GraphicsCache,
     hf_rule: _HeaderFooterRule,
     structure_pages: dict[int, PageStructureData] | None,
+    *,
+    layout_cache: _LayoutCache | None = None,
 ) -> dict[float, int]:
     """Infer geometric heading levels across non-structured pages after applying controls."""
     size_counts: Counter[float] = Counter()
@@ -1772,7 +1986,11 @@ def _collect_geometric_heading_levels(
         tables = graphics.tables(page, config.table_strategy, clip=body_clip)
         table_bboxes = [(t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1) for t in tables]
         y_min, y_max = _band_bounds(layout["height"], body_clip)
-        layout, _ = hf_rule.filter_layout(layout, words, y_min, y_max, table_bboxes)
+        layout, words = hf_rule.filter_layout(layout, words, y_min, y_max, table_bboxes)
+        if layout_cache is not None and layout_cache.active and config.ignore_headers_footers:
+            ml_regions = layout_cache.regions(page, layout)
+            if ml_regions:
+                layout, _ = _filter_layout_by_ml_chrome(layout, words, ml_regions, table_bboxes)
         size_counts.update(collect_sizes([layout], [table_bboxes]))
     return heading_levels(size_counts)
 
@@ -1812,6 +2030,8 @@ def pages_markdown(  # noqa: PLR0913 - keyword-only retrieval export options.
     ignore_headers_footers: bool = False,
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
     max_graphics: int | None = _DEFAULT_MAX_GRAPHICS,
+    use_layout: bool = False,
+    layout_engine: LayoutEngine | None = None,
 ) -> str:
     """Convert ``pages`` to Markdown, using the PDF structure tree when enabled and trustworthy.
 
@@ -1829,6 +2049,8 @@ def pages_markdown(  # noqa: PLR0913 - keyword-only retrieval export options.
         ignore_headers_footers=ignore_headers_footers,
         images=images,
         max_graphics=max_graphics,
+        use_layout=use_layout,
+        layout_engine=layout_engine,
     )
     from pyropdf._structure_reading import extract_structure_pages  # noqa: PLC0415
 
@@ -1843,8 +2065,11 @@ def pages_markdown(  # noqa: PLR0913 - keyword-only retrieval export options.
     exporter = _ImageExporter(config.images, memory_limit=pages[0].document.limits.max_memory_size)
     graphics = _GraphicsCache(max_graphics=config.max_graphics, need_images=exporter.active)
     graphics.seed_from_structure(structure_pages)
+    layout_cache = _LayoutCache(config)
     hf_rule = _detect_headers_footers(pages, config, graphics, structure_pages)
-    levels = _collect_geometric_heading_levels(pages, config, graphics, hf_rule, structure_pages)
+    levels = _collect_geometric_heading_levels(
+        pages, config, graphics, hf_rule, structure_pages, layout_cache=layout_cache
+    )
 
     rendered: list[str] = []
     output_bytes = 0
@@ -1872,6 +2097,7 @@ def pages_markdown(  # noqa: PLR0913 - keyword-only retrieval export options.
                 levels=levels,
                 data=data,
                 page_budget=page_budget,
+                layout_cache=layout_cache,
             )
         if not page_markdown:
             continue

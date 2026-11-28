@@ -1608,16 +1608,20 @@ class Page:
         expand_abbreviations: bool = False,
         ruby: RubyMode = "omit",
         margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
+        ignore_headers_footers: bool = False,
         images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
         max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
         max_size: int | None = _markdown._DEFAULT_MAX_MARKDOWN_SIZE,  # noqa: SLF001
+        use_layout: bool = False,
+        layout_engine: LayoutEngine | None = None,
     ) -> str:
         """Return the current version of the page as Markdown.
 
         This is :meth:`Document.markdown` of this page alone, using the
         document's structure tree when enabled and trustworthy, or inferring
         heading sizes from this page when falling back to geometric extraction.
-        ``ruby``, ``margins``, ``images``, and ``max_graphics`` work as on
+        ``ruby``, ``margins``, ``ignore_headers_footers``, ``images``,
+        ``max_graphics``, ``use_layout``, and ``layout_engine`` work as on
         :meth:`Document.markdown`.
         """
         _markdown.validate_options(
@@ -1627,8 +1631,11 @@ class Page:
             expand_abbreviations=expand_abbreviations,
             ruby=ruby,
             margins=margins,
+            ignore_headers_footers=ignore_headers_footers,
             images=images,
             max_graphics=max_graphics,
+            use_layout=use_layout,
+            layout_engine=layout_engine,
         )
         with self._export_single() as export_page:
             return _markdown.pages_markdown(
@@ -1639,8 +1646,11 @@ class Page:
                 expand_abbreviations=expand_abbreviations,
                 ruby=ruby,
                 margins=margins,
+                ignore_headers_footers=ignore_headers_footers,
                 images=images,
                 max_graphics=max_graphics,
+                use_layout=use_layout,
+                layout_engine=layout_engine,
             )
 
     def tables(  # noqa: PLR0913 - table detection options are all keyword-only

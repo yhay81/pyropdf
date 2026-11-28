@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     import os
     from collections.abc import Callable, Sequence
 
+    from pyropdf._layout import LayoutEngine
     from pyropdf._markdown import ExportedImage, TextLine, TextPageDict, _ExportConfig
     from pyropdf._page import Page
     from pyropdf._structure_reading import StructureBlock
@@ -170,6 +171,8 @@ def validate_options(  # noqa: PLR0913 - validates all shared retrieval export o
     ignore_headers_footers: object = False,
     images: object = None,
     max_graphics: object = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
+    use_layout: object = False,
+    layout_engine: object = None,
 ) -> None:
     """Refuse options that a structured export does not take."""
     _markdown.validate_options(
@@ -182,6 +185,8 @@ def validate_options(  # noqa: PLR0913 - validates all shared retrieval export o
         ignore_headers_footers=ignore_headers_footers,
         images=images,
         max_graphics=max_graphics,
+        use_layout=use_layout,
+        layout_engine=layout_engine,
     )
 
 
@@ -197,6 +202,8 @@ def export_json(  # noqa: PLR0913 - keyword-only retrieval export options.
     ignore_headers_footers: bool = False,
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
     max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
+    use_layout: bool = False,
+    layout_engine: LayoutEngine | None = None,
 ) -> str:
     """Return ``pages`` as a JSON document of their sizes and elements."""
     config = _markdown._make_config(  # noqa: SLF001
@@ -209,6 +216,8 @@ def export_json(  # noqa: PLR0913 - keyword-only retrieval export options.
         ignore_headers_footers=ignore_headers_footers,
         images=images,
         max_graphics=max_graphics,
+        use_layout=use_layout,
+        layout_engine=layout_engine,
     )
     page_records, exporter = _pages_elements(pages, config)
     records = [
@@ -238,6 +247,8 @@ def export_chunks(  # noqa: PLR0913 - keyword-only retrieval export options.
     ignore_headers_footers: bool = False,
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
     max_graphics: int | None = _markdown._DEFAULT_MAX_GRAPHICS,  # noqa: SLF001
+    use_layout: bool = False,
+    layout_engine: LayoutEngine | None = None,
 ) -> list[Chunk]:
     """Return the chunks of ``pages``' elements within ``max_chars`` characters each."""
     config = _markdown._make_config(  # noqa: SLF001
@@ -250,6 +261,8 @@ def export_chunks(  # noqa: PLR0913 - keyword-only retrieval export options.
         ignore_headers_footers=ignore_headers_footers,
         images=images,
         max_graphics=max_graphics,
+        use_layout=use_layout,
+        layout_engine=layout_engine,
     )
     page_records, exporter = _pages_elements(pages, config)
     elements = [element for _, _, page_elements in page_records for element in page_elements]
@@ -314,6 +327,7 @@ def _geometric_page_elements(  # noqa: PLR0913 - extracts one geometric page's e
     levels: dict[float, int],
     budget: _Budget,
     data: Any,  # noqa: ANN401 - optional PageStructureData from _structure_reading.
+    layout_cache: _markdown._LayoutCache | None = None,
 ) -> tuple[tuple[float, float], list[Element]]:
     body_clip, body_empty = _markdown._page_body_clip(page, config.margins)  # noqa: SLF001
     page_gfx = graphics.inspect(page)
@@ -327,7 +341,16 @@ def _geometric_page_elements(  # noqa: PLR0913 - extracts one geometric page's e
     table_bboxes = [(t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1) for t in tables]
     y_min, y_max = _markdown._band_bounds(layout["height"], body_clip)  # noqa: SLF001
     layout, words = hf_rule.filter_layout(layout, words, y_min, y_max, table_bboxes)
-    elements = _PageReader(page.index, layout, levels, budget).read(tables, words if tables else None)
+    ml_headings: dict[tuple[int, int], tuple[int, int]] | None = None
+    if layout_cache is not None and layout_cache.active:
+        ml_regions = layout_cache.regions(page, layout)
+        if config.ignore_headers_footers and ml_regions:
+            layout, words = _markdown._filter_layout_by_ml_chrome(layout, words, ml_regions, table_bboxes)  # noqa: SLF001
+        if ml_regions:
+            ml_headings = _markdown._ml_line_headings(layout, ml_regions, table_bboxes) or None  # noqa: SLF001
+    elements = _PageReader(page.index, layout, levels, budget, ml_headings=ml_headings).read(
+        tables, words if tables else None
+    )
     kept_images = _markdown._filter_images_by_margins(page_gfx.images, body_clip, body_empty=False)  # noqa: SLF001
     for page_image in kept_images:
         ref = exporter.export(page_image)
@@ -359,9 +382,10 @@ def _pages_elements(
     )
     graphics = _markdown._GraphicsCache(max_graphics=config.max_graphics, need_images=True)  # noqa: SLF001
     graphics.seed_from_structure(structure_pages)
+    layout_cache = _markdown._LayoutCache(config)  # noqa: SLF001
     hf_rule = _markdown._detect_headers_footers(pages, config, graphics, structure_pages)  # noqa: SLF001
     levels = _markdown._collect_geometric_heading_levels(  # noqa: SLF001
-        pages, config, graphics, hf_rule, structure_pages
+        pages, config, graphics, hf_rule, structure_pages, layout_cache=layout_cache
     )
 
     budget = _Budget(config.max_size)
@@ -395,6 +419,7 @@ def _pages_elements(
                 levels=levels,
                 budget=budget,
                 data=data,
+                layout_cache=layout_cache,
             )
             result.append((page, size, elements))
     return result, exporter
@@ -423,13 +448,25 @@ class _Budget:
 class _PageReader:
     """Turn one page's layout into elements, as ``page_to_markdown`` turns it into Markdown."""
 
-    def __init__(self, page: int, layout: TextPageDict, levels: dict[float, int], budget: _Budget) -> None:
+    def __init__(
+        self,
+        page: int,
+        layout: TextPageDict,
+        levels: dict[float, int],
+        budget: _Budget,
+        *,
+        ml_headings: dict[tuple[int, int], tuple[int, int]] | None = None,
+    ) -> None:
         self.page = page
         self.layout = layout
         self.levels = levels
         self.budget = budget
+        self.ml_headings = ml_headings
         self.elements: list[Element] = []
         self.lines: list[tuple[str, tuple[float, float, float, float]]] = []
+        self.heading_lines: list[tuple[str, tuple[float, float, float, float]]] = []
+        self.heading_level: int | None = None
+        self.heading_region: int | None = None
 
     def read(self, tables: list[Table], words: list[Word] | None) -> list[Element]:
         remaining = None if self.budget.max_size is None else max(0, self.budget.max_size - self.budget.used)
@@ -446,8 +483,8 @@ class _PageReader:
             raise
         events, memberships, residuals = _markdown._table_events(self.layout, rendered, words)  # noqa: SLF001
         position = 0
-        for block in self.layout["blocks"]:
-            for line in block["lines"]:
+        for block_index, block in enumerate(self.layout["blocks"]):
+            for line_index, line in enumerate(block["lines"]):
                 pending = events.get(position, [])
                 if memberships[position]:
                     before, after = residuals.get(position, ("", ""))
@@ -456,9 +493,11 @@ class _PageReader:
                     self._line(line, after)
                 else:
                     self._tables(tables, rendered, pending)
-                    self._line(line, None)
+                    ml_override = None if self.ml_headings is None else self.ml_headings.get((block_index, line_index))
+                    self._line(line, None, ml_override=ml_override)
                 position += 1
             self._flush()
+        self._flush_heading()
         self._tables(tables, rendered, events.get(position, []))
         return self.elements
 
@@ -466,11 +505,29 @@ class _PageReader:
         self.budget.charge(element.text)
         self.elements.append(element)
 
-    def _line(self, line: TextLine, override: str | None) -> None:
+    def _line(
+        self,
+        line: TextLine,
+        override: str | None,
+        *,
+        ml_override: tuple[int, int] | None = None,
+    ) -> None:
         text = _markdown._line_text(line) if override is None else override.strip()  # noqa: SLF001
         if not text:
             return
         bbox = tuple(line["bbox"])
+        if ml_override is not None:
+            ml_level, region_index = ml_override
+            resolved = _markdown._effective_heading_level(line, self.levels, ml_level)  # noqa: SLF001
+            assert resolved is not None  # noqa: S101
+            self._flush()
+            if self.heading_lines and (self.heading_region != region_index or self.heading_level != resolved):
+                self._flush_heading()
+            self.heading_level = resolved
+            self.heading_region = region_index
+            self.heading_lines.append((text, bbox))
+            return
+        self._flush_heading()
         level = self.levels.get(_markdown._line_size(line))  # noqa: SLF001
         item = _markdown._normalize_list_item(text)  # noqa: SLF001
         if level is None and item is None:
@@ -485,10 +542,28 @@ class _PageReader:
     def _tables(self, tables: list[Table], rendered: list[tuple[Any, str]], indexes: list[int]) -> None:
         if not indexes:
             return
+        self._flush_heading()
         self._flush()
         for index in indexes:
             table = tables[index]
             self._add(Element(kind="table", page=self.page, bbox=table.bbox, text=rendered[index][1], rows=table.rows))
+
+    def _flush_heading(self) -> None:
+        if not self.heading_lines or self.heading_level is None:
+            return
+        boxes = [bbox for _, bbox in self.heading_lines]
+        bbox = Rect(
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        )
+        text = _markdown._join_lines([text for text, _ in self.heading_lines])  # noqa: SLF001
+        level = self.heading_level
+        self.heading_lines.clear()
+        self.heading_level = None
+        self.heading_region = None
+        self._add(Element(kind="heading", page=self.page, bbox=bbox, text=text, level=level))
 
     def _flush(self) -> None:
         if not self.lines:
