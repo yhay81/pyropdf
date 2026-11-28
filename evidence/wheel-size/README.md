@@ -231,3 +231,45 @@ vs 644.7 ms on `bill-hr815`; 77.8 vs 78.2 ms and 116.1 vs 115.7 ms on
 `usrguide`), text extraction moved by +2.2% and +0.3%, word extraction moved by
 −2.2% and +3.8%, search moved by +0.6% and +4.3%, and save improved by 6.6% and
 2.9%.
+
+## `dyn ContentSink`, `skrifa` deduplication, and remaining cold crates (#1264)
+
+After concurrent feature merges (`#1241`, `#1243`, `#1245`, and Lane 2A–4
+hardening), `main` at `fc9e5067` reached 9,463,199 bytes on Windows x86_64
+(+26,015 bytes above the 9,437,184-byte `abi3` limit) and 9,386,351 bytes on
+Linux x86_64, blocking PRs `#1262` and `#1263`.
+
+Three zero-regression reductions restored >200 KiB of compressed headroom
+without lowering `opt-level` on any hot crate or on `pyropdf-store` /
+`pyropdf-engine` (compiling `pyropdf-engine` at level `z` was measured and
+rejected because it monomorphizes `hayro_interpret::interpret` for text
+extraction at `minsize`, regressing `bill-hr815` text extraction by +37.6%):
+
+1. **De-monomorphize `ContentCollector` over `&mut dyn ContentSink`** in
+   `crates/pyropdf-engine/src/extract/model.rs` (eliminates 6 duplicate
+   monomorphizations of `ContentCollector` and `hayro_interpret::interpret`):
+   −138,513 bytes (−135.3 KiB).
+2. **Align `pyropdf-engine`'s `skrifa` to `0.49.0`** (matching `hayro-font
+   0.5.0`, removing the duplicate `skrifa 0.50.0` copy from the compiled
+   extension): −48,574 bytes (−47.4 KiB).
+3. **Size-optimize remaining strictly cold-path crates at level `z`** in
+   `Cargo.toml` (`harfrust`, `hayro-cmap`, `zune-jpeg`, `zune-core`, `png`,
+   `fdeflate`, `miniz_oxide`, `image`, `fax`, `brotli`, `j2k-*`, `unicode-*`,
+   non-GEMM `rten-*`, `yoke`, `polycool`, `xmlwriter`, `base64*`, and remaining
+   PDF/PAdES crypto crates), keeping all 10 hot crates at level `2` and
+   `pyropdf-store`, `pyropdf-engine`, `read-fonts`, `skrifa`, `hayro-font`, and
+   `pyo3` at level `s`: −24,125 bytes (−23.6 KiB).
+
+Together, these reduced the delivered macOS arm64 wheel on `fc9e5067` from
+8,189,550 to 7,978,338 bytes — a saving of 211,212 bytes (206.3 KiB; compressed
+extension from 7,445,177 to 7,234,041 bytes; uncompressed `_core.abi3.so` from
+16,618,816 to 16,124,864 bytes). The delivered wheel passed
+`tools/smoke_artifact.py` and `cargo-audit audit --deny warnings`.
+[Artifact hashes and timings](dyn-sink-skrifa-profile.json).
+
+Across `bill-hr815` and `usrguide` (best of five freshly opened documents per
+operation on Apple M2 Pro, macOS 27.2, CPython 3.15.2), all four 72 and 144 dpi
+rendering comparisons stayed flat to slightly faster (−1.4% to +0.5%: 373.4 vs
+368.5 ms and 647.9 vs 638.5 ms on `bill-hr815`; 76.4 vs 76.7 ms and 116.2 vs
+115.8 ms on `usrguide`), and `bill-hr815` text, words, and search stayed within
++0.9% to +1.8% (68.0 vs 69.2 ms, 99.1 vs 100.6 ms, 70.0 vs 70.7 ms).

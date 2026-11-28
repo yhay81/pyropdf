@@ -616,16 +616,37 @@ def test_release_profile_size_optimizes_cold_crates_and_preserves_hot_paths() ->
         "harfrust",
         "read-fonts",
         "skrifa",
+        "hayro-font",
+        "hayro-cmap",
+        "pyo3",
         "rten",
+        "rten-vecmath",
         "hayro-svg",
         "hayro-jbig2",
         "hayro-jpeg2000",
+        "zune-jpeg",
+        "png",
+        "unicode-bidi",
         "cms",
         "x509-cert",
         "der",
         "pkcs8",
+        "aes-gcm",
+        "aes",
+        "sha2",
         "quick-xml",
         "tiff",
         "gif",
     ):
         assert packages[cold]["opt-level"] in {"s", "z"}, f"{cold} should be size-optimized in release wheels"
+
+
+def test_pyropdf_engine_shares_hayro_font_skrifa_version() -> None:
+    lock = tomllib.loads((ROOT / "Cargo.lock").read_text(encoding="utf-8"))
+    packages = {p["name"]: p for p in lock["package"] if p["name"] in {"pyropdf-engine", "hayro-font"}}
+    engine_skrifa = [d for d in packages["pyropdf-engine"]["dependencies"] if d == "skrifa" or d.startswith("skrifa ")]
+    hayro_skrifa = [d for d in packages["hayro-font"]["dependencies"] if d == "skrifa" or d.startswith("skrifa ")]
+    assert engine_skrifa == hayro_skrifa, (
+        f"pyropdf-engine ({engine_skrifa}) should share hayro-font's skrifa ({hayro_skrifa}) "
+        "to avoid duplicating skrifa in native wheels"
+    )

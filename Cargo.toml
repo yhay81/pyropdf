@@ -43,21 +43,19 @@ strip = "symbols"
 # PyO3 converts Rust panics into Python exceptions only when they unwind.
 panic = "unwind"
 
-# Size-optimize the PDF store, engine, font/CMap code, and PyO3 runtime glue at
-# level `s`, and strictly cold-path crates (Arlington schema, OCR operators and
-# model loading, cold codecs, SVG/XML, and PAdES/X.509/CMS/PKCS crypto) at
-# level `z` (#858, #1110, #1164). The binding crate (`pyropdf-python`, which
-# drives fat LTO), rasterizer (`vello_cpu`, `vello_common`,
-# `ab_glyph_rasterizer`), matrix-multiplication kernels (`rten-gemm`), core PDF
-# parser/interpreter (`hayro`, `hayro-interpret`, `hayro-syntax`), and Flate
-# compression (`flate2`, `zlib-rs`) retain speed optimization (`opt-level = 2`).
+# Size-optimize the PDF store, engine, font metrics/parsing, and PyO3 runtime
+# glue at level `s`, and strictly cold-path crates (Arlington schema, text
+# shaping, CJK CMaps, RTen non-GEMM/model-loading, image/SVG/XML/Unicode
+# codecs, and PAdES/X.509/CMS/PKCS/PDF crypto) at level `z` (#858, #1110,
+# #1164, #1264). The binding crate (`pyropdf-python`, which drives fat LTO),
+# rasterizer (`vello_cpu`, `vello_common`, `ab_glyph_rasterizer`),
+# matrix-multiplication kernels (`rten-gemm`), core PDF parser/interpreter
+# (`hayro`, `hayro-interpret`, `hayro-syntax`), and Flate compression
+# (`flate2`, `zlib-rs`) retain speed optimization (`opt-level = 2`).
 [profile.release.package.pyropdf-store]
 opt-level = "s"
 
 [profile.release.package.pyropdf-engine]
-opt-level = "s"
-
-[profile.release.package.harfrust]
 opt-level = "s"
 
 [profile.release.package.read-fonts]
@@ -69,11 +67,14 @@ opt-level = "s"
 [profile.release.package.hayro-font]
 opt-level = "s"
 
-[profile.release.package.hayro-cmap]
-opt-level = "s"
-
 [profile.release.package.pyo3]
 opt-level = "s"
+
+[profile.release.package.harfrust]
+opt-level = "z"
+
+[profile.release.package.hayro-cmap]
+opt-level = "z"
 
 [profile.release.package.pyropdf-schema]
 opt-level = "z"
@@ -88,6 +89,18 @@ opt-level = "z"
 opt-level = "z"
 
 [profile.release.package.rten-model-file]
+opt-level = "z"
+
+[profile.release.package.rten-vecmath]
+opt-level = "z"
+
+[profile.release.package.rten-simd]
+opt-level = "z"
+
+[profile.release.package.rten-parallel]
+opt-level = "z"
+
+[profile.release.package.rten-base]
 opt-level = "z"
 
 [profile.release.package.flatbuffers]
@@ -117,7 +130,34 @@ opt-level = "z"
 [profile.release.package.j2k-native]
 opt-level = "z"
 
+[profile.release.package.j2k-codec-math]
+opt-level = "z"
+
+[profile.release.package.j2k-profile]
+opt-level = "z"
+
+[profile.release.package.j2k-types]
+opt-level = "z"
+
 [profile.release.package.jpeg-encoder]
+opt-level = "z"
+
+[profile.release.package.zune-jpeg]
+opt-level = "z"
+
+[profile.release.package.zune-core]
+opt-level = "z"
+
+[profile.release.package.png]
+opt-level = "z"
+
+[profile.release.package.fdeflate]
+opt-level = "z"
+
+[profile.release.package.miniz_oxide]
+opt-level = "z"
+
+[profile.release.package.image]
 opt-level = "z"
 
 [profile.release.package.tiff]
@@ -129,6 +169,9 @@ opt-level = "z"
 [profile.release.package.weezl]
 opt-level = "z"
 
+[profile.release.package.fax]
+opt-level = "z"
+
 [profile.release.package.moxcms]
 opt-level = "z"
 
@@ -138,10 +181,40 @@ opt-level = "z"
 [profile.release.package.pxfm]
 opt-level = "z"
 
+[profile.release.package.brotli]
+opt-level = "z"
+
 [profile.release.package.brotli-decompressor]
 opt-level = "z"
 
 [profile.release.package.quick-xml]
+opt-level = "z"
+
+[profile.release.package.xmlwriter]
+opt-level = "z"
+
+[profile.release.package.unicode-bidi]
+opt-level = "z"
+
+[profile.release.package.unicode-linebreak]
+opt-level = "z"
+
+[profile.release.package.unicode-script]
+opt-level = "z"
+
+[profile.release.package.unicode-segmentation]
+opt-level = "z"
+
+[profile.release.package.yoke]
+opt-level = "z"
+
+[profile.release.package.polycool]
+opt-level = "z"
+
+[profile.release.package.base64]
+opt-level = "z"
+
+[profile.release.package.base64ct]
 opt-level = "z"
 
 [profile.release.package.cms]
@@ -151,6 +224,15 @@ opt-level = "z"
 opt-level = "z"
 
 [profile.release.package.der]
+opt-level = "z"
+
+[profile.release.package.spki]
+opt-level = "z"
+
+[profile.release.package.pem-rfc7468]
+opt-level = "z"
+
+[profile.release.package.const-oid]
 opt-level = "z"
 
 [profile.release.package.pkcs8]
@@ -168,10 +250,82 @@ opt-level = "z"
 [profile.release.package.ecdsa]
 opt-level = "z"
 
+[profile.release.package.elliptic-curve]
+opt-level = "z"
+
+[profile.release.package.primeorder]
+opt-level = "z"
+
+[profile.release.package.primefield]
+opt-level = "z"
+
+[profile.release.package.rfc6979]
+opt-level = "z"
+
+[profile.release.package.signature]
+opt-level = "z"
+
+[profile.release.package.wnaf]
+opt-level = "z"
+
 [profile.release.package.crypto-bigint]
 opt-level = "z"
 
 [profile.release.package.sec1]
+opt-level = "z"
+
+[profile.release.package.aes]
+opt-level = "z"
+
+[profile.release.package.aes-gcm]
+opt-level = "z"
+
+[profile.release.package.aes-kw]
+opt-level = "z"
+
+[profile.release.package.cbc]
+opt-level = "z"
+
+[profile.release.package.ctr]
+opt-level = "z"
+
+[profile.release.package.ghash]
+opt-level = "z"
+
+[profile.release.package.polyval]
+opt-level = "z"
+
+[profile.release.package.sha1]
+opt-level = "z"
+
+[profile.release.package.sha2]
+opt-level = "z"
+
+[profile.release.package.sha3]
+opt-level = "z"
+
+[profile.release.package.keccak]
+opt-level = "z"
+
+[profile.release.package.hmac]
+opt-level = "z"
+
+[profile.release.package.hkdf]
+opt-level = "z"
+
+[profile.release.package.pbkdf2]
+opt-level = "z"
+
+[profile.release.package.scrypt]
+opt-level = "z"
+
+[profile.release.package.salsa20]
+opt-level = "z"
+
+[profile.release.package.md-5]
+opt-level = "z"
+
+[profile.release.package.rc2]
 opt-level = "z"
 
 # hayro renders the corpus in the tests of pyropdf-engine; unoptimized, one
