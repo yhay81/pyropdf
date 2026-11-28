@@ -366,6 +366,19 @@ to Python, and dropped with the base. A version whose `/Encrypt` is not
 the base's is refused, as a save refuses it. I1 makes the password
 unnecessary.
 
+As a temporary workaround until I1 (#14) and byte passwords (#1043) are
+released in hayro-syntax (tracked in #7 and #1272), the bridge may fall
+back to an ephemeral, F6-budgeted in-memory unencrypted copy *only* for
+already-authenticated documents whose encryption mode pinned hayro-syntax
+cannot open directly: ISO/TS 32003 AES-GCM (#968), legacy pre-V5
+public-key recipients (#937), explicit legacy `/Crypt` stream filters or
+independently keyed recipient streams (#993), and non-UTF-8 R2–R4 byte
+passwords (#1043). Streams that the authenticated recipient cannot decrypt
+remain omitted in the bridged view, the store's `Version` and saved bytes
+stay untouched, and standard UTF-8 password and single-key V5 recipient
+PDFs keep the zero-decrypt path above. This fallback is removed once
+pyropdf adopts a hayro-syntax release with I1 and byte passwords.
+
 No pyropdf release claims safety for untrusted input before I2 is released.
 If the upstream patches cannot land, pyropdf bounds that construction
 itself before hayro builds it: an iterative walk, charged to the
