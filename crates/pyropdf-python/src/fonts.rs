@@ -1814,6 +1814,9 @@ fn codec_budget(
 
 /// Returns `(vertical, can_extend, base_font)` for a Type 0 font handle
 /// `(root, path)`, or `None` when it is not a valid Type 0 composite font.
+///
+/// Uses lightweight metadata inspection without decompressing embedded font
+/// programs.
 #[pyfunction(signature = (document, root, path, *, operation=None))]
 pub fn type0_inspect(
     py: Python<'_>,
@@ -1829,9 +1832,8 @@ pub fn type0_inspect(
             return Ok(None);
         };
         let summary = py
-            .detach(|| Type0Codec::load(&version, &dict, &budget))
-            .map_err(|error| store_error(&error))?
-            .map(|codec| codec.summary());
+            .detach(|| Type0Codec::inspect(&version, &dict, &budget))
+            .map_err(|error| store_error(&error))?;
         Ok(summary.map(|s| (s.vertical, s.can_extend, s.base_font)))
     })?
 }
@@ -1858,7 +1860,7 @@ pub fn type0_decode<'py>(
         };
         let result = py
             .detach(|| {
-                let Some(codec) = Type0Codec::load(&version, &dict, &budget)? else {
+                let Some(codec) = Type0Codec::load_for_decode(&version, &dict, &budget)? else {
                     return Ok(None);
                 };
                 #[expect(
@@ -1892,7 +1894,7 @@ pub fn type0_decode<'py>(
 }
 
 /// Encodes `text` through a Type 0 font handle, returning
-/// `(vertical, segments, extensions)` where each segment is
+/// `(vertical, segments, extensions, existing_tounicode)` where each segment is
 /// `(is_glyph, code_bytes, text, advance, kern_after)` and each extension is
 /// `(gid, width, v_metrics, text)`.
 type GlyphExtensionTuple = (u16, f64, Option<(f64, f64, f64)>, String);
@@ -1901,6 +1903,7 @@ type EncodedType0Plan<'py> = (
     bool,
     Vec<(bool, Bound<'py, PyBytes>, String, f64, f64)>,
     Vec<GlyphExtensionTuple>,
+    Vec<(u16, String)>,
 );
 
 #[pyfunction(signature = (document, root, path, text, *, operation=None))]
@@ -1954,7 +1957,12 @@ pub fn type0_encode<'py>(
             exts.try_push((ext.gid, ext.width, ext.v_metrics, ext.text))
                 .map_err(|error| limit_error(&error))?;
         }
-        Ok(Some((plan.vertical, segs.into_vec(), exts.into_vec())))
+        Ok(Some((
+            plan.vertical,
+            segs.into_vec(),
+            exts.into_vec(),
+            plan.existing_tounicode,
+        )))
     })?
 }
 

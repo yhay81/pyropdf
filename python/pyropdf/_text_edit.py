@@ -15,16 +15,24 @@ vertical for ``WMode = 1``) so following text keeps its display position
 from __future__ import annotations
 
 import contextlib
-import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pyropdf import _core
 from pyropdf._errors import LimitError, PdfError
-from pyropdf._fonts import Font, _cmap, _w2_array, _w_array, add_glyphs, embedded_font
+from pyropdf._fonts import (
+    _MAX_MAPPED_UNITS,
+    _NO_TEXT,
+    Font,
+    _cmap,
+    _w2_array,
+    _w_array,
+    add_glyphs,
+    embedded_font,
+)
 from pyropdf._limits import _validate_optional_positive_int
-from pyropdf._objects import Array, Dictionary, Name, Real, Stream, String, _encode_text_string
+from pyropdf._objects import Array, Dictionary, Name, Real, Stream, String, _encode, _encode_text_string
 from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._xobjects import _parse_stream_operations
 
@@ -56,14 +64,10 @@ _SPACE_BYTE = b" "
 _STREAM_KEYS = frozenset({"Length", "Filter", "DecodeParms", "DL"})
 #: Maximum ligature length considered during greedy simple/Type 3 reverse lookup.
 _MAX_LIGATURE = 8
-#: Maximum CID range expanded while reading ``/W``, ``/W2``, or ``bfrange``.
-_MAX_RANGE_EXPAND = 65_536
-#: Patterns for reading existing ToUnicode entries when extending an embedded face.
-_BFCHAR_BLOCKS = re.compile(rb"beginbfchar\s*(.*?)\s*endbfchar", re.DOTALL)
-_BFCHAR_ROW = re.compile(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>")
-_BFRANGE_BLOCKS = re.compile(rb"beginbfrange\s*(.*?)\s*endbfrange", re.DOTALL)
-_BFRANGE_ROW = re.compile(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(<([0-9A-Fa-f]+)>|\[([^\]]*)\])")
-_HEX_STR = re.compile(rb"<([0-9A-Fa-f]+)>")
+#: Maximum nodes visited in a single ``/ParentTree`` number-tree lookup (F6).
+_MAX_PARENT_TREE_NODES = 4096
+#: Maximum nesting depth when converting named ``/Properties`` into inline operands (F6).
+_MAX_OPERAND_DEPTH = 64
 
 
 class _Rollback(Exception):  # noqa: N818 - control flow, never raised to a caller.
@@ -78,7 +82,6 @@ class _Font:
     kind: str | bool
     """One of ``"simple"``, ``"type3"``, ``"type0"``, or ``"other"``."""
     vertical: bool = False
-    can_extend: bool = False
     base_font: str | None = None
     texts: dict[int, str] = field(default_factory=dict)
     """Unicode text of each one-byte code (simple / Type 3)."""
@@ -90,6 +93,8 @@ class _Font:
     """Cached decoded glyph sequences for raw strings of a Type 0 font."""
     extensions: dict[int, tuple[float, tuple[float, float, float] | None, str]] = field(default_factory=dict)
     """Planned ``(width, v_metrics, text)`` extensions by GID for an editable Type 0 font."""
+    existing_tounicode: dict[int, str] | None = None
+    """Existing ``/ToUnicode`` mappings parsed by Rust when extending an editable Type 0 font."""
 
     def __post_init__(self) -> None:
         if isinstance(self.kind, bool):
@@ -163,8 +168,10 @@ class _EditContext:
     states: list[_State]
     taken_xobjects: set[str]
     taken_fonts: set[str]
+    taken_properties: set[str]
     drawn: dict[str, int]
     added_fonts: dict[str, object]
+    added_properties: dict[str, dict[str, object]]
     budget: _core._OperationBudget
 
 
@@ -176,6 +183,7 @@ class _Copy:
     operations: list[Operation | InlineImage]
     drawn: dict[str, int]
     added_fonts: dict[str, object]
+    added_properties: dict[str, dict[str, object]]
 
 
 @dataclass(slots=True)
@@ -251,8 +259,19 @@ class _Editor:
         self.operations: list[Operation | InlineImage] | None = None
         self.drawn: dict[str, int] = {}
         self.root_added_fonts: dict[str, object] = {}
+        self.root_added_properties: dict[str, dict[str, object]] = {}
         self.copies: list[_Copy] = []
         self._fallback_glyphs: dict[bool, list[tuple[int, str]]] = {False: [], True: []}
+        self._type0_plans: dict[
+            tuple[object, str],
+            tuple[
+                bool,
+                list[tuple[bool, bytes, str, float, float]],
+                list[tuple[int, float, tuple[float, float, float] | None, str]],
+                list[tuple[int, str]],
+            ],
+        ] = {}
+        self._tagged_shared_elsewhere: set[int] = set()
 
     def read(self) -> None:
         """Collect drawings and fonts, inspect/decode fonts, and plan edits in drawing order."""
@@ -270,7 +289,20 @@ class _Editor:
         _core.read_operation(core, self._inspect_non_simple)
         edited = _core.read_operation(core, lambda budget: self._edit(self.root, _State(), budget))
         if edited is not None:
-            self.operations, self.drawn, self.root_added_fonts = edited
+            self.operations, self.drawn, self.root_added_fonts, self.root_added_properties = edited
+        if self.copies:
+            tagged_xrefs = {
+                copy.scope.stream.xref
+                for copy in self.copies
+                if copy.scope.stream is not None
+                and copy.scope.stream.xref is not None
+                and _is_int(copy.scope.stream.get("StructParents"))
+            }
+            if tagged_xrefs:
+                self._tagged_shared_elsewhere = _core.read_operation(
+                    core,
+                    lambda budget: _other_pages_use_xobjects(self.page.document, self.page, tagged_xrefs, budget),
+                )
 
     def _collect(self, scope: _Scope, budget: _core._OperationBudget) -> None:
         """Walk Form XObjects drawn by ``scope`` and record every referenced font."""
@@ -317,7 +349,7 @@ class _Editor:
                 if info is None:
                     font.kind = "other"
                 else:
-                    font.vertical, font.can_extend, font.base_font = info
+                    font.vertical, _, font.base_font = info
         type0_strings = self._collect_type0_strings(self.root, _State(), budget)
         for font_key, strings in type0_strings.items():
             font = self.fonts[font_key]
@@ -415,16 +447,18 @@ class _Editor:
 
     def _edit(
         self, scope: _Scope, state: _State, budget: _core._OperationBudget
-    ) -> tuple[list[Operation | InlineImage], dict[str, int], dict[str, object]] | None:
-        """Return edited operations, copied Form XObject map, and added Font resources, or ``None``."""
+    ) -> tuple[list[Operation | InlineImage], dict[str, int], dict[str, object], dict[str, dict[str, object]]] | None:
+        """Return edited operations, copied Form XObjects, added Fonts, and added Properties, or ``None``."""
         ctx = _EditContext(
             scope=scope,
             state=state,
             states=[],
             taken_xobjects=_taken_names(scope, "XObject", "Do") if scope.forms else set(),
             taken_fonts=_taken_names(scope, "Font", "Tf"),
+            taken_properties=_taken_property_names(scope),
             drawn={},
             added_fonts={},
+            added_properties={},
             budget=budget,
         )
         out: list[Operation | InlineImage] = []
@@ -440,7 +474,7 @@ class _Editor:
             out.extend(emitted)
             changed = changed or step_changed
             index = next_index
-        return (out, ctx.drawn, ctx.added_fonts) if changed else None
+        return (out, ctx.drawn, ctx.added_fonts, ctx.added_properties) if changed else None
 
     def _edit_step(self, ctx: _EditContext, index: int) -> tuple[list[Operation | InlineImage], int, bool]:
         """Process one operation (or one ``/ActualText`` span) at ``index``."""
@@ -489,7 +523,15 @@ class _Editor:
         edited_inner = self._edit_actual_text_inner(ctx, inner, updated_text, replace_n)
         updated_props = dict(props)
         updated_props["ActualText"] = String(_encode_text_string(updated_text))
-        new_bdc = Operation("BDC", (bdc.operands[0], updated_props))
+        inline_ok, inline_props = _to_inline_operand(updated_props)
+        if inline_ok:
+            new_bdc = Operation("BDC", (bdc.operands[0], inline_props))
+        else:
+            base_name = str(bdc.operands[1]) if isinstance(bdc.operands[1], Name) else "P_at"
+            prop_name = _fresh(base_name, ctx.taken_properties)
+            ctx.taken_properties.add(prop_name)
+            ctx.added_properties[prop_name] = updated_props
+            new_bdc = Operation("BDC", (bdc.operands[0], Name(prop_name)))
         self.replaced += replace_n
         return [new_bdc, *edited_inner, ctx.scope.operations[emc]], emc + 1, True
 
@@ -602,7 +644,9 @@ class _Editor:
         if operator == "'":
             return [Operation("T*"), *shown_ops]
         if operator == '"':
-            return [Operation("Tw", (operands[0],)), Operation("Tc", (operands[1],)), Operation("T*"), *shown_ops]
+            if len(operands) >= 3:  # noqa: PLR2004 - aw, ac, and the string.
+                return [Operation("Tw", (operands[0],)), Operation("Tc", (operands[1],)), Operation("T*"), *shown_ops]
+            return [Operation("T*"), *shown_ops]
         return shown_ops
 
     def _replace_tokens(self, tokens: list[_Glyph | _Kern], ctx: _EditContext) -> list[_Token] | None:
@@ -666,9 +710,11 @@ class _Editor:
             if matched is not None:
                 step, raw = matched
                 if missing:
-                    out.extend(self._encode_fallback(missing, state, ctx, vertical=False))
+                    fb_tokens = self._encode_fallback(missing, state, ctx, vertical=False)
                     missing = ""
-                    in_fallback = True
+                    if fb_tokens:
+                        out.extend(fb_tokens)
+                        in_fallback = True
                 if in_fallback:
                     out.append(_Switch(self._restore_font_name(state, ctx)))
                     in_fallback = False
@@ -678,27 +724,55 @@ class _Editor:
                 missing += text[cursor]
                 cursor += 1
         if missing:
-            out.extend(self._encode_fallback(missing, state, ctx, vertical=False))
-            in_fallback = True
+            fb_tokens = self._encode_fallback(missing, state, ctx, vertical=False)
+            if fb_tokens:
+                out.extend(fb_tokens)
+                in_fallback = True
         if in_fallback:
             out.append(_Switch(self._restore_font_name(state, ctx)))
         return out
 
-    def _encode_type0(self, font: _Font, text: str, state: _State, ctx: _EditContext) -> list[_Token]:
+    def _type0_plan(
+        self,
+        font: _Font,
+        text: str,
+        budget: _core._OperationBudget,
+    ) -> tuple[
+        bool,
+        list[tuple[bool, bytes, str, float, float]],
+        list[tuple[int, float, tuple[float, float, float] | None, str]],
+        list[tuple[int, str]],
+    ]:
+        cache_key = (_key(font.dictionary), text)
+        plan = self._type0_plans.get(cache_key)
+        if plan is not None:
+            return plan
         core = self.page.document._core()  # noqa: SLF001
         plan = _core.type0_encode(
             core,
             font.dictionary._root,  # noqa: SLF001
             list(font.dictionary._path),  # noqa: SLF001
             text,
-            operation=ctx.budget,
+            operation=budget,
         )
         if plan is None:
             msg = f"the composite font {font.base_font or 'of the text'} cannot be encoded"
             raise ValueError(msg)
-        vertical, segments, extensions = plan
-        for gid, width, v_metrics, g_text in extensions:
-            font.extensions.setdefault(gid, (width, v_metrics, g_text))
+        self._type0_plans[cache_key] = plan
+        _, _, extensions, existing_tounicode = plan
+        if extensions:
+            if font.existing_tounicode is None:
+                font.existing_tounicode = dict(existing_tounicode)
+            for gid, width, v_metrics, g_text in extensions:
+                existing = font.extensions.get(gid)
+                if existing is None:
+                    font.extensions[gid] = (width, v_metrics, g_text)
+                elif not existing[2] and g_text:
+                    font.extensions[gid] = (existing[0], existing[1], g_text)
+        return plan
+
+    def _encode_type0(self, font: _Font, text: str, state: _State, ctx: _EditContext) -> list[_Token]:
+        vertical, segments, _, _ = self._type0_plan(font, text, ctx.budget)
         out: list[_Token] = []
         in_fallback = False
         for is_glyph, code_bytes, seg_text, advance, kern_after in segments:
@@ -710,8 +784,10 @@ class _Editor:
                 if kern_after:
                     out.append(_Kern(kern_after))
             else:
-                out.extend(self._encode_fallback(seg_text, state, ctx, vertical=vertical))
-                in_fallback = True
+                fb_tokens = self._encode_fallback(seg_text, state, ctx, vertical=vertical)
+                if fb_tokens:
+                    out.extend(fb_tokens)
+                    in_fallback = True
         if in_fallback:
             out.append(_Switch(self._restore_font_name(state, ctx)))
         return out
@@ -725,30 +801,45 @@ class _Editor:
             msg = f"the font {name} has no code for {first!r} (U+{ord(first):04X})"
             raise ValueError(msg)
         fb = self.fallback
+        if fb.program() is None:
+            return self._encode_standard_fallback(fb, text, ctx, vertical=vertical)
+        return self._encode_embedded_fallback(fb, text, ctx, vertical=vertical)
+
+    def _encode_standard_fallback(self, fb: Font, text: str, ctx: _EditContext, *, vertical: bool) -> list[_Token]:
+        if vertical:
+            msg = "cannot use a Standard 14 fallback font for vertical text"
+            raise ValueError(msg)
+        try:
+            encoded = fb._font.encode(text, operation=ctx.budget)  # noqa: SLF001
+            widths = fb.char_widths(text, 1000.0)
+        except PdfError as err:
+            msg = f"fallback font {fb.name!r} cannot encode {text!r}: {err}"
+            raise ValueError(msg) from err
+        if not encoded:
+            return []
         fb_name = self._fallback_font_name(ctx, vertical=vertical)
         tokens: list[_Token] = [_Switch(fb_name)]
-        if fb.program() is None:
-            if vertical:
-                msg = "cannot use a Standard 14 fallback font for vertical text"
-                raise ValueError(msg)
-            try:
-                encoded = fb._font.encode(text, operation=ctx.budget)  # noqa: SLF001
-                widths = fb.char_widths(text, 1000.0)
-            except PdfError as err:
-                msg = f"fallback font {fb.name!r} cannot encode {text!r}: {err}"
-                raise ValueError(msg) from err
-            for byte, ch, width in zip(encoded, text, widths, strict=True):
-                tokens.append(_Glyph(bytes([byte]), ch, width))
-            return tokens
+        for byte, ch, width in zip(encoded, text, widths, strict=True):
+            tokens.append(_Glyph(bytes([byte]), ch, width))
+        return tokens
 
+    def _encode_embedded_fallback(self, fb: Font, text: str, ctx: _EditContext, *, vertical: bool) -> list[_Token]:
+        if not fb._font.outlines:  # noqa: SLF001
+            msg = f"fallback font {fb.name!r} has colour bitmaps and no vector outlines"
+            raise ValueError(msg)
         try:
             shaped = _core.shape_text_fallback([fb._font], text, vertical=vertical, operation=ctx.budget)  # noqa: SLF001
         except (PdfError, ValueError) as err:
             msg = f"fallback font {fb.name!r} cannot encode {text!r}: {err}"
             raise ValueError(msg) from err
+        if any(row[1] == 0 or row[1] > 0xFFFF for row in shaped):  # noqa: PLR2004
+            msg = f"fallback font {fb.name!r} cannot encode {text!r}: missing glyph"
+            raise ValueError(msg)
         gids = sorted({row[1] for row in shaped})
         if not gids:
             return []
+        fb_name = self._fallback_font_name(ctx, vertical=vertical)
+        tokens: list[_Token] = [_Switch(fb_name)]
         em = fb._font.units_per_em  # noqa: SLF001
         scale = 1000.0 / em
         h_widths = dict(zip(gids, fb._font.glyph_widths(gids), strict=True))  # noqa: SLF001
@@ -775,35 +866,51 @@ class _Editor:
         return Name(name)
 
     def _restore_font_name(self, state: _State, ctx: _EditContext) -> Name:
-        if state.font_name is not None:
-            return state.font_name
         assert state.font is not None  # noqa: S101
-        marker = ("orig", state.font.dictionary)
+        if state.font_name is not None:
+            fonts = _sub(ctx.scope.resources, "Font")
+            local = fonts.get(state.font_name) if fonts is not None else None
+            if isinstance(local, Dictionary) and _key(local) == _key(state.font.dictionary):
+                return state.font_name
+        target_key = _key(state.font.dictionary)
         for existing_name, existing_marker in ctx.added_fonts.items():
-            if existing_marker == marker:
+            if (
+                isinstance(existing_marker, tuple)
+                and len(existing_marker) == 2  # noqa: PLR2004
+                and existing_marker[0] == "orig"
+                and isinstance(existing_marker[1], Dictionary)
+                and _key(existing_marker[1]) == target_key
+            ):
                 return Name(existing_name)
         name = _fresh("F_orig", ctx.taken_fonts)
         ctx.taken_fonts.add(name)
-        ctx.added_fonts[name] = marker
+        ctx.added_fonts[name] = ("orig", state.font.dictionary)
         return Name(name)
 
     def write(self) -> None:
         """Write font extensions, fallback fonts, copied Forms, and page content in one transaction."""
         document = self.page.document
+        total_form_counts = _count_form_drawings(self.root) if self.copies else {}
         with document.transaction():
             for font in self.fonts.values():
                 if font.extensions:
                     _apply_type0_extensions(font)
             fb_objects = self._materialize_fallbacks(document)
-            numbers = self._write_copies(document, fb_objects)
+            numbers = self._write_copies(document, fb_objects, total_form_counts)
             if self.operations is not None:
                 self.page.operations = Operations(self.operations, tail=self.root.operations.tail)
             root_fonts = _resolve_added_fonts(self.root_added_fonts, fb_objects)
             root_drawn = {name: numbers[place] for name, place in self.drawn.items()}
-            if root_drawn or root_fonts:
-                _repoint_page(self.page, root_drawn, root_fonts)
+            if root_drawn or root_fonts or self.root_added_properties:
+                _repoint_page(self.page, root_drawn, root_fonts, self.root_added_properties)
             if self.copies:
-                _repoint_structure_streams(self.page, self.copies, numbers)
+                _repoint_structure_streams(
+                    self.page,
+                    self.copies,
+                    numbers,
+                    total_form_counts,
+                    self._tagged_shared_elsewhere,
+                )
 
     def _materialize_fallbacks(self, document: Any) -> dict[bool, object]:  # noqa: ANN401
         fb_objects: dict[bool, object] = {}
@@ -815,16 +922,35 @@ class _Editor:
                 fb_objects[vertical] = self._materialize_fallback(document, fb_cache, vertical=vertical)
         return fb_objects
 
-    def _write_copies(self, document: Any, fb_objects: dict[bool, object]) -> list[int]:  # noqa: ANN401
+    def _write_copies(
+        self,
+        document: Any,  # noqa: ANN401
+        fb_objects: dict[bool, object],
+        total_form_counts: dict[int, int],
+    ) -> list[int]:
+        edited_counts: dict[int, int] = {}
+        for copy in self.copies:
+            stream = copy.scope.stream
+            if stream is not None and stream.xref is not None:
+                edited_counts[stream.xref] = edited_counts.get(stream.xref, 0) + 1
+        reused_sp: set[int] = set()
         numbers: list[int] = []
         for copy in self.copies:
             stream = copy.scope.stream
             assert stream is not None  # noqa: S101
             dictionary = {key: value for key, value in stream.items() if key not in _STREAM_KEYS}
+            if stream.xref is not None and _is_int(stream.get("StructParents")):
+                still_on_page = edited_counts.get(stream.xref, 0) < total_form_counts.get(stream.xref, 0)
+                shared_elsewhere = stream.xref in self._tagged_shared_elsewhere
+                if not still_on_page and not shared_elsewhere and stream.xref not in reused_sp:
+                    reused_sp.add(stream.xref)
+                else:
+                    # Non-unique copy gets its own fresh /StructParents in _repoint_structure_streams.
+                    dictionary.pop("StructParents", None)
             drawn = {name: numbers[place] for name, place in copy.drawn.items()}
             fonts_to_add = _resolve_added_fonts(copy.added_fonts, fb_objects)
-            if drawn or fonts_to_add:
-                dictionary["Resources"] = self._own_resources(copy.scope, drawn, fonts_to_add)
+            if drawn or fonts_to_add or copy.added_properties:
+                dictionary["Resources"] = self._own_resources(copy.scope, drawn, fonts_to_add, copy.added_properties)
             data = Operations(copy.operations, tail=copy.scope.operations.tail).to_bytes()
             numbers.append(document.objects.add_stream(data, dictionary))
         return numbers
@@ -847,7 +973,13 @@ class _Editor:
             add_glyphs(document, xref, fb, glyphs, vertical=vertical)
         return document.objects[xref]
 
-    def _own_resources(self, scope: _Scope, drawn: dict[str, int], added_fonts: dict[str, object]) -> dict[str, Any]:
+    def _own_resources(
+        self,
+        scope: _Scope,
+        drawn: dict[str, int],
+        added_fonts: dict[str, object],
+        added_properties: dict[str, dict[str, object]],
+    ) -> dict[str, Any]:
         assert scope.stream is not None  # noqa: S101
         resources = scope.stream.get("Resources")
         if not isinstance(resources, Dictionary):
@@ -863,6 +995,10 @@ class _Editor:
             fonts = own.get("Font")
             own["Font"] = dict(fonts.items()) if isinstance(fonts, Dictionary) else {}
             own["Font"].update(added_fonts)
+        if added_properties:
+            props = own.get("Properties")
+            own["Properties"] = dict(props.items()) if isinstance(props, Dictionary) else {}
+            own["Properties"].update(added_properties)
         return own
 
 
@@ -880,7 +1016,7 @@ def _scan_span_shown(
     for idx, op in enumerate(inner):
         if not isinstance(op, Operation):
             continue
-        if (shown_indices and op.operator in _TEXT_POSITION_OPS) or (op.operator in ("'", '"') and idx > 0):
+        if (shown_indices and op.operator in _TEXT_POSITION_OPS) or op.operator in ("'", '"'):
             positioned = True
         _advance_state(op, ctx.scope.resources, probe_state, probe_stack, font_of)
         if op.operator in _SHOWS_TEXT:
@@ -930,46 +1066,49 @@ def _apply_type0_extensions(font: _Font) -> None:
     _extend_w(descendant, font.extensions)
     if font.vertical:
         _extend_w2(descendant, font.extensions)
-    _extend_tounicode(to_unicode, font.extensions)
+    _extend_tounicode(to_unicode, font.existing_tounicode or {}, font.extensions)
 
 
 def _extend_w(
     descendant: Dictionary, extensions: dict[int, tuple[float, tuple[float, float, float] | None, str]]
 ) -> None:
-    widths = _read_w_map(descendant)
-    changed = False
-    for gid, (width, _, _) in extensions.items():
-        if gid not in widths:
-            widths[gid] = width
-            changed = True
-    if changed:
-        descendant["W"] = _w_array(widths)
+    kept, ranges = _read_w_ranges(descendant, vertical=False)
+    new_widths = {
+        gid: width for gid, (width, _, _) in extensions.items() if not any(lo <= gid <= hi for lo, hi in ranges)
+    }
+    if new_widths:
+        descendant["W"] = [*kept, *_w_array(new_widths)]
 
 
 def _extend_w2(
     descendant: Dictionary, extensions: dict[int, tuple[float, tuple[float, float, float] | None, str]]
 ) -> None:
-    widths2 = _read_w2_map(descendant)
-    changed = False
-    for gid, (_, v_metrics, _) in extensions.items():
-        if v_metrics is not None and gid not in widths2:
-            widths2[gid] = v_metrics
-            changed = True
-    if changed:
+    kept, ranges = _read_w_ranges(descendant, vertical=True)
+    new_metrics = {
+        gid: v_metrics
+        for gid, (_, v_metrics, _) in extensions.items()
+        if v_metrics is not None and not any(lo <= gid <= hi for lo, hi in ranges)
+    }
+    if new_metrics:
         if "DW2" not in descendant:
             descendant["DW2"] = [880, -1000]
-        descendant["W2"] = _w2_array(widths2)
+        descendant["W2"] = [*kept, *_w2_array(new_metrics)]
 
 
 def _extend_tounicode(
-    to_unicode: Stream, extensions: dict[int, tuple[float, tuple[float, float, float] | None, str]]
+    to_unicode: Stream,
+    existing_tounicode: dict[int, str],
+    extensions: dict[int, tuple[float, tuple[float, float, float] | None, str]],
 ) -> None:
-    mapped = _read_tounicode_map(to_unicode)
+    mapped = dict(existing_tounicode)
     changed = False
     for gid, (_, _, text) in extensions.items():
-        if text and mapped.get(gid) != text:
-            mapped[gid] = text
-            changed = True
+        if mapped.get(gid, _NO_TEXT) != _NO_TEXT or not text or mapped.get(gid) == text:
+            continue
+        if len(text.encode("utf-16-be", "surrogatepass")) > 2 * _MAX_MAPPED_UNITS:
+            continue
+        mapped[gid] = text
+        changed = True
     if changed:
         to_unicode.write(_cmap(mapped))
 
@@ -982,103 +1121,69 @@ def _is_num(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _read_w_map(descendant: Dictionary) -> dict[int, float]:
-    """Read ``/W`` entries (both ``c [w ...]`` and ``c1 c2 w`` forms) into a glyph-to-width map."""
-    widths: dict[int, float] = {}
-    entries = descendant.get("W")
+def _read_w_ranges(descendant: Dictionary, *, vertical: bool) -> tuple[list[object], list[tuple[int, int]]]:
+    """Read ``/W`` or ``/W2`` into preserved entries and compact ``(start, end)`` CID ranges."""
+    key = "W2" if vertical else "W"
+    entries = descendant.get(key)
     if not isinstance(entries, Array):
-        return widths
+        return [], []
+    kept: list[object] = []
+    ranges: list[tuple[int, int]] = []
     items = list(entries)
     i = 0
     while i + 1 < len(items) and _is_int(items[i]):
         first = int(items[i])
         nxt = items[i + 1]
         if isinstance(nxt, Array):
-            for offset, w in enumerate(nxt):
-                if _is_num(w):
-                    widths[first + offset] = float(w)
+            arr_vals = list(nxt)
+            kept.extend((first, arr_vals))
+            if vertical:
+                _record_w2_array_ranges(ranges, first, arr_vals)
+            else:
+                _record_w_array_ranges(ranges, first, arr_vals)
             i += 2
-        elif _is_int(nxt) and i + 2 < len(items) and _is_num(items[i + 2]):
+        elif not vertical and _is_int(nxt) and i + 2 < len(items) and _is_num(items[i + 2]):
             last = int(nxt)
-            w_val = float(items[i + 2])
-            if 0 <= last - first <= _MAX_RANGE_EXPAND:
-                widths.update(dict.fromkeys(range(first, last + 1), w_val))
+            if first <= last:
+                ranges.append((first, last))
+            kept.extend((first, last, items[i + 2]))
             i += 3
-        else:
-            break
-    return widths
-
-
-def _read_w2_map(descendant: Dictionary) -> dict[int, tuple[float, float, float]]:
-    """Read ``/W2`` entries (both array and range forms) into a glyph-to-``(w1y, vx, vy)`` map."""
-    metrics: dict[int, tuple[float, float, float]] = {}
-    entries = descendant.get("W2")
-    if not isinstance(entries, Array):
-        return metrics
-    items = list(entries)
-    i = 0
-    while i + 1 < len(items) and _is_int(items[i]):
-        first = int(items[i])
-        nxt = items[i + 1]
-        if isinstance(nxt, Array):
-            _read_w2_array_run(metrics, first, list(nxt))
-            i += 2
-        elif _is_int(nxt) and i + 4 < len(items):
+        elif vertical and _is_int(nxt) and i + 4 < len(items) and all(_is_num(v) for v in items[i + 2 : i + 5]):
             last = int(nxt)
-            triple = items[i + 2 : i + 5]
-            if all(_is_num(v) for v in triple) and 0 <= last - first <= _MAX_RANGE_EXPAND:
-                entry = (float(triple[0]), float(triple[1]), float(triple[2]))
-                metrics.update(dict.fromkeys(range(first, last + 1), entry))
+            if first <= last:
+                ranges.append((first, last))
+            kept.extend((first, last, items[i + 2], items[i + 3], items[i + 4]))
             i += 5
         else:
             break
-    return metrics
+    return kept, ranges
 
 
-def _read_w2_array_run(metrics: dict[int, tuple[float, float, float]], first: int, vals: list[Any]) -> None:
-    for offset in range(len(vals) // 3):
-        triple = vals[3 * offset : 3 * offset + 3]
-        if all(_is_num(v) for v in triple):
-            metrics[first + offset] = (float(triple[0]), float(triple[1]), float(triple[2]))
+def _record_w_array_ranges(ranges: list[tuple[int, int]], first: int, vals: list[Any]) -> None:
+    run_start: int | None = None
+    for offset, w in enumerate(vals):
+        if _is_num(w):
+            if run_start is None:
+                run_start = first + offset
+        elif run_start is not None:
+            ranges.append((run_start, first + offset - 1))
+            run_start = None
+    if run_start is not None:
+        ranges.append((run_start, first + len(vals) - 1))
 
 
-def _read_tounicode_map(stream: Stream) -> dict[int, str]:
-    """Read all ``bfchar`` and ``bfrange`` mappings from a ``/ToUnicode`` stream."""
-    mapped: dict[int, str] = {}
-    data = stream.read()
-    for block in _BFCHAR_BLOCKS.findall(data):
-        for code_hex, text_hex in _BFCHAR_ROW.findall(block):
-            if len(text_hex) % 4 == 0:
-                mapped[int(code_hex, 16)] = bytes.fromhex(text_hex.decode()).decode("utf-16-be", "surrogatepass")
-    for block in _BFRANGE_BLOCKS.findall(data):
-        for row in _BFRANGE_ROW.findall(block):
-            _parse_bfrange_row(mapped, row)
-    return mapped
-
-
-def _parse_bfrange_row(mapped: dict[int, str], row: tuple[bytes, bytes, bytes, bytes, bytes]) -> None:
-    start_hex, end_hex, _, single_hex, arr_body = row
-    start_code = int(start_hex, 16)
-    end_code = int(end_hex, 16)
-    if end_code < start_code or end_code - start_code > _MAX_RANGE_EXPAND:
-        return
-    if arr_body:
-        for offset, item_hex in enumerate(_HEX_STR.findall(arr_body)):
-            if start_code + offset > end_code:
-                break
-            if len(item_hex) % 4 == 0:
-                mapped[start_code + offset] = bytes.fromhex(item_hex.decode()).decode("utf-16-be", "surrogatepass")
-        return
-    if single_hex and len(single_hex) % 4 == 0:
-        raw = bytes.fromhex(single_hex.decode())
-        base_units = [int.from_bytes(raw[k : k + 2], "big") for k in range(0, len(raw), 2)]
-        for offset in range(end_code - start_code + 1):
-            last_u = base_units[-1] + offset
-            if last_u > 0xFFFF:  # noqa: PLR2004
-                break
-            units = [*base_units[:-1], last_u]
-            raw_out = b"".join(u.to_bytes(2, "big") for u in units)
-            mapped[start_code + offset] = raw_out.decode("utf-16-be", "surrogatepass")
+def _record_w2_array_ranges(ranges: list[tuple[int, int]], first: int, vals: list[Any]) -> None:
+    run_start: int | None = None
+    count = len(vals) // 3
+    for offset in range(count):
+        if all(_is_num(v) for v in vals[3 * offset : 3 * offset + 3]):
+            if run_start is None:
+                run_start = first + offset
+        elif run_start is not None:
+            ranges.append((run_start, first + offset - 1))
+            run_start = None
+    if run_start is not None:
+        ranges.append((run_start, first + count - 1))
 
 
 def _longest_simple_match(text: str, cursor: int, reverse: dict[str, bytes]) -> tuple[int, bytes] | None:
@@ -1099,6 +1204,41 @@ def _resolve_bdc_properties(operand: object, resources: Dictionary | None) -> Ma
         if isinstance(entry, Dictionary):
             return dict(entry.items())
     return None
+
+
+def _to_inline_operand(value: object, depth: int = 0) -> tuple[bool, Any]:
+    """Convert object-model handles into plain values accepted by :class:`Operation`, or return ``(False, None)``."""
+    if depth >= _MAX_OPERAND_DEPTH or isinstance(value, Stream):
+        return False, None
+    if isinstance(value, (Dictionary, Mapping)):
+        return _to_inline_mapping(value, depth + 1)
+    if isinstance(value, (Array, list, tuple)):
+        return _to_inline_sequence(value, depth + 1)
+    if value is None or isinstance(value, (bool, int, float, Real, Name, String, str, bytes, bytearray, memoryview)):
+        return True, value
+    return False, None
+
+
+def _to_inline_mapping(mapping: Mapping[str, Any] | Dictionary, depth: int) -> tuple[bool, Any]:
+    out: dict[str, Any] = {}
+    for key, item in mapping.items():
+        if not isinstance(key, str) or not key:
+            return False, None
+        ok, converted = _to_inline_operand(item, depth)
+        if not ok:
+            return False, None
+        out[key] = converted
+    return True, out
+
+
+def _to_inline_sequence(sequence: Sequence[Any] | Array, depth: int) -> tuple[bool, Any]:
+    items: list[Any] = []
+    for item in sequence:
+        ok, converted = _to_inline_operand(item, depth)
+        if not ok:
+            return False, None
+        items.append(converted)
+    return True, tuple(items)
 
 
 def _find_matching_emc(ops: Sequence[Operation | InlineImage], start: int) -> int | None:
@@ -1161,6 +1301,86 @@ def _taken_names(scope: _Scope, resource_key: str, operator: str) -> set[str]:
     return names
 
 
+def _taken_property_names(scope: _Scope) -> set[str]:
+    """Return ``/Properties`` resource names defined or referenced by ``BDC`` in ``scope``."""
+    sub = _sub(scope.resources, "Properties")
+    names = set(sub) if sub is not None else set()
+    pending = [scope]
+    while pending:
+        current = pending.pop()
+        names.update(
+            str(operation.operands[1])
+            for operation in current.operations
+            if isinstance(operation, Operation)
+            and operation.operator == "BDC"
+            and len(operation.operands) >= 2  # noqa: PLR2004
+            and isinstance(operation.operands[1], Name)
+        )
+        pending.extend(form for form in current.forms.values() if form.resources is scope.resources)
+    return names
+
+
+def _count_form_drawings(root: _Scope) -> dict[int, int]:
+    """Count total ``Do`` invocations per indirect Form XObject xref on the page."""
+    counts: dict[int, int] = {}
+    pending = [root]
+    while pending:
+        current = pending.pop()
+        for child in current.forms.values():
+            if child.stream is not None and child.stream.xref is not None:
+                counts[child.stream.xref] = counts.get(child.stream.xref, 0) + 1
+            pending.append(child)
+    return counts
+
+
+def _other_pages_use_xobjects(
+    document: Any,  # noqa: ANN401
+    current_page: Page,
+    target_xrefs: set[int],
+    budget: _core._OperationBudget,
+) -> set[int]:
+    """Return the subset of ``target_xrefs`` referenced by any page other than ``current_page``."""
+    found: set[int] = set()
+    seen_forms: set[int] = set()
+    for other in document.pages:
+        budget.poll()
+        if other.obj.xref == current_page.obj.xref:
+            continue
+        _scan_resources_for_xobjects(_resources(other), target_xrefs, seen_forms, found, budget)
+        if len(found) == len(target_xrefs) or len(seen_forms) >= _MAX_FORMS:
+            break
+    return found
+
+
+def _scan_resources_for_xobjects(
+    resources: Dictionary | None,
+    target_xrefs: set[int],
+    seen_forms: set[int],
+    found: set[int],
+    budget: _core._OperationBudget,
+) -> None:
+    stack: list[Dictionary] = [resources] if resources is not None else []
+    while stack and len(found) < len(target_xrefs) and len(seen_forms) < _MAX_FORMS:
+        xobjects = _sub(stack.pop(), "XObject")
+        if xobjects is None:
+            continue
+        for name in xobjects:
+            budget.poll()
+            form = xobjects.get(name)
+            if not isinstance(form, Stream) or form.get("Subtype") != "Form" or form.xref is None:
+                continue
+            if form.xref in target_xrefs:
+                found.add(form.xref)
+            if form.xref in seen_forms:
+                continue
+            seen_forms.add(form.xref)
+            sub_res = form.get("Resources")
+            if isinstance(sub_res, Dictionary):
+                stack.append(sub_res)
+            if len(seen_forms) >= _MAX_FORMS:
+                break
+
+
 def _fresh(name: str, taken: set[str]) -> str:
     number = 1
     while f"{name}_{number}" in taken:
@@ -1168,66 +1388,165 @@ def _fresh(name: str, taken: set[str]) -> str:
     return f"{name}_{number}"
 
 
-def _repoint_structure_streams(page: Page, copies: list[_Copy], numbers: list[int]) -> None:
-    """Update ``/MCR /Stm`` pointers on ``page`` when a tagged Form XObject is copied."""
+def _repoint_structure_streams(
+    page: Page,
+    copies: list[_Copy],
+    numbers: list[int],
+    total_form_counts: dict[int, int],
+    shared_elsewhere: set[int],
+) -> None:
+    """Update ``/StructParents``, ``/ParentTree``, and ``/MCR /Stm`` when tagged Forms are copied."""
     document = page.document
     struct_root = document.catalog.get("StructTreeRoot")
-    if not isinstance(struct_root, Dictionary):
-        return
-    parent_tree = struct_root.get("ParentTree")
+    parent_tree = struct_root.get("ParentTree") if isinstance(struct_root, Dictionary) else None
     if not isinstance(parent_tree, Dictionary):
         return
-    # Map old tagged Form xref -> new copy xref when replaced uniquely on this page.
-    replaced: dict[int, tuple[int, int]] = {}
-    counts: dict[int, int] = {}
+    edited_counts: dict[int, int] = {}
+    for copy in copies:
+        stream = copy.scope.stream
+        if stream is not None and stream.xref is not None and _is_int(stream.get("StructParents")):
+            edited_counts[stream.xref] = edited_counts.get(stream.xref, 0) + 1
+
+    seen_old: set[int] = set()
     for copy, new_xref in zip(copies, numbers, strict=True):
         stream = copy.scope.stream
-        if stream is None or stream.xref is None:
+        if stream is None or stream.xref is None or not _is_int(stream.get("StructParents")):
             continue
-        sp_key = stream.get("StructParents")
-        if isinstance(sp_key, int) and not isinstance(sp_key, bool):
-            counts[stream.xref] = counts.get(stream.xref, 0) + 1
-            replaced[stream.xref] = (sp_key, new_xref)
-    for old_xref, (sp_key, new_xref) in replaced.items():
-        if counts.get(old_xref) != 1:
+        old_xref = stream.xref
+        is_first = old_xref not in seen_old
+        seen_old.add(old_xref)
+        still_on_page = edited_counts.get(old_xref, 0) < total_form_counts.get(old_xref, 0)
+        reused = is_first and not still_on_page and old_xref not in shared_elsewhere
+        _repoint_one_tagged_copy(
+            page,
+            parent_tree,
+            old_xref,
+            int(stream["StructParents"]),
+            new_xref,
+            reused=reused,
+            repoint_mcr=is_first and not still_on_page,
+        )
+
+
+def _repoint_one_tagged_copy(  # noqa: PLR0913 - structure-repointing parameters.
+    page: Page,
+    parent_tree: Dictionary,
+    old_xref: int,
+    sp_key: int,
+    new_xref: int,
+    *,
+    reused: bool,
+    repoint_mcr: bool,
+) -> None:
+    document = page.document
+    entry = _core.read_operation(
+        document._core(),  # noqa: SLF001
+        lambda budget: _number_tree_get(parent_tree, sp_key, budget),
+    )
+    if entry is None:
+        return
+    new_stream = document.objects[new_xref]
+    if not reused:
+        owners: object | None = (
+            list(entry) if isinstance(entry, Array) else (entry if isinstance(entry, Dictionary) else None)
+        )
+        if owners is None:
+            return
+        new_stream["StructParents"] = _core.parent_tree_append(
+            document._core(),  # noqa: SLF001
+            _encode(document, owners, 1),
+        )
+    _update_structure_mcrs(entry, page.obj, old_xref, new_stream, repoint=repoint_mcr)
+
+
+def _update_structure_mcrs(
+    entry: object,
+    page_obj: Dictionary,
+    old_xref: int,
+    new_stream: Stream,
+    *,
+    repoint: bool,
+) -> None:
+    """Repoint or append ``/MCR /Stm`` entries on structure elements listed in ``entry``."""
+    elem_mcids: dict[int, list[int]] = {}
+    if isinstance(entry, Array):
+        elems = list(entry)
+        for mcid, elem in enumerate(elems):
+            if isinstance(elem, Dictionary) and elem.xref is not None:
+                elem_mcids.setdefault(elem.xref, []).append(mcid)
+    elif isinstance(entry, Dictionary):
+        elems = [entry]
+    else:
+        return
+    seen: set[int] = set()
+    for elem in elems:
+        if not isinstance(elem, Dictionary) or elem.xref is None or elem.xref in seen:
             continue
-        entry = _number_tree_get(parent_tree, sp_key)
-        elems = list(entry) if isinstance(entry, Array) else ([entry] if isinstance(entry, Dictionary) else [])
-        seen: set[int] = set()
-        for elem in elems:
-            if not isinstance(elem, Dictionary) or elem.xref is None or elem.xref in seen:
+        seen.add(elem.xref)
+        if repoint:
+            _repoint_elem_mcr_stm(elem, page_obj, old_xref, new_stream)
+        else:
+            _append_elem_mcr_stm(elem, page_obj, old_xref, new_stream, elem_mcids.get(elem.xref))
+
+
+def _number_tree_get(
+    root: Dictionary,
+    target: int,
+    budget: _core._OperationBudget | None = None,
+) -> object:
+    """Look up integer key ``target`` in a PDF number tree (ISO 32000-2 7.9.7), bounded against cycles and DAGs."""
+    stack: list[tuple[Dictionary, int]] = [(root, 0)]
+    seen: set[int] = set()
+    visited = 0
+    while stack:
+        node, depth = stack.pop()
+        if depth >= 32 or visited >= _MAX_PARENT_TREE_NODES:  # noqa: PLR2004 - bounded tree depth and visits (F6).
+            continue
+        if node.xref is not None:
+            if node.xref in seen:
                 continue
-            seen.add(elem.xref)
-            _repoint_elem_mcr_stm(elem, page.obj, old_xref, document.objects[new_xref])
-
-
-def _number_tree_get(node: Dictionary, target: int, depth: int = 0) -> object:
-    """Look up integer key ``target`` in a PDF number tree (ISO 32000-2 7.9.7)."""
-    if depth >= 32:  # noqa: PLR2004 - bounded tree depth (F6).
-        return None
-    found = _number_tree_nums_get(node.get("Nums"), target)
-    if found is not None:
-        return found
-    kids = node.get("Kids")
-    if not isinstance(kids, Array):
-        return None
-    for kid in kids:
-        if not isinstance(kid, Dictionary) or not _number_tree_in_limits(kid.get("Limits"), target):
-            continue
-        found = _number_tree_get(kid, target, depth + 1)
+            seen.add(node.xref)
+        visited += 1
+        if budget is not None:
+            budget.poll()
+        found = _number_tree_nums_get(node.get("Nums"), target, budget)
         if found is not None:
             return found
+        _push_number_tree_kids(stack, node.get("Kids"), target, depth + 1, budget)
     return None
 
 
-def _number_tree_nums_get(nums: object, target: int) -> object:
+def _push_number_tree_kids(
+    stack: list[tuple[Dictionary, int]],
+    kids: object,
+    target: int,
+    next_depth: int,
+    budget: _core._OperationBudget | None,
+) -> None:
+    if not isinstance(kids, Array):
+        return
+    for idx in range(len(kids) - 1, -1, -1):
+        if budget is not None:
+            _poll(budget, idx)
+        kid = kids[idx]
+        if isinstance(kid, Dictionary) and _number_tree_in_limits(kid.get("Limits"), target):
+            stack.append((kid, next_depth))
+
+
+def _number_tree_nums_get(
+    nums: object,
+    target: int,
+    budget: _core._OperationBudget | None = None,
+) -> object:
     if not isinstance(nums, Array):
         return None
-    items = list(nums)
-    for i in range(0, len(items) - 1, 2):
-        key = items[i]
+    length = len(nums)
+    for i in range(0, length - 1, 2):
+        if budget is not None:
+            _poll(budget, i)
+        key = nums[i]
         if isinstance(key, int) and not isinstance(key, bool) and key == target:
-            return items[i + 1]
+            return nums[i + 1]
     return None
 
 
@@ -1260,8 +1579,54 @@ def _repoint_elem_mcr_stm(elem: Dictionary, page_obj: Dictionary, old_xref: int,
             item["Stm"] = new_stream
 
 
-def _repoint_page(page: Page, drawn: dict[str, int], added_fonts: dict[str, object]) -> None:
-    """Attach copied Forms and added fallback Fonts to the page's own Resources."""
+def _append_elem_mcr_stm(
+    elem: Dictionary,
+    page_obj: Dictionary,
+    old_xref: int,
+    new_stream: Stream,
+    mcids: list[int] | None,
+) -> None:
+    """Append ``/MCR`` children pointing to ``new_stream`` for an additional tagged Form copy."""
+    kids = elem.get("K")
+    existing = list(kids) if isinstance(kids, Array) else ([kids] if kids is not None else [])
+    if mcids is None:
+        elem_pg = elem.get("Pg")
+        mcids = []
+        for item in existing:
+            if not isinstance(item, Dictionary) or item.get("Type") != Name("MCR"):
+                continue
+            stm = item.get("Stm")
+            pg = item.get("Pg", elem_pg)
+            mcid = item.get("MCID")
+            if (
+                isinstance(stm, Stream)
+                and stm.xref == old_xref
+                and isinstance(pg, Dictionary)
+                and pg.xref == page_obj.xref
+                and _is_int(mcid)
+            ):
+                mcids.append(int(mcid))
+    if not mcids:
+        return
+    for mcid in mcids:
+        existing.append({"Type": Name("MCR"), "Pg": page_obj, "Stm": new_stream, "MCID": mcid})
+    elem["K"] = existing
+
+
+def _ensure_owned_subdict(resources: Dictionary, key: str) -> Dictionary:
+    sub = resources.get(key)
+    if sub is None or sub.is_indirect:
+        resources[key] = {} if sub is None else dict(sub.items())
+    return resources[key]
+
+
+def _repoint_page(
+    page: Page,
+    drawn: dict[str, int],
+    added_fonts: dict[str, object],
+    added_properties: dict[str, dict[str, object]] | None = None,
+) -> None:
+    """Attach copied Forms, added fallback Fonts, and added Properties to the page's own Resources."""
     own = page.obj.get("Resources")
     if own is None or own.is_indirect:
         inherited = own if own is not None else _resources(page)
@@ -1269,17 +1634,17 @@ def _repoint_page(page: Page, drawn: dict[str, int], added_fonts: dict[str, obje
     resources = page.obj["Resources"]
     document = page.document
     if drawn:
-        xobjects = resources.get("XObject")
-        if xobjects is None or xobjects.is_indirect:
-            resources["XObject"] = {} if xobjects is None else dict(xobjects.items())
+        xobjects = _ensure_owned_subdict(resources, "XObject")
         for name, number in drawn.items():
-            resources["XObject"][name] = document.objects[number]
+            xobjects[name] = document.objects[number]
     if added_fonts:
-        fonts = resources.get("Font")
-        if fonts is None or fonts.is_indirect:
-            resources["Font"] = {} if fonts is None else dict(fonts.items())
+        fonts = _ensure_owned_subdict(resources, "Font")
         for name, font_obj in added_fonts.items():
-            resources["Font"][name] = font_obj
+            fonts[name] = font_obj
+    if added_properties:
+        props = _ensure_owned_subdict(resources, "Properties")
+        for name, prop_dict in added_properties.items():
+            props[name] = prop_dict
 
 
 def _resources(page: Page) -> Dictionary | None:
