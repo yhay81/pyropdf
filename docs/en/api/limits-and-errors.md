@@ -119,6 +119,14 @@ class InternalError(PdfError)
 
 A Rust panic in pyropdf or an engine. The message retains the panic; please report this library defect.
 
+## `LayoutError`
+
+```python
+class LayoutError(PdfError)
+```
+
+Model loading, validation, or inference failure in `LayoutEngine`.
+
 ## `LIMIT_CODES`
 
 ```python
@@ -155,6 +163,9 @@ LIMIT_CODES = {
     'ocr_text_size': 'OCR recognition produces more than 32 MiB of UTF-8 text before confidence filtering.',
     'ocr_model_size': 'The detector, recognizer, and dictionary that `OcrEngine` loads hold more bytes together than its `max_model_size`.',
     'ocr_dictionary_entries': 'The dictionary that `OcrEngine` loads has more lines than the limit.',
+    'layout_model_size': 'The model file that `LayoutEngine` loads is larger than its `max_model_size`.',
+    'layout_raster_size': 'The raster expanded to RGBA for layout detection exceeds 512 MiB.',
+    'layout_detection_count': 'Layout detection retains more than 1,024 regions on one page.',
     'stream_data_size': "Reading a stream returns more bytes than the call's `max_size`.",
     'object_value_depth': 'A value written to the document nests arrays and dictionaries deeper than its limit.',
     'markdown_output_size': "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`.",
@@ -254,6 +265,9 @@ LimitCode: TypeAlias = Literal[
     'ocr_text_size',
     'ocr_model_size',
     'ocr_dictionary_entries',
+    'layout_model_size',
+    'layout_raster_size',
+    'layout_detection_count',
     'stream_data_size',
     'object_value_depth',
     'markdown_output_size',

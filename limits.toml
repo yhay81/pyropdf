@@ -212,6 +212,24 @@ unit = "entries"
 default = 65_536
 reached = "The dictionary that `OcrEngine` loads has more lines than the limit."
 
+[codes.layout_model_size]
+message = "the layout model is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "The model file that `LayoutEngine` loads is larger than its `max_model_size`."
+
+[codes.layout_raster_size]
+message = "the layout raster is too large"
+unit = "bytes"
+default = 536_870_912
+reached = "The raster expanded to RGBA for layout detection exceeds 512 MiB."
+
+[codes.layout_detection_count]
+message = "the layout detector found too many regions"
+unit = "regions"
+default = 1_024
+reached = "Layout detection retains more than 1,024 regions on one page."
+
 # The low-level object model.
 
 [codes.stream_data_size]

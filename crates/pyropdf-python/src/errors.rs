@@ -65,6 +65,12 @@ pyo3::create_exception!(
     PdfError,
     "OCR model loading or inference failed."
 );
+pyo3::create_exception!(
+    _core,
+    LayoutError,
+    PdfError,
+    "Model loading, validation, or inference failure in ``LayoutEngine``."
+);
 
 /// Catches unwinding panics before PyO3 can turn them into `PanicException`.
 ///

@@ -634,6 +634,25 @@ raster-image regions not already covered by legible native text,
 recognizes only those regions under the document's limits, and drops
 any recognized words that overlap existing native text.
 
+### `regions`
+
+```python
+Page.regions(
+    *,
+    engine: LayoutEngine | None = None,
+    dpi: float = 150,
+    min_confidence: float = 0.5,
+    clip: Sequence[float] | None = None,
+) -> list[LayoutRegion]
+```
+
+Render the page at `dpi` and detect semantic layout regions in display space.
+
+The default engine is loaded lazily from `pyropdf[layout]` and reused.
+Pass an explicit `LayoutEngine` to control the model or its
+lifetime. `clip` detects regions inside one display-space box while
+returning region coordinates in full-page display space.
+
 ### `apply_ocr`
 
 ```python

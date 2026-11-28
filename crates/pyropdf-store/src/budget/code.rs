@@ -106,6 +106,13 @@ pub enum LimitCode {
     OcrModelSize,
     /// The dictionary that `OcrEngine` loads has more lines than the limit.
     OcrDictionaryEntries,
+    /// The model file that `LayoutEngine` loads is larger than its
+    /// `max_model_size`.
+    LayoutModelSize,
+    /// The raster expanded to RGBA for layout detection exceeds 512 MiB.
+    LayoutRasterSize,
+    /// Layout detection retains more than 1,024 regions on one page.
+    LayoutDetectionCount,
     /// Reading a stream returns more bytes than the call's `max_size`.
     StreamDataSize,
     /// A value written to the document nests arrays and dictionaries deeper
@@ -280,7 +287,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 90] = [
+    pub const ALL: [Self; 93] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -313,6 +320,9 @@ impl LimitCode {
         Self::OcrTextSize,
         Self::OcrModelSize,
         Self::OcrDictionaryEntries,
+        Self::LayoutModelSize,
+        Self::LayoutRasterSize,
+        Self::LayoutDetectionCount,
         Self::StreamDataSize,
         Self::ObjectValueDepth,
         Self::MarkdownOutputSize,
@@ -409,6 +419,9 @@ impl LimitCode {
             Self::OcrTextSize => "ocr_text_size",
             Self::OcrModelSize => "ocr_model_size",
             Self::OcrDictionaryEntries => "ocr_dictionary_entries",
+            Self::LayoutModelSize => "layout_model_size",
+            Self::LayoutRasterSize => "layout_raster_size",
+            Self::LayoutDetectionCount => "layout_detection_count",
             Self::StreamDataSize => "stream_data_size",
             Self::ObjectValueDepth => "object_value_depth",
             Self::MarkdownOutputSize => "markdown_output_size",
@@ -507,6 +520,9 @@ impl LimitCode {
             Self::OcrTextSize => "the recognized OCR text is too long",
             Self::OcrModelSize => "the OCR model set is too large",
             Self::OcrDictionaryEntries => "the OCR dictionary has too many entries",
+            Self::LayoutModelSize => "the layout model is too large",
+            Self::LayoutRasterSize => "the layout raster is too large",
+            Self::LayoutDetectionCount => "the layout detector found too many regions",
             Self::StreamDataSize => "the stream is too large to read",
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
             Self::MarkdownOutputSize => "the Markdown is too large",
@@ -611,6 +627,9 @@ impl LimitCode {
             Self::OcrTextSize => Some("bytes"),
             Self::OcrModelSize => Some("bytes"),
             Self::OcrDictionaryEntries => Some("entries"),
+            Self::LayoutModelSize => Some("bytes"),
+            Self::LayoutRasterSize => Some("bytes"),
+            Self::LayoutDetectionCount => Some("regions"),
             Self::StreamDataSize => Some("bytes"),
             Self::ObjectValueDepth => Some("levels"),
             Self::MarkdownOutputSize => Some("bytes"),
@@ -709,6 +728,9 @@ impl LimitCode {
             Self::OcrTextSize => Some(33_554_432),
             Self::OcrModelSize => Some(67_108_864),
             Self::OcrDictionaryEntries => Some(65_536),
+            Self::LayoutModelSize => Some(67_108_864),
+            Self::LayoutRasterSize => Some(536_870_912),
+            Self::LayoutDetectionCount => Some(1_024),
             Self::StreamDataSize => Some(67_108_864),
             Self::ObjectValueDepth => Some(32),
             Self::MarkdownOutputSize => Some(67_108_864),

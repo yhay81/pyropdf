@@ -18,6 +18,7 @@ pub mod display;
 pub mod extract;
 pub mod fonts;
 pub mod forms;
+pub mod layout;
 pub mod navigation;
 pub mod ocr;
 pub mod pages;

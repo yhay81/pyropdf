@@ -22,6 +22,7 @@ class LimitError(PdfError):
 class StaleObjectError(PdfError): ...
 class DocumentClosedError(PdfError): ...
 class OcrError(PdfError): ...
+class LayoutError(PdfError): ...
 
 # Private regression hooks, outside the public Python API.
 def _test_panic(document: _Document, site: str, payload: str = "str") -> None: ...
@@ -340,6 +341,23 @@ class _OcrEngine:
         rotation: int = 0,
         document: _Document | None = None,
     ) -> list[tuple[float, float, float, float, str, float]]: ...
+
+class _LayoutEngine:
+    def __init__(
+        self,
+        model_path: str,
+        threads: int,
+        max_model_size: int | None,
+        input_size: int = 800,
+        /,
+    ) -> None: ...
+    def detect_pixmap(
+        self,
+        pixmap: Pixmap,
+        *,
+        min_confidence: float = 0.5,
+        document: _Document | None = None,
+    ) -> list[tuple[int, float, float, float, float, float, int | None]]: ...
 
 def render_page(
     document: _Document | _PageSnapshot,

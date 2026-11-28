@@ -25,6 +25,7 @@ mod forms;
 mod history;
 mod images;
 mod items;
+mod layout;
 mod objects;
 mod ocr;
 mod outline;
@@ -77,8 +78,8 @@ mod _core {
     };
     #[pymodule_export]
     use super::errors::{
-        DocumentClosedError, EncryptedDocumentError, InternalError, LimitError, MalformedPdfError,
-        OcrError, PasswordError, PdfError, StaleObjectError,
+        DocumentClosedError, EncryptedDocumentError, InternalError, LayoutError, LimitError,
+        MalformedPdfError, OcrError, PasswordError, PdfError, StaleObjectError,
     };
     #[pymodule_export]
     use super::fax::{encode_ccitt_g4, encode_image_samples};
@@ -109,6 +110,8 @@ mod _core {
     };
     #[pymodule_export]
     use super::items::{cluster_path_boxes, page_content, page_paths};
+    #[pymodule_export]
+    use super::layout::_LayoutEngine;
     #[pymodule_export]
     use super::objects::{
         attachment_reader, decode_text_string, object_add, object_add_stream, object_delete,
