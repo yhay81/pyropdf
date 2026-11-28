@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from pyropdf._page import Page
     from pyropdf._structure_reading import StructureBlock
     from pyropdf._tables import Table
-    from pyropdf._text import Word
+    from pyropdf._text import RubyMode, Word
 
 #: The kind of a structured page :class:`Element`.
 ElementKind: TypeAlias = Literal["heading", "paragraph", "list_item", "table", "image", "blockquote", "code"]
@@ -165,6 +165,7 @@ def validate_options(  # noqa: PLR0913 - validates all shared retrieval export o
     *,
     use_structure: object = "auto",
     expand_abbreviations: object = False,
+    ruby: object = "omit",
     margins: object = None,
     ignore_headers_footers: object = False,
     images: object = None,
@@ -176,6 +177,7 @@ def validate_options(  # noqa: PLR0913 - validates all shared retrieval export o
         max_size,
         use_structure=use_structure,
         expand_abbreviations=expand_abbreviations,
+        ruby=ruby,
         margins=margins,
         ignore_headers_footers=ignore_headers_footers,
         images=images,
@@ -190,6 +192,7 @@ def export_json(  # noqa: PLR0913 - keyword-only retrieval export options.
     max_size: int | None,
     use_structure: Literal["auto", "always", "never"] = "auto",
     expand_abbreviations: bool = False,
+    ruby: RubyMode = "omit",
     margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
     ignore_headers_footers: bool = False,
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
@@ -201,6 +204,7 @@ def export_json(  # noqa: PLR0913 - keyword-only retrieval export options.
         max_size=max_size,
         use_structure=use_structure,
         expand_abbreviations=expand_abbreviations,
+        ruby=ruby,
         margins=margins,
         ignore_headers_footers=ignore_headers_footers,
         images=images,
@@ -229,6 +233,7 @@ def export_chunks(  # noqa: PLR0913 - keyword-only retrieval export options.
     max_size: int | None,
     use_structure: Literal["auto", "always", "never"] = "auto",
     expand_abbreviations: bool = False,
+    ruby: RubyMode = "omit",
     margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
     ignore_headers_footers: bool = False,
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
@@ -240,6 +245,7 @@ def export_chunks(  # noqa: PLR0913 - keyword-only retrieval export options.
         max_size=max_size,
         use_structure=use_structure,
         expand_abbreviations=expand_abbreviations,
+        ruby=ruby,
         margins=margins,
         ignore_headers_footers=ignore_headers_footers,
         images=images,
@@ -314,7 +320,9 @@ def _geometric_page_elements(  # noqa: PLR0913 - extracts one geometric page's e
     if body_empty:
         _, width, height = page._geometry()  # noqa: SLF001
         return (width, height), []
-    layout, words = _markdown._fallback_or_clipped_layout(page, data, body_clip, body_empty=False)  # noqa: SLF001
+    layout, words = _markdown._fallback_or_clipped_layout(  # noqa: SLF001
+        page, data, body_clip, body_empty=False, ruby=config.ruby
+    )
     tables = graphics.tables(page, config.table_strategy, clip=body_clip)
     table_bboxes = [(t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1) for t in tables]
     y_min, y_max = _markdown._band_bounds(layout["height"], body_clip)  # noqa: SLF001
@@ -343,6 +351,7 @@ def _pages_elements(
         table_strategy=config.table_strategy,
         use_structure=config.use_structure,
         expand_abbreviations=config.expand_abbreviations,
+        ruby=config.ruby,
         max_graphics=config.max_graphics,
     )
     exporter = _markdown._ImageExporter(  # noqa: SLF001

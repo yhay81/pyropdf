@@ -17,9 +17,9 @@ use hayro::kurbo::{Affine, BezPath, PathSeg};
 use pyropdf_store::budget::{Budget, LimitCode};
 
 use super::{
-    BBox, Error, FontInfo, GlyphRecord, TextOptions, TextPeak, as_u64, glyph_bbox,
-    glyph_is_nonspacing_mark, needs_gap, starts_block, try_push_glyph_text, try_push_str_text,
-    try_push_text, viewed_page_lines,
+    BBox, Error, FontInfo, GlyphRecord, TextOptions, TextPeak, as_u64, glyph_bbox, needs_gap,
+    starts_block, try_push_glyph_text, try_push_str_text, try_push_text, updates_gap_anchor,
+    viewed_page_lines,
 };
 use crate::bridge::Bridged;
 use crate::content::PageContent;
@@ -477,7 +477,7 @@ fn span_chars(glyphs: &[GlyphRecord], meter: &mut Meter<'_>) -> Result<Vec<CharT
             ),
             "layout chars",
         )?;
-        if !glyph_is_nonspacing_mark(glyph) {
+        if updates_gap_anchor(glyph) {
             previous = Some(glyph);
         }
     }
@@ -500,7 +500,8 @@ fn is_superscript(span: &GlyphRecord, line_main: Option<(f64, f64)>) -> bool {
     let Some((main_size, main_y)) = line_main else {
         return false;
     };
-    is_horizontal(span)
+    !span.is_ruby
+        && is_horizontal(span)
         && span.size < main_size * SUPERSCRIPT_SIZE
         && main_y - span.y > main_size * SUPERSCRIPT_RISE
 }
@@ -569,7 +570,7 @@ fn span_text(glyphs: &[GlyphRecord]) -> Result<String, Error> {
             try_push_str_text(&mut text, " ", "layout span text")?;
         }
         try_push_glyph_text(&mut text, &glyph.text, "layout span text")?;
-        if !glyph_is_nonspacing_mark(glyph) {
+        if updates_gap_anchor(glyph) {
             previous = Some(glyph);
         }
     }
@@ -594,7 +595,7 @@ fn split_words(line: &[GlyphRecord], meter: &mut Meter<'_>) -> Result<Vec<WordTu
         if !is_space && word_start.is_none() {
             word_start = Some(index);
         }
-        if !glyph_is_nonspacing_mark(glyph) {
+        if updates_gap_anchor(glyph) {
             previous = Some(glyph);
         }
     }

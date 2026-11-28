@@ -277,9 +277,11 @@ fn covered_fraction(region: Rect2, boxes: &[Rect2], budget: &Budget) -> Result<f
     for rect in clipped.iter() {
         budget.poll()?;
         let gx0 = (((rect.x0 - region.x0) * inv_w).floor() as i64).clamp(0, 63) as usize;
-        let gx1 = (((rect.x1 - region.x0) * inv_w).ceil() as i64).clamp(1, 64) as usize;
+        let gx1 =
+            (((rect.x1 - region.x0) * inv_w).ceil() as i64).clamp((gx0 + 1) as i64, 64) as usize;
         let gy0 = (((rect.y0 - region.y0) * inv_h).floor() as i64).clamp(0, 63) as usize;
-        let gy1 = (((rect.y1 - region.y0) * inv_h).ceil() as i64).clamp(1, 64) as usize;
+        let gy1 =
+            (((rect.y1 - region.y0) * inv_h).ceil() as i64).clamp((gy0 + 1) as i64, 64) as usize;
         let mask = if gx1 - gx0 >= 64 {
             u64::MAX
         } else {
@@ -463,20 +465,32 @@ pub fn filter_hybrid_words(
         kept_rects.try_push(rect)?;
     }
 
-    // 2. Optionally deduplicate near-identical OCR words from adjacent/overlapping regions.
+    // 2. Optionally deduplicate near-identical OCR words from adjacent/overlapping
+    // regions via confidence-ranked NMS so a suppressed intermediate box can never
+    // transitively suppress a disjoint surviving word.
     let mut deduped = BudgetVec::new(budget);
     if deduplicate_words && kept_indices.len() > 1 {
+        let mut order = BudgetVec::new(budget);
+        order.try_reserve_exact(kept_indices.len())?;
+        order.try_extend(0..kept_indices.len())?;
+        order.sort_unstable_by(|&a, &b| {
+            words[kept_indices[b]]
+                .5
+                .total_cmp(&words[kept_indices[a]].5)
+                .then_with(|| kept_rects[b].area().total_cmp(&kept_rects[a].area()))
+                .then_with(|| kept_indices[a].cmp(&kept_indices[b]))
+        });
         let mut suppressed = BudgetVec::new(budget);
         suppressed.try_reserve_exact(kept_indices.len())?;
         suppressed.try_extend(std::iter::repeat_n(false, kept_indices.len()))?;
-        for i in 0..kept_indices.len() {
+        for rank_i in 0..order.len() {
             budget.poll()?;
+            let i = order[rank_i];
             if suppressed[i] {
                 continue;
             }
             let a = kept_rects[i];
-            let a_conf = words[kept_indices[i]].5;
-            for j in (i + 1)..kept_indices.len() {
+            for &j in &order[(rank_i + 1)..] {
                 if suppressed[j] {
                     continue;
                 }
@@ -486,11 +500,6 @@ pub fn filter_hybrid_words(
                 };
                 let min_area = a.area().min(b.area());
                 if min_area > 0.0 && inter.area() / min_area >= WORD_SELF_DUPLICATE_THRESHOLD {
-                    let b_conf = words[kept_indices[j]].5;
-                    if b_conf > a_conf {
-                        suppressed[i] = true;
-                        break;
-                    }
                     suppressed[j] = true;
                 }
             }
@@ -636,6 +645,22 @@ mod tests {
             filter_hybrid_words(&words, &native, 0, (360.0, 220.0), true, true, &budget).unwrap();
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].4, "Scanned body");
+    }
+
+    #[test]
+    fn nms_dedup_does_not_transitively_suppress_disjoint_lower_confidence_word() {
+        let budget = Budget::default();
+        // A (0.80) overlaps both B (0.70) and C (0.90), while B and C are disjoint.
+        // Confidence-ranked NMS accepts C, suppresses A via C, and preserves B.
+        let words = vec![
+            (10.0, 10.0, 100.0, 30.0, "Middle".to_owned(), 0.80),
+            (10.0, 10.0, 50.0, 30.0, "Left".to_owned(), 0.70),
+            (60.0, 10.0, 100.0, 30.0, "Right".to_owned(), 0.90),
+        ];
+        let kept =
+            filter_hybrid_words(&words, &[], 0, (200.0, 100.0), true, false, &budget).unwrap();
+        let texts: Vec<&str> = kept.iter().map(|w| w.4.as_str()).collect();
+        assert_eq!(texts, vec!["Left", "Right"]);
     }
 
     #[test]

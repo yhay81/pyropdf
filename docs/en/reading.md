@@ -27,7 +27,7 @@ with pyropdf.open("input.pdf") as doc:
 `clip` limits a reader to a rectangle in display coordinates, whose origin
 is the page's top-left corner. By default, marked-content `/ActualText`
 replaces the text of its enclosed glyphs; pass `actual_text=False` to
-`page.text()`, `page.words()`, `page.layout()`, `page.chars()`,
+`page.text()`, `doc.text()`, `page.words()`, `page.layout()`, `page.chars()`,
 `page.search()`, or `annotation.text()` to inspect the underlying glyph
 Unicode values directly.
 
@@ -41,11 +41,11 @@ to bottom and right to left within their region.
 
 Japanese ruby (furigana) annotations—smaller kana runs aligned immediately
 above horizontal kanji or to the right of vertical kanji, as well as PDF
-structure `/Ruby` (`/RB`/`/RT`/`/RP`) elements in Markdown export—are controlled
-by `ruby`:
+structure `/Ruby` (`/RB`/`/RT`/`/RP`) elements in Markdown, JSON, and chunk
+exports—are controlled by `ruby`:
 
 - `"omit"` (default): omits furigana so base words stay intact for reading,
-  search, and Markdown export.
+  search, and Markdown, JSON, and chunk exports.
 - `"parenthesize"`: splices each furigana run inline in parentheses directly
   after its base characters (for example, `東京(とうきょう)`).
 - `"keep"`: preserves ruby runs as ordinary text.
