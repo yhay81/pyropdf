@@ -362,7 +362,7 @@ pub fn page_thumbnail(
         TypedIter::new(b"/Thumb Do"),
         &resources,
         &mut context,
-        &mut grab,
+        &mut crate::render::DynDevice(&mut grab),
     );
     if let Some(error) = grab.error {
         return Err(error);

@@ -1969,7 +1969,12 @@ impl<'a> Device<'a> for InkBounds {
                     }
                 }
                 Glyph::Type3(type3) => {
-                    type3.interpret(self, props.transform, glyph.transform(), &props.paint);
+                    type3.interpret(
+                        &mut crate::render::DynDevice(self),
+                        props.transform,
+                        glyph.transform(),
+                        &props.paint,
+                    );
                 }
             }
         }
@@ -2346,7 +2351,12 @@ impl<'a> Device<'a> for TilingCellCollector<'_> {
                         break;
                     }
                     self.depth += 1;
-                    type3.interpret(self, props.transform, glyph.transform(), &props.paint);
+                    type3.interpret(
+                        &mut crate::render::DynDevice(self),
+                        props.transform,
+                        glyph.transform(),
+                        &props.paint,
+                    );
                     self.depth -= 1;
                 }
             }
@@ -2433,7 +2443,11 @@ fn capture_tiling_cell<'a>(
     let x_step = f64::from(tiling.x_step);
     let y_step = f64::from(tiling.y_step);
     let mut collector = TilingCellCollector::new(depth, budget);
-    let interpreted = tiling.interpret(&mut collector, Affine::IDENTITY, is_stroke);
+    let interpreted = tiling.interpret(
+        &mut crate::render::DynDevice(&mut collector),
+        Affine::IDENTITY,
+        is_stroke,
+    );
     if let Some(error) = collector.error {
         return Err(error);
     }
@@ -2778,7 +2792,12 @@ impl<'a, 'b, 'c, 's> ContentCollector<'a, 'b, 'c, 's> {
             Some(bbox) => *bbox,
             None => {
                 let mut ink = InkBounds { bbox: None };
-                glyph.interpret(&mut ink, Affine::IDENTITY, Affine::IDENTITY, paint);
+                glyph.interpret(
+                    &mut crate::render::DynDevice(&mut ink),
+                    Affine::IDENTITY,
+                    Affine::IDENTITY,
+                    paint,
+                );
                 if self.type3_boxes.len() < MAX_CACHED_GLYPHS {
                     #[expect(
                         clippy::disallowed_methods,
@@ -3915,7 +3934,11 @@ fn collect_page_content_with_stretches_dyn<'a>(
     let mut context = extraction_context(page, display, cache, settings);
     let mut collector =
         ContentCollector::new(sink, kinds, stretches, page.xref(), display.size(), budget);
-    interpret_page(page, &mut context, &mut collector);
+    interpret_page(
+        page,
+        &mut context,
+        &mut crate::render::DynDevice(&mut collector),
+    );
     collector.finish(clip)
 }
 
@@ -3980,7 +4003,11 @@ fn collect_page_content_on_faces_dyn<'a>(
     let mut context = extraction_context(page, display, &cache, settings);
     let mut collector =
         ContentCollector::new(sink, kinds, &stretches, page.xref(), display.size(), budget);
-    interpret_page(page, &mut context, &mut collector);
+    interpret_page(
+        page,
+        &mut context,
+        &mut crate::render::DynDevice(&mut collector),
+    );
     if collector.error.is_none() && asked.load(Ordering::Relaxed) {
         let settings = InterpreterSettings {
             render_content,

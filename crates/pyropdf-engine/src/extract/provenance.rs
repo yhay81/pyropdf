@@ -261,7 +261,11 @@ pub fn collect_primary_signatures(
         callbacks: 0,
         error: None,
     };
-    interpret_page(page, &mut context, &mut device);
+    interpret_page(
+        page,
+        &mut context,
+        &mut crate::render::DynDevice(&mut device),
+    );
     if let Some(refusal) = device.error {
         return Err(refusal.into());
     }
@@ -349,7 +353,11 @@ fn collect_overlay_provenance(
         callbacks: 0,
         error: None,
     };
-    interpret_page(page, &mut context, &mut device);
+    interpret_page(
+        page,
+        &mut context,
+        &mut crate::render::DynDevice(&mut device),
+    );
     if let Some(refusal) = device.error {
         return Err(refusal.into());
     }
@@ -1103,7 +1111,7 @@ pub(crate) fn run_sources<'a>(
         TypedIter::new(&data),
         page.resources(),
         &mut context,
-        &mut device,
+        &mut crate::render::DynDevice(&mut device),
     );
     if let Some(refusal) = device.error {
         return Err(refusal.into());
