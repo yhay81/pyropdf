@@ -194,7 +194,7 @@ fn build_text_layer<'a, 'b>(
         settings.clone(),
     );
     let mut collector = TextLayerCollector::new(settings, base_len, budget);
-    interpret_page(page, &mut context, &mut collector);
+    interpret_page(page, &mut context, &mut super::DynDevice(&mut collector));
     collector.finish()
 }
 

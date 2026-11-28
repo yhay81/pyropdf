@@ -1,8 +1,14 @@
 //! Rasterizing a page through hayro, as much as `page.pixmap`
 //! (yhay81/pyropdf#35) needs, and converting it to SVG.
 
-use hayro::hayro_interpret::{InterpreterSettings, RenderContent};
+use hayro::hayro_interpret::font::GlyphRun;
+use hayro::hayro_interpret::{
+    BlendMode, ClipPath, Device, DrawMode, DrawProps, Image, ImageDrawProps, InterpreterSettings,
+    RenderContent, SoftMask,
+};
+use hayro::hayro_syntax::object::Dict;
 use hayro::hayro_syntax::page::Page;
+use hayro::kurbo::{BezPath, Rect};
 use hayro::vello_cpu::Pixmap;
 use hayro::vello_cpu::color::AlphaColor;
 use hayro::{PixmapSettings, RenderCache, RenderSettings};
@@ -26,6 +32,68 @@ mod tests;
 pub use batch::{MAX_WORKERS, batch, batch_scaled};
 pub use fallback::{Fallback, FontFile, Language, Source};
 pub use svg::{svg, svg_with_text_layer};
+
+/// Object-safe wrapper forwarding `hayro_interpret::Device` through dynamic
+/// dispatch so custom devices across `render` and `extract` share one
+/// monomorphization of `hayro-interpret` instead of duplicating it in release
+/// wheels (#1285).
+pub(crate) struct DynDevice<'r, 'a>(pub(crate) &'r mut dyn Device<'a>);
+
+impl<'a> Device<'a> for DynDevice<'_, 'a> {
+    fn draw_path(&mut self, path: &BezPath, props: DrawProps<'a>, draw_mode: &DrawMode) {
+        self.0.draw_path(path, props, draw_mode);
+    }
+
+    fn draw_rect(&mut self, rect: &Rect, props: DrawProps<'a>, draw_mode: &DrawMode) {
+        self.0.draw_rect(rect, props, draw_mode);
+    }
+
+    fn push_clip_path(&mut self, clip_path: &ClipPath) {
+        self.0.push_clip_path(clip_path);
+    }
+
+    fn push_clip_rect(&mut self, rect: &Rect) {
+        self.0.push_clip_rect(rect);
+    }
+
+    fn pop_clip(&mut self) {
+        self.0.pop_clip();
+    }
+
+    fn push_transparency_group(
+        &mut self,
+        opacity: f32,
+        mask: Option<SoftMask<'a>>,
+        blend_mode: BlendMode,
+    ) {
+        self.0.push_transparency_group(opacity, mask, blend_mode);
+    }
+
+    fn pop_transparency_group(&mut self) {
+        self.0.pop_transparency_group();
+    }
+
+    fn draw_glyph_run(
+        &mut self,
+        glyph_run: &GlyphRun<'_, 'a>,
+        props: DrawProps<'a>,
+        draw_mode: &DrawMode,
+    ) {
+        self.0.draw_glyph_run(glyph_run, props, draw_mode);
+    }
+
+    fn draw_image(&mut self, image: Image<'a, '_>, props: ImageDrawProps<'a>) {
+        self.0.draw_image(image, props);
+    }
+
+    fn begin_marked_content(&mut self, tag: &[u8], properties: Option<&Dict<'_>>) {
+        self.0.begin_marked_content(tag, properties);
+    }
+
+    fn end_marked_content(&mut self) {
+        self.0.end_marked_content();
+    }
+}
 
 /// The coverage threshold passed to hayro when [`Options::antialias`] is `false`.
 ///
