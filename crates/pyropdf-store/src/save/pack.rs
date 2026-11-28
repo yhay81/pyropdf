@@ -85,22 +85,6 @@ impl<'a> Packer<'a> {
             Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => return Ok(false),
             Err(error) => return Err(error.into()),
         };
-        // A member is never encrypted on its own: its object stream is.
-        let bytes = match (renumbering, version.slot(row.number)) {
-            (Some(renumbering), _) => {
-                let keep = StreamPolicy::new(Streams::Keep, &[], budget)?;
-                renumbering.bytes(version, reference, &keep, self.format, false, budget)?
-            }
-            (None, _) if self.format.rewrites_syntax() => {
-                let mut formatted = BudgetVec::new(budget);
-                self.format.write_value(&mut formatted, object.value())?;
-                Bytes::new(formatted.into_vec())
-            }
-            (None, Some(Slot::Written(object))) => object.bytes().clone(),
-            (None, _) => raw::body(&**version.base(), reference, budget).map_err(|error| {
-                error.context(format!("saving object {} {}", row.number, row.generation))
-            })?,
-        };
         let member = member.number();
         let number = match self.number {
             Some(number) => number,
@@ -111,10 +95,37 @@ impl<'a> Packer<'a> {
             }
         };
         let offset = self.values.len();
+        // A member is never encrypted on its own: its object stream is.
+        match (renumbering, version.slot(row.number)) {
+            (Some(renumbering), _) => {
+                let keep = StreamPolicy::new(Streams::Keep, &[], budget)?;
+                let bytes = renumbering.bytes(
+                    version,
+                    reference,
+                    &keep,
+                    self.format,
+                    false,
+                    None,
+                    budget,
+                )?;
+                self.values.try_extend_from_slice(&bytes)?;
+            }
+            (None, _) if self.format.rewrites_syntax() => {
+                self.format.write_value(&mut self.values, object.value())?;
+            }
+            (None, Some(Slot::Written(object))) => {
+                self.values.try_extend_from_slice(object.bytes())?;
+            }
+            (None, _) => {
+                let bytes = raw::body(&**version.base(), reference, budget).map_err(|error| {
+                    error.context(format!("saving object {} {}", row.number, row.generation))
+                })?;
+                self.values.try_extend_from_slice(&bytes)?;
+            }
+        }
+        self.values.try_push(b'\n')?;
         self.table
             .try_extend_from_slice(format!("{member} {offset} ").as_bytes())?;
-        self.values.try_extend_from_slice(&bytes)?;
-        self.values.try_push(b'\n')?;
         row.member = Some((number, self.count));
         self.count += 1;
         if self.count == MEMBERS {
@@ -150,26 +161,34 @@ impl<'a> Packer<'a> {
             reason = "the dictionary of an object stream has three entries"
         )]
         let dict: Dict = entries.into_iter().collect();
-        let stream = Stream::new(dict, Bytes::new(data.into_vec()));
-        let stream = match self.level {
-            Some(level) => recode::compressed(&stream, level, budget)?.unwrap_or(stream),
-            None => stream,
-        };
-        let stream = if self.format.ascii && !recode::is_printable_ascii(stream.data()) {
-            recode::wrap_ascii85(&stream, &|_, _| Ok(None), budget)?
-        } else {
-            stream
-        };
-        let mut plain = BudgetVec::new(budget);
-        self.format
-            .write_value(&mut plain, &Value::Stream(Box::new(stream)))?;
-        let plain = Bytes::new(plain.into_vec());
-        let bytes = match mode.handler() {
-            Some(handler) => {
-                security::encrypt_bytes(handler, Reference::new(number, 0), &plain, budget)?
-            }
-            None => plain,
-        };
+        let data_guard =
+            recode::MemoryGuard::new(budget, u64::try_from(data.capacity()).unwrap_or(u64::MAX));
+        let mut stream = recode::RecodedStream::new_with_guard(
+            Stream::new(dict, Bytes::new(data.into_vec())),
+            data_guard,
+        );
+        if let Some(level) = self.level
+            && let Some(compressed) = recode::compressed_temp(stream.stream(), level, budget)?
+        {
+            stream = compressed;
+        }
+        if self.format.ascii && !recode::is_printable_ascii(stream.stream().data()) {
+            stream = recode::wrap_ascii85_temp(stream.stream(), &|_, _| Ok(None), budget)?;
+        }
+        let plain = stream.into_value_guard();
+        let encrypted = mode
+            .handler()
+            .map(|handler| {
+                security::encrypt_value(handler, Reference::new(number, 0), plain.value(), budget)
+            })
+            .transpose()?;
+        let mut bytes = BudgetVec::new(budget);
+        self.format.write_value(
+            &mut bytes,
+            encrypted.as_ref().unwrap_or_else(|| plain.value()),
+        )?;
+        drop(encrypted);
+        drop(plain);
         self.rows.try_push(Row {
             number,
             generation: 0,

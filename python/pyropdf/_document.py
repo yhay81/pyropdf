@@ -1315,8 +1315,9 @@ class Document:
         if ascii and self._will_encrypt(encryption):
             msg = "ascii=True is not available for encrypted saves"
             raise ValueError(msg)
-        with self._save_source(clean=clean) as source:
-            _atomic_save_file(path, lambda temporary: source.save_path(temporary, incremental, arg, *options))
+        with self._save_source(clean=clean) as (source, remap):
+            effective = _remap_stream_filters(options, remap)
+            _atomic_save_file(path, lambda temporary: source.save_path(temporary, incremental, arg, *effective))
 
     def to_bytes(  # noqa: PLR0913 - the save options are all keyword-only
         self,
@@ -1375,8 +1376,9 @@ class Document:
         if ascii and self._will_encrypt(encryption):
             msg = "ascii=True is not available for encrypted saves"
             raise ValueError(msg)
-        with self._save_source(clean=clean) as source:
-            return source.to_bytes(incremental, max_size, arg, *options)
+        with self._save_source(clean=clean) as (source, remap):
+            effective = _remap_stream_filters(options, remap)
+            return source.to_bytes(incremental, max_size, arg, *effective)
 
     def _will_encrypt(self, encryption: Encryption | RecipientEncryption | None) -> bool:
         """Return whether a full save with ``encryption`` will write ciphertext."""
@@ -1388,15 +1390,15 @@ class Document:
         return True
 
     @contextmanager
-    def _save_source(self, *, clean: bool) -> Generator[_Document]:
-        """Yield the core handle to save, cleaning a private view when requested."""
+    def _save_source(self, *, clean: bool) -> Generator[tuple[_Document, dict[int, list[int]]]]:
+        """Yield the core handle to save and any content-stream xref remaps from cleaning."""
         if not clean:
-            yield self._doc
+            yield self._doc, {}
             return
         view = self._import_source(self._doc.save_view())
         try:
-            _clean_document(view)
-            yield view._doc  # noqa: SLF001
+            remap = _clean_document(view)
+            yield view._doc, remap  # noqa: SLF001
         finally:
             view.close()
 
@@ -2191,6 +2193,76 @@ def _check_save_option_conflicts(  # noqa: PLR0913 - mirrors Document.save keywo
         )
 
 
+#: Tuple of normalized save options passed to core ``save_path`` / ``to_bytes``.
+_CoreSaveOptions = tuple[
+    bool,
+    int | None,
+    bool,
+    bool,
+    bool | None,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    str | None,
+    list[tuple[int, str]] | None,
+    int,
+]
+
+
+def _remap_stream_filters(
+    options: _CoreSaveOptions,
+    remap: Mapping[int, list[int]],
+) -> _CoreSaveOptions:
+    """Apply content-stream xref remaps produced by ``clean=True`` to per-stream overrides."""
+    (
+        prune,
+        compress,
+        decompress,
+        renew_id,
+        stream,
+        object_streams,
+        renumber,
+        dedupe,
+        linearize,
+        hybrid,
+        ascii_mode,
+        pretty,
+        default_filter,
+        per_stream,
+        filter_level,
+    ) = options
+    if not remap or not per_stream:
+        return options
+    remapped: list[tuple[int, str]] = []
+    for xref, name in per_stream:
+        targets = remap.get(xref)
+        if targets:
+            remapped.extend((target, name) for target in targets)
+        else:
+            remapped.append((xref, name))
+    return (
+        prune,
+        compress,
+        decompress,
+        renew_id,
+        stream,
+        object_streams,
+        renumber,
+        dedupe,
+        linearize,
+        hybrid,
+        ascii_mode,
+        pretty,
+        default_filter,
+        remapped,
+        filter_level,
+    )
+
+
 def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
     *,
     incremental: bool,
@@ -2208,23 +2280,7 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
     ascii: bool,  # noqa: A002 - public full-save option
     pretty: bool,
     stream_filter: object,
-) -> tuple[
-    bool,
-    int | None,
-    bool,
-    bool,
-    bool | None,
-    bool,
-    bool,
-    bool,
-    bool,
-    bool,
-    bool,
-    bool,
-    str | None,
-    list[tuple[int, str]] | None,
-    int,
-]:
+) -> _CoreSaveOptions:
     """Check the save options, and return them as the core's save methods take them.
 
     They are ``prune``, the ``compress`` level, ``decompress``, ``renew_id``,

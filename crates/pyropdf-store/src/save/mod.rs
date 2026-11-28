@@ -438,7 +438,7 @@ pub fn full_with(
         prune::free_unreachable(version, &mut rows, encrypt, budget)?;
     }
     let plan = if options.dedupe {
-        merge::plan(version, &rows, budget)?
+        merge::plan(version, &rows, &policy, budget)?
     } else {
         merge::Plan {
             merged: BudgetVec::new(budget),
@@ -877,7 +877,12 @@ impl<'a> Mode<'a> {
             .base()
             .header_bytes()
             .and_then(|bytes| bytes.get(..8))
-            .filter(|bytes| bytes.starts_with(b"%PDF-"))
+            .filter(|bytes| {
+                matches!(
+                    *bytes,
+                    [b'%', b'P', b'D', b'F', b'-', b'1'..=b'9', b'.', b'0'..=b'9']
+                )
+            })
             .unwrap_or(b"%PDF-1.7");
         if (mac || self.handler().is_some_and(Handler::uses_gcm)) && original < b"%PDF-2.0" {
             b"%PDF-2.0"
@@ -932,6 +937,30 @@ fn row(version: &Version, number: u32) -> Row {
     }
 }
 
+/// Serialized bytes of one object being written: either shared with the base
+/// or a written slot, or a temporary budgeted buffer released on drop.
+enum ObjectBytes<'b> {
+    Shared(Bytes),
+    Owned(BudgetVec<'b, u8>),
+}
+
+impl ObjectBytes<'_> {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Shared(bytes) => bytes.as_slice(),
+            Self::Owned(bytes) => bytes.as_slice(),
+        }
+    }
+}
+
+impl std::ops::Deref for ObjectBytes<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
 fn write_object(
     version: &Version,
     row: &mut Row,
@@ -948,27 +977,21 @@ fn write_object(
     if let Some(renumbering) = renumbering {
         let target = renumbering.number(row.number)?;
         let reference = Reference::new(row.number, row.generation);
-        let plain = renumbering.bytes(
+        // The keys of an encrypted object derive from its new reference.
+        let encrypt = match (mode, mode.handler()) {
+            (Mode::Keep { encrypt, .. }, _) if Some(row.number) == *encrypt => None,
+            (_, Some(handler)) => Some((handler, target)),
+            (_, None) => None,
+        };
+        let bytes = renumbering.bytes(
             version,
             reference,
             policy,
             format,
             mode.removing_encryption(version),
+            encrypt,
             out.budget,
         )?;
-        // The keys of an encrypted object derive from its new reference.
-        let bytes = match (mode, mode.handler()) {
-            (Mode::Keep { encrypt, .. }, _) if Some(row.number) == *encrypt => plain,
-            (_, Some(handler)) => security::encrypt_bytes_as(
-                handler,
-                reference,
-                target,
-                &plain,
-                &|r, b| renumbering.lookup(version, r, b),
-                out.budget,
-            )?,
-            (_, None) => plain,
-        };
         row.offset = Some(out.offset()?);
         out.display(format_args!(
             "{} {} obj\n",
@@ -990,24 +1013,26 @@ fn write_object(
         let bytes = match (version.slot(row.number), mode) {
             (Some(Slot::Written(object)), Mode::Plain) => {
                 version.check_stream_filters(&*object.value(budget)?, budget)?;
-                plain_body(object.bytes().clone(), version, budget)?
+                ObjectBytes::Shared(plain_body(object.bytes().clone(), version, budget)?)
             }
             (Some(Slot::Written(object)), Mode::Keep { encrypt, .. })
                 if Some(row.number) == *encrypt =>
             {
-                object.bytes().clone()
+                ObjectBytes::Shared(object.bytes().clone())
             }
             (Some(Slot::Written(object)), _) => {
                 let handler = mode.handler().expect("an encrypting mode has a handler");
-                security::encrypt_bytes_as(
-                    handler,
-                    reference,
-                    reference,
-                    object.bytes(),
-                    &|r, b| version.filter_object(r, b),
-                    budget,
+                ObjectBytes::Owned(
+                    security::encrypt_bytes_as(
+                        handler,
+                        reference,
+                        reference,
+                        object.bytes(),
+                        &|r, b| version.filter_object(r, b),
+                        budget,
+                    )
+                    .map_err(context)?,
                 )
-                .map_err(context)?
             }
             (_, Mode::Keep { index, encrypt, .. })
                 if Some(row.number) == *encrypt
@@ -1017,25 +1042,27 @@ fn write_object(
                             Some(Location::Offset(_))
                         )) =>
             {
-                raw::file_body(index, reference, budget).map_err(context)?
+                ObjectBytes::Shared(raw::file_body(index, reference, budget).map_err(context)?)
             }
-            (_, Mode::Plain) => plain_body(
+            (_, Mode::Plain) => ObjectBytes::Shared(plain_body(
                 raw::body(&**version.base(), reference, budget).map_err(context)?,
                 version,
                 budget,
-            )?,
+            )?),
             (_, _) => {
                 let handler = mode.handler().expect("an encrypting mode has a handler");
                 let plain = raw::body(&**version.base(), reference, budget).map_err(context)?;
-                security::encrypt_bytes_as(
-                    handler,
-                    reference,
-                    reference,
-                    &plain,
-                    &|r, b| version.filter_object(r, b),
-                    budget,
+                ObjectBytes::Owned(
+                    security::encrypt_bytes_as(
+                        handler,
+                        reference,
+                        reference,
+                        &plain,
+                        &|r, b| version.filter_object(r, b),
+                        budget,
+                    )
+                    .map_err(context)?,
                 )
-                .map_err(context)?
             }
         };
         match recode(version, reference, policy, format, mode, budget).map_err(|error| {
@@ -1045,7 +1072,7 @@ fn write_object(
             Some(recoded)
                 if !policy.requires_shorter(row.number) || recoded.len() < bytes.len() =>
             {
-                recoded
+                ObjectBytes::Owned(recoded)
             }
             _ => bytes,
         }
@@ -1056,29 +1083,76 @@ fn write_object(
     out.bytes(b"\nendobj\n")
 }
 
+/// Formats an untouched encrypted base object from `index` while preserving its
+/// original ciphertext strings and streams verbatim.
+fn format_untouched_encrypted<'b>(
+    index: &Index,
+    reference: Reference,
+    format: Format,
+    budget: &'b Budget,
+) -> Result<ObjectBytes<'b>> {
+    let raw_bytes = raw::file_body(index, reference, budget)?;
+    match Value::parse_with_lengths(&raw_bytes, budget, &|r| index.object(r, budget)) {
+        Ok(raw_value) => {
+            let mut out = BudgetVec::new(budget);
+            format.write_value(&mut out, &raw_value)?;
+            Ok(ObjectBytes::Owned(out))
+        }
+        Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => {
+            Ok(ObjectBytes::Shared(raw_bytes))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Serializes `reference` through the object writer for `ascii`/`pretty`
-/// output, recoding streams per `policy` and wrapping binary streams in
-/// `ASCII85Decode` when `format.ascii` is set.
-fn formatted_object(
+/// output, recoding streams per `policy`, encrypting `Value` directly when
+/// required, and wrapping binary streams in `ASCII85Decode` when
+/// `format.ascii` is set.
+fn formatted_object<'b>(
     version: &Version,
     reference: Reference,
     policy: &StreamPolicy<'_>,
     format: Format,
     mode: &Mode<'_>,
-    budget: &Budget,
-) -> Result<Bytes> {
+    budget: &'b Budget,
+) -> Result<ObjectBytes<'b>> {
+    let untouched_keep = match mode {
+        Mode::Keep { index, encrypt, .. }
+            if Some(reference.number()) != *encrypt
+                && version.slot(reference.number()).is_none()
+                && mode
+                    .changed_streams()
+                    .binary_search(&reference.number())
+                    .is_err()
+                && matches!(
+                    index.get(reference.number()).map(|entry| entry.location()),
+                    Some(Location::Offset(_))
+                ) =>
+        {
+            Some(*index)
+        }
+        _ => None,
+    };
+    if let Some(index) = untouched_keep
+        && policy.is_keep(reference.number())
+    {
+        return format_untouched_encrypted(index, reference, format, budget);
+    }
+
     let object = match version.get(reference.number(), budget) {
         Ok(Some(object)) => object,
-        Ok(None) => return Ok(Bytes::default()),
+        Ok(None) => return Ok(ObjectBytes::Shared(Bytes::default())),
         Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => {
-            let raw_bytes = match version.slot(reference.number()) {
-                Some(Slot::Written(written)) => written.bytes().clone(),
+            let raw_bytes = match (version.slot(reference.number()), mode) {
+                (Some(Slot::Written(written)), _) => written.bytes().clone(),
+                (_, Mode::Keep { index, .. }) => raw::file_body(index, reference, budget)?,
                 _ => raw::body(&**version.base(), reference, budget)?,
             };
             if format.ascii && !recode::is_printable_ascii(&raw_bytes) {
                 return Err(error.into());
             }
-            return Ok(raw_bytes);
+            return Ok(ObjectBytes::Shared(raw_bytes));
         }
         Err(error) => return Err(error.into()),
     };
@@ -1101,62 +1175,76 @@ fn formatted_object(
         }
         object.value().as_ref()
     };
-    let recoded = recode::apply(
+
+    if let Some(index) = untouched_keep {
+        // Untouched encrypted base object with an active stream policy:
+        // preserve original ciphertext whenever the object is not recoded.
+        let recoded = recode::apply_temp(
+            value,
+            reference.number(),
+            policy,
+            false,
+            &|r, b| version.filter_object(r, b),
+            budget,
+        )?;
+        let keep_recoded = match &recoded {
+            Some(cand) if policy.requires_shorter(reference.number()) => {
+                let mut before = BudgetVec::new(budget);
+                format.write_value(&mut before, value)?;
+                let mut after = BudgetVec::new(budget);
+                format.write_value(&mut after, cand.value())?;
+                after.len() < before.len()
+            }
+            Some(_) => true,
+            None => false,
+        };
+        if !keep_recoded {
+            drop(recoded);
+            return format_untouched_encrypted(index, reference, format, budget);
+        }
+        let handler = mode.handler().expect("Mode::Keep has a handler");
+        let cand = recoded.as_ref().expect("keep_recoded implies Some");
+        let encrypted = security::encrypt_value_with(
+            handler,
+            (reference, reference),
+            cand.value(),
+            &|r, b| version.filter_object(r, b),
+            budget,
+        )?;
+        drop(recoded);
+        let mut out = BudgetVec::new(budget);
+        format.write_value(&mut out, &encrypted)?;
+        return Ok(ObjectBytes::Owned(out));
+    }
+
+    let encrypt = match (mode, mode.handler()) {
+        (Mode::Keep { encrypt, .. }, _) if Some(reference.number()) == *encrypt => None,
+        (_, Some(handler)) => Some((handler, reference, reference)),
+        (_, None) => None,
+    };
+    let out = recode::write_formatted(
         value,
         reference.number(),
         policy,
-        format.ascii,
+        format,
+        encrypt,
         &|r, b| version.filter_object(r, b),
         budget,
     )?;
-    let plain = match recoded {
-        Some(recoded) if policy.requires_shorter(reference.number()) && !format.ascii => {
-            let mut before = BudgetVec::new(budget);
-            format.write_value(&mut before, value)?;
-            let mut after = BudgetVec::new(budget);
-            format.write_value(&mut after, &recoded)?;
-            if after.len() < before.len() {
-                Bytes::new(after.into_vec())
-            } else {
-                Bytes::new(before.into_vec())
-            }
-        }
-        Some(recoded) => {
-            let mut out = BudgetVec::new(budget);
-            format.write_value(&mut out, &recoded)?;
-            Bytes::new(out.into_vec())
-        }
-        None => {
-            let mut out = BudgetVec::new(budget);
-            format.write_value(&mut out, value)?;
-            Bytes::new(out.into_vec())
-        }
-    };
-    Ok(match (mode, mode.handler()) {
-        (Mode::Keep { encrypt, .. }, _) if Some(reference.number()) == *encrypt => plain,
-        (_, Some(handler)) => security::encrypt_bytes_as(
-            handler,
-            reference,
-            reference,
-            &plain,
-            &|r, b| version.filter_object(r, b),
-            budget,
-        )?,
-        (_, None) => plain,
-    })
+    Ok(ObjectBytes::Owned(out))
 }
 
 /// Returns the bytes of the object `reference` with its stream recoded as
 /// `policy` asks, encrypted as `mode` encrypts, or `None` when it stays as
 /// it is. An object that does not parse stays as it is.
-fn recode(
+fn recode<'b>(
     version: &Version,
     reference: Reference,
     policy: &StreamPolicy<'_>,
     format: Format,
     mode: &Mode<'_>,
-    budget: &Budget,
-) -> Result<Option<Bytes>> {
+    budget: &'b Budget,
+) -> Result<Option<BudgetVec<'b, u8>>> {
     if policy.is_keep(reference.number()) && !format.ascii {
         return Ok(None);
     }
@@ -1180,7 +1268,7 @@ fn recode(
     } else {
         object.value().as_ref()
     };
-    let Some(value) = recode::apply(
+    let Some(recoded) = recode::apply_temp(
         value,
         reference.number(),
         policy,
@@ -1191,20 +1279,23 @@ fn recode(
     else {
         return Ok(None);
     };
-    let mut plain = BudgetVec::new(budget);
-    format.write_value(&mut plain, &value)?;
-    let plain = Bytes::new(plain.into_vec());
-    Ok(Some(match mode.handler() {
-        Some(handler) => security::encrypt_bytes_as(
+    let encrypted = match (mode, mode.handler()) {
+        (Mode::Keep { encrypt, .. }, _) if Some(reference.number()) == *encrypt => None,
+        (_, Some(handler)) => Some(security::encrypt_value_with(
             handler,
-            reference,
-            reference,
-            &plain,
+            (reference, reference),
+            recoded.value(),
             &|r, b| version.filter_object(r, b),
             budget,
-        )?,
-        None => plain,
-    }))
+        )?),
+        (_, None) => None,
+    };
+    let mut out = BudgetVec::new(budget);
+    format.write_value(
+        &mut out,
+        encrypted.as_ref().unwrap_or_else(|| recoded.value()),
+    )?;
+    Ok(Some(out))
 }
 
 /// How [`finish`] ends a save.
@@ -1417,9 +1508,11 @@ fn stream<'a>(
         data.try_extend_from_slice(&two.to_be_bytes()[8 - second..])?;
         data.try_extend_from_slice(&three.to_be_bytes()[8 - third..])?;
     }
+    let data_guard =
+        recode::MemoryGuard::new(budget, u64::try_from(data.capacity()).unwrap_or(u64::MAX));
     let data = Stream::new(Dict::new(), Bytes::new(data.into_vec()));
     let compressed = match level {
-        Some(level) => recode::compressed(&data, level, budget)?,
+        Some(level) => recode::compressed_temp(&data, level, budget)?,
         None => None,
     };
     let sep = if format.pretty { "\n  " } else { " " };
@@ -1457,17 +1550,23 @@ fn stream<'a>(
             out.display(format_args!(" {start} {count}"))?;
         }
     }
-    let raw_data = compressed.as_ref().unwrap_or(&data).data();
+    let raw_data = compressed
+        .as_ref()
+        .map_or(&data, recode::RecodedStream::stream)
+        .data();
     let ascii_wrapped = if format.ascii {
-        Some(encode::ascii85(
-            raw_data,
-            Some(recode::ASCII_WRAP_COLUMNS),
+        let encoded = encode::ascii85(raw_data, Some(recode::ASCII_WRAP_COLUMNS), budget)?;
+        let guard = recode::MemoryGuard::new(
             budget,
-        )?)
+            u64::try_from(encoded.capacity()).unwrap_or(u64::MAX),
+        );
+        Some((encoded, guard))
     } else {
         None
     };
-    let payload: &[u8] = ascii_wrapped.as_deref().unwrap_or(raw_data);
+    let payload: &[u8] = ascii_wrapped
+        .as_ref()
+        .map_or(raw_data.as_slice(), |(encoded, _)| encoded.as_slice());
     let close_index = if format.pretty { "]" } else { " ]" };
     out.display(format_args!("{close_index}{sep}/Length {}", payload.len()))?;
     match (ascii_wrapped.is_some(), compressed.is_some()) {
@@ -1478,6 +1577,10 @@ fn stream<'a>(
     }
     out.display(format_args!("{close}>>\nstream\n"))?;
     out.bytes(payload)?;
+    drop(ascii_wrapped);
+    drop(compressed);
+    drop(data);
+    drop(data_guard);
     out.bytes(b"\nendstream\nendobj\n")
 }
 
@@ -1549,8 +1652,9 @@ fn trailer(
         out.budget.poll()?;
         let mut bytes = BudgetVec::new(out.budget);
         // Names are bounded by the same operation before their small clone.
-        out.budget
-            .charge(LimitCode::MemorySize, name.as_bytes().len() as u64)?;
+        let name_charge = u64::try_from(name.as_bytes().len()).unwrap_or(u64::MAX);
+        out.budget.charge(LimitCode::MemorySize, name_charge)?;
+        let _name_guard = recode::MemoryGuard::new(out.budget, name_charge);
         format.write_trailer_value(&mut bytes, &Value::Name(name.clone()))?;
         bytes.try_push(b' ')?;
         match renumbering {

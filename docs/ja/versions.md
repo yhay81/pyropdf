@@ -83,8 +83,9 @@ with pyropdf.open("input.pdf") as doc:
   読み込んだまま保持します。
 
 `clean`・`ascii`・`pretty`・`stream_filter` は全体保存専用で、`incremental=True` と
-組み合わせると `ValueError` で拒否されます。また `ascii=True` は暗号化保存および
-リニアライズ保存と組み合わせられません。
+組み合わせると `ValueError` で拒否されます。また `ascii=True` は暗号化保存で、
+`ascii=True` と `pretty=True` はいずれもリニアライズ保存（`linearize=True`）で
+拒否されます。
 
 編集せずに保存した文書は入力を再現します。増分保存ならバイト単位で、全体保存なら
 すべての値が一致します。

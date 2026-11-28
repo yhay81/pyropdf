@@ -2099,3 +2099,1081 @@ fn stream_filters_reencode_and_respect_overrides_and_refusals() {
         ));
     }
 }
+
+#[test]
+fn pretty_encrypted_saves_preserve_multiline_formatting_across_modes() {
+    let budget = Budget::default();
+    let mut base = crate::version::MemoryBase::new(
+        [
+            (Name::from("Root"), Value::Reference(Reference::new(1, 0))),
+            (Name::from("Size"), Value::Integer(5)),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    insert_value(
+        &mut base,
+        1,
+        &Value::Dict(
+            [
+                (Name::from("Type"), Value::Name(Name::from("Catalog"))),
+                (Name::from("Pages"), Value::Reference(Reference::new(2, 0))),
+                (
+                    Name::from("Secret"),
+                    Value::String(PdfString::literal(b"top-secret-pretty-value".as_slice())),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    insert_value(
+        &mut base,
+        2,
+        &Value::Dict(
+            [
+                (Name::from("Type"), Value::Name(Name::from("Pages"))),
+                (
+                    Name::from("Kids"),
+                    Value::Array(Array::from(vec![Value::Reference(Reference::new(3, 0))])),
+                ),
+                (Name::from("Count"), Value::Integer(1)),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    insert_value(
+        &mut base,
+        3,
+        &Value::Dict(
+            [
+                (Name::from("Type"), Value::Name(Name::from("Page"))),
+                (Name::from("Parent"), Value::Reference(Reference::new(2, 0))),
+                (
+                    Name::from("Contents"),
+                    Value::Reference(Reference::new(4, 0)),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    insert_value(
+        &mut base,
+        4,
+        &Value::Stream(Box::new(Stream::new(
+            Dict::new(),
+            Bytes::from(&b"BT /F1 12 Tf (SecretStream) Tj ET\n"[..]),
+        ))),
+    );
+    let doc = Document::new(Arc::new(base), None);
+    let version = doc.current();
+    let encryption = Encryption::Password(crate::security::PasswordEncryption {
+        user: b"reader".to_vec(),
+        owner: b"owner".to_vec(),
+        permissions: u32::MAX,
+        method: crate::security::Method::Aes256,
+        random: [7; 64],
+    });
+
+    // Mode::New with pretty=True (plain, renumbered, and object_streams).
+    for options in [
+        Options {
+            pretty: true,
+            ..Options::default()
+        },
+        Options {
+            pretty: true,
+            renumber: true,
+            ..Options::default()
+        },
+        Options {
+            pretty: true,
+            object_streams: true,
+            ..Options::default()
+        },
+    ] {
+        let mut out = Vec::new();
+        full_with(
+            &version,
+            &mut out,
+            &budget,
+            Some(&encryption),
+            options.clone(),
+        )
+        .unwrap();
+        let contains =
+            |haystack: &[u8], needle: &[u8]| haystack.windows(needle.len()).any(|w| w == needle);
+        assert!(
+            !contains(&out, b"top-secret-pretty-value"),
+            "string must remain encrypted for {options:?}"
+        );
+        assert!(
+            !contains(&out, b"SecretStream"),
+            "stream must remain encrypted for {options:?}"
+        );
+        if options.object_streams {
+            assert!(
+                contains(&out, b"\n  /Type /ObjStm"),
+                "ObjStm dict must be pretty-printed"
+            );
+        } else {
+            assert!(
+                contains(&out, b"\n  /Type /Catalog"),
+                "Catalog dict must be pretty-printed for {options:?}"
+            );
+        }
+        assert!(
+            contains(&out, b"\n  /Filter /Standard"),
+            "/Encrypt dict must be pretty-printed"
+        );
+        let reopened = FileBase::open_with_password(Bytes::new(out), Some(b"reader"), &budget)
+            .expect("reopen encrypted pretty save");
+        let reopened_doc = Document::new(Arc::new(reopened), None);
+        let rv = reopened_doc.current();
+        let Value::Reference(root_ref) = rv.trailer().get("Root").unwrap() else {
+            panic!("root ref");
+        };
+        let root = rv.get(root_ref.number(), &budget).unwrap().unwrap();
+        let Value::Dict(cat) = root.value().as_ref() else {
+            panic!("catalog dict");
+        };
+        assert_eq!(
+            cat.get("Secret"),
+            Some(&Value::String(PdfString::literal(
+                b"top-secret-pretty-value".as_slice()
+            )))
+        );
+    }
+
+    // Mode::Keep with pretty=True (both untouched and edited objects, plus renumber/object_streams).
+    let mut initial = Vec::new();
+    full_with(
+        &version,
+        &mut initial,
+        &budget,
+        Some(&encryption),
+        Options::default(),
+    )
+    .unwrap();
+    let keep_base =
+        FileBase::open_with_password(Bytes::new(initial), Some(b"reader"), &budget).unwrap();
+    let keep_doc = Document::new(Arc::new(keep_base), None);
+    for (edit, options) in [
+        (
+            false,
+            Options {
+                pretty: true,
+                ..Options::default()
+            },
+        ),
+        (
+            true,
+            Options {
+                pretty: true,
+                ..Options::default()
+            },
+        ),
+        (
+            false,
+            Options {
+                pretty: true,
+                renumber: true,
+                ..Options::default()
+            },
+        ),
+        (
+            false,
+            Options {
+                pretty: true,
+                object_streams: true,
+                ..Options::default()
+            },
+        ),
+        (
+            false,
+            Options {
+                pretty: true,
+                streams: Streams::Compress(6),
+                ..Options::default()
+            },
+        ),
+    ] {
+        if edit {
+            let mut tx = keep_doc.begin();
+            let mut cat = crate::value::copy_for_edit(
+                keep_doc.current().get(1, &budget).unwrap().unwrap().value(),
+                &budget,
+            )
+            .unwrap();
+            if let Value::Dict(ref mut dict) = cat {
+                dict.insert(
+                    Name::from("Edited"),
+                    Value::String(PdfString::literal(b"edited-secret-keep".as_slice())),
+                );
+            }
+            tx.write(1, &cat, &budget).unwrap();
+            tx.commit(&budget).unwrap();
+        }
+        let current = keep_doc.current();
+        let mut out = Vec::new();
+        full_with(&current, &mut out, &budget, None, options.clone()).unwrap();
+        let contains =
+            |haystack: &[u8], needle: &[u8]| haystack.windows(needle.len()).any(|w| w == needle);
+        assert!(!contains(&out, b"top-secret-pretty-value"));
+        if edit {
+            assert!(!contains(&out, b"edited-secret-keep"));
+        }
+        if options.object_streams {
+            assert!(contains(&out, b"\n  /Type /ObjStm"));
+        } else {
+            assert!(contains(&out, b"\n  /Type /Catalog"));
+        }
+        let reopened = FileBase::open_with_password(Bytes::new(out), Some(b"reader"), &budget)
+            .expect("reopen Mode::Keep pretty save");
+        let reopened_doc = Document::new(Arc::new(reopened), None);
+        let rv = reopened_doc.current();
+        let Value::Reference(root_ref) = rv.trailer().get("Root").unwrap() else {
+            panic!("root ref");
+        };
+        let root = rv.get(root_ref.number(), &budget).unwrap().unwrap();
+        let Value::Dict(cat) = root.value().as_ref() else {
+            panic!("catalog dict");
+        };
+        assert_eq!(
+            cat.get("Secret"),
+            Some(&Value::String(PdfString::literal(
+                b"top-secret-pretty-value".as_slice()
+            )))
+        );
+        if edit {
+            assert_eq!(
+                cat.get("Edited"),
+                Some(&Value::String(PdfString::literal(
+                    b"edited-secret-keep".as_slice()
+                )))
+            );
+        }
+    }
+}
+
+#[test]
+fn ascii_save_handles_external_streams_malformed_header_null_empty_filter_and_crypt() {
+    let budget = Budget::default();
+    let binary_payload = vec![0x00, 0x01, 0x80, 0xFE, 0xFF, 0x42];
+    let flate_binary = recode::deflate(&binary_payload, 6, usize::MAX, &budget)
+        .unwrap()
+        .unwrap();
+
+    // External /F stream with binary inline data, /Filter null, /Filter [], and /Filter /Crypt /Identity.
+    let mut base = crate::version::MemoryBase::new(
+        [
+            (Name::from("Root"), Value::Reference(Reference::new(1, 0))),
+            (Name::from("Size"), Value::Integer(8)),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    insert_value(
+        &mut base,
+        1,
+        &Value::Dict(
+            [
+                (Name::from("Type"), Value::Name(Name::from("Catalog"))),
+                (
+                    Name::from("Streams"),
+                    Value::Array(Array::from(vec![
+                        Value::Reference(Reference::new(2, 0)),
+                        Value::Reference(Reference::new(3, 0)),
+                        Value::Reference(Reference::new(4, 0)),
+                        Value::Reference(Reference::new(5, 0)),
+                        Value::Reference(Reference::new(6, 0)),
+                    ])),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    // 2: External /F stream with ignored binary inline bytes.
+    insert_value(
+        &mut base,
+        2,
+        &Value::Stream(Box::new(Stream::new(
+            [
+                (
+                    Name::from("F"),
+                    Value::String(PdfString::literal(b"external.bin".as_slice())),
+                ),
+                (
+                    Name::from("FFilter"),
+                    Value::Name(Name::from("FlateDecode")),
+                ),
+                (
+                    Name::from("FDecodeParms"),
+                    Value::Dict(
+                        [(Name::from("Columns"), Value::Integer(4))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            Bytes::new(vec![0xFF, 0xFE, 0xFD, 0xFC]),
+        ))),
+    );
+    // 3: /Filter null + stale /DecodeParms with binary data.
+    insert_value(
+        &mut base,
+        3,
+        &Value::Stream(Box::new(Stream::new(
+            [
+                (Name::from("Filter"), Value::Null),
+                (
+                    Name::from("DecodeParms"),
+                    Value::Dict(
+                        [(Name::from("Columns"), Value::Integer(2))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            Bytes::new(binary_payload.clone()),
+        ))),
+    );
+    // 4: /Filter [] + stale /DecodeParms with binary data.
+    insert_value(
+        &mut base,
+        4,
+        &Value::Stream(Box::new(Stream::new(
+            [
+                (Name::from("Filter"), Value::Array(Array::new())),
+                (
+                    Name::from("DecodeParms"),
+                    Value::Dict(
+                        [(Name::from("Columns"), Value::Integer(2))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            Bytes::new(binary_payload.clone()),
+        ))),
+    );
+    // 5: /Filter /Crypt with /Name /Identity and binary data.
+    let identity_parms: Dict = [
+        (
+            Name::from("Type"),
+            Value::Name(Name::from("CryptFilterDecodeParms")),
+        ),
+        (Name::from("Name"), Value::Name(Name::from("Identity"))),
+    ]
+    .into_iter()
+    .collect();
+    insert_value(
+        &mut base,
+        5,
+        &Value::Stream(Box::new(Stream::new(
+            [
+                (Name::from("Filter"), Value::Name(Name::from("Crypt"))),
+                (
+                    Name::from("DecodeParms"),
+                    Value::Dict(identity_parms.clone()),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            Bytes::new(binary_payload.clone()),
+        ))),
+    );
+    // 6: /Filter [/Crypt /FlateDecode] with /Name /Identity.
+    insert_value(
+        &mut base,
+        6,
+        &Value::Stream(Box::new(Stream::new(
+            [
+                (
+                    Name::from("Filter"),
+                    Value::Array(Array::from(vec![
+                        Value::Name(Name::from("Crypt")),
+                        Value::Name(Name::from("FlateDecode")),
+                    ])),
+                ),
+                (
+                    Name::from("DecodeParms"),
+                    Value::Array(Array::from(vec![
+                        Value::Dict(identity_parms.clone()),
+                        Value::Null,
+                    ])),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            Bytes::new(flate_binary),
+        ))),
+    );
+
+    let doc = Document::new(Arc::new(base), None);
+    let mut ascii_out = Vec::new();
+    full_with(
+        &doc.current(),
+        &mut ascii_out,
+        &budget,
+        None,
+        Options {
+            ascii: true,
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    assert!(recode::is_printable_ascii(&ascii_out));
+
+    let reopened = open(ascii_out);
+    let rv = reopened.current();
+    // 2: external /F preserved, inline bytes stripped.
+    let s2_obj = rv.get(2, &budget).unwrap().unwrap();
+    let Value::Stream(s2) = s2_obj.value().as_ref() else {
+        panic!("stream 2");
+    };
+    assert_eq!(
+        s2.dict().get("F"),
+        Some(&Value::String(PdfString::literal(
+            b"external.bin".as_slice()
+        )))
+    );
+    assert_eq!(
+        s2.dict().get("FFilter"),
+        Some(&Value::Name(Name::from("FlateDecode")))
+    );
+    assert!(s2.dict().get("FDecodeParms").is_some());
+    assert!(s2.dict().get("Filter").is_none());
+    assert!(s2.data().is_empty());
+
+    // 3 & 4: /Filter null and /Filter [] become /ASCII85Decode without stale /DecodeParms.
+    for xref in [3, 4] {
+        let s_obj = rv.get(xref, &budget).unwrap().unwrap();
+        let Value::Stream(s) = s_obj.value().as_ref() else {
+            panic!("stream {xref}");
+        };
+        assert_eq!(
+            s.dict().get("Filter"),
+            Some(&Value::Name(Name::from("ASCII85Decode")))
+        );
+        assert_eq!(s.dict().get("DecodeParms"), None);
+        assert_eq!(s.decoded(&budget).unwrap(), binary_payload);
+    }
+
+    // 5: /Crypt remains first ahead of /ASCII85Decode with aligned DecodeParms.
+    let s5_obj = rv.get(5, &budget).unwrap().unwrap();
+    let Value::Stream(s5) = s5_obj.value().as_ref() else {
+        panic!("stream 5");
+    };
+    assert_eq!(
+        s5.dict().get("Filter"),
+        Some(&Value::Array(Array::from(vec![
+            Value::Name(Name::from("Crypt")),
+            Value::Name(Name::from("ASCII85Decode")),
+        ])))
+    );
+    assert_eq!(
+        s5.dict().get("DecodeParms"),
+        Some(&Value::Array(Array::from(vec![
+            Value::Dict(identity_parms.clone()),
+            Value::Null,
+        ])))
+    );
+    assert_eq!(s5.decoded(&budget).unwrap(), binary_payload);
+
+    // 6: /Crypt stays first in [/Crypt /ASCII85Decode /FlateDecode].
+    let s6_obj = rv.get(6, &budget).unwrap().unwrap();
+    let Value::Stream(s6) = s6_obj.value().as_ref() else {
+        panic!("stream 6");
+    };
+    assert_eq!(
+        s6.dict().get("Filter"),
+        Some(&Value::Array(Array::from(vec![
+            Value::Name(Name::from("Crypt")),
+            Value::Name(Name::from("ASCII85Decode")),
+            Value::Name(Name::from("FlateDecode")),
+        ])))
+    );
+    assert_eq!(
+        s6.dict().get("DecodeParms"),
+        Some(&Value::Array(Array::from(vec![
+            Value::Dict(identity_parms),
+            Value::Null,
+            Value::Null,
+        ])))
+    );
+    assert_eq!(s6.decoded(&budget).unwrap(), binary_payload);
+
+    // Non-Identity /Crypt in an unencrypted stream is refused rather than producing [/ASCII85Decode /Crypt].
+    let mut bad_base = crate::version::MemoryBase::new(
+        [
+            (Name::from("Root"), Value::Reference(Reference::new(1, 0))),
+            (Name::from("Size"), Value::Integer(3)),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    insert_value(
+        &mut bad_base,
+        1,
+        &Value::Dict(
+            [(Name::from("S"), Value::Reference(Reference::new(2, 0)))]
+                .into_iter()
+                .collect(),
+        ),
+    );
+    insert_value(
+        &mut bad_base,
+        2,
+        &Value::Stream(Box::new(Stream::new(
+            [
+                (Name::from("Filter"), Value::Name(Name::from("Crypt"))),
+                (
+                    Name::from("DecodeParms"),
+                    Value::Dict(
+                        [(Name::from("Name"), Value::Name(Name::from("CustomCF")))]
+                            .into_iter()
+                            .collect(),
+                    ),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            Bytes::new(binary_payload),
+        ))),
+    );
+    let bad_doc = Document::new(Arc::new(bad_base), None);
+    let err = full_with(
+        &bad_doc.current(),
+        &mut Vec::new(),
+        &budget,
+        None,
+        Options {
+            ascii: true,
+            ..Options::default()
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, Error::Store(ref e) if matches!(e.kind(), ErrorKind::Malformed(_))));
+
+    // Malformed %PDF-1.\xff header falls back to %PDF-1.7 in ASCII saves.
+    let valid_pdf = saved(&doc.current(), false);
+    let mut malformed_header = valid_pdf;
+    malformed_header[7] = 0xFF;
+    let header_doc = open(malformed_header);
+    let mut fixed = Vec::new();
+    full_with(
+        &header_doc.current(),
+        &mut fixed,
+        &budget,
+        None,
+        Options {
+            ascii: true,
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    assert!(fixed.starts_with(b"%PDF-1.7\n"));
+    assert!(recode::is_printable_ascii(&fixed));
+}
+
+#[test]
+fn streaming_saves_release_per_object_memory_budget_charges() {
+    // Verify RecodedValue drops release 100% of temporary MemorySize charges.
+    let budget = Budget::default();
+    let sample_stream = Value::Stream(Box::new(Stream::new(
+        [
+            (Name::from("Subtype"), Value::Name(Name::from("Form"))),
+            (Name::from("Filter"), Value::Name(Name::from("FlateDecode"))),
+        ]
+        .into_iter()
+        .collect(),
+        Bytes::new(
+            recode::deflate(&vec![0xAA; 8192], 6, usize::MAX, &budget)
+                .unwrap()
+                .unwrap(),
+        ),
+    )));
+    let baseline_used = budget.used(LimitCode::MemorySize);
+    for (streams, ascii) in [
+        (Streams::Keep, true),
+        (Streams::Decompress, false),
+        (Streams::Filter(StreamFilter::AsciiHex), false),
+        (Streams::Filter(StreamFilter::Ascii85), false),
+        (Streams::Filter(StreamFilter::Flate(6)), true),
+        (Streams::Filter(StreamFilter::RunLength), true),
+    ] {
+        let policy = StreamPolicy::new(streams, &[], &budget).unwrap();
+        let recoded =
+            recode::apply_temp(&sample_stream, 2, &policy, ascii, &|_, _| Ok(None), &budget)
+                .unwrap();
+        assert!(recoded.is_some());
+        drop(recoded);
+        drop(policy);
+        assert_eq!(
+            budget.used(LimitCode::MemorySize),
+            baseline_used,
+            "MemorySize leaked for streams={streams:?} ascii={ascii}"
+        );
+    }
+
+    // Build a multi-stream PDF (~384 KiB across 24 binary streams) and save under
+    // a tight memory budget much smaller than the total document size.
+    let count: u32 = 24;
+    let payload: Vec<u8> = (0..16_384).map(|i| ((i * 37 + 13) & 0xFF) as u8).collect();
+    let mut base = crate::version::MemoryBase::new(
+        [
+            (Name::from("Root"), Value::Reference(Reference::new(1, 0))),
+            (Name::from("Size"), Value::Integer(i64::from(count + 2))),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let refs: Vec<Value> = (2..2 + count)
+        .map(|n| Value::Reference(Reference::new(n, 0)))
+        .collect();
+    insert_value(
+        &mut base,
+        1,
+        &Value::Dict(
+            [
+                (Name::from("Type"), Value::Name(Name::from("Catalog"))),
+                (Name::from("Streams"), Value::Array(Array::from(refs))),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    for n in 2..2 + count {
+        insert_value(
+            &mut base,
+            n,
+            &Value::Stream(Box::new(Stream::new(
+                Dict::new(),
+                Bytes::new(payload.clone()),
+            ))),
+        );
+    }
+    let pdf_bytes = saved(&Document::new(Arc::new(base), None).current(), false);
+
+    // 180 KiB is well below the ~400-800 KiB total encoded size across 24 streams.
+    for options in [
+        Options {
+            ascii: true,
+            ..Options::default()
+        },
+        Options {
+            ascii: true,
+            pretty: true,
+            ..Options::default()
+        },
+        Options {
+            streams: Streams::Filter(StreamFilter::AsciiHex),
+            ..Options::default()
+        },
+        Options {
+            streams: Streams::Filter(StreamFilter::Flate(6)),
+            ..Options::default()
+        },
+        Options {
+            ascii: true,
+            renumber: true,
+            ..Options::default()
+        },
+        Options {
+            ascii: true,
+            object_streams: true,
+            ..Options::default()
+        },
+    ] {
+        let tight = Budget::default().with_limit(LimitCode::MemorySize, Some(180_000));
+        let doc = open(pdf_bytes.clone());
+        let mut sink = std::io::sink();
+        full_with(&doc.current(), &mut sink, &tight, None, options.clone())
+            .unwrap_or_else(|err| panic!("tight streaming save failed for {options:?}: {err}"));
+    }
+}
+
+#[test]
+fn empty_compressed_streams_recode_while_corrupt_streams_stay_untouched() {
+    let budget = Budget::default();
+    let empty_zlib = recode::deflate(b"", 6, usize::MAX, &budget)
+        .unwrap()
+        .unwrap();
+    let empty_ascii85_flate = crate::value::encode::ascii85(&empty_zlib, None, &budget).unwrap();
+    let valid_cases = [
+        ("FlateDecode", empty_zlib.as_slice()),
+        ("FlateDecode", &[0x03, 0x00]),
+        ("ASCII85Decode", b"~>"),
+        ("ASCIIHexDecode", b">"),
+        ("RunLengthDecode", &[128]),
+        ("LZWDecode", &[0x80, 0x40, 0x40]),
+    ];
+    for (filter_name, bytes) in valid_cases {
+        let s = stream(&[("Filter", name(filter_name))], bytes);
+        let decomp = recoded_stream(&s, Streams::Decompress)
+            .unwrap_or_else(|| panic!("Decompress skipped valid empty {filter_name}"));
+        assert_eq!(decomp.dict().get("Filter"), None);
+        assert!(decomp.data().is_empty());
+
+        let hex = recoded_stream(&s, Streams::Filter(StreamFilter::AsciiHex))
+            .unwrap_or_else(|| panic!("AsciiHex skipped valid empty {filter_name}"));
+        assert_eq!(hex.dict().get("Filter"), Some(&name("ASCIIHexDecode")));
+        assert_eq!(hex.decoded(&budget).unwrap(), b"");
+    }
+
+    // Chained [/ASCII85Decode /FlateDecode] encoding empty bytes also recodes.
+    let chained = stream(
+        &[(
+            "Filter",
+            Value::Array(vec![name("ASCII85Decode"), name("FlateDecode")].into()),
+        )],
+        &empty_ascii85_flate,
+    );
+    let decomp_chained = recoded_stream(&chained, Streams::Decompress).unwrap();
+    assert_eq!(decomp_chained.dict().get("Filter"), None);
+    assert!(decomp_chained.data().is_empty());
+
+    // Corrupt streams that silently decode to empty stay untouched.
+    let corrupt_cases = [
+        ("FlateDecode", b"not flate data".as_slice()),
+        ("FlateDecode", &[0x78, 0x9C]),
+        ("RunLengthDecode", b"not rle"),
+        ("LZWDecode", b"x"),
+        ("ASCII85Decode", b"~bad"),
+    ];
+    for (filter_name, bytes) in corrupt_cases {
+        let s = stream(&[("Filter", name(filter_name))], bytes);
+        assert_eq!(
+            recoded_stream(&s, Streams::Decompress),
+            None,
+            "corrupt {filter_name} should stay untouched under Decompress"
+        );
+        assert_eq!(
+            recoded_stream(&s, Streams::Filter(StreamFilter::AsciiHex)),
+            None,
+            "corrupt {filter_name} should stay untouched under StreamFilter"
+        );
+    }
+}
+
+#[test]
+fn dedupe_respects_per_stream_filter_overrides() {
+    let budget = Budget::default();
+    let payload = b"Identical stream content for dedupe test!\n".repeat(4);
+    let mut base = crate::version::MemoryBase::new(
+        [
+            (Name::from("Root"), Value::Reference(Reference::new(1, 0))),
+            (Name::from("Size"), Value::Integer(4)),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    insert_value(
+        &mut base,
+        1,
+        &Value::Dict(
+            [
+                (Name::from("Type"), Value::Name(Name::from("Catalog"))),
+                (Name::from("Left"), Value::Reference(Reference::new(2, 0))),
+                (Name::from("Right"), Value::Reference(Reference::new(3, 0))),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    for n in [2, 3] {
+        insert_value(
+            &mut base,
+            n,
+            &Value::Stream(Box::new(Stream::new(
+                Dict::new(),
+                Bytes::new(payload.clone()),
+            ))),
+        );
+    }
+    let doc = Document::new(Arc::new(base), None);
+    let version = doc.current();
+
+    // Override on higher xref only: must not merge or drop override.
+    let mut out = Vec::new();
+    full_with(
+        &version,
+        &mut out,
+        &budget,
+        None,
+        Options {
+            prune: true,
+            dedupe: true,
+            stream_filters: vec![(3, StreamFilter::AsciiHex)],
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    let rv = open(out).current();
+    let Value::Dict(cat) = rv
+        .get(1, &budget)
+        .unwrap()
+        .unwrap()
+        .value()
+        .as_ref()
+        .clone()
+    else {
+        panic!("catalog");
+    };
+    let (Some(Value::Reference(ref_a)), Some(Value::Reference(ref_b))) =
+        (cat.get("Left"), cat.get("Right"))
+    else {
+        panic!("refs");
+    };
+    assert_ne!(ref_a.number(), ref_b.number());
+    let Value::Stream(sa) = rv
+        .get(ref_a.number(), &budget)
+        .unwrap()
+        .unwrap()
+        .value()
+        .as_ref()
+        .clone()
+    else {
+        panic!("sa");
+    };
+    let Value::Stream(sb) = rv
+        .get(ref_b.number(), &budget)
+        .unwrap()
+        .unwrap()
+        .value()
+        .as_ref()
+        .clone()
+    else {
+        panic!("sb");
+    };
+    assert_eq!(sa.dict().get("Filter"), None);
+    assert_eq!(sb.dict().get("Filter"), Some(&name("ASCIIHexDecode")));
+
+    // Override on lower xref only: must not leak onto higher xref.
+    let mut out = Vec::new();
+    full_with(
+        &version,
+        &mut out,
+        &budget,
+        None,
+        Options {
+            prune: true,
+            dedupe: true,
+            stream_filters: vec![(2, StreamFilter::AsciiHex)],
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    let rv = open(out).current();
+    let Value::Dict(cat) = rv
+        .get(1, &budget)
+        .unwrap()
+        .unwrap()
+        .value()
+        .as_ref()
+        .clone()
+    else {
+        panic!("catalog");
+    };
+    let (Some(Value::Reference(ref_a)), Some(Value::Reference(ref_b))) =
+        (cat.get("Left"), cat.get("Right"))
+    else {
+        panic!("refs");
+    };
+    assert_ne!(ref_a.number(), ref_b.number());
+    let Value::Stream(sa) = rv
+        .get(ref_a.number(), &budget)
+        .unwrap()
+        .unwrap()
+        .value()
+        .as_ref()
+        .clone()
+    else {
+        panic!("sa");
+    };
+    let Value::Stream(sb) = rv
+        .get(ref_b.number(), &budget)
+        .unwrap()
+        .unwrap()
+        .value()
+        .as_ref()
+        .clone()
+    else {
+        panic!("sb");
+    };
+    assert_eq!(sa.dict().get("Filter"), Some(&name("ASCIIHexDecode")));
+    assert_eq!(sb.dict().get("Filter"), None);
+
+    // Same override on both: streams merge into lower xref and keep the override.
+    let mut out = Vec::new();
+    full_with(
+        &version,
+        &mut out,
+        &budget,
+        None,
+        Options {
+            prune: true,
+            dedupe: true,
+            stream_filters: vec![(2, StreamFilter::AsciiHex), (3, StreamFilter::AsciiHex)],
+            ..Options::default()
+        },
+    )
+    .unwrap();
+    let rv = open(out).current();
+    let Value::Dict(cat) = rv
+        .get(1, &budget)
+        .unwrap()
+        .unwrap()
+        .value()
+        .as_ref()
+        .clone()
+    else {
+        panic!("catalog");
+    };
+    let (Some(Value::Reference(ref_a)), Some(Value::Reference(ref_b))) =
+        (cat.get("Left"), cat.get("Right"))
+    else {
+        panic!("refs");
+    };
+    assert_eq!(ref_a.number(), ref_b.number());
+    let Value::Stream(sa) = rv
+        .get(ref_a.number(), &budget)
+        .unwrap()
+        .unwrap()
+        .value()
+        .as_ref()
+        .clone()
+    else {
+        panic!("sa");
+    };
+    assert_eq!(sa.dict().get("Filter"), Some(&name("ASCIIHexDecode")));
+}
+
+#[test]
+fn compress_with_ascii_keeps_shorter_original_printable_ascii_stream() {
+    let budget = Budget::default();
+    let short_ascii = b"0 0 m 10 10 l S\n".repeat(3);
+    let long_ascii = b"0 0 m 10 10 l S\n".repeat(100);
+    let incompressible_binary: Vec<u8> = (0u8..64)
+        .map(|i| i.wrapping_mul(173).wrapping_add(0x81))
+        .collect();
+    let mut base = crate::version::MemoryBase::new(
+        [
+            (Name::from("Root"), Value::Reference(Reference::new(1, 0))),
+            (Name::from("Size"), Value::Integer(5)),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    insert_value(
+        &mut base,
+        1,
+        &Value::Dict(
+            [
+                (Name::from("Type"), Value::Name(Name::from("Catalog"))),
+                (Name::from("Short"), Value::Reference(Reference::new(2, 0))),
+                (Name::from("Long"), Value::Reference(Reference::new(3, 0))),
+                (Name::from("Bin"), Value::Reference(Reference::new(4, 0))),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    insert_value(
+        &mut base,
+        2,
+        &Value::Stream(Box::new(Stream::new(
+            Dict::new(),
+            Bytes::new(short_ascii.clone()),
+        ))),
+    );
+    insert_value(
+        &mut base,
+        3,
+        &Value::Stream(Box::new(Stream::new(
+            Dict::new(),
+            Bytes::new(long_ascii.clone()),
+        ))),
+    );
+    insert_value(
+        &mut base,
+        4,
+        &Value::Stream(Box::new(Stream::new(
+            Dict::new(),
+            Bytes::new(incompressible_binary.clone()),
+        ))),
+    );
+    let doc = Document::new(Arc::new(base), None);
+
+    for renumber in [false, true] {
+        let mut out = Vec::new();
+        full_with(
+            &doc.current(),
+            &mut out,
+            &budget,
+            None,
+            Options {
+                streams: Streams::Compress(9),
+                ascii: true,
+                renumber,
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        assert!(recode::is_printable_ascii(&out));
+        let rv = open(out).current();
+        let Value::Dict(cat) = rv
+            .get(1, &budget)
+            .unwrap()
+            .unwrap()
+            .value()
+            .as_ref()
+            .clone()
+        else {
+            panic!("catalog");
+        };
+        let get_stream = |key: &str| {
+            let Some(Value::Reference(r)) = cat.get(key) else {
+                panic!("missing {key}");
+            };
+            let Value::Stream(s) = rv
+                .get(r.number(), &budget)
+                .unwrap()
+                .unwrap()
+                .value()
+                .as_ref()
+                .clone()
+            else {
+                panic!("not stream {key}");
+            };
+            s
+        };
+        let s_short = get_stream("Short");
+        assert_eq!(s_short.dict().get("Filter"), None);
+        assert_eq!(s_short.data().as_slice(), short_ascii.as_slice());
+
+        let s_long = get_stream("Long");
+        assert_eq!(
+            s_long.dict().get("Filter"),
+            Some(&Value::Array(Array::from(vec![
+                name("ASCII85Decode"),
+                name("FlateDecode"),
+            ])))
+        );
+        assert_eq!(s_long.decoded(&budget).unwrap(), long_ascii);
+
+        let s_bin = get_stream("Bin");
+        assert_eq!(s_bin.dict().get("Filter"), Some(&name("ASCII85Decode")));
+        assert_eq!(s_bin.decoded(&budget).unwrap(), incompressible_binary);
+    }
+}

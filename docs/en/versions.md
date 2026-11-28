@@ -86,8 +86,9 @@ with pyropdf.open("input.pdf") as doc:
   streams untouched.
 
 `clean`, `ascii`, `pretty`, and `stream_filter` require a full save and are
-refused when `incremental=True`. `ascii=True` is refused for encrypted or
-linearized saves.
+refused when `incremental=True`. `ascii=True` is refused for encrypted saves,
+and both `ascii=True` and `pretty=True` are refused for linearized saves
+(`linearize=True`).
 
 A document saved without edits reproduces its input: an incremental save
 byte for byte, a full save in every value.
