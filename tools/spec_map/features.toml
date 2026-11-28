@@ -408,7 +408,7 @@ interpret = { status = "partial", missing = "AESV3 renders from the authenticate
 clause = "7.6.6"
 description = "Named crypt filters and their methods: RC4, AES-128, and AES-256."
 objects = ["CryptFilter", "CryptFilterMap", "CryptFilterPublicKey", "CryptFilterPublicKeyMap"]
-interpret = { status = "partial", missing = "The store interprets explicit filters and EFF, including independent recipient keys. Direct rendering of explicit legacy filters and a second recipient page key requires the authenticated store source (#993).", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "The public engine matches independent text and pixels for R4 implicit/Identity streams and public pages with a restricted attachment. Named legacy and separately keyed recipient pages await the production object-source API (#14, #993).", milestone = "Phase 4: Specification" }
 
 [features.document-catalog]
 clause = "7.7.2"
