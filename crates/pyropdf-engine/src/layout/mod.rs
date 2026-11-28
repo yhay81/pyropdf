@@ -4,6 +4,8 @@
 //! `pyropdf-layout-models` package (or an explicit `.rten` file) and loads an
 //! [`Engine`] over `pyropdf-engine`'s existing `rten_format` runtime.
 
+mod int8_range;
+
 use std::fmt;
 use std::fs::File;
 use std::io::Read;
@@ -284,7 +286,8 @@ impl Engine {
                 "input_size must be from 1 through {MAX_INPUT_SIZE}"
             )));
         }
-        let model_data = read_model_file(model_path, budget)?;
+        let mut model_data = read_model_file(model_path, budget)?;
+        int8_range::maybe_reduce_saturating_int8_weights(&mut model_data, budget)?;
         let model = Model::load(model_data).map_err(|error| {
             format!(
                 "failed to load layout model {}: {error}",
@@ -509,14 +512,14 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     /// Minimal zero-dependency back-to-front FlatBuffers writer for building
-    /// synthetic `.rten` v1 test models matching `rten-model-file/src/schema.fbs`.
-    struct FbBuilder {
+    /// synthetic `.rten` test models matching `rten-model-file/src/schema.fbs`.
+    pub(super) struct FbBuilder {
         /// Bytes stored in reverse order; final buffer is `buf.reverse()`.
         buf: Vec<u8>,
     }
 
     impl FbBuilder {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             Self { buf: Vec::new() }
         }
 
@@ -538,13 +541,25 @@ mod tests {
             self.buf.len()
         }
 
+        fn write_u16(&mut self, v: u16) -> usize {
+            self.pad_for(2, 2);
+            self.push_rev(&v.to_le_bytes());
+            self.buf.len()
+        }
+
         fn write_i32(&mut self, v: i32) -> usize {
             self.pad_for(4, 4);
             self.push_rev(&v.to_le_bytes());
             self.buf.len()
         }
 
-        fn write_string(&mut self, s: &str) -> usize {
+        fn write_u64(&mut self, v: u64) -> usize {
+            self.pad_for(8, 8);
+            self.push_rev(&v.to_le_bytes());
+            self.buf.len()
+        }
+
+        pub(super) fn write_string(&mut self, s: &str) -> usize {
             let total = 4 + s.len() + 1;
             self.pad_for(total, 4);
             self.buf.push(0);
@@ -553,7 +568,7 @@ mod tests {
             self.buf.len()
         }
 
-        fn write_vec_u32(&mut self, items: &[u32]) -> usize {
+        pub(super) fn write_vec_u32(&mut self, items: &[u32]) -> usize {
             self.pad_for(4 * (1 + items.len()), 4);
             for &v in items.iter().rev() {
                 self.push_rev(&v.to_le_bytes());
@@ -562,7 +577,7 @@ mod tests {
             self.buf.len()
         }
 
-        fn write_vec_i32(&mut self, items: &[i32]) -> usize {
+        pub(super) fn write_vec_i32(&mut self, items: &[i32]) -> usize {
             self.pad_for(4 * (1 + items.len()), 4);
             for &v in items.iter().rev() {
                 self.push_rev(&v.to_le_bytes());
@@ -571,7 +586,14 @@ mod tests {
             self.buf.len()
         }
 
-        fn write_vec_f32(&mut self, items: &[f32]) -> usize {
+        pub(super) fn write_vec_u8(&mut self, items: &[u8]) -> usize {
+            self.pad_for(4 + items.len(), 4);
+            self.push_rev(items);
+            self.push_rev(&(items.len() as u32).to_le_bytes());
+            self.buf.len()
+        }
+
+        pub(super) fn write_vec_f32(&mut self, items: &[f32]) -> usize {
             self.pad_for(4 * (1 + items.len()), 4);
             for &v in items.iter().rev() {
                 self.push_rev(&v.to_le_bytes());
@@ -580,7 +602,7 @@ mod tests {
             self.buf.len()
         }
 
-        fn write_vec_offsets(&mut self, targets: &[usize]) -> usize {
+        pub(super) fn write_vec_offsets(&mut self, targets: &[usize]) -> usize {
             self.pad_for(4 * (1 + targets.len()), 4);
             for &target in targets.iter().rev() {
                 let slot_pos = self.buf.len() + 4;
@@ -592,13 +614,19 @@ mod tests {
         }
 
         /// Writes a table whose fields are specified as `(field_id, FieldVal)`.
-        fn write_table(&mut self, num_fields: usize, fields: &[(usize, FieldVal)]) -> usize {
+        pub(super) fn write_table(
+            &mut self,
+            num_fields: usize,
+            fields: &[(usize, FieldVal)],
+        ) -> usize {
             let table_bottom = self.buf.len();
             let mut field_positions = vec![0usize; num_fields];
             for &(field_id, val) in fields.iter().rev() {
                 let field_pos = match val {
                     FieldVal::U8(v) => self.write_u8(v),
+                    FieldVal::U16(v) => self.write_u16(v),
                     FieldVal::I32(v) => self.write_i32(v),
+                    FieldVal::U64(v) => self.write_u64(v),
                     FieldVal::Offset(target) => {
                         self.pad_for(4, 4);
                         let slot_pos = self.buf.len() + 4;
@@ -638,7 +666,7 @@ mod tests {
             table_pos
         }
 
-        fn finish(mut self, root_pos: usize) -> Vec<u8> {
+        pub(super) fn finish(mut self, root_pos: usize) -> Vec<u8> {
             self.pad_for(8, 8);
             self.push_rev(b"RTEN");
             let slot_pos = self.buf.len() + 4;
@@ -650,9 +678,11 @@ mod tests {
     }
 
     #[derive(Clone, Copy)]
-    enum FieldVal {
+    pub(super) enum FieldVal {
         U8(u8),
+        U16(u16),
         I32(i32),
+        U64(u64),
         Offset(usize),
     }
 
