@@ -229,11 +229,19 @@ def patch_exports() -> None:
 
     py_lib = ROOT / "crates/pyropdf-python/src/lib.rs"
     src = py_lib.read_text()
-    src = src.replace("mod unrotate;\n", "mod unrotate;\nmod _spike_layout;\n", 1)
+    mod_anchor = "mod unrotate;\n"
+    if mod_anchor not in src:
+        msg = f"anchor {mod_anchor!r} not found in {py_lib}"
+        raise RuntimeError(msg)
+    src = src.replace(mod_anchor, f"{mod_anchor}mod _spike_layout;\n", 1)
+
+    export_anchor = "    /// The version of pyropdf: the version of its crates.\n"
+    if export_anchor not in src:
+        msg = f"export anchor {export_anchor!r} not found in {py_lib}"
+        raise RuntimeError(msg)
     src = src.replace(
-        "    #[pymodule_export]\n    use super::ocr::{_OcrEngine, insert_ocr_layer};",
-        "    #[pymodule_export]\n    use super::ocr::{_OcrEngine, insert_ocr_layer};\n"
-        "    #[pymodule_export]\n    use super::_spike_layout::_SpikeLayoutEngine;",
+        export_anchor,
+        f"    #[pymodule_export]\n    use super::_spike_layout::_SpikeLayoutEngine;\n\n{export_anchor}",
         1,
     )
     py_lib.write_text(src)
