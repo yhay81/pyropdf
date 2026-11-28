@@ -2487,7 +2487,10 @@ fn line_segment_count(line: &[GlyphRecord]) -> usize {
 }
 
 /// Split baseline bands only when a sustained page-level column gutter exists.
-fn order_page_lines(clustered: Vec<Vec<GlyphRecord>>) -> Result<Vec<Vec<GlyphRecord>>, Error> {
+fn order_page_lines(
+    clustered: Vec<Vec<GlyphRecord>>,
+    budget: &Budget,
+) -> Result<Vec<Vec<GlyphRecord>>, Error> {
     if let Some(orientation) = uniform_axis_orientation(&clustered) {
         return order_axis_page_lines(clustered, orientation);
     }
@@ -2495,7 +2498,7 @@ fn order_page_lines(clustered: Vec<Vec<GlyphRecord>>) -> Result<Vec<Vec<GlyphRec
         .iter()
         .any(|line| line.first().is_some_and(has_vertical_baseline))
     {
-        return order_vertical_page_lines(clustered);
+        return order_vertical_page_lines(clustered, budget);
     }
     order_axis_page_lines(clustered, AxisOrientation::Right)
 }
@@ -2588,8 +2591,9 @@ fn order_axis_page_lines(
 /// page flow) or left-to-right when horizontal text dominates.
 fn order_vertical_page_lines(
     clustered: Vec<Vec<GlyphRecord>>,
+    budget: &Budget,
 ) -> Result<Vec<Vec<GlyphRecord>>, Error> {
-    order_mixed_region(clustered, 0)
+    order_mixed_region(clustered, 0, budget)
 }
 
 fn line_char_weight(line: &[GlyphRecord]) -> usize {
@@ -2621,7 +2625,9 @@ fn region_is_vertical_dominant(lines: &[Vec<GlyphRecord>]) -> bool {
 fn order_mixed_region(
     lines: Vec<Vec<GlyphRecord>>,
     depth: usize,
+    budget: &Budget,
 ) -> Result<Vec<Vec<GlyphRecord>>, Error> {
+    budget.poll()?;
     if lines.len() <= 1 {
         return Ok(lines);
     }
@@ -2641,11 +2647,11 @@ fn order_mixed_region(
 
     if depth < MAX_ORIENTATION_DEPTH {
         // 1. Try horizontal cuts (vertically disjoint y-bands, top-to-bottom).
-        let y_bands = split_disjoint_bands(lines, false)?;
+        let y_bands = split_disjoint_bands(lines, false, budget)?;
         if y_bands.len() >= 2 {
             let mut out = Vec::new();
             for band in y_bands {
-                for line in order_mixed_region(band, depth + 1)? {
+                for line in order_mixed_region(band, depth + 1, budget)? {
                     try_push_text(&mut out, line, "ordered mixed y-band lines")?;
                 }
             }
@@ -2655,14 +2661,14 @@ fn order_mixed_region(
 
         // 2. Try vertical cuts (horizontally disjoint x-strips within the band).
         let vertical_dominant = region_is_vertical_dominant(&lines);
-        let mut x_strips = split_disjoint_bands(lines, true)?;
+        let mut x_strips = split_disjoint_bands(lines, true, budget)?;
         if x_strips.len() >= 2 {
             if vertical_dominant {
                 x_strips.reverse();
             }
             let mut out = Vec::new();
             for strip in x_strips {
-                for line in order_mixed_region(strip, depth + 1)? {
+                for line in order_mixed_region(strip, depth + 1, budget)? {
                     try_push_text(&mut out, line, "ordered mixed x-strip lines")?;
                 }
             }
@@ -2681,9 +2687,11 @@ fn order_mixed_region(
 fn split_disjoint_bands(
     lines: Vec<Vec<GlyphRecord>>,
     split_x: bool,
+    budget: &Budget,
 ) -> Result<Vec<Vec<Vec<GlyphRecord>>>, Error> {
     let mut decorated: Vec<(f64, f64, usize, Vec<GlyphRecord>)> = Vec::new();
     for line in lines {
+        budget.poll()?;
         let (x0, y0, x1, y1) = line_bbox(&line);
         let (start, end) = if split_x { (x0, x1) } else { (y0, y1) };
         let source = line_source_order(&line);
@@ -2698,6 +2706,7 @@ fn split_disjoint_bands(
     let mut bands: Vec<Vec<Vec<GlyphRecord>>> = Vec::new();
     let mut current_end = f64::NEG_INFINITY;
     for (start, end, _, line) in decorated {
+        budget.poll()?;
         if bands.is_empty() || start >= current_end {
             let mut band = Vec::new();
             try_push_text(&mut band, line, "orientation band line")?;
@@ -3848,7 +3857,7 @@ fn page_lines(
 ) -> Result<Vec<Vec<GlyphRecord>>, Error> {
     let physical_lines = cluster_lines(glyphs)?;
     let ruby_resolved = apply_geometric_ruby(physical_lines, ruby, budget, charge)?;
-    let mut lines = order_page_lines(ruby_resolved)?;
+    let mut lines = order_page_lines(ruby_resolved, budget)?;
     for line in &mut lines {
         logicalize_rtl_segments(line);
     }
@@ -4216,10 +4225,6 @@ fn apply_geometric_ruby(
                 while cursor < end_idx && attachments[cursor].anchor_index == glyph_idx {
                     let att = attachments[cursor];
                     cursor += 1;
-                    budget.charge(LimitCode::TextGlyphCount, 2)?;
-                    charge.glyphs += 2;
-                    budget.charge(LimitCode::TextSize, 2)?;
-                    charge.text_size += 2;
                     let mut ruby_glyphs = Vec::new();
                     for slot in &mut lines[att.ruby_line][att.seg_start..att.seg_end] {
                         let mut moved = std::mem::replace(slot, GlyphRecord::placeholder());
@@ -4233,6 +4238,10 @@ fn apply_geometric_ruby(
                     if ruby_glyphs.is_empty() {
                         continue;
                     }
+                    budget.charge(LimitCode::TextGlyphCount, 2)?;
+                    charge.glyphs += 2;
+                    budget.charge(LimitCode::TextSize, 2)?;
+                    charge.text_size += 2;
                     if base_vertical && ruby_glyphs.len() > 1 {
                         ruby_glyphs.sort_unstable_by(|left, right| {
                             left.y
@@ -4524,6 +4533,13 @@ fn glyph_is_nonspacing_mark(glyph: &GlyphRecord) -> bool {
     glyph.bidi_flags & BIDI_NSM_ONLY != 0
 }
 
+/// Whether `glyph` advances the baseline anchor used by [`needs_gap`].
+/// Nonspacing combining marks and parenthesized inline ruby glyphs sit off the
+/// base word's advance, so the previous base glyph remains the gap anchor.
+fn updates_gap_anchor(glyph: &GlyphRecord) -> bool {
+    !glyph_is_nonspacing_mark(glyph) && !glyph.is_ruby
+}
+
 const BIDI_RTL_STRONG: u8 = 1;
 const BIDI_FORWARD: u8 = 1 << 1;
 const BIDI_NSM_ONLY: u8 = 1 << 2;
@@ -4735,7 +4751,7 @@ fn assembled_text_size<L: AsRef<[GlyphRecord]>>(lines: &[L]) -> Option<usize> {
             }
             ends_with_space = glyph.text.ends_with(' ');
             ends_with_newline = glyph.text.ends_with('\n');
-            if !glyph_is_nonspacing_mark(glyph) {
+            if updates_gap_anchor(glyph) {
                 previous = Some(glyph);
             }
         }
@@ -4794,7 +4810,7 @@ fn assemble_text_into<L: AsRef<[GlyphRecord]>>(
                     }
                 }
                 try_push_glyph_text(out, &glyph.text, "plain text output")?;
-                if !glyph_is_nonspacing_mark(glyph) {
+                if updates_gap_anchor(glyph) {
                     previous = Some(glyph);
                 }
             }
@@ -5084,5 +5100,51 @@ mod tests {
                 "Footer"
             ]
         );
+    }
+
+    #[test]
+    fn parenthesized_ruby_preserves_inter_word_space_and_tight_cjk() {
+        let mut gs = Vec::new();
+        let mut seq = 0usize;
+        // "東京" at x=40, 52; space gap to "Station" starting at x=76.
+        for (i, ch) in ['東', '京'].into_iter().enumerate() {
+            let mut g = glyph(ch, 40.0 + i as f64 * 12.0, 100.0, 12.0);
+            g.advance = 12.0;
+            g.run = 1;
+            g.source_order = seq;
+            g.shown_until = seq + 1;
+            seq += 1;
+            gs.push(g);
+        }
+        for (i, ch) in "Station".chars().enumerate() {
+            let mut g = glyph(ch, 76.0 + i as f64 * 7.0, 100.0, 12.0);
+            g.advance = 7.0;
+            g.run = 2;
+            g.source_order = seq;
+            g.shown_until = seq + 1;
+            seq += 1;
+            gs.push(g);
+        }
+        // Ruby "とうきょう" directly above "東京".
+        for (i, ch) in "とうきょう".chars().enumerate() {
+            let mut g = glyph(ch, 39.0 + i as f64 * 5.0, 88.0, 5.5);
+            g.advance = 5.0;
+            g.run = 3;
+            g.source_order = seq;
+            g.shown_until = seq + 1;
+            seq += 1;
+            gs.push(g);
+        }
+
+        let budget = Budget::default();
+        let mut charge = GlyphCharge {
+            glyphs: 0,
+            text_size: 0,
+        };
+        let parenthesized = page_lines(gs, RubyMode::Parenthesize, &budget, &mut charge).unwrap();
+        let exact = assembled_text_size(&parenthesized).unwrap();
+        let mut out = String::new();
+        assemble_text_into(&parenthesized, Some(exact), &mut out).unwrap();
+        assert_eq!(out, "東京(とうきょう) Station\n");
     }
 }

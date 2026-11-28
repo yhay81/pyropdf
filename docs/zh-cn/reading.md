@@ -21,15 +21,15 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.text())  # every page, joined in order
 ```
 
-`clip` 将读取范围限定在显示坐标下的某个矩形内，原点为页面左上角。默认情况下，标记内容中的 `/ActualText` 会替换其所包围字形的文本；向 `page.text()`、`page.words()`、`page.layout()`、`page.chars()`、`page.search()` 或 `annotation.text()` 传入 `actual_text=False`，即可直接查看底层字形的原始 Unicode 值。
+`clip` 将读取范围限定在显示坐标下的某个矩形内，原点为页面左上角。默认情况下，标记内容中的 `/ActualText` 会替换其所包围字形的文本；向 `page.text()`、`doc.text()`、`page.words()`、`page.layout()`、`page.chars()`、`page.search()` 或 `annotation.text()` 传入 `actual_text=False`，即可直接查看底层字形的原始 Unicode 值。
 
 ### 混排方向与日语注音（振假名） {#mixed-orientations-and-japanese-ruby-furigana}
 
 对于同时包含横排区域或边栏（标题、图注、表格、页脚）与竖排 CJK 分栏（含多段段组版式）的页面，排序前会先按一致的书写方向划分区域：横排区域自上而下、自左向右阅读，竖排 CJK 分栏在各自区域内自上而下、自右向左阅读。
 
-日语注音（振假名）——紧贴横排汉字上方或竖排汉字右侧的小号假名，以及 Markdown 导出中的 PDF 结构 `/Ruby`（`/RB`/`/RT`/`/RP`）元素——可通过 `ruby` 选项控制：
+日语注音（振假名）——紧贴横排汉字上方或竖排汉字右侧的小号假名，以及 Markdown、JSON 和分块导出中的 PDF 结构 `/Ruby`（`/RB`/`/RT`/`/RP`）元素——可通过 `ruby` 选项控制：
 
-- `"omit"`（默认）：省略振假名，使正文词语在阅读、搜索和 Markdown 导出中保持完整。
+- `"omit"`（默认）：省略振假名，使正文词语在阅读、搜索以及 Markdown、JSON 和分块导出中保持完整。
 - `"parenthesize"`：将每段振假名以圆括号内联插入其对应汉字之后（例如 `東京(とうきょう)`）。
 - `"keep"`：将注音文本按普通文本保留。
 

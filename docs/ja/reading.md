@@ -24,7 +24,7 @@ with pyropdf.open("input.pdf") as doc:
 
 `clip` は読み取りを表示座標の矩形に絞ります。表示座標の原点はページの左上です。
 既定では marked-content の `/ActualText` が内包するグリフのテキストを置き換えますが、
-`page.text()`・`page.words()`・`page.layout()`・`page.chars()`・`page.search()`・
+`page.text()`・`doc.text()`・`page.words()`・`page.layout()`・`page.chars()`・`page.search()`・
 `annotation.text()` に `actual_text=False` を渡すと、元のグリフの Unicode 値を直接取り出せます。
 
 ### 縦書き・横書き混在とルビ（ふりがな） {#mixed-orientations-and-japanese-ruby-furigana}
@@ -35,7 +35,7 @@ with pyropdf.open("input.pdf") as doc:
 自然な読み順で並びます。
 
 日本語のルビ（ふりがな）—横書き漢字の直上または縦書き漢字の直右に配置された小字の
-かな列、および Markdown エクスポート時の構造ツリー `/Ruby`（`/RB`・`/RT`・`/RP`）要素—は
+かな列、および Markdown・JSON・チャンク出力時の構造ツリー `/Ruby`（`/RB`・`/RT`・`/RP`）要素—は
 `ruby` オプションで制御できます。
 
 - `"omit"`（既定）: ふりがなを省略し、親文字の語句を検索や抽出で分断しないようにします。

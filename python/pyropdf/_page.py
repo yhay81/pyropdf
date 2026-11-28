@@ -903,8 +903,6 @@ class Page:
         ):
             msg = "engine, dpi, tile_size, overlap, and min_confidence apply to recognition, not to words"
             raise TypeError(msg)
-        if resolved_mode == "skip_existing" and self._has_text(clip_rect):
-            return []
         if words is None:
             recognized = self.ocr(
                 engine=engine,
@@ -918,6 +916,10 @@ class Page:
             )
             accepted = _ocr_layer_words(recognized)
         else:
+            if resolved_mode == "skip_existing":
+                _active_ocr_bounds(self, clip_rect)
+                if self._has_text(clip_rect):
+                    return []
             accepted = _ocr_layer_words(words)
             if resolved_mode == "hybrid":
                 accepted = _filter_external_hybrid_words(self, accepted, clip_rect, resolved_rotation)

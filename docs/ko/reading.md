@@ -21,15 +21,15 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.text())  # every page, joined in order
 ```
 
-`clip`은 페이지 왼쪽 위 모서리를 원점으로 하는 표시 좌표 사각형으로 읽기 범위를 제한합니다. 기본적으로 마크드 콘텐츠의 `/ActualText`가 감싼 글리프의 텍스트를 대체하지만, `page.text()`, `page.words()`, `page.layout()`, `page.chars()`, `page.search()`, `annotation.text()`에 `actual_text=False`를 전달하면 기반 글리프의 유니코드 값을 직접 확인할 수 있습니다.
+`clip`은 페이지 왼쪽 위 모서리를 원점으로 하는 표시 좌표 사각형으로 읽기 범위를 제한합니다. 기본적으로 마크드 콘텐츠의 `/ActualText`가 감싼 글리프의 텍스트를 대체하지만, `page.text()`, `doc.text()`, `page.words()`, `page.layout()`, `page.chars()`, `page.search()`, `annotation.text()`에 `actual_text=False`를 전달하면 기반 글리프의 유니코드 값을 직접 확인할 수 있습니다.
 
 ### 가로·세로 혼용 방향과 일본어 루비(후리가나) {#mixed-orientations-and-japanese-ruby-furigana}
 
 가로쓰기 띠 영역이나 사이드바(제목, 캡션, 표, 바닥글)와 세로쓰기 CJK 열(다단 *단구미* 레이아웃 포함)이 섞여 있는 페이지는 정렬 전에 일관된 방향 영역으로 분할됩니다. 가로 영역은 위에서 아래·왼쪽에서 오른쪽으로, 세로 CJK 열은 해당 영역 내에서 위에서 아래·오른쪽에서 왼쪽으로 읽힙니다.
 
-가로 한자 바로 위나 세로 한자 바로 오른쪽에 배치되는 작은 가나 문자열과 Markdown 내보내기의 PDF 구조 `/Ruby`(`/RB`/`/RT`/`/RP`) 요소 같은 일본어 루비(후리가나) 주석은 `ruby` 옵션으로 제어합니다.
+가로 한자 바로 위나 세로 한자 바로 오른쪽에 배치되는 작은 가나 문자열과 Markdown·JSON·청크 내보내기의 PDF 구조 `/Ruby`(`/RB`/`/RT`/`/RP`) 요소 같은 일본어 루비(후리가나) 주석은 `ruby` 옵션으로 제어합니다.
 
-- `"omit"`(기본값): 후리가나를 생략하여 읽기, 검색, Markdown 내보내기에서 기본 단어가 끊어지지 않도록 유지합니다.
+- `"omit"`(기본값): 후리가나를 생략하여 읽기, 검색, Markdown·JSON·청크 내보내기에서 기본 단어가 끊어지지 않도록 유지합니다.
 - `"parenthesize"`: 각 후리가나를 해당 기본 문자 바로 뒤에 괄호로 인라인 삽입합니다(예: `東京(とうきょう)`).
 - `"keep"`: 루비 런을 일반 텍스트로 그대로 보존합니다.
 

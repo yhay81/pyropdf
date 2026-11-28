@@ -1192,6 +1192,7 @@ Document.text(
     whitespace: bool = True,
     dehyphenate: bool = False,
     unmapped: Unmapped = 'skip',
+    actual_text: bool = True,
     ruby: RubyMode = 'omit',
     max_glyphs: int | None = 262144,
     max_size: int | None = 67108864,
@@ -1300,6 +1301,7 @@ Document.to_json(
     table_strategy: Literal['lines', 'text'] | None = 'lines',
     use_structure: Literal['auto', 'always', 'never'] = 'auto',
     expand_abbreviations: bool = False,
+    ruby: RubyMode = 'omit',
     margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
     ignore_headers_footers: bool = False,
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
@@ -1317,7 +1319,7 @@ The document is `{"pages": [...]}`, each page `{"index",
 `Element.to_dict` gives it: a heading, paragraph, list item,
 table, image, block quote, or code block in reading order with its
 page index and its box in display space. Structure-tree extraction,
-`use_structure`, `expand_abbreviations`, `margins`,
+`use_structure`, `expand_abbreviations`, `ruby`, `margins`,
 `ignore_headers_footers`, `images`, `max_graphics`, `pages`,
 and `table_strategy` are as for `markdown`. More than
 `max_size` bytes of UTF-8 element text raise `LimitError`
@@ -1334,6 +1336,7 @@ Document.to_chunks(
     table_strategy: Literal['lines', 'text'] | None = 'lines',
     use_structure: Literal['auto', 'always', 'never'] = 'auto',
     expand_abbreviations: bool = False,
+    ruby: RubyMode = 'omit',
     margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
     ignore_headers_footers: bool = False,
     images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
@@ -1356,8 +1359,8 @@ or code block is never split, and a chunk of one that is longer is
 any structure `alt_text`, `language`, or exported `image`
 metadata, and `Chunk.to_dict` gives JSON-safe values. `pages`,
 `table_strategy`, `use_structure`, `expand_abbreviations`,
-`margins`, `ignore_headers_footers`, `images`, `max_graphics`,
-and `max_size` are as for `to_json`.
+`ruby`, `margins`, `ignore_headers_footers`, `images`,
+`max_graphics`, and `max_size` are as for `to_json`.
 
 ### `flatten`
 

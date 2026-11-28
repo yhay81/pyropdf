@@ -11,7 +11,7 @@ use super::{
     BBox, Error, FontInfo, GlyphRecord, LINE_SEGMENT_GAP, LINE_TOLERANCE, RtlLineOrder,
     TextOptions, as_u64, cluster_lines, collect_page_glyphs, glyph_end, glyph_is_nonspacing_mark,
     glyph_progress, glyphs_rtl_order, has_vertical_baseline, line_bbox, needs_gap,
-    try_push_glyph_text, try_push_str_text, try_push_text,
+    try_push_glyph_text, try_push_str_text, try_push_text, updates_gap_anchor,
 };
 use crate::bridge::Bridged;
 use crate::render::Fallback;
@@ -412,7 +412,7 @@ fn split_word_slices(line: &[GlyphRecord]) -> Result<Vec<BorrowedWord<'_>>, Erro
         if !is_space && word_start.is_none() {
             word_start = Some(index);
         }
-        if !glyph_is_nonspacing_mark(glyph) {
+        if updates_gap_anchor(glyph) {
             previous = Some(glyph);
         }
     }
@@ -2549,7 +2549,9 @@ fn build_attached_body_table(
 
     let structural_headers =
         (horizontal && plan.orientation.block_sign >= 0.0).then_some(header_rows);
-    let row_styles = grid_row_styles(total_rows, total_cols, &cells, word_lines, fonts, tol.snap)?;
+    let row_styles = grid_row_styles(
+        total_rows, total_cols, &cells, &anchors, word_lines, fonts, tol.snap, budget,
+    )?;
     let detected_headers = detect_header_rows(
         total_rows,
         total_cols,
@@ -2784,9 +2786,11 @@ fn detect_grid_tables(
             row_count_usize,
             column_count_usize,
             &cells,
+            &cell_anchors,
             &word_lines,
             fonts,
             tol.snap,
+            budget,
         )?;
         let header_rows = detect_header_rows(
             row_count_usize,
@@ -2890,9 +2894,11 @@ fn materialize_explicit_grid(
         row_count_usize,
         column_count_usize,
         &cells,
+        &cell_anchors,
         word_lines,
         fonts,
         tol.snap,
+        budget,
     )?;
     let header_rows = detect_header_rows(
         row_count_usize,
@@ -3054,20 +3060,34 @@ fn detect_single_axis_explicit_table(
             return Ok(None);
         }
         row_spans.sort_unstable_by(|left, right| left.0.total_cmp(&right.0));
+        let mut merged_rows: Vec<(f64, f64)> = Vec::new();
+        for (start, end) in row_spans {
+            if let Some(last) = merged_rows.last_mut()
+                && start <= last.1 + tol.snap
+            {
+                last.1 = last.1.max(end);
+            } else {
+                try_push_text(
+                    &mut merged_rows,
+                    (start, end),
+                    "explicit vertical guide row spans",
+                )?;
+            }
+        }
         let mut ys = Vec::new();
         try_push_text(
             &mut ys,
-            row_spans[0].0,
+            merged_rows[0].0,
             "explicit vertical guide row bounds",
         )?;
-        for pair in row_spans.windows(2) {
+        for pair in merged_rows.windows(2) {
             let mid = (pair[0].1 + pair[1].0) * 0.5;
             let prev = *ys.last().expect("start bound pushed");
             if mid > prev + tol.snap {
                 try_push_text(&mut ys, mid, "explicit vertical guide row bounds")?;
             }
         }
-        let last_y = row_spans[row_spans.len() - 1].1;
+        let last_y = merged_rows[merged_rows.len() - 1].1;
         if last_y > *ys.last().expect("start bound pushed") {
             try_push_text(&mut ys, last_y, "explicit vertical guide row bounds")?;
         }
@@ -3205,27 +3225,49 @@ fn segmented_row_style(row: &[&[GlyphRecord]], fonts: &[FontInfo]) -> RowStyle {
 }
 
 /// Summarize style flags for each row of a grid table.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "grid dimensions, cells, anchors, borrowed words, fonts, snap tolerance, and budget"
+)]
 fn grid_row_styles(
     row_count: usize,
     col_count: usize,
     cells: &[TableCell],
+    anchors: &[u32],
     word_lines: &[Vec<BorrowedWord<'_>>],
     fonts: &[FontInfo],
     snap: f64,
+    budget: &Budget,
 ) -> Result<Vec<RowStyle>, Error> {
     let mut styles = Vec::new();
     for row in 0..row_count {
+        budget.poll()?;
         let mut row_y0 = f64::INFINITY;
         let mut row_y1 = f64::NEG_INFINITY;
+        let mut single_row_y0 = f64::INFINITY;
+        let mut single_row_y1 = f64::NEG_INFINITY;
         let mut row_x0 = f64::INFINITY;
         let mut row_x1 = f64::NEG_INFINITY;
         for col in 0..col_count {
-            if let Some(((x0, y0, x1, y1), _)) = &cells[row * col_count + col] {
+            let slot = row * col_count + col;
+            if let Some(((x0, y0, x1, y1), _)) = &cells[slot] {
                 row_x0 = row_x0.min(*x0);
                 row_y0 = row_y0.min(*y0);
                 row_x1 = row_x1.max(*x1);
                 row_y1 = row_y1.max(*y1);
+                let spans_below = row + 1 < row_count
+                    && anchors
+                        .get((row + 1) * col_count + col)
+                        .is_some_and(|&below_anchor| below_anchor as usize == slot);
+                if !spans_below {
+                    single_row_y0 = single_row_y0.min(*y0);
+                    single_row_y1 = single_row_y1.max(*y1);
+                }
             }
+        }
+        if single_row_y0 <= single_row_y1 {
+            row_y0 = single_row_y0;
+            row_y1 = single_row_y1;
         }
         let mut bold = 0usize;
         let mut total = 0usize;
@@ -3745,5 +3787,80 @@ mod tests {
         let err = detect_grid_tables(&lines, &rules, tol, &[], false, &text_budget).unwrap_err();
         assert!(matches!(err, Error::Limit(refusal) if refusal.code() == LimitCode::TextSize));
         assert_eq!(text_budget.used(LimitCode::TextSize), 0);
+    }
+
+    #[test]
+    fn grid_row_styles_ignore_rowspan_bleed_from_body_rows() {
+        let regular_font = FontInfo {
+            name: std::sync::Arc::from("Regular"),
+            flags: 0,
+            ascender: 0.8,
+            descender: -0.2,
+        };
+        let bold_font = FontInfo {
+            name: std::sync::Arc::from("Bold"),
+            flags: 16,
+            ascender: 0.8,
+            descender: -0.2,
+        };
+        let fonts = [regular_font, bold_font];
+        // Row 0 has Col 0 spanning rows 0..2 (y=0..40) and Col 1 single-row (y=0..20), both bold.
+        // Row 1 Col 1 (y=20..40) has a long non-bold body string that must not dilute Row 0's bold style.
+        let cells: Vec<TableCell> = vec![
+            Some(((0.0, 0.0, 50.0, 40.0), "ID".to_owned())),
+            Some(((50.0, 0.0, 150.0, 20.0), "Name".to_owned())),
+            None,
+            Some(((50.0, 20.0, 150.0, 40.0), "OrdinaryBodyText".to_owned())),
+        ];
+        let anchors = vec![0u32, 1, 0, 3];
+        let mut h0 = text_glyphs("ID", 10.0, 10.0, 10.0);
+        for g in &mut h0 {
+            g.font_id = 1;
+        }
+        let mut h1 = text_glyphs("Name", 60.0, 10.0, 10.0);
+        for g in &mut h1 {
+            g.font_id = 1;
+        }
+        let body = text_glyphs("OrdinaryBodyText", 60.0, 30.0, 10.0);
+        let word_lines = vec![
+            vec![(glyphs_bbox(&h0), &h0[..]), (glyphs_bbox(&h1), &h1[..])],
+            vec![(glyphs_bbox(&body), &body[..])],
+        ];
+        let budget = Budget::default();
+        let styles =
+            grid_row_styles(2, 2, &cells, &anchors, &word_lines, &fonts, 1.0, &budget).unwrap();
+        assert!(styles[0].is_bold);
+        assert!(!styles[1].is_bold);
+    }
+
+    #[test]
+    fn single_axis_vertical_guides_merge_overlapping_row_spans() {
+        // Two overlapping physical lines on the same visual row (y=20..32 and y=22..30),
+        // followed by a cleanly separated second visual row (y=48..60).
+        let line_a = text_glyphs("Alpha", 20.0, 30.0, 12.0);
+        let line_b = text_glyphs("100", 120.0, 29.0, 8.0);
+        let line_c = text_glyphs("Beta", 20.0, 58.0, 12.0);
+        let line_d = text_glyphs("200", 120.0, 58.0, 12.0);
+        let physical_lines = vec![line_a, line_b, line_c, line_d];
+        let word_lines = build_word_lines(&physical_lines).unwrap();
+        let budget = Budget::default();
+        let table = detect_single_axis_explicit_table(
+            &physical_lines,
+            &word_lines,
+            &[10.0, 100.0, 200.0],
+            &[],
+            None,
+            TableTolerances::default(),
+            &[],
+            &budget,
+        )
+        .unwrap()
+        .expect("single-axis table should be detected");
+        assert_eq!((table.1, table.2), (2, 2));
+        let text_at = |r: usize, c: usize| table.3[r * 2 + c].as_ref().unwrap().1.as_str();
+        assert_eq!(text_at(0, 0), "Alpha");
+        assert_eq!(text_at(0, 1), "100");
+        assert_eq!(text_at(1, 0), "Beta");
+        assert_eq!(text_at(1, 1), "200");
     }
 }

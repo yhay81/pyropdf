@@ -499,6 +499,7 @@ def test_the_size_budget_counts_the_text_of_the_whole_call() -> None:
         ({"ruby": "inline"}, ValueError, "ruby must be"),
         ({"ruby": True}, TypeError, "ruby must be"),
         ({"ruby": 1}, TypeError, "ruby must be"),
+        ({"actual_text": 1}, TypeError, "actual_text must be True or False"),
         ({"clipped": 1}, TypeError, "clipped must be True or False"),
         ({"ligatures": None}, TypeError, "ligatures must be True or False"),
         ({"whitespace": "no"}, TypeError, "whitespace must be True or False"),
@@ -727,3 +728,33 @@ def test_vertical_japanese_ruby_modes_including_single_kana() -> None:
         assert "とうきょう" in page.text(ruby="keep")
         assert "い" in page.text(ruby="keep")
         assert "東京へ行く" in page.text(ruby="keep")
+
+
+def test_document_text_accepts_actual_text_opt_out() -> None:
+    stream = "/Span << /ActualText (Replaced) >> BDC BT /F1 16 Tf 72 700 Td (RawGlyphs) Tj ET EMC"
+    with pyropdf.open(build_text_pdf(stream, stream)) as doc:
+        assert doc.text() == "Replaced\nReplaced\n"
+        assert doc.text(actual_text=False) == "RawGlyphs\nRawGlyphs\n"
+        assert doc.text(actual_text=False) == "".join(page.text(actual_text=False) for page in doc.pages)
+
+
+def test_parenthesized_ruby_preserves_following_word_space_and_non_superscript() -> None:
+    stream = "\n".join(
+        [
+            f"BT /FH 12 Tf 60 400 Td ({_cp932_octal('東京')}) Tj ET",
+            "BT /F1 12 Tf 100 400 Td (Station) Tj ET",
+            f"BT /FH 6 Tf 58 413 Td ({_cp932_octal('とうきょう')}) Tj ET",
+        ]
+    )
+    with pyropdf.open(_japanese_mixed_pdf(stream)) as doc:
+        page = doc.pages[0]
+        assert page.text(ruby="omit") == "東京 Station\n"
+        assert page.text(ruby="parenthesize") == "東京(とうきょう) Station\n"
+        assert [w.text for w in page.words(ruby="parenthesize")] == ["東京(とうきょう)", "Station"]
+        assert len(page.search("東京(とうきょう) Station", ruby="parenthesize")) == 1
+        layout = page.layout(ruby="parenthesize")
+        ruby_spans = [
+            span for block in layout.blocks for line in block.lines for span in line.spans if "とうきょう" in span.text
+        ]
+        assert len(ruby_spans) == 1
+        assert ruby_spans[0].is_superscript is False

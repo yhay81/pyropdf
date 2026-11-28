@@ -1681,6 +1681,7 @@ class Document:
         whitespace: bool = True,
         dehyphenate: bool = False,
         unmapped: Unmapped = "skip",
+        actual_text: bool = True,
         ruby: RubyMode = "omit",
         max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
         max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
@@ -1703,6 +1704,7 @@ class Document:
             whitespace=whitespace,
             dehyphenate=dehyphenate,
             unmapped=unmapped,
+            actual_text=actual_text,
             ruby=ruby,
             max_glyphs=max_glyphs,
             max_size=max_size,
@@ -1837,6 +1839,7 @@ class Document:
         table_strategy: Literal["lines", "text"] | None = "lines",
         use_structure: Literal["auto", "always", "never"] = "auto",
         expand_abbreviations: bool = False,
+        ruby: RubyMode = "omit",
         margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
         ignore_headers_footers: bool = False,
         images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
@@ -1852,7 +1855,7 @@ class Document:
         :meth:`Element.to_dict` gives it: a heading, paragraph, list item,
         table, image, block quote, or code block in reading order with its
         page index and its box in display space. Structure-tree extraction,
-        ``use_structure``, ``expand_abbreviations``, ``margins``,
+        ``use_structure``, ``expand_abbreviations``, ``ruby``, ``margins``,
         ``ignore_headers_footers``, ``images``, ``max_graphics``, ``pages``,
         and ``table_strategy`` are as for :meth:`markdown`. More than
         ``max_size`` bytes of UTF-8 element text raise :class:`LimitError`
@@ -1864,6 +1867,7 @@ class Document:
             max_size,
             use_structure=use_structure,
             expand_abbreviations=expand_abbreviations,
+            ruby=ruby,
             margins=margins,
             ignore_headers_footers=ignore_headers_footers,
             images=images,
@@ -1876,6 +1880,7 @@ class Document:
                 max_size=max_size,
                 use_structure=use_structure,
                 expand_abbreviations=expand_abbreviations,
+                ruby=ruby,
                 margins=margins,
                 ignore_headers_footers=ignore_headers_footers,
                 images=images,
@@ -1890,6 +1895,7 @@ class Document:
         table_strategy: Literal["lines", "text"] | None = "lines",
         use_structure: Literal["auto", "always", "never"] = "auto",
         expand_abbreviations: bool = False,
+        ruby: RubyMode = "omit",
         margins: float | tuple[float, float] | tuple[float, float, float, float] | None = None,
         ignore_headers_footers: bool = False,
         images: str | os.PathLike[str] | Callable[[ExportedImage], str | None] | None = None,
@@ -1910,8 +1916,8 @@ class Document:
         any structure ``alt_text``, ``language``, or exported ``image``
         metadata, and :meth:`Chunk.to_dict` gives JSON-safe values. ``pages``,
         ``table_strategy``, ``use_structure``, ``expand_abbreviations``,
-        ``margins``, ``ignore_headers_footers``, ``images``, ``max_graphics``,
-        and ``max_size`` are as for :meth:`to_json`.
+        ``ruby``, ``margins``, ``ignore_headers_footers``, ``images``,
+        ``max_graphics``, and ``max_size`` are as for :meth:`to_json`.
         """
         _chunks.validate_max_chars(max_chars)
         _chunks.validate_options(
@@ -1919,6 +1925,7 @@ class Document:
             max_size,
             use_structure=use_structure,
             expand_abbreviations=expand_abbreviations,
+            ruby=ruby,
             margins=margins,
             ignore_headers_footers=ignore_headers_footers,
             images=images,
@@ -1932,6 +1939,7 @@ class Document:
                 max_size=max_size,
                 use_structure=use_structure,
                 expand_abbreviations=expand_abbreviations,
+                ruby=ruby,
                 margins=margins,
                 ignore_headers_footers=ignore_headers_footers,
                 images=images,

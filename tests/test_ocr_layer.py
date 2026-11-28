@@ -234,6 +234,8 @@ def test_ocr_layer_from_words_skips_pages_with_text_by_default() -> None:
 
     assert document.pages[0].apply_ocr(words=[word]) == []
     assert document.to_bytes() == before
+    with pytest.raises(pyropdf.PdfError, match="clip"):
+        document.pages[0].apply_ocr(words=[word], clip=(900, 900, 950, 950))
     # Only text that meets the clip counts; "Hello" is near the top of the page.
     assert document.pages[0].apply_ocr(words=[word], clip=(250, 250, 450, 350)) == [word]
     assert "Scanned" in document.pages[0].text()

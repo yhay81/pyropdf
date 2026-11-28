@@ -660,3 +660,57 @@ def test_exports_cache_tables_and_structure_content_per_page(monkeypatch: pytest
         chunks = doc.to_chunks(images=tmp_path / "tagged_chunks")
         assert "![Chart](page-0-image-0.png)" in chunks[0].text
         assert content_calls == 1
+
+
+def test_json_and_chunks_honor_ruby_for_geometric_and_structure_pages() -> None:
+    from test_markdown import _japanese_md_pdf, _sjis  # noqa: PLC0415
+
+    # Geometric ruby PDF
+    geom_stream = "\n".join(
+        [
+            f"BT /FH 12 Tf 60 460 Td ({_sjis('東京から大阪へ')}) Tj ET",
+            f"BT /FH 6 Tf 58 473 Td ({_sjis('とうきょう')}) Tj ET",
+            f"BT /FH 6 Tf 106 473 Td ({_sjis('おおさか')}) Tj ET",
+        ]
+    )
+    with pyropdf.open(_japanese_md_pdf(geom_stream)) as doc:
+        omit_json = json.loads(doc.to_json())
+        assert [e["text"] for e in omit_json["pages"][0]["elements"]] == ["東京から大阪へ"]
+        paren_json = json.loads(doc.to_json(ruby="parenthesize"))
+        assert [e["text"] for e in paren_json["pages"][0]["elements"]] == ["東京(とうきょう)から大阪(おおさか)へ"]
+        assert [c.text for c in doc.to_chunks(ruby="parenthesize")] == ["東京(とうきょう)から大阪(おおさか)へ"]
+        for call in (doc.to_json, doc.to_chunks):
+            with pytest.raises(TypeError, match="ruby"):
+                call(ruby=123)  # ty: ignore[invalid-argument-type]
+            with pytest.raises(ValueError, match="ruby"):
+                call(ruby="inline")  # ty: ignore[invalid-argument-type]
+
+    # Tagged /Ruby PDF (/RB + /RT)
+    tagged_stream = "\n".join(
+        [
+            f"BT /FH 12 Tf 60 460 Td /RB << /MCID 0 >> BDC ({_sjis('東京')}) Tj EMC ET",
+            f"BT /FH 6 Tf 58 473 Td /RT << /MCID 1 >> BDC ({_sjis('とうきょう')}) Tj EMC ET",
+            f"BT /FH 12 Tf 84 460 Td /Span << /MCID 2 >> BDC ({_sjis('へ')}) Tj EMC ET",
+        ]
+    )
+    tagged_extra: dict[int, str | bytes] = {
+        10: "<< /Type /StructTreeRoot /K 11 0 R >>",
+        11: "<< /Type /StructElem /S /Document /P 10 0 R /Pg 3 0 R /K 12 0 R >>",
+        12: "<< /Type /StructElem /S /P /P 11 0 R /Pg 3 0 R /K [13 0 R 16 0 R] >>",
+        13: "<< /Type /StructElem /S /Ruby /P 12 0 R /Pg 3 0 R /K [14 0 R 15 0 R] >>",
+        14: "<< /Type /StructElem /S /RB /P 13 0 R /Pg 3 0 R /K 0 >>",
+        15: "<< /Type /StructElem /S /RT /P 13 0 R /Pg 3 0 R /K 1 >>",
+        16: "<< /Type /StructElem /S /Span /P 12 0 R /Pg 3 0 R /K 2 >>",
+    }
+    tagged_pdf = _japanese_md_pdf(
+        tagged_stream,
+        extra_objects=tagged_extra,
+        catalog_extra="/MarkInfo << /Marked true >> /StructTreeRoot 10 0 R ",
+        page_extra="/StructParents 0 ",
+    )
+    with pyropdf.open(tagged_pdf) as doc:
+        assert [c.text for c in doc.to_chunks()] == ["東京へ"]
+        assert [c.text for c in doc.to_chunks(ruby="parenthesize")] == ["東京(とうきょう)へ"]
+        assert [c.text for c in doc.to_chunks(ruby="keep")] == ["東京とうきょうへ"]
+        paren_json = json.loads(doc.to_json(ruby="parenthesize"))
+        assert [e["text"] for e in paren_json["pages"][0]["elements"]] == ["東京(とうきょう)へ"]

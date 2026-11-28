@@ -8,8 +8,8 @@ use pyropdf_store::budget::{Budget, LimitCode};
 
 use super::layout::{QuadTuple, glyphs_bbox, glyphs_quad};
 use super::{
-    BBox, Error, GlyphRecord, TextOptions, glyph_is_nonspacing_mark, needs_gap, try_push_str_text,
-    try_push_text, viewed_page_lines,
+    BBox, Error, GlyphRecord, TextOptions, needs_gap, try_push_str_text, try_push_text,
+    updates_gap_anchor, viewed_page_lines,
 };
 use crate::bridge::Bridged;
 use crate::render::Fallback;
@@ -165,7 +165,7 @@ fn search_index(unit: &[Vec<GlyphRecord>]) -> Result<(String, SearchMap), Error>
             for _ in 0..pushed {
                 try_push_text(&mut map, Some((line_index, index)), "search glyph map")?;
             }
-            if !glyph_is_nonspacing_mark(glyph) {
+            if updates_gap_anchor(glyph) {
                 previous = Some(glyph);
             }
         }

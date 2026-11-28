@@ -371,6 +371,12 @@ def test_apply_ocr_skips_existing_text_by_default() -> None:
 
     assert page.apply_ocr() == []
     assert page.ocr(mode="skip_existing") == []
+    with pytest.raises(pyropdf.OcrError, match="dpi"):
+        page.apply_ocr(dpi=-1, mode="skip_existing")
+    with pytest.raises(TypeError, match="engine"):
+        page.apply_ocr(engine="bad", mode="skip_existing")  # ty: ignore[invalid-argument-type]
+    with pytest.raises(pyropdf.PdfError, match="clip"):
+        page.apply_ocr(clip=(300, 300, 400, 400), mode="skip_existing")
     with pytest.raises(TypeError, match="mode"):
         page.apply_ocr(mode=1)  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError, match="mode"):
